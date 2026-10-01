@@ -12,7 +12,20 @@ Requisitos: Node 24, npm 11 y Docker Desktop abierto.
 2. Levantar la base de datos local: `npx supabase start`
    (usa los puertos 56321 a 56329, para no chocar con otros proyectos de Supabase local)
 3. Copiar `.env.example` a `.env.local` y completar los valores con `npx supabase status -o env`
-4. Levantar la aplicación: `npm run dev` y abrir http://localhost:3000
+4. Generar las claves de cifrado (una para datos personales y otra, distinta, para las huellas de
+   búsqueda) y pegarlas en `.env.local` como `CP_PII_KEY_V1` y `CP_SEARCH_KEY_V1`, con
+   `CP_PII_KEY_CURRENT=v1`. Cada clave sale de:
+
+   ```
+   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+   ```
+
+   Cada entorno usa claves distintas. Si se pierde `CP_PII_KEY_V1`, los datos cifrados no se
+   recuperan.
+
+5. Cargar datos ficticios: `npm run db:seed` (se niega a correr si la URL de Supabase no es local;
+   crea ana, beto, mixta y ex `@ejemplo.test`, con la contraseña que imprime al terminar)
+6. Levantar la aplicación: `npm run dev` y abrir http://localhost:3000
 
 Para apagar la base local: `npx supabase stop`.
 
@@ -29,6 +42,7 @@ Para apagar la base local: `npx supabase stop`.
 | `npm test`             | Pruebas unitarias (Vitest)                |
 | `npm run test:e2e`     | Pruebas de extremo a extremo (Playwright) |
 | `npm run test:db`      | Pruebas de la base de datos (necesitan `supabase start` y `supabase db reset`) |
+| `npm run db:seed`      | Datos ficticios en la base local (solo local) |
 | `npm run test:db:rollbacks` | Prueba los deshacer de las migraciones (borra los datos de la base local) |
 
 La primera vez, `npx playwright install chromium` descarga el navegador de las pruebas.

@@ -1,0 +1,172 @@
+/**
+ * ÚNICO lugar donde se resuelve la organización activa, es decir, el `tenant_id`
+ * (STACK.md §5b, punto 4; PROYECTO.md §13.1; modelo-datos.md §2.3).
+ *
+ * Una persona puede pertenecer a varias organizaciones, así que el `tenant_id` NO sale del pase de
+ * sesión: sale de la dirección (`/o/{tenantId}/...`) y aquí se verifica, en cada petición, que la
+ * persona sea miembro activo. Quien no es miembro recibe "No encontrado" (404), nunca "Prohibido":
+ * no se revela si la organización existe.
+ *
+ * Ningún otro archivo arma la cabecera de la organización ni decide de dónde sale el tenant.
+ *
+ * Dos capas:
+ * - `resolveActiveTenant({ userId, requestedTenantId })`: el núcleo. No usa sesión ni `notFound()`,
+ *   así que sirve para pantallas, rutas de API y pruebas. Devuelve `null` si no corresponde.
+ * - `requireActiveTenant(requestedTenantId)`: para pantallas y acciones. Exige sesión y responde
+ *   "No encontrado" ante cualquier `null`.
+ */
+import { notFound } from "next/navigation";
+import { cache } from "react";
+import { logAuditEvent } from "@/lib/audit/log";
+import { requireUser, type SessionUser } from "@/lib/auth/session";
+import { getRequestContext } from "@/lib/http/request-context";
+import { createClient } from "@/lib/supabase/server";
+import {
+  CLIENT_IP_HEADER,
+  REQUEST_ID_HEADER,
+  TENANT_HEADER,
+  isCanonicalUuid,
+  isUuid,
+} from "./constants";
+
+export type MemberRole = "owner" | "admin" | "approver" | "sales" | "viewer";
+
+export type Membership = {
+  tenantId: string;
+  name: string;
+  role: MemberRole;
+};
+
+type ScopedClient = Awaited<ReturnType<typeof createClient>>;
+
+export type ResolvedTenant = {
+  tenantId: string;
+  tenantName: string;
+  role: MemberRole;
+  userId: string;
+  /** Cliente de Supabase con la organización activa ya puesta en la cabecera. */
+  supabase: ScopedClient;
+};
+
+export type ActiveTenant = ResolvedTenant & { user: SessionUser };
+
+type MembershipRow = {
+  tenant_id: string;
+  role: MemberRole;
+  tenants: { name: string } | { name: string }[] | null;
+};
+
+function toMembership(row: MembershipRow): Membership {
+  const tenant = Array.isArray(row.tenants) ? row.tenants[0] : row.tenants;
+  return { tenantId: row.tenant_id, name: tenant?.name ?? "", role: row.role };
+}
+
+/** Organizaciones a las que pertenece la persona (para el selector). */
+export const listMemberships = cache(async (userId: string): Promise<Membership[]> => {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("members")
+    .select("tenant_id, role, tenants!inner(name, status, kind)")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .eq("tenants.status", "active")
+    .eq("tenants.kind", "organization");
+  if (error || !data) return [];
+  return (data as unknown as MembershipRow[])
+    .map(toMembership)
+    .sort((a, b) => a.name.localeCompare(b.name, "es-CL"));
+});
+
+/**
+ * Núcleo: ¿esta persona es miembro activo de la organización pedida? Si lo es, entrega el cliente de
+ * Supabase con la cabecera puesta; si no (o si la dirección no es un UUID canónico en minúsculas),
+ * deja constancia en la auditoría y devuelve `null`.
+ */
+export async function resolveActiveTenant(input: {
+  userId: string;
+  requestedTenantId: string;
+}): Promise<ResolvedTenant | null> {
+  const { userId, requestedTenantId } = input;
+
+  const canonical = isCanonicalUuid(requestedTenantId);
+  const membership = canonical
+    ? (await listMemberships(userId)).find((m) => m.tenantId === requestedTenantId)
+    : undefined;
+
+  if (!membership) {
+    await logAuditEvent({
+      action: "tenant.access_denied",
+      result: "denied",
+      actorUserId: userId,
+      resourceType: "tenant",
+      resourceId: isUuid(requestedTenantId) ? requestedTenantId : undefined,
+      details: { reason: canonical ? "not_a_member" : "invalid_id" },
+    });
+    return null;
+  }
+
+  const context = await getRequestContext();
+  const supabase = await createClient({
+    [TENANT_HEADER]: membership.tenantId,
+    [REQUEST_ID_HEADER]: context.requestId,
+    ...(context.clientIp ? { [CLIENT_IP_HEADER]: context.clientIp } : {}),
+  });
+
+  return {
+    tenantId: membership.tenantId,
+    tenantName: membership.name,
+    role: membership.role,
+    userId,
+    supabase,
+  };
+}
+
+const resolveForCurrentUser = cache(
+  async (requestedTenantId: string): Promise<ActiveTenant | null> => {
+    const user = await requireUser();
+    const resolved = await resolveActiveTenant({ userId: user.id, requestedTenantId });
+    return resolved ? { ...resolved, user } : null;
+  },
+);
+
+/** Para pantallas y acciones: la organización activa o "No encontrado" (404 idéntico en todos los casos). */
+export async function requireActiveTenant(requestedTenantId: string): Promise<ActiveTenant> {
+  const active = await resolveForCurrentUser(requestedTenantId);
+  if (!active) notFound();
+  return active;
+}
+
+/**
+ * La última organización que usó la persona, solo para "volver a donde estaba". No tiene valor de
+ * seguridad: el destino igual pasa por `requireActiveTenant`. Es el único lugar que lee la columna
+ * (después pasará a una función de la base de datos, `my_last_tenant_id`).
+ */
+export async function getLastTenantId(userId: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("profiles")
+    .select("last_tenant_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return (data?.last_tenant_id as string | null | undefined) ?? null;
+}
+
+/**
+ * A qué organización enviar a quien acaba de entrar: la última que usó si sigue siendo suya, o la
+ * primera de su lista. `null` si todavía no tiene ninguna.
+ */
+export async function resolveLandingTenant(user: SessionUser): Promise<string | null> {
+  const memberships = await listMemberships(user.id);
+  if (memberships.length === 0) return null;
+  const lastTenantId = await getLastTenantId(user.id);
+  const last = memberships.find((m) => m.tenantId === lastTenantId);
+  return (last ?? memberships[0]).tenantId;
+}
+
+/** Recuerda la organización elegida para la próxima vez que la persona entre. */
+export async function rememberLastTenant(active: ActiveTenant): Promise<void> {
+  await active.supabase
+    .from("profiles")
+    .update({ last_tenant_id: active.tenantId })
+    .eq("user_id", active.userId);
+}

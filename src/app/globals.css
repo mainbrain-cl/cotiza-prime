@@ -358,3 +358,61 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ───────────── Fondo animado (ingreso, onboarding y estados vacíos) ─────────────
+   Manchas de color difuminadas que se mueven despacio (22–30 s por ciclo). Solo con colores del
+   sistema. Con "reducir movimiento" quedan quietas. */
+@keyframes aurora-drift-a {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(8%, 10%, 0) scale(1.12);
+  }
+}
+@keyframes aurora-drift-b {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1.05);
+  }
+  50% {
+    transform: translate3d(-10%, -8%, 0) scale(0.92);
+  }
+}
+@keyframes aurora-drift-c {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(0.95);
+  }
+  50% {
+    transform: translate3d(-6%, 12%, 0) scale(1.1);
+  }
+}
+
+@utility aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(80px);
+  opacity: 0.35;
+  will-change: transform;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none !important;
+  }
+}
+
+/* Entrada de las pantallas de ingreso */
+@keyframes enter-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+@utility animate-enter {
+  animation: enter-up var(--dur-enter) var(--ease-ios) both;
+}

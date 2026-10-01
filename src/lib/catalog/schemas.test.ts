@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createCatalogItemSchema } from "./schemas";
+import { createCatalogItemSchema, parseCatalogStatusFilter } from "./schemas";
 
 const valid = {
   name: "  Flete Santiago  ",
@@ -39,5 +39,30 @@ describe("createCatalogItemSchema", () => {
   });
   it("acepta precio cero", () => {
     expect(createCatalogItemSchema.safeParse({ ...valid, unitPriceClp: "0" }).success).toBe(true);
+  });
+  it("acepta cambiar precio, unidad e IVA al editar", () => {
+    const result = createCatalogItemSchema.safeParse({
+      ...valid,
+      unitPriceClp: "19.990",
+      unit: "hour",
+      taxTreatment: "exempt",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toMatchObject({
+        unitPriceClp: 19990,
+        unit: "hour",
+        taxTreatment: "exempt",
+      });
+    }
+  });
+});
+
+describe("parseCatalogStatusFilter", () => {
+  it.each(["activos", "inactivos", "todos"])("acepta %j", (value) => {
+    expect(parseCatalogStatusFilter(value)).toBe(value);
+  });
+  it.each([undefined, "", "borrados", ["todos"], 3])("vuelve a activos con %j", (value) => {
+    expect(parseCatalogStatusFilter(value)).toBe("activos");
   });
 });

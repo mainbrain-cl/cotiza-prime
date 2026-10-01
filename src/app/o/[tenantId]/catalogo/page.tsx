@@ -1,11 +1,18 @@
 import { Plus, Search, Tags } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/form-controls";
-import { CATALOG_SEARCH_MAX_LENGTH, unitLabel } from "@/lib/catalog/schemas";
+import {
+  CATALOG_SEARCH_MAX_LENGTH,
+  CATALOG_STATUS_FILTERS,
+  parseCatalogStatusFilter,
+  unitLabel,
+} from "@/lib/catalog/schemas";
 import { formatClp } from "@/lib/money/clp";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
+import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
 import { CatalogForm } from "./catalog-form";
 
@@ -37,6 +44,7 @@ export default async function CatalogPage({
   const search = (typeof rawSearch === "string" ? rawSearch : "")
     .trim()
     .slice(0, CATALOG_SEARCH_MAX_LENGTH);
+  const status = parseCatalogStatusFilter((await searchParams).estado);
 
   // El filtro por organización lo pone la base (RLS) según la organización activa.
   let query = active.supabase
@@ -45,10 +53,20 @@ export default async function CatalogPage({
     .order("name", { ascending: true })
     .limit(MAX_LISTED);
   if (search !== "") query = query.ilike("name", `%${escapeLike(search)}%`);
+  if (status === "activos") query = query.eq("is_active", true);
+  if (status === "inactivos") query = query.eq("is_active", false);
   const { data, error } = await query;
   const items = (data ?? []) as CatalogRow[];
   const canEdit = active.role === "owner" || active.role === "admin";
-  const isCatalogEmpty = !error && items.length === 0 && search === "";
+  const hasNoFilters = search === "" && status === "activos";
+  // Catálogo realmente vacío: sin servicios de ningún tipo (ni siquiera desactivados).
+  let isCatalogEmpty = false;
+  if (!error && items.length === 0 && hasNoFilters) {
+    const { count } = await active.supabase
+      .from("catalog_items")
+      .select("id", { count: "exact", head: true });
+    isCatalogEmpty = (count ?? 0) === 0;
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -104,11 +122,43 @@ export default async function CatalogPage({
                   maxLength={CATALOG_SEARCH_MAX_LENGTH}
                   className="pl-10"
                 />
+                {status !== "activos" ? <input type="hidden" name="estado" value={status} /> : null}
               </form>
+
+              <nav aria-label="Filtrar por estado" className="flex flex-wrap gap-2">
+                {CATALOG_STATUS_FILTERS.map((filter) => {
+                  const params = new URLSearchParams();
+                  if (search !== "") params.set("q", search);
+                  if (filter.value !== "activos") params.set("estado", filter.value);
+                  const href = `${tenantPath(active.tenantId, "catalogo")}${
+                    params.size > 0 ? `?${params}` : ""
+                  }`;
+                  const selected = filter.value === status;
+                  return (
+                    <Link
+                      key={filter.value}
+                      href={href}
+                      aria-current={selected ? "true" : undefined}
+                      className={cn(
+                        "inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-semibold md:min-h-9",
+                        selected
+                          ? "border-accent bg-accent text-on-accent"
+                          : "border-border-strong bg-surface text-fg-muted hover:bg-surface-2 hover:text-fg",
+                      )}
+                    >
+                      {filter.label}
+                    </Link>
+                  );
+                })}
+              </nav>
 
               {items.length === 0 ? (
                 <p className="rounded-lg border border-border bg-surface px-6 py-10 text-center text-fg-muted">
-                  No hay servicios que coincidan con &ldquo;{search}&rdquo;.
+                  {search !== ""
+                    ? `No hay servicios que coincidan con “${search}”.`
+                    : status === "inactivos"
+                      ? "No tienes servicios desactivados."
+                      : "No hay servicios activos. Puedes reactivar uno desde el filtro “Inactivos”."}
                 </p>
               ) : (
                 <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-1">
@@ -129,7 +179,19 @@ export default async function CatalogPage({
                         className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 px-4 py-3.5 md:grid-cols-[minmax(0,1fr)_9rem_9rem_8rem] md:items-center"
                       >
                         <div className="min-w-0">
-                          <p className="font-semibold text-fg">{item.name}</p>
+                          <p className="flex flex-wrap items-center gap-x-2 font-semibold text-fg">
+                            <Link
+                              href={tenantPath(active.tenantId, `catalogo/${item.id}`)}
+                              className="inline-flex min-h-11 items-center hover:text-accent hover:underline md:min-h-0"
+                            >
+                              {item.name}
+                            </Link>
+                            {item.is_active ? null : (
+                              <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-fg-muted">
+                                Desactivado
+                              </span>
+                            )}
+                          </p>
                           {item.description ? (
                             <p className="line-clamp-2 text-sm text-fg-muted">{item.description}</p>
                           ) : null}

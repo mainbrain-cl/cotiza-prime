@@ -16,6 +16,20 @@ export const TAX_TREATMENTS = [
   { value: "exempt", label: "Exento de IVA" },
 ] as const;
 
+/** Filtro de la lista del catálogo: por defecto solo los servicios que se ofrecen al cotizar. */
+export const CATALOG_STATUS_FILTERS = [
+  { value: "activos", label: "Activos" },
+  { value: "inactivos", label: "Inactivos" },
+  { value: "todos", label: "Todos" },
+] as const;
+
+export type CatalogStatusFilter = (typeof CATALOG_STATUS_FILTERS)[number]["value"];
+
+export function parseCatalogStatusFilter(value: unknown): CatalogStatusFilter {
+  const found = CATALOG_STATUS_FILTERS.find((filter) => filter.value === value);
+  return found ? found.value : "activos";
+}
+
 export const CATALOG_NAME_MAX_LENGTH = 150;
 export const CATALOG_DESCRIPTION_MAX_LENGTH = 2000;
 export const CATALOG_SEARCH_MAX_LENGTH = 100;

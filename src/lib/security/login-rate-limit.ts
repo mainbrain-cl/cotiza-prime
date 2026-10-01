@@ -42,7 +42,29 @@ const IPV6_TOTAL_HEXTETS = 8;
 export const RATE_LIMITED_MESSAGE =
   "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.";
 
-export type RateLimitScope = "login_email" | "login_ip" | "signup_ip" | "tenant_denied_user";
+/** Pedidos de restablecer contraseña permitidos por cuenta y por IP dentro de la ventana (H-003). */
+export const RESET_MAX_REQUESTS_PER_ACCOUNT = 3;
+export const RESET_MAX_REQUESTS_PER_IP = 10;
+export const RESET_WINDOW_SECONDS = 15 * SECONDS_PER_MINUTE;
+export const RESET_LOCK_SECONDS = 15 * SECONDS_PER_MINUTE;
+
+export type RateLimitScope =
+  "login_email" | "login_ip" | "signup_ip" | "tenant_denied_user" | "reset_email" | "reset_ip";
+
+/**
+ * La tabla `auth_rate_limits` solo admite ciertos valores en su columna `scope`. Los pedidos de
+ * restablecer contraseña reutilizan dos de ellos; no se mezclan con los de ingreso o registro
+ * porque la huella (`key_hash`) se calcula con un nombre de campo distinto.
+ * TODO: una migración puede darles su propio valor en la columna.
+ */
+const STORAGE_SCOPE: Record<RateLimitScope, string> = {
+  login_email: "login_email",
+  login_ip: "login_ip",
+  signup_ip: "signup_ip",
+  tenant_denied_user: "tenant_denied_user",
+  reset_email: "login_email",
+  reset_ip: "signup_ip",
+};
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
 
@@ -67,6 +89,17 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: TENANT_DENIED_MAX_LOGGED_PER_WINDOW + 1,
     windowSeconds: TENANT_DENIED_WINDOW_SECONDS,
     lockSeconds: TENANT_DENIED_WINDOW_SECONDS,
+  },
+  // Cada pedido cuenta; el siguiente al tope queda bloqueado.
+  reset_email: {
+    maxFailures: RESET_MAX_REQUESTS_PER_ACCOUNT,
+    windowSeconds: RESET_WINDOW_SECONDS,
+    lockSeconds: RESET_LOCK_SECONDS,
+  },
+  reset_ip: {
+    maxFailures: RESET_MAX_REQUESTS_PER_IP,
+    windowSeconds: RESET_WINDOW_SECONDS,
+    lockSeconds: RESET_LOCK_SECONDS,
   },
 };
 
@@ -100,7 +133,7 @@ export function emailFingerprint(email: string): string {
   return searchHash("login_email", PLATFORM_TENANT_ID, normalizeEmail(email));
 }
 
-function ipFingerprint(scope: "login_ip" | "signup_ip", ip: string): string {
+function ipFingerprint(scope: "login_ip" | "signup_ip" | "reset_ip", ip: string): string {
   return searchHash(scope, PLATFORM_TENANT_ID, ipLimitKey(ip));
 }
 
@@ -111,6 +144,17 @@ function loginTargets(email: string, ip: string | null): Target[] {
   // Sin IP conocida no se limita por IP (un solo grupo "desconocido" bloquearía a todos); sigue
   // vigente el límite por cuenta.
   if (ip) targets.push({ scope: "login_ip", keyHash: ipFingerprint("login_ip", ip) });
+  return targets;
+}
+
+function resetTargets(email: string, ip: string | null): Target[] {
+  const targets: Target[] = [
+    {
+      scope: "reset_email",
+      keyHash: searchHash("reset_email", PLATFORM_TENANT_ID, normalizeEmail(email)),
+    },
+  ];
+  if (ip) targets.push({ scope: "reset_ip", keyHash: ipFingerprint("reset_ip", ip) });
   return targets;
 }
 
@@ -129,7 +173,7 @@ async function anyLocked(targets: Target[]): Promise<boolean> {
   const admin = createAdminClient();
   for (const target of targets) {
     const { data, error } = await admin.rpc("auth_limit_locked_until", {
-      p_scope: target.scope,
+      p_scope: STORAGE_SCOPE[target.scope],
       p_key_hash: target.keyHash,
     });
     if (error) throw new Error(error.code ?? "rate_limit_read_failed");
@@ -145,7 +189,7 @@ async function recordAll(targets: Target[]): Promise<boolean> {
   for (const target of targets) {
     const rule = RULES[target.scope];
     const { data, error } = await admin.rpc("auth_limit_record_failure", {
-      p_scope: target.scope,
+      p_scope: STORAGE_SCOPE[target.scope],
       p_key_hash: target.keyHash,
       p_max_failures: rule.maxFailures,
       p_window_seconds: rule.windowSeconds,
@@ -216,4 +260,14 @@ export async function shouldLogTenantDenied(userId: string): Promise<boolean> {
   };
   const overTheCap = await failOpen("tenant_denied_count", false, () => recordAll([target]));
   return !overTheCap;
+}
+
+/** ¿Esta cuenta o esta IP ya pidió demasiados restablecimientos? */
+export function isResetLocked(email: string, ip: string | null): Promise<boolean> {
+  return failOpen("reset_check", false, () => anyLocked(resetTargets(email, ip)));
+}
+
+/** Cada pedido cuenta, exista o no la cuenta: así el límite tampoco revela nada. */
+export function recordResetRequest(email: string, ip: string | null): Promise<boolean> {
+  return failOpen("reset_request", false, () => recordAll(resetTargets(email, ip)));
 }

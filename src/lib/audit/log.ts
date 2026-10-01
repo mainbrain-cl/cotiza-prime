@@ -10,6 +10,8 @@ export type AuditAction =
   | "session.logout"
   | "session.login_failed"
   | "session.login_locked"
+  | "session.password_reset_requested"
+  | "session.password_changed"
   | "tenant.access_denied";
 
 export type AuditResult = "success" | "failure" | "denied";

@@ -18,6 +18,10 @@ const NOTICES: Record<string, { tone: "success" | "warning"; text: string }> = {
     tone: "warning",
     text: "El enlace no sirve: caducó o ya se usó. Si tu correo ya está verificado, ingresa; si no, crea tu cuenta de nuevo.",
   },
+  [LOGIN_NOTICES.resetLinkExpired]: {
+    tone: "warning",
+    text: "El enlace para cambiar tu contraseña caducó, ya se usó o se abrió en otro navegador. Pide uno nuevo desde “¿Olvidaste tu contraseña?”.",
+  },
   [LOGIN_NOTICES.signedOut]: { tone: "success", text: "Cerraste sesión." },
   [LOGIN_NOTICES.signOutIncomplete]: {
     tone: "warning",

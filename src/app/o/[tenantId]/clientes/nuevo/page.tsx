@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
-import { CustomerForm } from "./customer-form";
+import { CustomerForm } from "../customer-form";
 
 export const metadata: Metadata = { title: "Nuevo cliente · Cotiza Prime" };
 

@@ -296,6 +296,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/clientes", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/clientes/nuevo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/clientes/[customerId]", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/clientes/[customerId]/editar", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/numeracion", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones", kind: "page", scope: "tenant" },

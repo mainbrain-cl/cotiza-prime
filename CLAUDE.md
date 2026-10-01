@@ -38,7 +38,7 @@ de la base exige una decisión registrada en `docs/decisiones/`.
 
 Al abrir una sesión nueva, **parte por aquí**.
 
-**Sprint 1 — construido y revisado el 2026-10-01; falta solo la prueba en pantalla de Aarón.**
+**Sprint 1 — ✅ cerrado el 2026-10-01** (Aarón lo probó en pantalla; cierre en `docs/sprints/001-base-segura.md`).
 Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por separado) y con los
 hallazgos corregidos. Pruebas: `npm test`, `test:db`, `test:isolation` (504 ataques entre
 organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHub Actions.
@@ -51,9 +51,8 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 - **Diseño:** `docs/DISENO.md` v1.0 aprobado. **Decisión 014:** licencias de `sharp` y `caniuse-lite`.
 - **Historia nueva H-114** (IP de auditoría falsificable), en el sprint 6, antes del piloto.
 
-**Paso siguiente:** cuando Aarón cierre el sprint 1 en pantalla, hacer el cierre (comparar lo
-planificado con lo real) y partir el **sprint 2** (`docs/sprints/001-base-segura.md`, tabla de los 11
-sprints). El sprint 2 necesita la **plantilla 1 del PDF** diseñada.
+**En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
+la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
 **Cómo se integra el trabajo de los subagentes:** cada uno trabaja en una copia aislada y hace commit
 en su rama; la sesión principal cierra servidores abiertos, une la rama, corre todas las pruebas,
@@ -62,7 +61,7 @@ sube a `main` y borra la copia. Los cambios de base de datos, de a uno. Las 🔒
 **Repositorio:** `github.com/avronygg/cotiza-prime`, privado, rama `main` (creado el 2026-10-01).
 Docker Desktop ya está abierto.
 
-**Pendientes de Aarón:** plantilla 1 del PDF (antes del sprint 2); dominio de correo (antes del sprint 3); GitHub Pro o regla del proceso para bloquear integraciones en rojo; datos de Main Brain para los términos (29 marcadores `[POR COMPLETAR]`); crear el correo de la agencia y la cuenta de
+**Pendientes de Aarón:** aprobar la vista previa de la plantilla 1 del PDF (antes de H-028); dominio de correo (antes del sprint 3); GitHub Pro o regla del proceso para bloquear integraciones en rojo; datos de Main Brain para los términos (29 marcadores `[POR COMPLETAR]`); crear el correo de la agencia y la cuenta de
 Supabase (pruebas y producción); Vercel cuando haya que publicar; decisiones pendientes de
 `PROYECTO.md` §16.2 (dominio, quién diseña las plantillas, estudio logístico); **custodia de las
 claves de cifrado** (gestor de contraseñas y dos personas, antes del piloto; `modelo-datos.md` §12

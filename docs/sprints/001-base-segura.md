@@ -202,3 +202,33 @@ producción sin la confirmación explícita de `/entorno`.
 
 > ### ✅ COMPUERTA 3 — cruzada
 > Sprint 1 confirmado por Aarón el 2026-10-01.
+
+---
+
+# Cierre del sprint 1 — 2026-10-01
+
+> **✅ Cerrado.** Aarón lo probó en pantalla el 2026-10-01: "como primera base está bastante bien.
+> Avancemos nomás".
+
+| | Planificado | Real |
+|---|---|---|
+| Historias | 10 | 10, todas integradas en `main` y revisadas por Opus (H-012 por separado) |
+| Duración | 9 días de trabajo | ~1 día, con subagentes en paralelo |
+| Pruebas | Aislamiento en verde | 207 unitarias, 172 de base de datos, 504 ataques de aislamiento, 31 de punta a punta; todas en verde local y en GitHub Actions |
+| Migraciones | 8 | 14 (6 nacieron de las revisiones) |
+
+**Lo que encontraron las revisiones y se corrigió:** límite de intentos de ingreso que no protegía a
+cada persona (bloqueante); filtración de `profiles.last_tenant_id` entre compañeros (H-012);
+GraphQL expuesto sin uso; pie legal; cierre de sesión que no avisaba si fallaba; estados de carga y
+error; 13 menores.
+
+**Historia nueva:** H-114 (IP de auditoría falsificable) → sprint 6. **Pedido de Aarón:** pulido
+visual (animaciones, transiciones, esqueletos de carga, componentes más modernos) → H-115.
+
+**Lecciones para los sprints siguientes:**
+- `npm install` en Windows borra entradas del lockfile → `npm run check:lockfile` dentro de `lint`.
+- Los subagentes dejan servidores abiertos → cerrarlos antes de integrar.
+- Varios agentes comparten la base local y el límite de inicios de sesión → puertos de Playwright
+  distintos, datos únicos por ejecución, y solo un agente toca la base a la vez.
+- **Recalibración:** con este ritmo, el cuello de botella son los insumos de Aarón (plantilla del
+  PDF, dominio de correo, cuentas, abogado), no la construcción.

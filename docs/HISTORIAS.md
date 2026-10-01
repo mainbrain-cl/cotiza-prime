@@ -1868,6 +1868,30 @@ antes del piloto, porque la aceptación de términos es prueba de consentimiento
 
 ---
 
+### H-115 · Que la aplicación se sienta pulida y moderna · M19
+
+**Como** miembro de una organización
+**quiero** que la aplicación responda con transiciones suaves, esqueletos de carga y componentes modernos
+**para** que trabajar en ella sea agradable y se sienta profesional.
+
+**Criterios de aceptación**
+- [ ] Las listas y pantallas muestran esqueletos de carga con la forma del contenido, no pantallas en blanco
+- [ ] Cambiar de pantalla, abrir menús y paneles tiene transiciones suaves y cortas, según los tokens de movimiento de `DISENO.md`
+- [ ] Los avisos de éxito o error entran y salen con animación, sin tapar acciones
+- [ ] Con "reducir movimiento" activado no hay animaciones decorativas
+- [ ] El puntaje de rendimiento móvil sigue sobre 80
+- [ ] Cada librería nueva tiene licencia verificada y queda en la tabla de `DISENO.md`
+
+**Prioridad:** usable
+**Tamaño:** mediano
+**Depende de:** H-006
+**Datos personales:** no
+**Notas técnicas:** pedido de Aarón al cerrar el sprint 1 (2026-10-01). Candidatas ya verificadas en
+`DISENO.md`: Motion, Sonner, cmdk, Embla. Se repite como pasada de pulido al final de cada sprint
+sobre las pantallas nuevas.
+
+---
+
 # Índice por prioridad
 
 **Núcleo — sin esto el producto no tiene sentido (44)**
@@ -1876,11 +1900,11 @@ H-013 · H-014 · H-020 · H-021 · H-022 · H-023 · H-024 · H-025 · H-026 ·
 H-030 · H-031 · H-032 · H-033 · H-034 · H-040 · H-041 · H-043 · H-044 · H-045 · H-046 · H-047 ·
 H-050 · H-051 · H-052 · H-053 · H-054 · H-056 · H-057 · H-110
 
-**Usable — lo que lo hace funcional en el día a día (47)**
+**Usable — lo que lo hace funcional en el día a día (48)**
 H-035 · H-042 · H-048 · H-055 · H-060 · H-061 · H-062 · H-063 · H-064 · H-065 · H-066 · H-067 ·
 H-068 · H-069 · H-070 · H-071 · H-072 · H-073 · H-074 · H-075 · H-076 · H-080 · H-081 · H-082 ·
 H-083 · H-084 · H-085 · H-086 · H-087 · H-088 · H-089 · H-090 · H-091 · H-092 · H-100 · H-101 ·
-H-102 · H-103 · H-104 · H-106 · H-107 · H-108 · H-109 · H-111 · H-112 · H-113 · H-114
+H-102 · H-103 · H-104 · H-106 · H-107 · H-108 · H-109 · H-111 · H-112 · H-113 · H-114 · H-115
 
 **Extra — suma valor pero no es esencial (1)**
 H-105

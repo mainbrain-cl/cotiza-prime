@@ -788,7 +788,7 @@ revoke execute on function app.allocate_quote_number(uuid) from public, anon, au
   |---|---|
   | `ana@ejemplo.test` | Dueña de **Org A** |
   | `beto@ejemplo.test` | Dueño de **Org B** |
-  | `mixta@ejemplo.test` | Dueña de Org A y de Org B |
+  | `mixta@ejemplo.test` | Administradora de Org A y de Org B (no Dueña: cada organización tiene un solo Dueño activo) |
   | `ex@ejemplo.test` | Estaba en Org A y fue quitada |
 
   Cada organización tiene catálogo, clientes cifrados, numeración y auditoría.

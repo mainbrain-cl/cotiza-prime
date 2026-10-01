@@ -64,6 +64,11 @@ Supabase (pruebas y producción); Vercel cuando haya que publicar; decisiones pe
 claves de cifrado** (gestor de contraseñas y dos personas, antes del piloto; `modelo-datos.md` §12
 pregunta 5).
 
+**Trampa de Windows:** `npm install` en este equipo puede borrar de `package-lock.json` las
+entradas `node_modules/@emnapi/core` y `node_modules/@emnapi/runtime`, y entonces `npm ci` falla en
+GitHub Actions. Antes de subir, confirmar que siguen ahí. Los subagentes dejan servidores de prueba
+abiertos que bloquean archivos: cerrarlos al integrar.
+
 **Notas:** OneDrive no está sincronizando esta carpeta (verificado el 2026-10-01); no activarlo. La
 carpeta `base-tecnica/` de la raíz es la copia original de la base; preguntar si se elimina.
 

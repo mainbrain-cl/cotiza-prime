@@ -576,6 +576,70 @@ describe("catálogo y clientes: RLS, columnas y auditoría", () => {
       });
     }));
 
+  it("H-021: solo Dueño y Administrador editan; desactivar y reactivar queda en auditoría con precio anterior y nuevo", () =>
+    withTx(db, async () => {
+      const dueno = await createUser(db);
+      const comercial = await createUser(db);
+      const tenantId = await createTenantAs(db, dueno);
+      await db.query(
+        "insert into public.members (tenant_id, user_id, role) values ($1, $2, 'sales')",
+        [tenantId, comercial.id],
+      );
+
+      await actAs(db, dueno, { [TENANT_HEADER]: tenantId });
+      const item = await one<{ id: string }>(
+        `insert into public.catalog_items (name, unit, unit_price_clp) values ('Flete', 'km', 1500)
+         returning id`,
+      );
+      await db.query(
+        "update public.catalog_items set unit_price_clp = 2000, name = 'Flete largo' where id = $1",
+        [item.id],
+      );
+      await db.query("update public.catalog_items set is_active = false where id = $1", [item.id]);
+      await db.query("update public.catalog_items set is_active = true where id = $1", [item.id]);
+
+      // el Comercial no puede editar ni desactivar: la base no le encuentra la fila
+      await actAs(db, comercial, { [TENANT_HEADER]: tenantId });
+      expect(
+        (
+          await db.query("update public.catalog_items set unit_price_clp = 1 where id = $1", [
+            item.id,
+          ])
+        ).rowCount,
+      ).toBe(0);
+      expect(
+        (
+          await db.query("update public.catalog_items set is_active = false where id = $1", [
+            item.id,
+          ])
+        ).rowCount,
+      ).toBe(0);
+
+      await actAsPostgres(db);
+      const rows = (
+        await db.query<{ action: string; details: Record<string, Record<string, unknown>> }>(
+          "select action, details from public.audit_log where resource_id = $1",
+          [item.id],
+        )
+      ).rows;
+      const price = rows.find((r) => r.action === "catalog_item.price_changed");
+      expect(price?.details).toEqual({
+        old: { name: "Flete", unit_price_clp: 1500 },
+        new: { name: "Flete largo", unit_price_clp: 2000 },
+      });
+      const toggles = rows.filter(
+        (r) => r.action === "catalog_item.updated" && "is_active" in (r.details.new ?? {}),
+      );
+      // dentro de una transacción todas las filas comparten la misma hora: se compara sin orden
+      expect(toggles.map((r) => r.details.new.is_active).sort()).toEqual([false, true]);
+      const stored = await one<{ unit_price_clp: string; is_active: boolean }>(
+        "select unit_price_clp, is_active from public.catalog_items where id = $1",
+        [item.id],
+      );
+      expect(Number(stored.unit_price_clp)).toBe(2000);
+      expect(stored.is_active).toBe(true);
+    }));
+
   it("los clientes los crean Dueño, Administrador y Comercial; la auditoría guarda solo nombres de campos", () =>
     withTx(db, async () => {
       const dueno = await createUser(db);

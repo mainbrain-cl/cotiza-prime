@@ -293,6 +293,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/api/v1/ping", kind: "api", scope: "none" },
   { path: "/o/[tenantId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/catalogo/[itemId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/clientes", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/clientes/nuevo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/clientes/[customerId]", kind: "page", scope: "tenant" },
@@ -305,8 +306,16 @@ export const APP_ROUTES: AppRoute[] = [
 export const TENANT_PAGES = APP_ROUTES.filter((r) => r.kind === "page" && r.scope === "tenant");
 
 /** Dirección concreta de una ruta de pantalla para una organización (y un cliente, si lo pide). */
-export function concretePath(route: AppRoute, tenantId: string, customerId: string): string {
-  return route.path.replace("[tenantId]", tenantId).replace("[customerId]", customerId);
+export function concretePath(
+  route: AppRoute,
+  tenantId: string,
+  customerId: string,
+  itemId: string,
+): string {
+  return route.path
+    .replace("[tenantId]", tenantId)
+    .replace("[customerId]", customerId)
+    .replace("[itemId]", itemId);
 }
 
 /** Personas con acceso de lectura a una organización, según el rol. */

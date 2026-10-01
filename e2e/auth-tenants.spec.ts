@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, randomTestIp, test, type Page } from "./fixtures";
 import { TEST_PASSWORD, createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
 
 // Cuentas, organizaciones y aislamiento de punta a punta (H-001, H-002, H-005, H-006).
@@ -38,14 +38,12 @@ test("registro, organizaciones, cambio, cierre de sesión y aislamiento", async 
   // Sin aceptar términos y con contraseña corta: se dice cuál es el largo mínimo y se exige aceptar
   await expect(page.getByText("La contraseña debe tener al menos 10 caracteres.")).toBeVisible();
   await expect(page.getByText("Para crear tu cuenta debes aceptar los términos")).toBeVisible();
-  await expect(page.getByRole("link", { name: "términos y condiciones" })).toHaveAttribute(
-    "href",
-    "/terminos",
-  );
-  await expect(page.getByRole("link", { name: "política de privacidad" })).toHaveAttribute(
-    "href",
-    "/privacidad",
-  );
+  await expect(
+    page.getByRole("link", { name: "términos y condiciones", exact: true }),
+  ).toHaveAttribute("href", "/terminos");
+  await expect(
+    page.getByRole("link", { name: "política de privacidad", exact: true }),
+  ).toHaveAttribute("href", "/privacidad");
 
   await signUpAndVerify(page, emailA, "Ana Ficticia");
 
@@ -135,8 +133,20 @@ test("registro, organizaciones, cambio, cierre de sesión y aislamiento", async 
 
   expect(consoleErrors, "no debe haber errores en la consola").toEqual([]);
 
+  // ── H-002: "volver atrás" tras cerrar sesión no deja ver la pantalla anterior ────────────────
+  await page.goto(`/o/${tenantA}/clientes`);
+  await expect(page.getByRole("heading", { name: "Clientes", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cerrar sesión" }).click();
+  await expect(page).toHaveURL(/\/ingresar\?aviso=sesion-cerrada$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/ingresar$/);
+  await expect(page.getByText("Negocio 1")).toHaveCount(0);
+
   // ── Aislamiento: otra cuenta no puede ver la organización de Ana ────────────────────────────
-  const contextB = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+  const contextB = await browser.newContext({
+    baseURL: test.info().project.use.baseURL,
+    extraHTTPHeaders: { "x-forwarded-for": randomTestIp() },
+  });
   const pageB = await contextB.newPage();
   await signUpAndVerify(pageB, emailB, "Beto Ficticio");
   const tenantOfBeto = await createTenant(pageB, "Negocio de Beto", "13.000.000-2");

@@ -41,6 +41,7 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
         "numbering_sequences",
         "catalog_items",
         "customers",
+        "auth_rate_limits",
       ]),
     );
   });

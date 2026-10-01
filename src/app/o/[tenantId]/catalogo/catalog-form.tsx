@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { Field, FormAlert, Input, Select, SubmitButton } from "@/components/ui/form-controls";
+import { OfflineNotice } from "@/components/ui/offline-notice";
 import { INITIAL_FORM_STATE, type FormState } from "@/lib/auth/form-state";
 import { createCatalogItemAction } from "@/lib/catalog/actions";
 import {
@@ -27,6 +28,7 @@ export function CatalogForm({ tenantId }: { tenantId: string }) {
 
   return (
     <form key={formKey} action={formAction} className="flex flex-col gap-4" noValidate>
+      <OfflineNotice />
       {state.status === "sent" && state.message ? (
         <FormAlert tone="success">{state.message}</FormAlert>
       ) : null}

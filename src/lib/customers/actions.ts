@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import type { FormState } from "@/lib/auth/form-state";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
+import { serverLog } from "@/lib/log/server-log";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { findDuplicates, type DuplicateMatch } from "./queries";
@@ -52,9 +53,7 @@ export async function createCustomerAction(
   const row = buildCustomerInsertRow(parsed.data, active.tenantId, customerId);
   const { error } = await active.supabase.from("customers").insert(row);
   if (error) {
-    console.error(
-      JSON.stringify({ level: "error", message: "customer_insert_failed", code: error.code }),
-    );
+    await serverLog("error", "customer_insert_failed", { code: error.code });
     return {
       status: "error",
       message:

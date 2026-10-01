@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import type { FormState } from "@/lib/auth/form-state";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
 import { requireUser } from "@/lib/auth/session";
+import { serverLog } from "@/lib/log/server-log";
 import { createClient } from "@/lib/supabase/server";
 import { rememberLastTenant, requireActiveTenant } from "./active-tenant";
 import { tenantPath } from "./constants";
@@ -69,9 +70,7 @@ export async function createTenantAction(
         values: raw,
       };
     }
-    console.error(
-      JSON.stringify({ level: "error", message: "create_tenant_failed", code: error?.code }),
-    );
+    await serverLog("error", "create_tenant_failed", { code: error?.code });
     return {
       status: "error",
       message: "No pudimos crear la organización. Intenta de nuevo en unos minutos.",

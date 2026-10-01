@@ -10,15 +10,19 @@ import { LoginForm } from "./login-form";
 export const metadata: Metadata = { title: "Ingresar · Cotiza Prime" };
 
 const NOTICES: Record<string, { tone: "success" | "warning"; text: string }> = {
-  [LOGIN_NOTICES.verified]: {
-    tone: "success",
-    text: "Tu correo quedó verificado. Ingresa con tu correo y contraseña.",
+  [LOGIN_NOTICES.linkNotUsable]: {
+    tone: "warning",
+    text: "Si ya verificaste tu correo, ingresa con tu contraseña. Si no, pide un enlace nuevo.",
   },
   [LOGIN_NOTICES.linkExpired]: {
     tone: "warning",
     text: "El enlace no sirve: caducó o ya se usó. Si tu correo ya está verificado, ingresa; si no, crea tu cuenta de nuevo.",
   },
   [LOGIN_NOTICES.signedOut]: { tone: "success", text: "Cerraste sesión." },
+  [LOGIN_NOTICES.signOutIncomplete]: {
+    tone: "warning",
+    text: "Cerramos la sesión en este navegador, pero no pudimos confirmarlo en nuestros servidores. Si usas un equipo compartido, vuelve a ingresar y cierra sesión de nuevo.",
+  },
 };
 
 export default async function LoginPage({ searchParams }: PageProps<"/ingresar">) {

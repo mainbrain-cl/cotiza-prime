@@ -99,7 +99,7 @@ export default async function CustomersPage({ params }: PageProps<"/o/[tenantId]
           </ul>
 
           {/* Escritorio: tabla */}
-          <div className="hidden overflow-hidden rounded-lg border border-border bg-surface shadow-1 md:block">
+          <div className="hidden overflow-x-auto rounded-lg border border-border bg-surface shadow-1 md:block">
             <table className="w-full text-left text-sm">
               <thead className="bg-surface-2 text-fg-muted">
                 <tr>

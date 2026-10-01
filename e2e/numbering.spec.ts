@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
 
 // H-024 · Configurar la numeración de las cotizaciones, de punta a punta.

@@ -30,7 +30,7 @@ export default async function CustomerDetailPage({
       <header className="flex flex-col gap-2">
         <Link
           href={listPath}
-          className="inline-flex items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
+          className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
         >
           <ChevronLeft aria-hidden className="size-4" />
           Clientes

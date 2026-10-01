@@ -50,7 +50,7 @@ const eslintConfig = defineConfig([
             {
               group: ["**/admin-client", "**/admin-client.ts"],
               message:
-                "El cliente con la llave maestra solo puede importarse desde src/lib/audit/, src/server/jobs/, scripts/ y tests/.",
+                "El cliente con la llave maestra solo puede importarse desde src/lib/audit/, src/lib/security/, src/server/jobs/, scripts/ y tests/.",
             },
           ],
         },
@@ -58,7 +58,13 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    files: ["src/lib/audit/**", "src/server/jobs/**", "scripts/**", "tests/**"],
+    files: [
+      "src/lib/audit/**",
+      "src/lib/security/**",
+      "src/server/jobs/**",
+      "scripts/**",
+      "tests/**",
+    ],
     rules: { "no-restricted-imports": "off" },
   },
 ]);

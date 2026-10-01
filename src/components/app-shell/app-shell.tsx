@@ -1,8 +1,11 @@
 import { LogOut } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { BrandMark } from "@/components/brand-mark";
+import { LegalFooter } from "@/components/legal/legal-footer";
+import { LegalLinks } from "@/components/legal/legal-page";
 import { Button } from "@/components/ui/button";
 import { signOutAction } from "@/lib/auth/actions";
+import { APP_ENV, isTestEnv } from "@/lib/env/app-env";
 import type { MemberRole, Membership } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { MobileNav } from "./mobile-nav";
@@ -42,7 +45,11 @@ export function AppShell({
   }));
 
   return (
-    <div className="flex flex-1 flex-col md:flex-row md:gap-4 md:p-4">
+    <div
+      className="flex flex-1 flex-col md:flex-row md:gap-4 md:p-4"
+      // Sin la franja de pruebas (producción) no hay alto que descontar.
+      style={isTestEnv(APP_ENV) ? undefined : ({ "--env-banner-height": "0px" } as CSSProperties)}
+    >
       {/* Teléfono: organización activa arriba */}
       <header className="flex items-center gap-3 px-4 pt-4 md:hidden">
         <div className="min-w-0 flex-1">
@@ -62,6 +69,7 @@ export function AppShell({
           <p className="truncate px-1 text-xs text-fg-muted max-xl:sr-only" title={userName}>
             {userName}
           </p>
+          <LegalLinks className="max-xl:hidden" />
           <form action={signOutAction}>
             <Button
               type="submit"
@@ -77,12 +85,16 @@ export function AppShell({
         </div>
       </aside>
 
-      <main
-        id="contenido"
-        className="min-w-0 flex-1 px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] md:px-4 md:pt-2 md:pb-8 xl:px-8"
-      >
-        {children}
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <main
+          id="contenido"
+          className="min-w-0 flex-1 px-4 pt-4 pb-6 md:px-4 md:pt-2 md:pb-8 xl:px-8"
+        >
+          {children}
+        </main>
+        {/* En escritorio los enlaces legales van en la barra lateral */}
+        <LegalFooter className="pb-[calc(env(safe-area-inset-bottom)+5.5rem)] md:pb-3 xl:hidden" />
+      </div>
 
       <MobileNav basePath={basePath} />
     </div>

@@ -22,12 +22,12 @@ function formatDate(isoDate: string): string {
 export function LegalLinks({ className }: { className?: string }) {
   return (
     <nav aria-label="Información legal" className={className}>
-      <ul className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+      <ul className="flex flex-wrap gap-x-6 text-sm">
         {LEGAL_LINKS.map((link) => (
           <li key={link.href}>
             <Link
               href={link.href}
-              className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+              className="inline-flex min-h-11 items-center text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             >
               {link.label}
             </Link>

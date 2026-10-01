@@ -35,8 +35,12 @@ describe("reglas del linter que protegen el aislamiento", () => {
     const forbidden = await messagesFor(code, "src/app/pagina.ts");
     expect(forbidden.some((m) => m.ruleId === "no-restricted-imports")).toBe(true);
 
+    const lib = await messagesFor(code, "src/lib/customers/otro.ts");
+    expect(lib.some((m) => m.ruleId === "no-restricted-imports")).toBe(true);
+
     for (const allowed of [
       "src/lib/audit/otro.ts",
+      "src/lib/security/otro.ts",
       "src/server/jobs/tarea.ts",
       "scripts/semilla.mjs",
       "tests/db/x.ts",

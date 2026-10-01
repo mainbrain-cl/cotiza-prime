@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { normalizeRut, parseRut } from "@/lib/chile/rut";
 import { normalizeEmail } from "@/lib/normalize/email";
+import { isPlausiblePhone } from "@/lib/normalize/phone";
 
 export const CUSTOMER_KINDS = [
   { value: "person", label: "Persona" },
@@ -14,8 +15,6 @@ export const CUSTOMER_EMAIL_MAX_LENGTH = 254;
 export const CUSTOMER_PHONE_MAX_LENGTH = 30;
 export const CUSTOMER_ADDRESS_MAX_LENGTH = 300;
 export const CUSTOMER_RUT_MAX_LENGTH = 20;
-
-const PHONE_PATTERN = /^\+?[0-9()\s-]{6,30}$/;
 
 export const RUT_ERROR = "El RUT no es válido. Revisa el número y el dígito verificador.";
 
@@ -47,7 +46,7 @@ export const customerSchema = z.object({
     .string()
     .trim()
     .max(CUSTOMER_PHONE_MAX_LENGTH, "El teléfono es demasiado largo.")
-    .refine((value) => value === "" || PHONE_PATTERN.test(value), "Revisa el teléfono.")
+    .refine((value) => value === "" || isPlausiblePhone(value), "Revisa el teléfono.")
     .transform(emptyToNull),
   address: z
     .string()

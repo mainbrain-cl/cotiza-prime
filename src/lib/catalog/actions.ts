@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import type { FormState } from "@/lib/auth/form-state";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
+import { serverLog } from "@/lib/log/server-log";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { createCatalogItemSchema } from "./schemas";
@@ -63,9 +64,7 @@ export async function createCatalogItemAction(
         values: raw,
       };
     }
-    console.error(
-      JSON.stringify({ level: "error", message: "catalog_insert_failed", code: error.code }),
-    );
+    await serverLog("error", "catalog_insert_failed", { code: error.code });
     return {
       status: "error",
       message: "No pudimos guardar el servicio. Intenta de nuevo en unos minutos.",

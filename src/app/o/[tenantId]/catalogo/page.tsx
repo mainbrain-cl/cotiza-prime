@@ -48,7 +48,7 @@ export default async function CatalogPage({
   const { data, error } = await query;
   const items = (data ?? []) as CatalogRow[];
   const canEdit = active.role === "owner" || active.role === "admin";
-  const isCatalogEmpty = items.length === 0 && search === "";
+  const isCatalogEmpty = !error && items.length === 0 && search === "";
 
   return (
     <div className="flex flex-col gap-6">
@@ -78,7 +78,7 @@ export default async function CatalogPage({
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_24rem] 2xl:grid-cols-[minmax(0,1fr)_28rem]">
         <section aria-label="Lista de servicios" className="flex min-w-0 flex-col gap-4">
-          {isCatalogEmpty ? (
+          {error ? null : isCatalogEmpty ? (
             <EmptyState
               icon={Tags}
               title="Tu catálogo está vacío"

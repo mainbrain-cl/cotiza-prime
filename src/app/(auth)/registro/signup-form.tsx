@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { MailCheck } from "lucide-react";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
+import { OfflineNotice } from "@/components/ui/offline-notice";
 import { signUpAction } from "@/lib/auth/actions";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 import { LOGIN_PATH, PRIVACY_PATH, TERMS_PATH } from "@/lib/auth/paths";
@@ -41,6 +42,7 @@ export function SignUpForm() {
   const errors = state.fieldErrors ?? {};
   return (
     <form action={formAction} className="flex flex-col gap-4" noValidate>
+      <OfflineNotice />
       {state.message ? <FormAlert>{state.message}</FormAlert> : null}
 
       <Field label="Tu nombre" error={errors.fullName} required>

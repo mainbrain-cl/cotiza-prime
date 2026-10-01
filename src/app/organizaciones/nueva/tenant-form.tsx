@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { Field, FormAlert, Input, Select, SubmitButton } from "@/components/ui/form-controls";
+import { OfflineNotice } from "@/components/ui/offline-notice";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 import { formatRut, isValidRut } from "@/lib/rut";
 import { createTenantAction } from "@/lib/tenant/actions";
@@ -28,6 +29,7 @@ export function TenantForm() {
 
   return (
     <form action={formAction} className="flex flex-col gap-4" noValidate>
+      <OfflineNotice />
       {state.message ? <FormAlert>{state.message}</FormAlert> : null}
 
       <Field label="Nombre de la empresa" error={errors.name} required>

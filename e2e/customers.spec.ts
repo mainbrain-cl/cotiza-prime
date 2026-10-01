@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { generateRut } from "../src/lib/chile/rut";
 import { connect } from "../tests/db/helpers";
 import { createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
@@ -54,8 +54,10 @@ test("registrar clientes, duplicados, detalle, aislamiento y cifrado en la base"
   await page.getByLabel("Teléfono (opcional)").click(); // al salir del campo se valida
   await expect(page.getByText("El RUT no es válido.")).toBeVisible();
   await page.getByLabel("Correo (opcional)").fill("sin-arroba");
+  await page.getByLabel("Teléfono (opcional)").fill("12345"); // menos de 6 dígitos
   await page.getByRole("button", { name: "Guardar cliente" }).click();
   await expect(page.getByText("Revisa el correo.")).toBeVisible();
+  await expect(page.getByText("Revisa el teléfono.")).toBeVisible();
 
   // Cliente 1: empresa
   await page.goto(`/o/${tenantId}/clientes/nuevo`);
@@ -106,6 +108,14 @@ test("registrar clientes, duplicados, detalle, aislamiento y cifrado en la base"
   await fillCustomer(page, { name: "Ana Repetida", email: "ANA.CLIENTE@ejemplo.test" });
   await page.getByRole("button", { name: "Guardar cliente" }).click();
   await expect(page.getByTestId("duplicate-warning")).toContainText("el mismo correo");
+  // Si se edita el correo, el aviso ya no vale: se esconde y "Guardar de todos modos" desaparece
+  await page.getByLabel("Correo (opcional)").fill("otra.persona@ejemplo.test");
+  await expect(page.getByTestId("duplicate-warning")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Guardar de todos modos" })).toHaveCount(0);
+  // Al volver a escribir el correo repetido y guardar, se revisa de nuevo y el aviso vuelve
+  await page.getByLabel("Correo (opcional)").fill("ANA.CLIENTE@ejemplo.test");
+  await page.getByRole("button", { name: "Guardar cliente" }).click();
+  await expect(page.getByTestId("duplicate-warning")).toContainText("el mismo correo");
   await page.getByRole("button", { name: "Guardar de todos modos" }).click();
   await expect(page.getByText("Cliente guardado.")).toBeVisible();
 
@@ -127,6 +137,15 @@ test("registrar clientes, duplicados, detalle, aislamiento y cifrado en la base"
   await expect(page.getByRole("heading", { name: "No encontrado" })).toBeVisible();
   await page.goto(`/o/${otherTenantId}/clientes`);
   await expect(page.getByRole("heading", { name: "Aún no tienes clientes" })).toBeVisible();
+
+  // El mismo RUT en otra organización no es un duplicado: cada una tiene sus clientes
+  await page.goto(`/o/${otherTenantId}/clientes/nuevo`);
+  await fillCustomer(page, { name: "Mismo RUT, otro negocio", rut: RUT_COMPANY });
+  await page.getByRole("button", { name: "Guardar cliente" }).click();
+  await expect(page.getByTestId("duplicate-warning")).toHaveCount(0);
+  await expect(page).toHaveURL(
+    new RegExp(`/o/${otherTenantId}/clientes/[0-9a-f-]{36}\\?creado=1$`),
+  );
 
   // Teléfono: tarjetas y sin desplazamiento horizontal
   await page.setViewportSize(MOBILE);

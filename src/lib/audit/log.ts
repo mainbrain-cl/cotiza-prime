@@ -1,11 +1,16 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-client";
 import { getRequestContext } from "@/lib/http/request-context";
+import { serverLog } from "@/lib/log/server-log";
 import { PLATFORM_TENANT_ID } from "@/lib/tenant/constants";
 
 /** Eventos de la aplicación que se registran en la auditoría (los cambios de datos los registra la base). */
 export type AuditAction =
-  "session.login" | "session.logout" | "session.login_failed" | "tenant.access_denied";
+  | "session.login"
+  | "session.logout"
+  | "session.login_failed"
+  | "session.login_locked"
+  | "tenant.access_denied";
 
 export type AuditResult = "success" | "failure" | "denied";
 
@@ -46,11 +51,9 @@ export async function logAuditEvent(event: AuditEvent): Promise<void> {
       details: event.details ?? {},
     });
     if (error) {
-      console.error(
-        JSON.stringify({ level: "error", message: "audit_insert_failed", code: error.code }),
-      );
+      await serverLog("error", "audit_insert_failed", { code: error.code });
     }
   } catch {
-    console.error(JSON.stringify({ level: "error", message: "audit_insert_failed" }));
+    await serverLog("error", "audit_insert_failed");
   }
 }

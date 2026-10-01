@@ -1,0 +1,87 @@
+// Prueba de cobertura (docs/arquitectura/modelo-datos.md §2): nada de lo que toca datos de una
+// organización puede olvidar resolver la organización activa con `requireActiveTenant`.
+// Lee los archivos del código; no ejecuta nada. Si agregas una pantalla o una acción nueva y se
+// te olvida la guardia, esta prueba falla.
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const SRC = path.resolve(import.meta.dirname, "..", "..");
+const TENANT_PAGES_DIR = path.join(SRC, "app", "o", "[tenantId]");
+const GUARD = "requireActiveTenant(";
+
+/** Acciones que NO operan dentro de una organización, con la razón. Cada excepción debe justificarse. */
+const ACTIONS_WITHOUT_ACTIVE_TENANT: Record<string, string> = {
+  "lib/auth/actions.ts#signUpAction": "todavía no hay sesión ni organización",
+  "lib/auth/actions.ts#signInAction": "todavía no hay sesión ni organización",
+  "lib/auth/actions.ts#signOutAction":
+    "cierra la sesión de la cuenta, no actúa sobre una organización",
+  "lib/auth/actions.ts#acceptLegalAction": "los términos son de la cuenta, no de una organización",
+  "lib/tenant/actions.ts#createTenantAction": "crea la organización: aún no existe una activa",
+};
+
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const full = path.join(dir, name);
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+}
+
+const rel = (file: string) => path.relative(SRC, file).split(path.sep).join("/");
+const read = (file: string) => readFileSync(file, "utf8");
+
+describe("toda pantalla de una organización resuelve la organización activa", () => {
+  const files = walk(TENANT_PAGES_DIR).filter((file) => /\/(page|layout)\.tsx$/.test(rel(file)));
+
+  it("hay pantallas que revisar", () => {
+    expect(files.length).toBeGreaterThan(5);
+  });
+
+  it.each(files.map((file) => [rel(file), file]))(
+    "%s llama a requireActiveTenant",
+    (_name, file) => {
+      // El layout no protege a las páginas (la navegación del cliente puede saltárselo): cada una lo exige.
+      expect(read(file)).toContain(GUARD);
+    },
+  );
+});
+
+describe("toda acción de servidor que usa Supabase resuelve la organización activa", () => {
+  const actionFiles = walk(SRC).filter(
+    (file) =>
+      /\.(ts|tsx)$/.test(file) &&
+      !/\.test\./.test(file) &&
+      /^\s*["']use server["']/.test(read(file).trimStart()),
+  );
+
+  const actions = actionFiles.flatMap((file) => {
+    const text = read(file);
+    const usesSupabase = /createClient|createAdminClient|\.supabase\b/.test(text);
+    const parts = text.split(/export async function /).slice(1);
+    return parts.map((part) => ({
+      id: `${rel(file)}#${part.slice(0, part.indexOf("(")).trim()}`,
+      usesSupabase,
+      body: part,
+    }));
+  });
+
+  it("hay acciones que revisar", () => {
+    expect(actions.length).toBeGreaterThan(5);
+  });
+
+  it.each(actions.map((action) => [action.id, action] as const))(
+    "%s llama a requireActiveTenant o está justificada",
+    (id, action) => {
+      if (!action.usesSupabase) return;
+      if (id in ACTIONS_WITHOUT_ACTIVE_TENANT) return;
+      expect(action.body).toContain(GUARD);
+    },
+  );
+
+  it("la lista de excepciones no tiene acciones que ya no existen", () => {
+    const existing = new Set(actions.map((action) => action.id));
+    for (const id of Object.keys(ACTIONS_WITHOUT_ACTIVE_TENANT)) {
+      expect(existing.has(id), `${id} ya no existe: quítala de la lista`).toBe(true);
+    }
+  });
+});

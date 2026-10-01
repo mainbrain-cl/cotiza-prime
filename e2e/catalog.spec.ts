@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
 
 // H-020: cargar servicios en el catálogo, de punta a punta.

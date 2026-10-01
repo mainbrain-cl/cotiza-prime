@@ -1,6 +1,7 @@
 "use server";
 
 import { fieldErrorsOf } from "@/lib/auth/schemas";
+import { serverLog } from "@/lib/log/server-log";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tooLowMessage } from "./format";
 import type { NumberingSaveState } from "./form-state";
@@ -111,9 +112,7 @@ export async function saveNumberingAction(
         values: raw,
       };
     }
-    console.error(
-      JSON.stringify({ level: "error", message: "set_numbering_failed", code: error?.code }),
-    );
+    await serverLog("error", "set_numbering_failed", { code: error?.code });
     return {
       status: "error",
       message: "No pudimos guardar la numeración. Intenta de nuevo en unos minutos.",

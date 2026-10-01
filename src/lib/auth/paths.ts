@@ -11,7 +11,8 @@ export const PRIVACY_PATH = "/privacidad";
 
 /** Avisos que puede traer `/ingresar?aviso=...` (los muestra la pantalla de ingreso). */
 export const LOGIN_NOTICES = {
-  verified: "correo-verificado",
+  linkNotUsable: "enlace-no-valido",
   linkExpired: "enlace-vencido",
   signedOut: "sesion-cerrada",
+  signOutIncomplete: "cierre-incompleto",
 } as const;

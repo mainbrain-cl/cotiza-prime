@@ -19,8 +19,7 @@ export function classifyAuthError(error: AuthErrorLike): AuthFailureKind {
 }
 
 export const AUTH_MESSAGES: Record<AuthFailureKind, string> = {
-  rate_limited:
-    "Hiciste demasiados intentos seguidos. Por seguridad los bloqueamos un rato: espera unos minutos y vuelve a intentar.",
+  rate_limited: "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
   weak_password:
     "Esa contraseña es muy fácil de adivinar. Prueba con otra más larga o más variada.",
   invalid_credentials: "Correo o contraseña incorrectos.",

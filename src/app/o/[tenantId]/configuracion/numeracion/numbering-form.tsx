@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
+import { OfflineNotice } from "@/components/ui/offline-notice";
 import {
   previewNumberingAction,
   saveNumberingAction,
@@ -76,6 +77,7 @@ export function NumberingForm({
 
   return (
     <form action={formAction} className="flex flex-col gap-6" noValidate>
+      <OfflineNotice />
       {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
       {showSaved ? (
         <FormAlert tone="success">
@@ -129,7 +131,14 @@ export function NumberingForm({
                 onChange={() => setMode(option.value)}
                 className="peer absolute inset-0 size-full cursor-[inherit] appearance-none rounded-md outline-none"
               />
-              <span className="text-sm font-semibold text-fg">{option.title}</span>
+              {mode === option.value ? (
+                <CheckCircle2
+                  aria-hidden
+                  data-testid="numbering-mode-selected"
+                  className="absolute top-3 right-3 size-5 text-accent"
+                />
+              ) : null}
+              <span className="pr-8 text-sm font-semibold text-fg">{option.title}</span>
               <span className="text-sm text-fg-muted">
                 Ejemplo: <span className="font-mono">{option.example}</span>
               </span>

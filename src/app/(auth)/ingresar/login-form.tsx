@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
+import { OfflineNotice } from "@/components/ui/offline-notice";
 import { signInAction } from "@/lib/auth/actions";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 
@@ -11,6 +12,7 @@ export function LoginForm() {
 
   return (
     <form action={formAction} className="flex flex-col gap-4" noValidate>
+      <OfflineNotice />
       {state.message ? <FormAlert>{state.message}</FormAlert> : null}
 
       <Field label="Correo" error={errors.email} required>

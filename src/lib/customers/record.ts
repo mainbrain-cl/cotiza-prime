@@ -34,6 +34,10 @@ export type CustomerStoredRow = {
   created_at: string;
 };
 
+/** Fila de la lista: sin la dirección, que solo se descifra en el detalle. */
+export type CustomerSummaryRow = Omit<CustomerStoredRow, "address_enc">;
+export type CustomerSummary = Omit<CustomerView, "address">;
+
 export type CustomerView = {
   id: string;
   kind: CustomerKind;
@@ -95,6 +99,21 @@ export function decodeCustomer(row: CustomerStoredRow, tenantId: string): Custom
     phone: open("phone", row.phone_enc),
     rut: open("rut", row.rut_enc),
     address: open("address", row.address_enc),
+    createdAt: row.created_at,
+  };
+}
+
+/** Igual que `decodeCustomer`, pero sin descifrar la dirección (para la lista). */
+export function decodeCustomerSummary(row: CustomerSummaryRow, tenantId: string): CustomerSummary {
+  const open = (field: string, token: string | null) =>
+    token === null ? null : decryptPii(token, context(field, tenantId, row.id));
+  return {
+    id: row.id,
+    kind: row.kind,
+    displayName: row.display_name,
+    email: open("email", row.email_enc),
+    phone: open("phone", row.phone_enc),
+    rut: open("rut", row.rut_enc),
     createdAt: row.created_at,
   };
 }

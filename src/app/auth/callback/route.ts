@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { HOME_PATH, LOGIN_NOTICES, LOGIN_PATH } from "@/lib/auth/paths";
+import { getAppOrigin } from "@/lib/http/request-context";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -8,7 +9,8 @@ import { createClient } from "@/lib/supabase/server";
  * navegador, lleva a ingresar con un aviso: el correo puede haber quedado verificado igual.
  */
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
+  const origin = getAppOrigin();
   const code = searchParams.get("code");
 
   if (searchParams.get("error") || !code) {
@@ -18,7 +20,7 @@ export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
-    return NextResponse.redirect(`${origin}${LOGIN_PATH}?aviso=${LOGIN_NOTICES.verified}`);
+    return NextResponse.redirect(`${origin}${LOGIN_PATH}?aviso=${LOGIN_NOTICES.linkNotUsable}`);
   }
   return NextResponse.redirect(`${origin}${HOME_PATH}`);
 }

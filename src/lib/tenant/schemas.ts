@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isPlausiblePhone } from "@/lib/normalize/phone";
 import { isValidRut } from "@/lib/rut";
 
 export const INDUSTRIES = [
@@ -45,6 +46,7 @@ export const createTenantSchema = z.object({
     .string()
     .trim()
     .max(CONTACT_PHONE_MAX_LENGTH, "El teléfono es demasiado largo.")
+    .refine((value) => value === "" || isPlausiblePhone(value), "Revisa el teléfono.")
     .transform((value) => (value === "" ? null : value)),
 });
 

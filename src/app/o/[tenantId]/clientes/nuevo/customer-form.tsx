@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
+import { OfflineNotice } from "@/components/ui/offline-notice";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 import { formatRut } from "@/lib/chile/rut";
 import { createCustomerAction, type CustomerFormState } from "@/lib/customers/actions";
@@ -26,8 +27,12 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
   const [rut, setRut] = useState(state.values?.rut ?? "");
   const [rutError, setRutError] = useState<string | undefined>();
   const [kind, setKind] = useState(state.values?.kind ?? "person");
+  // El aviso de duplicados corresponde a lo que se envió. Si se edita el RUT o el correo, deja de
+  // valer: se esconde y el siguiente guardado vuelve a revisar. Un resultado nuevo lo reemplaza.
+  const [staleState, setStaleState] = useState<CustomerFormState | null>(null);
   const errors = state.fieldErrors ?? {};
-  const duplicates = state.duplicates ?? [];
+  const duplicates = staleState === state ? [] : (state.duplicates ?? []);
+  const dismissDuplicates = () => setStaleState(state);
 
   // Aviso inmediato en el navegador; el servidor vuelve a validar y es quien manda.
   function checkRut(value: string) {
@@ -45,6 +50,7 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
 
   return (
     <form action={formAction} className="flex flex-col gap-4" noValidate>
+      <OfflineNotice />
       {state.message ? <FormAlert>{state.message}</FormAlert> : null}
 
       {duplicates.length > 0 ? (
@@ -63,7 +69,7 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
                 </span>
                 <Link
                   href={tenantPath(tenantId, `clientes/${duplicate.id}`)}
-                  className="font-semibold text-accent underline underline-offset-4"
+                  className="inline-flex min-h-11 items-center font-semibold text-accent underline underline-offset-4"
                 >
                   Abrir {duplicate.displayName}
                 </Link>
@@ -131,6 +137,7 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
             onChange={(event) => {
               setRut(event.target.value);
               setRutError(undefined);
+              dismissDuplicates();
             }}
             onBlur={(event) => checkRut(event.target.value)}
           />
@@ -146,6 +153,7 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
             inputMode="email"
             autoComplete="off"
             defaultValue={state.values?.email}
+            onChange={dismissDuplicates}
             maxLength={CUSTOMER_EMAIL_MAX_LENGTH}
           />
         )}
@@ -185,9 +193,9 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
           Cancelar
         </Link>
         {duplicates.length > 0 ? (
-          <Button type="submit" name="confirmDuplicate" value="1" size="lg">
+          <SubmitButton name="confirmDuplicate" value="1" pendingLabel="Guardando…">
             Guardar de todos modos
-          </Button>
+          </SubmitButton>
         ) : (
           <SubmitButton pendingLabel="Guardando…">Guardar cliente</SubmitButton>
         )}

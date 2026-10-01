@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { AUTH_MESSAGES, classifyAuthError } from "./errors";
-import { fieldErrorsOf, signInSchema, signUpSchema } from "./schemas";
+import { RESET_REQUEST_SENT_MESSAGE } from "./messages";
+import {
+  fieldErrorsOf,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  signInSchema,
+  signUpSchema,
+} from "./schemas";
 
 describe("classifyAuthError", () => {
   it("reconoce el bloqueo por demasiados intentos", () => {
@@ -18,6 +25,46 @@ describe("classifyAuthError", () => {
 
   it("el mensaje de credenciales no distingue entre correo y contraseña", () => {
     expect(AUTH_MESSAGES.invalid_credentials).toBe("Correo o contraseña incorrectos.");
+  });
+});
+
+describe("restablecer contraseña (H-003)", () => {
+  it("la contraseña nueva exige el largo mínimo y que ambas coincidan", () => {
+    const short = resetPasswordSchema.safeParse({ password: "corta", confirmPassword: "corta" });
+    expect(short.success).toBe(false);
+    if (!short.success) {
+      expect(fieldErrorsOf(short.error).password).toBe(
+        "La contraseña debe tener al menos 10 caracteres.",
+      );
+    }
+
+    const mismatch = resetPasswordSchema.safeParse({
+      password: "una-clave-larga",
+      confirmPassword: "otra-clave-larga",
+    });
+    expect(mismatch.success).toBe(false);
+    if (!mismatch.success) {
+      expect(fieldErrorsOf(mismatch.error).confirmPassword).toBe("Las contraseñas no coinciden.");
+    }
+
+    expect(
+      resetPasswordSchema.safeParse({
+        password: "una-clave-larga",
+        confirmPassword: "una-clave-larga",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("el correo del pedido se limpia y se valida", () => {
+    const ok = forgotPasswordSchema.safeParse({ email: "  ANA@Ejemplo.test " });
+    expect(ok.success && ok.data.email).toBe("ana@ejemplo.test");
+    expect(forgotPasswordSchema.safeParse({ email: "no-es-correo" }).success).toBe(false);
+  });
+
+  it("reconoce la contraseña repetida y el mensaje del pedido no depende de la cuenta", () => {
+    expect(classifyAuthError({ code: "same_password" })).toBe("same_password");
+    expect(AUTH_MESSAGES.same_password).toContain("distinta");
+    expect(RESET_REQUEST_SENT_MESSAGE).toMatch(/^Si ese correo tiene una cuenta/);
   });
 });
 

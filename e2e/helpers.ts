@@ -15,13 +15,15 @@ type MailpitSearch = { messages?: { ID: string }[] };
 type MailpitMessage = { Text: string; HTML: string };
 
 /** Espera el correo de verificación en el buzón local y devuelve el enlace que trae. */
-export async function waitForVerificationLink(email: string): Promise<string> {
+export async function waitForVerificationLink(email: string, subject?: string): Promise<string> {
   let link: string | null = null;
   await expect
     .poll(
       async () => {
         const search = await fetch(
-          `${MAILBOX_URL}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`,
+          `${MAILBOX_URL}/api/v1/search?query=${encodeURIComponent(
+            subject ? `to:${email} subject:${subject}` : `to:${email}`,
+          )}`,
         );
         const { messages } = (await search.json()) as MailpitSearch;
         if (!messages?.length) return null;
@@ -37,7 +39,11 @@ export async function waitForVerificationLink(email: string): Promise<string> {
 }
 
 /** Sigue el enlace del correo: Supabase verifica y devuelve un código que la aplicación cambia por sesión. */
-export async function openVerificationLink(page: Page, link: string): Promise<void> {
+export async function openVerificationLink(
+  page: Page,
+  link: string,
+  callbackPath = "/auth/callback",
+): Promise<void> {
   // El navegador de la prueba no debe seguir la redirección a otro puerto: se toma el código y se
   // entrega directo a la ruta de la aplicación que corre en esta prueba.
   const response = await page.request.get(link, { maxRedirects: 0 });
@@ -45,7 +51,16 @@ export async function openVerificationLink(page: Page, link: string): Promise<vo
   expect(location, "el enlace de verificación debe redirigir con un código").toBeTruthy();
   const code = new URL(location).searchParams.get("code");
   expect(code, "la redirección debe traer ?code=").toBeTruthy();
-  await page.goto(`/auth/callback?code=${code}`);
+  await page.goto(`${callbackPath}?code=${code}`);
+}
+
+/** Cuántos correos con ese asunto hay para esa dirección en el buzón local. */
+export async function countMails(email: string, subject: string): Promise<number> {
+  const search = await fetch(
+    `${MAILBOX_URL}/api/v1/search?query=${encodeURIComponent(`to:${email} subject:${subject}`)}`,
+  );
+  const { messages } = (await search.json()) as MailpitSearch;
+  return messages?.length ?? 0;
 }
 
 /** Registra una cuenta nueva, verifica el correo y deja la sesión iniciada en la pantalla de crear organización. */

@@ -42,6 +42,27 @@ export const signInSchema = z.object({
     .max(PASSWORD_MAX_LENGTH, "Correo o contraseña incorrectos."),
 });
 
+export const forgotPasswordSchema = z.object({ email: emailField });
+
+export const resetPasswordSchema = z
+  .object({
+    password: z
+      .string({ error: "Ingresa una contraseña." })
+      .min(
+        PASSWORD_MIN_LENGTH,
+        `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres.`,
+      )
+      .max(
+        PASSWORD_MAX_LENGTH,
+        `La contraseña puede tener hasta ${PASSWORD_MAX_LENGTH} caracteres.`,
+      ),
+    confirmPassword: z.string({ error: "Repite la contraseña." }),
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    path: ["confirmPassword"],
+    error: "Las contraseñas no coinciden.",
+  });
+
 export function fieldErrorsOf(error: z.ZodError): Record<string, string> {
   const flat = z.flattenError(error).fieldErrors as Record<string, string[] | undefined>;
   const result: Record<string, string> = {};

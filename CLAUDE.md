@@ -57,25 +57,23 @@ la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con
 ### Traspaso del 2026-10-01 (fin de sesión) — empezar por aquí
 
 **Integrado en `main` del sprint 2:** H-021 (editar/desactivar servicios), H-003 (recuperar
-contraseña) y el **paso 1 de H-026** (cálculo puro: `src/lib/money/rounding.ts`,
-`src/lib/quotes/calc.ts`, `calc-cases.ts` con K01–K39 exactos, `parse.ts`). 289 pruebas unitarias en
+contraseña), H-023 (lista paginada, búsqueda por nombre/RUT/correo y edición de clientes) y el **paso 1 de H-026** (cálculo puro: `src/lib/money/rounding.ts`,
+`src/lib/quotes/calc.ts`, `calc-cases.ts` con K01–K39 exactos, `parse.ts`). 301 pruebas unitarias en
 verde. **No se corrió la suite completa (`test:db`, `test:isolation`, `test:e2e`) después de estas
 tres integraciones**: correrla primero.
 
-**Quedaron trabajando dos subagentes al cerrar la sesión.** Su trabajo queda como commit en su rama
+**Quedó trabajando un subagente al cerrar la sesión.** Su trabajo queda como commit en su rama
 (o sin commit si se cortaron). Revisar cada copia con `git -C <ruta> status` y `git log`:
 - **H-007 logo, colores y datos de la empresa** → rama `worktree-agent-a83e3c73c22f35487`, copia
   `.claude/worktrees/agent-a83e3c73c22f35487`. Es el único que creaba migraciones (marca en
   `tenants`, bucket de Storage). Debía verificar si Storage entrega las cabeceras a la base.
-- **H-023 ver y editar clientes** → rama `worktree-agent-aebc7e4253261d09a`, copia
-  `.claude/worktrees/agent-aebc7e4253261d09a`.
 - Si la rama tiene commit: cerrar procesos `node`, unir, `npm ci`, `npm run check:lockfile`,
   `supabase db reset`, correr todas las pruebas, subir y borrar la copia. Si no tiene commit:
   relanzar la historia con un subagente nuevo (los encargos están en el traspaso de la sesión;
   basta con apuntarlo a la historia, a `CLAUDE.md` y a los documentos de arquitectura).
 
 **Pendientes del sprint 2, en este orden:**
-1. Integrar H-007 y H-023 (arriba).
+1. Integrar H-007 (arriba).
 2. **H-003:** reiniciar Supabase local (`npx supabase stop && npx supabase start`) para cargar el
    aviso por correo de cambio de contraseña, y correr el e2e con
    `E2E_EXPECT_PASSWORD_CHANGED_MAIL=1`. En el límite de intentos reutiliza los alcances
@@ -99,7 +97,7 @@ tres integraciones**: correrla primero.
   que el subtotal se rechaza; topes de 200 líneas y $1 billón; vigencia en días desde el envío.
 - GitHub Pro (~US$4/mes) para bloquear integraciones en rojo, o seguir con la regla del proceso.
 
-**Avance estimado al cerrar:** sprint 2 ~35% · hasta el piloto (sprints 1–6) ~22% · construcción
+**Avance estimado al cerrar:** sprint 2 ~45% · hasta el piloto (sprints 1–6) ~22% · construcción
 completa ~13%.
 
 **Cómo se integra el trabajo de los subagentes:** cada uno trabaja en una copia aislada y hace commit

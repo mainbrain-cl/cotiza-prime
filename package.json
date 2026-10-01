@@ -13,7 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:isolation": "playwright test --project=isolation",
     "test:db": "vitest run --config vitest.db.config.mts",
+    "test:isolation": "vitest run --config vitest.isolation.config.mts",
     "test:db:rollbacks": "node scripts/check-rollbacks.mjs",
     "db:seed": "tsx --conditions=react-server --env-file=.env.local scripts/seed.ts",
     "check:lockfile": "node scripts/check-lockfile.mjs"

@@ -5,6 +5,7 @@ const requireUser = vi.fn();
 const logAuditEvent = vi.fn();
 const createClient = vi.fn();
 const from = vi.fn();
+const rpc = vi.fn();
 
 vi.mock("next/navigation", () => ({
   redirect: (target: string) => {
@@ -42,18 +43,17 @@ function membershipsAre(
   rows: { tenant_id: string; role: string; tenants: { name: string } }[],
   lastTenantId: string | null = null,
 ) {
-  from.mockImplementation((table: string) =>
-    table === "members"
-      ? queryBuilder({ data: rows, error: null })
-      : queryBuilder({ data: { last_tenant_id: lastTenantId }, error: null }),
-  );
+  from.mockImplementation(() => queryBuilder({ data: rows, error: null }));
+  // La última organización se lee con la función `my_last_tenant_id`, nunca con un select a profiles.
+  rpc.mockResolvedValue({ data: lastTenantId, error: null });
 }
 
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue(USER);
   logAuditEvent.mockReset();
-  createClient.mockReset().mockImplementation(async () => ({ from }));
+  createClient.mockReset().mockImplementation(async () => ({ from, rpc }));
   from.mockReset();
+  rpc.mockReset();
 });
 
 describe("resolveActiveTenant", () => {
@@ -146,6 +146,13 @@ describe("resolveLandingTenant", () => {
   it("si la última ya no es suya, usa la primera de su lista", async () => {
     membershipsAre(rows, "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
     expect(await resolveLandingTenant(USER)).toBe(TENANT_A);
+  });
+
+  it("lee la última organización con my_last_tenant_id y nunca con una consulta a profiles (H-012)", async () => {
+    membershipsAre(rows, TENANT_B);
+    await resolveLandingTenant(USER);
+    expect(rpc).toHaveBeenCalledWith("my_last_tenant_id");
+    expect(from).not.toHaveBeenCalledWith("profiles");
   });
 
   it("sin organizaciones devuelve null", async () => {

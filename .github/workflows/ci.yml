@@ -22,7 +22,32 @@ jobs:
       # Pruebas de base de datos: Supabase local en Docker (entorno de PRUEBAS, nunca producción)
       - run: npx supabase start
       - run: npx supabase db reset
+      # Direcciones y llaves de la Supabase LOCAL (valores de demostración de la CLI) y claves de
+      # cifrado de PRUEBAS al azar para esta corrida. Nombres que entrega `supabase status -o env`:
+      # API_URL, PUBLISHABLE_KEY, SECRET_KEY, ANON_KEY y SERVICE_ROLE_KEY.
+      - name: Variables de las pruebas (Supabase local y claves de pruebas)
+        run: |
+          npx supabase status -o env > "$RUNNER_TEMP/supabase.env"
+          value() { grep "^$1=" "$RUNNER_TEMP/supabase.env" | head -1 | cut -d= -f2- | tr -d '"'; }
+          {
+            echo "SUPABASE_URL=$(value API_URL)"
+            echo "SUPABASE_PUBLISHABLE_KEY=$(value PUBLISHABLE_KEY)"
+            echo "SUPABASE_SECRET_KEY=$(value SECRET_KEY)"
+            echo "NEXT_PUBLIC_SUPABASE_URL=$(value API_URL)"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$(value ANON_KEY)"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$(value SERVICE_ROLE_KEY)"
+            echo "CP_PII_KEY_CURRENT=v1"
+            echo "CP_PII_KEY_V1=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")"
+            echo "CP_SEARCH_KEY_V1=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")"
+          } >> "$GITHUB_ENV"
+          rm "$RUNNER_TEMP/supabase.env"
       - run: npm run test:db
+      - name: Prueba de aislamiento entre organizaciones (H-012)
+        run: npm run test:isolation
+      # Pruebas de punta a punta, incluido el aislamiento visto desde el navegador (proyecto `isolation`)
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      # Esta prueba destruye los datos locales y los vuelve a crear: va después de las demás.
       - run: npm run test:db:rollbacks
       - run: npx supabase stop
         if: always()

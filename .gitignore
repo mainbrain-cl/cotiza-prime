@@ -41,3 +41,4 @@ next-env.d.ts
 
 # Copias aisladas de los subagentes
 .claude/worktrees/
+e2e/.auth/

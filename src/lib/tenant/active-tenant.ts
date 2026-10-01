@@ -138,17 +138,15 @@ export async function requireActiveTenant(requestedTenantId: string): Promise<Ac
 
 /**
  * La última organización que usó la persona, solo para "volver a donde estaba". No tiene valor de
- * seguridad: el destino igual pasa por `requireActiveTenant`. Es el único lugar que lee la columna
- * (después pasará a una función de la base de datos, `my_last_tenant_id`).
+ * seguridad: el destino igual pasa por `requireActiveTenant`. Se lee con la función de la base de
+ * datos `my_last_tenant_id` (solo entrega la propia, y solo si sigue siendo miembro), nunca con un
+ * `select` a `profiles`: la columna `last_tenant_id` no es legible por tabla (H-012, migración 12).
  */
-export async function getLastTenantId(userId: string): Promise<string | null> {
+export async function getLastTenantId(): Promise<string | null> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("profiles")
-    .select("last_tenant_id")
-    .eq("user_id", userId)
-    .maybeSingle();
-  return (data?.last_tenant_id as string | null | undefined) ?? null;
+  const { data, error } = await supabase.rpc("my_last_tenant_id");
+  if (error || typeof data !== "string") return null;
+  return data;
 }
 
 /**
@@ -158,7 +156,7 @@ export async function getLastTenantId(userId: string): Promise<string | null> {
 export async function resolveLandingTenant(user: SessionUser): Promise<string | null> {
   const memberships = await listMemberships(user.id);
   if (memberships.length === 0) return null;
-  const lastTenantId = await getLastTenantId(user.id);
+  const lastTenantId = await getLastTenantId();
   const last = memberships.find((m) => m.tenantId === lastTenantId);
   return (last ?? memberships[0]).tenantId;
 }

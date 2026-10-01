@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
+    "lint": "node scripts/check-lockfile.mjs && eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "next typegen && tsc --noEmit",
@@ -15,7 +15,8 @@
     "test:e2e": "playwright test",
     "test:db": "vitest run --config vitest.db.config.mts",
     "test:db:rollbacks": "node scripts/check-rollbacks.mjs",
-    "db:seed": "tsx --conditions=react-server --env-file=.env.local scripts/seed.ts"
+    "db:seed": "tsx --conditions=react-server --env-file=.env.local scripts/seed.ts",
+    "check:lockfile": "node scripts/check-lockfile.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",

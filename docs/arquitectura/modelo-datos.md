@@ -535,8 +535,12 @@ create policy profiles_select on public.profiles for select to authenticated
                         where m.tenant_id = (select app.current_tenant_id()) and m.status = 'active'));
 create policy profiles_update on public.profiles for update to authenticated
   using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
-grant select on public.profiles to authenticated;
+-- Lectura SOLO por columnas: last_tenant_id es privado de cada persona (migración 12, H-012).
+-- Nunca "grant select on public.profiles" completo: los compañeros verían la otra organización.
+grant select (user_id, tenant_id, full_name, created_at, updated_at) on public.profiles to authenticated;
 grant update (full_name, last_tenant_id) on public.profiles to authenticated;
+-- La propia persona lee su última organización con la RPC public.my_last_tenant_id()
+-- (security definer; solo devuelve una organización de la que sigue siendo miembro).
 
 -- audit_log ---------------------------------------------------------------
 alter table public.audit_log enable row level security;
@@ -871,6 +875,12 @@ Las reglas de solo agregar, el contador que no baja y la validación de RUT en S
 | 6 | `..._create_tenant_rpc` | `create_tenant` (crea organización, Dueño, numeración por defecto y auditoría) | H-005 |
 | 7 | `..._catalog_items` | Tabla, índices, RLS y auditoría | H-020 |
 | 8 | `..._customers` | Tabla, índices de huella, RLS y auditoría (solo nombres de campos) | H-022 |
+| 9 | `..._legal_documents_seed` | Versiones vigentes de términos y privacidad, con el SHA-256 de `src/lib/legal/documents.ts` | H-110 |
+| 10 | `..._auth_rate_limits` | Límite propio de intentos de ingreso y registro (por huella de cuenta y por IP); RLS sin políticas, solo el servidor | H-002 (revisión) |
+| 11 | `..._create_tenant_contact_email_check` | `create_tenant` valida el formato del correo de contacto | H-005 (revisión) |
+| 12 | `..._profiles_column_privacy` | `profiles` legible solo por columnas, sin `last_tenant_id`; RPC `my_last_tenant_id()` | H-012 (filtración corregida) |
+
+Las migraciones posteriores al sprint 1 se listan en el sprint que las crea.
 
 **Configuración de Supabase Auth** (`supabase/config.toml`, sin migración): confirmación de correo obligatoria; largo mínimo de contraseña (constante declarada; propuesta: 10); límites de intentos de ingreso; duración corta del pase con renovación automática. Localmente, los correos de verificación se ven en el buzón de prueba que trae Supabase (Inbucket o Mailpit).
 

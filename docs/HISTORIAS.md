@@ -1845,6 +1845,29 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 ---
 
+### H-114 · Que la dirección de origen en la auditoría sea confiable · M18
+
+**Como** Dueño
+**quiero** que el registro de actividad guarde desde dónde se hizo cada acción sin que nadie pueda falsearlo
+**para** poder confiar en él ante un incidente o una solicitud de un titular.
+
+**Criterios de aceptación**
+- [ ] Una persona con sesión que llama directo a la base de datos no puede elegir la dirección IP que queda en la auditoría ni en la aceptación de términos
+- [ ] La IP que se guarda es la que vio el servidor de Cotiza Prime
+- [ ] Si la IP no se puede confirmar, queda vacía, nunca inventada
+- [ ] Existe una prueba automática que intenta falsearla y falla
+
+**Prioridad:** usable
+**Tamaño:** mediano
+**Depende de:** H-012
+**Datos personales:** sí — la IP es un dato personal
+**Notas técnicas:** surgió de la revisión de H-012 (2026-10-01). Hoy la base toma la IP de la cabecera
+`x-cp-client-ip`, que el navegador puede enviar con su propio pase. Opciones: que el servidor firme la
+cabecera con un secreto que la base verifique, o que la IP la escriba solo el servidor. Debe estar
+antes del piloto, porque la aceptación de términos es prueba de consentimiento.
+
+---
+
 # Índice por prioridad
 
 **Núcleo — sin esto el producto no tiene sentido (44)**
@@ -1853,11 +1876,11 @@ H-013 · H-014 · H-020 · H-021 · H-022 · H-023 · H-024 · H-025 · H-026 ·
 H-030 · H-031 · H-032 · H-033 · H-034 · H-040 · H-041 · H-043 · H-044 · H-045 · H-046 · H-047 ·
 H-050 · H-051 · H-052 · H-053 · H-054 · H-056 · H-057 · H-110
 
-**Usable — lo que lo hace funcional en el día a día (46)**
+**Usable — lo que lo hace funcional en el día a día (47)**
 H-035 · H-042 · H-048 · H-055 · H-060 · H-061 · H-062 · H-063 · H-064 · H-065 · H-066 · H-067 ·
 H-068 · H-069 · H-070 · H-071 · H-072 · H-073 · H-074 · H-075 · H-076 · H-080 · H-081 · H-082 ·
 H-083 · H-084 · H-085 · H-086 · H-087 · H-088 · H-089 · H-090 · H-091 · H-092 · H-100 · H-101 ·
-H-102 · H-103 · H-104 · H-106 · H-107 · H-108 · H-109 · H-111 · H-112 · H-113
+H-102 · H-103 · H-104 · H-106 · H-107 · H-108 · H-109 · H-111 · H-112 · H-113 · H-114
 
 **Extra — suma valor pero no es esencial (1)**
 H-105

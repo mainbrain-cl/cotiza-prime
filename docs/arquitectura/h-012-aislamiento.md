@@ -268,3 +268,38 @@ Consecuencia: H-006 lee la última organización con `rpc('my_last_tenant_id')` 
 - [ ] `e2e/isolation.spec.ts` en verde: 404 idéntico para organización ajena e inexistente, con `tenant.access_denied` en la plataforma.
 - [ ] Paso de H-012 visible en GitHub Actions y decisión de Aarón sobre el bloqueo.
 - [ ] Aarón lo ve en pantalla: Ana en A abre una dirección de B y ve "No encontrado"; Mixta con dos pestañas ve cada organización por separado.
+
+---
+
+## 11. Registro de cierre (2026-10-01)
+
+**Construida** por un subagente Sonnet, sola. **Revisada** por el revisor (Opus): aprobada con
+observaciones, sin bloqueantes y sin filtraciones encontradas.
+
+**Filtración encontrada y corregida:** `profiles.last_tenant_id` era legible por los compañeros de
+organización. Antes de la corrección, 4 pruebas de `profiles` quedaron en rojo con el UUID de B en la
+respuesta. Corregida con la migración 12 (`20261001150000_profiles_column_privacy`) y la RPC
+`my_last_tenant_id()`.
+
+**Evidencia exigida por §10:**
+
+| Prueba | Resultado |
+|---|---|
+| Guardia G1 con una tabla temporal `zz_guard_probe` con `tenant_id` sin registrar | Rojo (`+ "zz_guard_probe"`); revertida |
+| Guardia G5 con una ruta temporal `src/app/api/v1/zz/route.ts` | Rojo (`+ "/api/v1/zz"`); revertida |
+| Mutación: `customers_select` cambiada a `using (true)` | `Tests 40 failed | 442 passed`; fallaron A02 (Ana con cabecera B), A10 (Mixta), A03, A05 y X3. Revertida y verificada en `pg_policy` |
+| `test:isolation` | 490 en verde, 5 `it.todo` visibles (Storage, búsqueda global, exportación, enlace del cliente, formulario público) |
+| `test:e2e` | 31 en verde (15 de aislamiento) |
+| Migración 12 aplicada y deshecha | `test:db:rollbacks` en verde |
+
+**Bloqueo de integración:** hoy la prueba corre en cada subida a `main` y avisa, pero no impide
+integrar. Bloquear exige pull requests y una regla en GitHub (GitHub Pro o Team en repositorio
+privado). **Pendiente de decisión de Aarón**; mientras tanto, regla del proceso: el revisor no cierra
+ninguna historia con la integración en rojo.
+
+**Derivado:** la IP de origen en la auditoría se puede falsificar llamando directo a la base con un
+pase válido. No es una filtración entre organizaciones; se registró como historia nueva **H-114**,
+para el sprint 6 (antes del piloto).
+
+**Correcciones de la revisión** (GraphQL desactivado, registro de visibilidades cerrado, guardias de
+rutas completas, control positivo en escrituras, CI con tiempo límite y caché): en curso.

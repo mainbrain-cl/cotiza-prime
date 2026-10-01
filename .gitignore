@@ -38,3 +38,6 @@ next-env.d.ts
 
 # Claves y certificados
 *.pem
+
+# Copias aisladas de los subagentes
+.claude/worktrees/

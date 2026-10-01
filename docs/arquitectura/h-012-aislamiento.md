@@ -301,5 +301,5 @@ ninguna historia con la integración en rojo.
 pase válido. No es una filtración entre organizaciones; se registró como historia nueva **H-114**,
 para el sprint 6 (antes del piloto).
 
-**Correcciones de la revisión** (GraphQL desactivado, registro de visibilidades cerrado, guardias de
-rutas completas, control positivo en escrituras, CI con tiempo límite y caché): en curso.
+**Correcciones de la revisión: hechas** (GraphQL desactivado con la migración 13, registro de visibilidades cerrado, guardias de
+rutas completas, control positivo en escrituras, CI con tiempo límite y caché, tope a los registros de acceso denegado con la migración 14). Verificación: 504 ataques en verde, 31 pruebas de punta a punta en verde.

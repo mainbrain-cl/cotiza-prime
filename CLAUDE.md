@@ -36,29 +36,33 @@ de la base exige una decisión registrada en `docs/decisiones/`.
 
 ## Para retomar (actualizado 2026-10-01)
 
-Al abrir una sesión nueva, **parte por aquí**. Hay esqueleto técnico, pero todavía no hay
-funcionalidad del producto.
+Al abrir una sesión nueva, **parte por aquí**.
 
-**Paso 1 — Preparación del sprint 1: ✅ terminado el 2026-10-01.**
+**Sprint 1 — construido y revisado el 2026-10-01; falta solo la prueba en pantalla de Aarón.**
+Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por separado) y con los
+hallazgos corregidos. Pruebas: `npm test`, `test:db`, `test:isolation` (504 ataques entre
+organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHub Actions.
 
-- **Esqueleto:** Next.js 16 + TypeScript + Tailwind 4 + shadcn/ui, Supabase local en Docker
-  (puertos **56320–56329**, porque `fidelidad-prime` usa los por defecto), Vitest, Playwright,
-  ESLint, Prettier, CI en GitHub Actions. Cómo levantarlo: `README.md`.
-- **Modelo de datos y RLS: aprobado** → `docs/arquitectura/modelo-datos.md` (respuestas por
-  defecto de su §12). El archivo de resolución de la organización se llama ahí
-  `src/lib/tenant/active-tenant.ts`; el esqueleto dejó `resolve.ts`: renombrar al construir H-005.
-- **`docs/DISENO.md`: aprobado** (v1.0), con vista previa visual. Fondos animados en CSS propio;
-  React Bits solo con aprobación de Aarón.
-- **Decisión 014:** licencias indirectas de `sharp` (LGPL) y `caniuse-lite` (CC-BY) aceptadas.
+- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 14 migraciones. Datos de
+  prueba: `npm run db:seed` (`ana`, `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
+  `Prueba-Cotiza-2026`; Negocio Demo 1 y 2). Cómo levantarlo: `README.md`.
+- **Documentos de arquitectura:** `docs/arquitectura/modelo-datos.md` (aprobado) y
+  `docs/arquitectura/h-012-aislamiento.md` (plan y registro de cierre).
+- **Diseño:** `docs/DISENO.md` v1.0 aprobado. **Decisión 014:** licencias de `sharp` y `caniuse-lite`.
+- **Historia nueva H-114** (IP de auditoría falsificable), en el sprint 6, antes del piloto.
 
-**Paso 2 — Construir el sprint 1** según `docs/sprints/001-base-segura.md`, con la forma de trabajo
-de la decisión 013. Antes de la migración 1, verificar contra la documentación vigente de Supabase
-los tres puntos marcados al final de `modelo-datos.md`.
+**Paso siguiente:** cuando Aarón cierre el sprint 1 en pantalla, hacer el cierre (comparar lo
+planificado con lo real) y partir el **sprint 2** (`docs/sprints/001-base-segura.md`, tabla de los 11
+sprints). El sprint 2 necesita la **plantilla 1 del PDF** diseñada.
+
+**Cómo se integra el trabajo de los subagentes:** cada uno trabaja en una copia aislada y hace commit
+en su rama; la sesión principal cierra servidores abiertos, une la rama, corre todas las pruebas,
+sube a `main` y borra la copia. Los cambios de base de datos, de a uno. Las 🔒, solas.
 
 **Repositorio:** `github.com/avronygg/cotiza-prime`, privado, rama `main` (creado el 2026-10-01).
 Docker Desktop ya está abierto.
 
-**Pendientes de Aarón (no bloquean el sprint 1):** crear el correo de la agencia y la cuenta de
+**Pendientes de Aarón:** plantilla 1 del PDF (antes del sprint 2); dominio de correo (antes del sprint 3); GitHub Pro o regla del proceso para bloquear integraciones en rojo; datos de Main Brain para los términos (29 marcadores `[POR COMPLETAR]`); crear el correo de la agencia y la cuenta de
 Supabase (pruebas y producción); Vercel cuando haya que publicar; decisiones pendientes de
 `PROYECTO.md` §16.2 (dominio, quién diseña las plantillas, estudio logístico); **custodia de las
 claves de cifrado** (gestor de contraseñas y dos personas, antes del piloto; `modelo-datos.md` §12

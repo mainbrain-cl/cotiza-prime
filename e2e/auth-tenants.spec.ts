@@ -79,7 +79,7 @@ test("registro, organizaciones, cambio, cierre de sesión y aislamiento", async 
   await expect(page.locator('[data-testid="tenant-switcher"]:visible')).toContainText("Negocio 1");
 
   // Destinos que aún no existen: dicen la verdad
-  await page.getByRole("link", { name: "Catálogo" }).first().click();
+  await page.getByRole("link", { name: "Cotizaciones" }).first().click();
   await expect(page.getByText("Disponible pronto")).toBeVisible();
 
   // ── Teléfono: sin desplazamiento horizontal y con barra inferior ────────────────────────────

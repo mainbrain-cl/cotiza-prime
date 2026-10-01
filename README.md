@@ -1,0 +1,46 @@
+# Cotiza Prime
+
+Plataforma web donde cada empresa crea su organización para cotizar con su marca, sus precios y
+sus reglas, y seguir cada cotización hasta que se paga. El plan completo está en
+[`docs/PROYECTO.md`](docs/PROYECTO.md).
+
+## Cómo levantarlo en local
+
+Requisitos: Node 24, npm 11 y Docker Desktop abierto.
+
+1. Instalar dependencias: `npm ci`
+2. Levantar la base de datos local: `npx supabase start`
+   (usa los puertos 56321 a 56329, para no chocar con otros proyectos de Supabase local)
+3. Copiar `.env.example` a `.env.local` y completar los valores con `npx supabase status -o env`
+4. Levantar la aplicación: `npm run dev` y abrir http://localhost:3000
+
+Para apagar la base local: `npx supabase stop`.
+
+## Scripts
+
+| Comando                | Qué hace                                  |
+| ---------------------- | ----------------------------------------- |
+| `npm run dev`          | Servidor de desarrollo                    |
+| `npm run build`        | Compila para producción                   |
+| `npm run typecheck`    | Revisa los tipos de TypeScript            |
+| `npm run lint`         | Revisa el código con ESLint               |
+| `npm run format`       | Da formato con Prettier                   |
+| `npm run format:check` | Verifica el formato sin modificar         |
+| `npm test`             | Pruebas unitarias (Vitest)                |
+| `npm run test:e2e`     | Pruebas de extremo a extremo (Playwright) |
+
+La primera vez, `npx playwright install chromium` descarga el navegador de las pruebas.
+
+## Estructura
+
+```
+docs/                 Plan, decisiones, sprints y base técnica
+e2e/                  Pruebas de extremo a extremo
+supabase/             Configuración y migraciones de la base de datos
+src/app/              Páginas y rutas (App Router)
+src/app/api/v1/       API versionada
+src/components/ui/    Componentes de shadcn/ui
+src/lib/auth/         Único lugar donde se valida el pase de sesión
+src/lib/tenant/       Único lugar donde se resuelve la organización activa
+src/lib/supabase/     Clientes de Supabase (servidor y navegador)
+```

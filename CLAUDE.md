@@ -36,28 +36,33 @@ de la base exige una decisión registrada en `docs/decisiones/`.
 
 ## Para retomar (actualizado 2026-10-01)
 
-Al abrir una sesión nueva, **parte por aquí**. Todavía no se ha escrito código del producto.
+Al abrir una sesión nueva, **parte por aquí**. Hay esqueleto técnico, pero todavía no hay
+funcionalidad del producto.
 
-**Paso 1 — Preparación del sprint 1, en paralelo:**
-- **Esqueleto del proyecto** (subagente Sonnet): Next.js + TypeScript + Tailwind + shadcn/ui,
-  Supabase local con Docker, Vitest, Playwright, linter y formateador, estructura `/api/v1/`,
-  repositorio git. Revisar antes que Docker Desktop esté abierto.
-- **Modelo de datos y RLS** (subagente `planificador`, Opus): tablas del sprint 1 y siguientes con
-  `tenant_id`, reglas RLS, resolución de la organización activa en un solo punto, huella buscable
-  para datos cifrados. Queda en `docs/arquitectura/modelo-datos.md` para que Aarón lo apruebe.
-- **`docs/DISENO.md`** (sesión principal): proponer tokens (colores, tipografía, espaciado, radios,
-  vidrio, movimiento) según la dirección visual aprobada, con una **vista previa visual** para que
-  Aarón la apruebe. Verificar las licencias de las librerías candidatas.
+**Paso 1 — Preparación del sprint 1: ✅ terminado el 2026-10-01.**
+
+- **Esqueleto:** Next.js 16 + TypeScript + Tailwind 4 + shadcn/ui, Supabase local en Docker
+  (puertos **56320–56329**, porque `fidelidad-prime` usa los por defecto), Vitest, Playwright,
+  ESLint, Prettier, CI en GitHub Actions. Cómo levantarlo: `README.md`.
+- **Modelo de datos y RLS: aprobado** → `docs/arquitectura/modelo-datos.md` (respuestas por
+  defecto de su §12). El archivo de resolución de la organización se llama ahí
+  `src/lib/tenant/active-tenant.ts`; el esqueleto dejó `resolve.ts`: renombrar al construir H-005.
+- **`docs/DISENO.md`: aprobado** (v1.0), con vista previa visual. Fondos animados en CSS propio;
+  React Bits solo con aprobación de Aarón.
+- **Decisión 014:** licencias indirectas de `sharp` (LGPL) y `caniuse-lite` (CC-BY) aceptadas.
 
 **Paso 2 — Construir el sprint 1** según `docs/sprints/001-base-segura.md`, con la forma de trabajo
-de la decisión 013.
+de la decisión 013. Antes de la migración 1, verificar contra la documentación vigente de Supabase
+los tres puntos marcados al final de `modelo-datos.md`.
 
 **Repositorio:** `github.com/avronygg/cotiza-prime`, privado, rama `main` (creado el 2026-10-01).
 Docker Desktop ya está abierto.
 
-**Pendientes de Aarón (no bloquean el paso 1):** crear el correo de la agencia y la cuenta de
+**Pendientes de Aarón (no bloquean el sprint 1):** crear el correo de la agencia y la cuenta de
 Supabase (pruebas y producción); Vercel cuando haya que publicar; decisiones pendientes de
-`PROYECTO.md` §16.2 (dominio, quién diseña las plantillas, estudio logístico).
+`PROYECTO.md` §16.2 (dominio, quién diseña las plantillas, estudio logístico); **custodia de las
+claves de cifrado** (gestor de contraseñas y dos personas, antes del piloto; `modelo-datos.md` §12
+pregunta 5).
 
 **Notas:** OneDrive no está sincronizando esta carpeta (verificado el 2026-10-01); no activarlo. La
 carpeta `base-tecnica/` de la raíz es la copia original de la base; preguntar si se elimina.
@@ -77,3 +82,13 @@ pantalla al cerrarla. Antes de tocar la base de datos, declarar el entorno (`/en
 - Direcciones de API con `/api/v1/` desde el inicio.
 - Validación del pase de sesión en **un solo archivo**.
 - Resolución del cliente (de dónde sale el `tenant_id`) en **un solo punto**.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

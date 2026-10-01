@@ -1,7 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { searchHash } from "@/lib/crypto/search-hash";
-import { buildCustomerInsertRow, customerHashes, decodeCustomer } from "./record";
+import {
+  buildCustomerInsertRow,
+  buildCustomerUpdateRow,
+  customerHashes,
+  decodeCustomer,
+} from "./record";
 import { customerSchema } from "./schemas";
 
 const ENV_VARS = ["CP_PII_KEY_CURRENT", "CP_PII_KEY_V1", "CP_SEARCH_KEY_V1"] as const;
@@ -84,5 +89,31 @@ describe("registro cifrado del cliente", () => {
     });
     expect(() => decodeCustomer(stored, randomUUID())).toThrow();
     expect(() => decodeCustomer({ ...stored, id: randomUUID() }, tenantId)).toThrow();
+  });
+
+  it("la edición vuelve a cifrar con el mismo contexto y recalcula las huellas", () => {
+    const tenantId = randomUUID();
+    const id = randomUUID();
+    const edited = customerSchema.parse({
+      kind: "company",
+      displayName: "Ana Ficticia Ltda",
+      rut: "76.086.428-5",
+      email: "NUEVO@Ejemplo.test",
+      phone: "",
+      address: "Otra calle 2",
+    });
+    const update = buildCustomerUpdateRow(edited, tenantId, id);
+    expect(Object.keys(update)).not.toContain("id");
+    expect(Object.keys(update)).not.toContain("tenant_id");
+    expect(update.rut_hash).toBe(searchHash("rut", tenantId, "76086428-5"));
+    expect(update.email_hash).toBe(searchHash("email", tenantId, "nuevo@ejemplo.test"));
+    expect(update.phone_enc).toBeNull();
+    // Lo cifrado se abre con la misma organización y el mismo cliente
+    const reopened = decodeCustomer(
+      { ...update, id, created_at: "2026-10-01T00:00:00Z" },
+      tenantId,
+    );
+    expect(reopened).toMatchObject({ rut: "76086428-5", email: "nuevo@ejemplo.test", phone: null });
+    expect(JSON.stringify(update)).not.toContain("nuevo@ejemplo.test");
   });
 });

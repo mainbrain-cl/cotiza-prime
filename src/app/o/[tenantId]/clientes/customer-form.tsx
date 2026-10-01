@@ -7,7 +7,11 @@ import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-cont
 import { OfflineNotice } from "@/components/ui/offline-notice";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 import { formatRut } from "@/lib/chile/rut";
-import { createCustomerAction, type CustomerFormState } from "@/lib/customers/actions";
+import {
+  createCustomerAction,
+  updateCustomerAction,
+  type CustomerFormState,
+} from "@/lib/customers/actions";
 import {
   CUSTOMER_ADDRESS_MAX_LENGTH,
   CUSTOMER_EMAIL_MAX_LENGTH,
@@ -22,11 +26,37 @@ const INITIAL: CustomerFormState = INITIAL_FORM_STATE;
 
 const MATCH_LABEL = { rut: "el mismo RUT", email: "el mismo correo" } as const;
 
-export function CustomerForm({ tenantId }: { tenantId: string }) {
-  const [state, formAction] = useActionState(createCustomerAction.bind(null, tenantId), INITIAL);
-  const [rut, setRut] = useState(state.values?.rut ?? "");
+/** Datos con que se abre el formulario al editar (el RUT ya con formato). */
+export type CustomerFormInitial = {
+  kind: string;
+  displayName: string;
+  rut: string;
+  email: string;
+  phone: string;
+  address: string;
+};
+
+/** Sin `customerId` registra un cliente nuevo; con `customerId` edita ese cliente. */
+export function CustomerForm({
+  tenantId,
+  customerId,
+  initial,
+}: {
+  tenantId: string;
+  customerId?: string;
+  initial?: CustomerFormInitial;
+}) {
+  const editing = customerId !== undefined;
+  const [state, formAction] = useActionState(
+    editing
+      ? updateCustomerAction.bind(null, tenantId, customerId)
+      : createCustomerAction.bind(null, tenantId),
+    INITIAL,
+  );
+  const value = (name: keyof CustomerFormInitial) => state.values?.[name] ?? initial?.[name];
+  const [rut, setRut] = useState(value("rut") ?? "");
   const [rutError, setRutError] = useState<string | undefined>();
-  const [kind, setKind] = useState(state.values?.kind ?? "person");
+  const [kind, setKind] = useState(value("kind") ?? "person");
   // El aviso de duplicados corresponde a lo que se envió. Si se edita el RUT o el correo, deja de
   // valer: se esconde y el siguiente guardado vuelve a revisar. Un resultado nuevo lo reemplaza.
   const [staleState, setStaleState] = useState<CustomerFormState | null>(null);
@@ -115,7 +145,7 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
             {...control}
             name="displayName"
             autoComplete="off"
-            defaultValue={state.values?.displayName}
+            defaultValue={value("displayName")}
             maxLength={CUSTOMER_NAME_MAX_LENGTH}
             required
           />
@@ -152,7 +182,7 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
             type="email"
             inputMode="email"
             autoComplete="off"
-            defaultValue={state.values?.email}
+            defaultValue={value("email")}
             onChange={dismissDuplicates}
             maxLength={CUSTOMER_EMAIL_MAX_LENGTH}
           />
@@ -167,7 +197,7 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
             type="tel"
             inputMode="tel"
             autoComplete="off"
-            defaultValue={state.values?.phone}
+            defaultValue={value("phone")}
             maxLength={CUSTOMER_PHONE_MAX_LENGTH}
           />
         )}
@@ -179,7 +209,7 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
             {...control}
             name="address"
             autoComplete="off"
-            defaultValue={state.values?.address}
+            defaultValue={value("address")}
             maxLength={CUSTOMER_ADDRESS_MAX_LENGTH}
           />
         )}
@@ -187,7 +217,7 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
 
       <div className="flex flex-col-reverse gap-3 md:flex-row md:justify-end">
         <Link
-          href={tenantPath(tenantId, "clientes")}
+          href={tenantPath(tenantId, editing ? `clientes/${customerId}` : "clientes")}
           className={buttonVariants({ variant: "secondary", size: "lg" })}
         >
           Cancelar
@@ -197,7 +227,9 @@ export function CustomerForm({ tenantId }: { tenantId: string }) {
             Guardar de todos modos
           </SubmitButton>
         ) : (
-          <SubmitButton pendingLabel="Guardando…">Guardar cliente</SubmitButton>
+          <SubmitButton pendingLabel="Guardando…">
+            {editing ? "Guardar cambios" : "Guardar cliente"}
+          </SubmitButton>
         )}
       </div>
     </form>

@@ -13,14 +13,16 @@ import {
   type CustomerView,
 } from "./record";
 import type { CustomerInput } from "./schemas";
+import { detectCustomerSearch, escapeLikePattern } from "./search";
 
 /** La lista descifra solo lo que muestra; la dirección se lee únicamente en el detalle. */
 const LIST_COLUMNS = "id, kind, display_name, email_enc, phone_enc, rut_enc, created_at";
 const DETAIL_COLUMNS =
-  "id, kind, display_name, email_enc, phone_enc, rut_enc, address_enc, created_at";
-/** Tope de la lista simple de H-022; la búsqueda y la paginación llegan con H-023. */
-export const CUSTOMER_LIST_LIMIT = 200;
+  "id, kind, display_name, email_enc, phone_enc, rut_enc, address_enc, created_at, updated_at";
+/** Clientes por página de la lista. */
+export const CUSTOMERS_PAGE_SIZE = 25;
 const DUPLICATES_SHOWN = 5;
+const PGRST_RANGE_NOT_SATISFIABLE = "PGRST103";
 
 export type CustomerListItem =
   { ok: true; customer: CustomerSummary } | { ok: false; id: string; displayName: string };
@@ -36,14 +38,52 @@ async function logFailure(message: string, code?: string) {
   await serverLog("error", message, { code });
 }
 
-/** Clientes de la organización activa, por nombre. Un dato que no se puede descifrar no tumba la lista. */
-export async function listCustomers(active: ActiveTenant): Promise<CustomerListItem[] | null> {
-  const { data, error } = await active.supabase
+export type CustomerPage = {
+  items: CustomerListItem[];
+  page: number;
+  pageCount: number;
+  total: number;
+  /** Cómo se interpretó lo buscado, para decírselo a la persona. */
+  searchKind: "none" | "rut" | "email" | "text";
+};
+
+/**
+ * Clientes de la organización activa, por nombre y de a páginas. Lo buscado se interpreta en el
+ * servidor: un correo o un RUT completos se buscan por huella (sin descifrar nada); lo demás es parte
+ * del nombre. Un dato que no se puede descifrar no tumba la lista.
+ */
+export async function listCustomers(
+  active: ActiveTenant,
+  options: { search?: string; page?: number } = {},
+): Promise<CustomerPage | null> {
+  const search = detectCustomerSearch(options.search);
+  const page = Number.isInteger(options.page) && (options.page ?? 0) >= 1 ? options.page! : 1;
+  const from = (page - 1) * CUSTOMERS_PAGE_SIZE;
+
+  let query = active.supabase
     .from("customers")
-    .select(LIST_COLUMNS)
-    .eq("tenant_id", active.tenantId)
+    .select(LIST_COLUMNS, { count: "exact" })
+    .eq("tenant_id", active.tenantId);
+  if (search.kind === "rut" || search.kind === "email") {
+    const hashes = customerHashes(active.tenantId, {
+      rut: search.kind === "rut" ? search.rut : null,
+      email: search.kind === "email" ? search.email : null,
+    });
+    query =
+      search.kind === "rut"
+        ? query.eq("rut_hash", hashes.rutHash ?? "")
+        : query.eq("email_hash", hashes.emailHash ?? "");
+  } else if (search.kind === "text") {
+    query = query.ilike("display_name", `%${escapeLikePattern(search.text)}%`);
+  }
+  const { data, error, count } = await query
     .order("display_name", { ascending: true })
-    .limit(CUSTOMER_LIST_LIMIT);
+    .order("id", { ascending: true })
+    .range(from, from + CUSTOMERS_PAGE_SIZE - 1);
+  // Una página que ya no existe (p. ej. un enlace viejo): se muestra la primera.
+  if (error?.code === PGRST_RANGE_NOT_SATISFIABLE && page > 1) {
+    return listCustomers(active, { ...options, page: 1 });
+  }
   if (error || !data) {
     await logFailure("customers_list_failed", error?.code);
     return null;
@@ -58,7 +98,14 @@ export async function listCustomers(active: ActiveTenant): Promise<CustomerListI
       items.push({ ok: false, id: row.id, displayName: row.display_name });
     }
   }
-  return items;
+  const total = count ?? items.length;
+  return {
+    items,
+    page,
+    pageCount: Math.max(1, Math.ceil(total / CUSTOMERS_PAGE_SIZE)),
+    total,
+    searchKind: search.kind,
+  };
 }
 
 /** Un cliente de la organización activa, o `null` si no existe en ella. */
@@ -91,6 +138,7 @@ export async function getCustomer(
 export async function findDuplicates(
   active: ActiveTenant,
   input: Pick<CustomerInput, "rut" | "email">,
+  excludeCustomerId?: string,
 ): Promise<DuplicateMatch[]> {
   const { rutHash, emailHash } = customerHashes(active.tenantId, input);
   const conditions = [
@@ -99,10 +147,13 @@ export async function findDuplicates(
   ].filter((condition): condition is string => condition !== null);
   if (conditions.length === 0) return [];
 
-  const { data, error } = await active.supabase
+  let query = active.supabase
     .from("customers")
     .select("id, display_name, rut_hash, email_hash")
-    .eq("tenant_id", active.tenantId)
+    .eq("tenant_id", active.tenantId);
+  // Al editar, el propio cliente no cuenta como duplicado de sí mismo.
+  if (excludeCustomerId) query = query.neq("id", excludeCustomerId);
+  const { data, error } = await query
     .or(conditions.join(","))
     .order("display_name", { ascending: true })
     .limit(DUPLICATES_SHOWN);

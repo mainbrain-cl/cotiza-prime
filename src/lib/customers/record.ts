@@ -32,11 +32,12 @@ export type CustomerStoredRow = {
   rut_enc: string | null;
   address_enc: string | null;
   created_at: string;
+  updated_at?: string;
 };
 
 /** Fila de la lista: sin la dirección, que solo se descifra en el detalle. */
 export type CustomerSummaryRow = Omit<CustomerStoredRow, "address_enc">;
-export type CustomerSummary = Omit<CustomerView, "address">;
+export type CustomerSummary = Omit<CustomerView, "address" | "updatedAt">;
 
 export type CustomerView = {
   id: string;
@@ -47,6 +48,7 @@ export type CustomerView = {
   rut: string | null;
   address: string | null;
   createdAt: string;
+  updatedAt: string | null;
 };
 
 function context(field: string, tenantId: string, rowId: string): PiiContext {
@@ -61,6 +63,31 @@ export function customerHashes(
   return {
     rutHash: input.rut ? searchHash("rut", tenantId, input.rut) : null,
     emailHash: input.email ? searchHash("email", tenantId, input.email) : null,
+  };
+}
+
+/** Columnas que una edición puede cambiar (la organización y el identificador nunca cambian). */
+export type CustomerUpdateRow = Omit<CustomerInsertRow, "id" | "tenant_id">;
+
+/**
+ * Arma los datos de una edición: vuelve a cifrar con el MISMO contexto (tabla, campo, organización
+ * y cliente) y recalcula las huellas de RUT y correo. `input` ya viene validado y normalizado.
+ */
+export function buildCustomerUpdateRow(
+  input: CustomerInput,
+  tenantId: string,
+  customerId: string,
+): CustomerUpdateRow {
+  const row = buildCustomerInsertRow(input, tenantId, customerId);
+  return {
+    kind: row.kind,
+    display_name: row.display_name,
+    email_enc: row.email_enc,
+    email_hash: row.email_hash,
+    phone_enc: row.phone_enc,
+    rut_enc: row.rut_enc,
+    rut_hash: row.rut_hash,
+    address_enc: row.address_enc,
   };
 }
 
@@ -100,6 +127,7 @@ export function decodeCustomer(row: CustomerStoredRow, tenantId: string): Custom
     rut: open("rut", row.rut_enc),
     address: open("address", row.address_enc),
     createdAt: row.created_at,
+    updatedAt: row.updated_at ?? null,
   };
 }
 

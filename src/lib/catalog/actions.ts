@@ -1,0 +1,83 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import type { FormState } from "@/lib/auth/form-state";
+import { fieldErrorsOf } from "@/lib/auth/schemas";
+import { requireActiveTenant } from "@/lib/tenant/active-tenant";
+import { tenantPath } from "@/lib/tenant/constants";
+import { createCatalogItemSchema } from "./schemas";
+
+const SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
+
+function readText(formData: FormData, name: string): string {
+  const value = formData.get(name);
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * H-020: agrega un servicio al catálogo de la organización activa. Valida en el servidor.
+ * No manda `tenant_id`: lo pone la base según la organización activa, y la regla de seguridad por
+ * fila (RLS) solo deja insertar al Dueño y a los Administradores.
+ */
+export async function createCatalogItemAction(
+  tenantId: string,
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const active = await requireActiveTenant(tenantId);
+
+  const raw = {
+    name: readText(formData, "name"),
+    description: readText(formData, "description"),
+    unit: readText(formData, "unit"),
+    unitPriceClp: readText(formData, "unitPriceClp"),
+    taxTreatment: readText(formData, "taxTreatment"),
+  };
+
+  if (active.role !== "owner" && active.role !== "admin") {
+    return {
+      status: "error",
+      message: "Solo el Dueño y los Administradores pueden agregar servicios al catálogo.",
+      values: raw,
+    };
+  }
+
+  const parsed = createCatalogItemSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { status: "error", fieldErrors: fieldErrorsOf(parsed.error), values: raw };
+  }
+
+  const { error } = await active.supabase.from("catalog_items").insert({
+    name: parsed.data.name,
+    description: parsed.data.description,
+    unit: parsed.data.unit,
+    unit_price_clp: parsed.data.unitPriceClp,
+    tax_treatment: parsed.data.taxTreatment,
+  });
+
+  if (error) {
+    if (error.code === SQLSTATE_INSUFFICIENT_PRIVILEGE) {
+      return {
+        status: "error",
+        message: "No tienes permiso para agregar servicios en esta organización.",
+        values: raw,
+      };
+    }
+    console.error(
+      JSON.stringify({ level: "error", message: "catalog_insert_failed", code: error.code }),
+    );
+    return {
+      status: "error",
+      message: "No pudimos guardar el servicio. Intenta de nuevo en unos minutos.",
+      values: raw,
+    };
+  }
+
+  revalidatePath(tenantPath(active.tenantId, "catalogo"));
+  // `nonce` hace que cada guardado sea distinto, para que el formulario se vacíe aunque se repita el nombre.
+  return {
+    status: "sent",
+    message: `Agregaste "${parsed.data.name}" al catálogo.`,
+    values: { nonce: crypto.randomUUID() },
+  };
+}

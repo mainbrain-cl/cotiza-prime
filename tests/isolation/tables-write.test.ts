@@ -79,6 +79,30 @@ describe.each(ISOLATION_TABLES)("escritura sobre $name", (spec: TableSpec) => {
     expect(isRejectedOrEmpty(bulk)).toBe(true);
   });
 
+  it("control positivo · el mismo cuerpo apuntado a la propia organización sí se acepta (A06 y A07)", async () => {
+    if (!spec.ownWriteAccepted) return; // se escribe solo por funciones o por el servidor
+    const fx = fixture();
+    const token = await tokenOf("ana");
+    const headers = { Prefer: "return=representation", ...tenantHeader(fx.orgs.A.tenantId) };
+    // A06 con la organización propia: el cuerpo es válido, así que el rechazo de arriba era por aislamiento
+    const created = await rest(token, spec.name, {
+      method: "POST",
+      headers,
+      body: spec.insertAttack(fx, fx.orgs.A.tenantId, `LEGITIMO-${fx.runId}`),
+    });
+    expect(created.status, `${spec.name}: ${created.text.slice(0, 160)}`).toBe(201);
+    const row = (created.json as Record<string, string>[])[0];
+    expect(row.tenant_id).toBe(fx.orgs.A.tenantId);
+    // A07 con la fila propia: el mismo cambio sí se aplica
+    const updated = await rest(token, `${spec.name}?${spec.idColumn}=eq.${row[spec.idColumn]}`, {
+      method: "PATCH",
+      headers,
+      body: spec.updateAttack(`LEGITIMO-editado-${fx.runId}`),
+    });
+    expect(updated.status, `${spec.name}: ${updated.text.slice(0, 160)}`).toBe(200);
+    expect((updated.json as unknown[]).length).toBe(1);
+  });
+
   it("A09 · borrar una fila de B (o propia) es rechazado y no desaparece nada", async () => {
     const fx = fixture();
     const id = await aRowOfB(db, spec);

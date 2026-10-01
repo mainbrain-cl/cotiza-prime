@@ -1,4 +1,5 @@
 import "server-only";
+import { isIP } from "node:net";
 import { searchHash } from "@/lib/crypto/search-hash";
 import { serverLog } from "@/lib/log/server-log";
 import { normalizeEmail } from "@/lib/normalize/email";
@@ -23,11 +24,25 @@ export const SIGNUP_MAX_ATTEMPTS_PER_IP = 10;
 export const SIGNUP_WINDOW_SECONDS = 15 * SECONDS_PER_MINUTE;
 export const SIGNUP_LOCK_SECONDS = 15 * SECONDS_PER_MINUTE;
 
+/**
+ * Registros de "acceso denegado a una organización" que se escriben por persona y por ventana.
+ * Pasado el tope se sigue respondiendo 404, pero ya no se escribe en la auditoría: quien prueba
+ * direcciones ajenas no puede llenarla.
+ */
+export const TENANT_DENIED_MAX_LOGGED_PER_WINDOW = 20;
+export const TENANT_DENIED_WINDOW_SECONDS = 15 * SECONDS_PER_MINUTE;
+
+/** Grupo único de los intentos de registro cuyo origen no se pudo determinar (solo producción). */
+const UNKNOWN_IP_GROUP = "desconocida";
+/** Una IPv6 se agrupa por bloque /64: los primeros 4 de sus 8 grupos. */
+const IPV6_GROUPED_HEXTETS = 4;
+const IPV6_TOTAL_HEXTETS = 8;
+
 /** Mensaje único: no revela si el correo existe ni cuál de los límites se alcanzó. */
 export const RATE_LIMITED_MESSAGE =
   "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.";
 
-export type RateLimitScope = "login_email" | "login_ip" | "signup_ip";
+export type RateLimitScope = "login_email" | "login_ip" | "signup_ip" | "tenant_denied_user";
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
 
@@ -47,7 +62,38 @@ const RULES: Record<RateLimitScope, Rule> = {
     windowSeconds: SIGNUP_WINDOW_SECONDS,
     lockSeconds: SIGNUP_LOCK_SECONDS,
   },
+  // El intento número N+1 es el que bloquea: los primeros N sí se registran.
+  tenant_denied_user: {
+    maxFailures: TENANT_DENIED_MAX_LOGGED_PER_WINDOW + 1,
+    windowSeconds: TENANT_DENIED_WINDOW_SECONDS,
+    lockSeconds: TENANT_DENIED_WINDOW_SECONDS,
+  },
 };
+
+/**
+ * Clave de agrupación de una IP. Una IPv4 cuenta tal cual; una IPv6 se agrupa por bloque /64,
+ * porque un solo cliente controla las 2^64 direcciones de su bloque y, sin agrupar, cambiaría de
+ * dirección en cada intento para esquivar el límite. Una IPv4 escrita como IPv6 (::ffff:a.b.c.d)
+ * cuenta como IPv4.
+ *
+ * ATENCIÓN: esto supone que la IP que llega es la real del cliente (la reescribe Vercel en el
+ * borde). Si algún día hay un proxy o una red de distribución delante de Vercel, `x-forwarded-for`
+ * pasaría a traer la IP de ese intermediario y todos los clientes caerían en el mismo grupo:
+ * habría que revisar de dónde se lee la IP (`src/lib/http/request-context.ts`).
+ */
+export function ipLimitKey(ip: string): string {
+  if (isIP(ip) !== 6) return ip;
+  const lower = ip.toLowerCase();
+  const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return mapped[1];
+  const [head, tail] = lower.split("::");
+  const headParts = head ? head.split(":") : [];
+  const tailParts = tail ? tail.split(":") : [];
+  const missing = tail === undefined ? 0 : IPV6_TOTAL_HEXTETS - headParts.length - tailParts.length;
+  const hextets = [...headParts, ...Array<string>(Math.max(missing, 0)).fill("0"), ...tailParts];
+  const block = hextets.slice(0, IPV6_GROUPED_HEXTETS).map((h) => h.padStart(4, "0"));
+  return `${block.join(":")}::/64`;
+}
 
 /** Huella de un correo, para el contador y para la auditoría (nunca el correo en claro). */
 export function emailFingerprint(email: string): string {
@@ -55,7 +101,7 @@ export function emailFingerprint(email: string): string {
 }
 
 function ipFingerprint(scope: "login_ip" | "signup_ip", ip: string): string {
-  return searchHash(scope, PLATFORM_TENANT_ID, ip);
+  return searchHash(scope, PLATFORM_TENANT_ID, ipLimitKey(ip));
 }
 
 type Target = { scope: RateLimitScope; keyHash: string };
@@ -69,7 +115,14 @@ function loginTargets(email: string, ip: string | null): Target[] {
 }
 
 function signupTargets(ip: string | null): Target[] {
-  return ip ? [{ scope: "signup_ip", keyHash: ipFingerprint("signup_ip", ip) }] : [];
+  if (ip) return [{ scope: "signup_ip", keyHash: ipFingerprint("signup_ip", ip) }];
+  // En producción la IP siempre debería venir. Si falta, el registro no queda sin límite: todos los
+  // intentos sin origen cuentan juntos en el grupo "desconocida" (se prefiere frenar de más a dejar
+  // pasar un registro masivo). En desarrollo y pruebas no se limita sin IP.
+  if (process.env.NODE_ENV === "production") {
+    return [{ scope: "signup_ip", keyHash: ipFingerprint("signup_ip", UNKNOWN_IP_GROUP) }];
+  }
+  return [];
 }
 
 async function anyLocked(targets: Target[]): Promise<boolean> {
@@ -149,4 +202,18 @@ export function isSignupLocked(ip: string | null): Promise<boolean> {
 /** Cada intento de registro cuenta (no hay "fallo" que distinguir sin revelar si el correo existía). */
 export function recordSignupAttempt(ip: string | null): Promise<boolean> {
   return failOpen("signup_attempt", false, () => recordAll(signupTargets(ip)));
+}
+
+/**
+ * ¿Corresponde escribir en la auditoría este acceso denegado a una organización? Cuenta el intento
+ * de esta persona y responde `false` pasado el tope por ventana. Si el contador falla, se registra
+ * igual: perder un registro de seguridad es peor que escribir uno de más.
+ */
+export async function shouldLogTenantDenied(userId: string): Promise<boolean> {
+  const target: Target = {
+    scope: "tenant_denied_user",
+    keyHash: searchHash("tenant_denied_user", PLATFORM_TENANT_ID, userId),
+  };
+  const overTheCap = await failOpen("tenant_denied_count", false, () => recordAll([target]));
+  return !overTheCap;
 }

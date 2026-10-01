@@ -5,6 +5,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { APP_ROUTES } from "./registry";
+import { discoverAppRoutes, routeKey } from "./routes";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const SRC = path.join(ROOT, "src");
@@ -53,20 +54,19 @@ describe("guardias estáticas del aislamiento", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("3. toda ruta de la API que no sea pública resuelve la organización con requireActiveTenant", () => {
-    const publicApi = new Set(
-      APP_ROUTES.filter((r) => r.kind === "api" && r.public).map((r) => r.path),
+  it("3. toda ruta de servidor (route.*) que no se declara sin organización resuelve requireActiveTenant", () => {
+    const discovered = discoverAppRoutes(path.join(SRC, "app")).filter((r) => r.kind !== "page");
+    expect(discovered.length).toBeGreaterThan(0);
+    const withoutOrganization = new Set(
+      APP_ROUTES.filter((r) => r.scope === "none").map((r) => routeKey(r)),
     );
-    const routes = sourceFiles.filter((f) =>
-      /\/app\/api\/v1\/.*\/route\.ts$/.test(f.split(path.sep).join("/")),
-    );
-    for (const file of routes) {
-      const urlPath =
-        "/" + path.relative(path.join(SRC, "app"), path.dirname(file)).split(path.sep).join("/");
-      if (publicApi.has(urlPath)) continue;
-      expect(read(file), `${rel(file)} debe llamar a requireActiveTenant(`).toContain(
-        "requireActiveTenant(",
-      );
+    for (const route of discovered) {
+      // Una ruta que no esté en el registro la atrapa G5; aquí solo cuentan las declaradas "none".
+      if (withoutOrganization.has(routeKey(route))) continue;
+      expect(
+        read(route.absoluteFile),
+        `src/app/${route.file} debe llamar a requireActiveTenant( o declararse sin organización en APP_ROUTES`,
+      ).toContain("requireActiveTenant(");
     }
   });
 

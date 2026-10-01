@@ -1,14 +1,21 @@
-// Guardia del registro (G1–G5): la prueba de aislamiento no puede quedarse atrás del sistema.
+// Guardia del registro (G1–G6): la prueba de aislamiento no puede quedarse atrás del sistema.
 // Si alguien agrega una tabla con `tenant_id`, una función expuesta o una ruta y no la anota en
 // `registry.ts`, esta prueba falla y obliga a decidir quién puede verla antes de integrar.
 // Complementa `tests/db/schema-guards.test.ts` (estructura) y `src/lib/tenant/guard-coverage.test.ts`
 // (código de pantallas y acciones); no los repite.
-import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { aRowOfB, fixture, openDb } from "./context";
-import { APP_ROUTES, ISOLATION_TABLES, RPC_CASES, SERVER_ONLY_FUNCTIONS } from "./registry";
+import {
+  APP_ROUTES,
+  ISOLATION_TABLES,
+  NON_BUSINESS_VISIBILITY,
+  RPC_CASES,
+  SERVER_ONLY_FUNCTIONS,
+  visibilityDeclarationErrors,
+} from "./registry";
+import { discoverAppRoutes, routeKey } from "./routes";
 
 const SRC = path.resolve(import.meta.dirname, "..", "..", "src");
 
@@ -19,13 +26,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await db.end();
 });
-
-function walk(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const full = path.join(dir, name);
-    return statSync(full).isDirectory() ? walk(full) : [full];
-  });
-}
 
 const sorted = (values: Iterable<string>) => [...values].sort();
 
@@ -91,15 +91,48 @@ describe("guardia del registro de aislamiento", () => {
     expect(rows).toEqual([]);
   });
 
-  it("G5. toda ruta de la API y toda pantalla de una organización está en APP_ROUTES", () => {
-    const routes: string[] = [];
-    for (const file of walk(path.join(SRC, "app"))) {
-      const rel = path.relative(path.join(SRC, "app"), file).split(path.sep).join("/");
-      let match = rel.match(/^(api\/v1(?:\/.*)?)\/route\.ts$/);
-      if (match) routes.push(`/${match[1]}`);
-      match = rel.match(/^(o\/\[tenantId\](?:\/.*)?)\/page\.tsx$/);
-      if (match) routes.push(`/${match[1]}`);
+  it("G5. toda pantalla (page.*) y toda ruta de servidor (route.*) bajo src/app está en APP_ROUTES, y al revés", () => {
+    const discovered = discoverAppRoutes(path.join(SRC, "app"));
+    expect(discovered.length).toBeGreaterThan(0);
+    expect(
+      sorted(new Set(discovered.map(routeKey))),
+      "Una ruta nueva debe agregarse a APP_ROUTES (tests/isolation/registry.ts) diciendo si es de una organización o 'none'",
+    ).toEqual(sorted(APP_ROUTES.map(routeKey)));
+  });
+
+  it("G5b. el alcance declarado de cada ruta calza con su dirección", () => {
+    for (const route of APP_ROUTES) {
+      const underTenant = route.path === "/o/[tenantId]" || route.path.startsWith("/o/[tenantId]/");
+      expect(route.scope === "tenant", `${route.path}: alcance ${route.scope}`).toBe(underTenant);
+      if (route.scope === "tenant") expect(route.kind).toBe("page");
     }
-    expect(sorted(new Set(routes))).toEqual(sorted(APP_ROUTES.map((r) => r.path)));
+  });
+
+  it("G6. la visibilidad declarada de cada tabla calza con la lista cerrada de excepciones", () => {
+    expect(visibilityDeclarationErrors(ISOLATION_TABLES)).toEqual([]);
+    // toda excepción de la lista cerrada existe de verdad en el registro
+    for (const name of Object.keys(NON_BUSINESS_VISIBILITY)) {
+      expect(
+        ISOLATION_TABLES.some((t) => t.name === name),
+        `${name} ya no está en el registro: quítala de NON_BUSINESS_VISIBILITY`,
+      ).toBe(true);
+    }
+  });
+
+  it("G6b. la guardia detecta una tabla de negocio declarada con menos rigor", () => {
+    const tampered = ISOLATION_TABLES.map((t) =>
+      t.name === "customers" ? { ...t, visibility: "public" as const } : t,
+    );
+    expect(visibilityDeclarationErrors(tampered)).toEqual([
+      "customers: declarada public, debe ser business",
+    ]);
+    const loosened = ISOLATION_TABLES.map((t) =>
+      t.name === "tenants" ? { ...t, visibility: "business" as const } : t,
+    );
+    expect(visibilityDeclarationErrors(loosened)).toHaveLength(1);
+    // y una tabla nueva no declarada "business" tampoco pasa
+    expect(
+      visibilityDeclarationErrors([{ name: "quotes", visibility: "own-user" as const }]),
+    ).toEqual(["quotes: declarada own-user, debe ser business"]);
   });
 });

@@ -8,6 +8,8 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Si algo se cuelga (Docker, navegador), el trabajo termina solo en vez de gastar horas
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,7 +47,23 @@ jobs:
       - name: Prueba de aislamiento entre organizaciones (H-012)
         run: npm run test:isolation
       # Pruebas de punta a punta, incluido el aislamiento visto desde el navegador (proyecto `isolation`)
-      - run: npx playwright install --with-deps chromium
+      # Los navegadores se guardan en caché con la versión de Playwright en la llave: si cambia la
+      # versión, se descargan de nuevo. Si ya están en caché, solo se instalan las dependencias del sistema.
+      - name: Versión de Playwright
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Caché de navegadores de Playwright
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Instalar Chromium (si no está en caché)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Instalar dependencias del sistema de Chromium (si ya está en caché)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
       - run: npm run test:e2e
       # Esta prueba destruye los datos locales y los vuelve a crear: va después de las demás.
       - run: npm run test:db:rollbacks

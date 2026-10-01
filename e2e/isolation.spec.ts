@@ -10,7 +10,7 @@ import {
   ONLY_B_CUSTOMER_RUT,
   SHARED_CUSTOMER_RUT,
 } from "../tests/isolation/fixture";
-import { APP_ROUTES, concretePath } from "../tests/isolation/registry";
+import { APP_ROUTES, TENANT_PAGES, concretePath } from "../tests/isolation/registry";
 import { expect, test, type Page } from "./fixtures";
 import { countRows, loadFixture, stateFile } from "./isolation-support";
 
@@ -67,7 +67,7 @@ async function expectNotFound(page: Page, path: string) {
   await expect(page.getByRole("heading", { name: NOT_FOUND_HEADING })).toBeVisible();
 }
 
-const PAGE_ROUTES = APP_ROUTES.filter((route) => route.kind === "page");
+const PAGE_ROUTES = TENANT_PAGES;
 
 test.describe("Ana (Dueña de A) frente a la organización B", () => {
   test.use({ storageState: stateFile("ana") });
@@ -175,7 +175,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
 
     // rutas de la API: las públicas no devuelven datos de nadie; las que no, dan 404 con una organización ajena
     for (const route of APP_ROUTES.filter((r) => r.kind === "api")) {
-      if (route.public) {
+      if (route.scope === "none") {
         const res = await page.request.get(route.path, {
           headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
         });

@@ -52,9 +52,12 @@ Al abrir una sesión nueva, **parte por aquí**. Todavía no se ha escrito códi
 **Paso 2 — Construir el sprint 1** según `docs/sprints/001-base-segura.md`, con la forma de trabajo
 de la decisión 013.
 
+**Repositorio:** `github.com/avronygg/cotiza-prime`, privado, rama `main` (creado el 2026-10-01).
+Docker Desktop ya está abierto.
+
 **Pendientes de Aarón (no bloquean el paso 1):** crear el correo de la agencia y la cuenta de
-Supabase; confirmar la creación del repositorio privado en GitHub (cuenta avronygg); decisiones
-pendientes de `PROYECTO.md` §16.2 (dominio, quién diseña las plantillas, estudio logístico).
+Supabase (pruebas y producción); Vercel cuando haya que publicar; decisiones pendientes de
+`PROYECTO.md` §16.2 (dominio, quién diseña las plantillas, estudio logístico).
 
 **Notas:** OneDrive no está sincronizando esta carpeta (verificado el 2026-10-01); no activarlo. La
 carpeta `base-tecnica/` de la raíz es la copia original de la base; preguntar si se elimina.

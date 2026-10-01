@@ -1,6 +1,8 @@
 // Prueba de estructura (docs/arquitectura/modelo-datos.md §8.2).
 // Recorre el catálogo de la base de datos y falla si alguna tabla o función no cumple las reglas.
 // Protege también lo que todavía no existe: cuando se cree `quotes`, esta prueba ya la vigila.
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { connect } from "./helpers";
@@ -182,5 +184,19 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
            where ca.attname = 'tenant_id' and pa.attname = 'tenant_id')`,
     );
     expect(rows.map((r) => r.fk)).toEqual([]);
+  });
+
+  it("11. GraphQL no existe: pg_graphql no está instalada y graphql_public no se expone (H-012)", async () => {
+    const { rows } = await db.query<{ extname: string }>(
+      `select extname from pg_extension where extname = 'pg_graphql'`,
+    );
+    expect(rows.map((r) => r.extname)).toEqual([]);
+    const config = readFileSync(
+      path.resolve(import.meta.dirname, "..", "..", "supabase", "config.toml"),
+      "utf8",
+    );
+    const schemas = config.match(/^schemas\s*=\s*\[([^\]]*)\]/m);
+    expect(schemas, "falta `schemas` en [api] de supabase/config.toml").not.toBeNull();
+    expect(schemas?.[1]).not.toContain("graphql_public");
   });
 });

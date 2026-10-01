@@ -24,6 +24,10 @@ vi.mock("@/lib/auth/session", () => ({
 vi.mock("@/lib/audit/log", () => ({
   logAuditEvent: (...args: unknown[]) => logAuditEvent(...args),
 }));
+const shouldLogTenantDenied = vi.fn();
+vi.mock("@/lib/security/login-rate-limit", () => ({
+  shouldLogTenantDenied: (...args: unknown[]) => shouldLogTenantDenied(...args),
+}));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: (...args: unknown[]) => createClient(...args),
 }));
@@ -51,6 +55,7 @@ function membershipsAre(
 beforeEach(() => {
   requireUser.mockReset().mockResolvedValue(USER);
   logAuditEvent.mockReset();
+  shouldLogTenantDenied.mockReset().mockResolvedValue(true);
   createClient.mockReset().mockImplementation(async () => ({ from, rpc }));
   from.mockReset();
   rpc.mockReset();
@@ -80,6 +85,16 @@ describe("resolveActiveTenant", () => {
         resourceId: TENANT_B,
       }),
     );
+  });
+
+  it("pasado el tope de registros por persona, igual responde null pero ya no escribe en la auditoría", async () => {
+    membershipsAre([{ tenant_id: TENANT_A, role: "owner", tenants: { name: "Negocio 1" } }]);
+    shouldLogTenantDenied.mockResolvedValue(false);
+    const active = await resolveActiveTenant({ userId: USER.id, requestedTenantId: TENANT_B });
+
+    expect(active).toBeNull();
+    expect(shouldLogTenantDenied).toHaveBeenCalledWith(USER.id);
+    expect(logAuditEvent).not.toHaveBeenCalled();
   });
 
   it("si la dirección no es un UUID, ni siquiera consulta las membresías", async () => {

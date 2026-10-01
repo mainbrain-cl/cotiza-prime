@@ -41,6 +41,13 @@ export interface TableSpec {
   updateAttack: (marker: string) => object;
   /** ¿La fixture tiene al menos una fila de B en esta tabla? (G2) */
   hasFixtureRowsInB: boolean;
+  /**
+   * ¿Una persona con permiso puede crear y editar una fila PROPIA de esta tabla por la API?
+   * Si sí, la prueba de escritura exige el control positivo: el mismo cuerpo apuntado a su propia
+   * organización se acepta (así un rechazo no puede deberse a un cuerpo mal armado). Las demás
+   * tablas se escriben solo por funciones o por el servidor.
+   */
+  ownWriteAccepted: boolean;
 }
 
 const byTenantB = (fx: IsolationFixture) => `tenant_id = '${fx.orgs.B.tenantId}'`;
@@ -60,6 +67,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
     }),
     updateAttack: (marker) => ({ display_name: marker }),
     hasFixtureRowsInB: true,
+    ownWriteAccepted: true,
   },
   {
     name: "catalog_items",
@@ -76,6 +84,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
     }),
     updateAttack: (marker) => ({ name: marker }),
     hasFixtureRowsInB: true,
+    ownWriteAccepted: true,
   },
   {
     name: "numbering_settings",
@@ -86,6 +95,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
     insertAttack: (_fx, tenant, marker) => ({ tenant_id: tenant, prefix: marker.slice(0, 8) }),
     updateAttack: () => ({ prefix: "ATAQUE" }),
     hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
   },
   {
     name: "numbering_sequences",
@@ -96,6 +106,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
     insertAttack: (_fx, tenant) => ({ tenant_id: tenant, scope: "continuous", last_number: 0 }),
     updateAttack: () => ({ last_number: 0 }),
     hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
   },
   {
     name: "audit_log",
@@ -113,6 +124,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
     }),
     updateAttack: (marker) => ({ details: { marker } }),
     hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
   },
   {
     name: "tenants",
@@ -123,6 +135,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
     insertAttack: (_fx, tenant, marker) => ({ tenant_id: tenant, name: marker, rut: "76086428-5" }),
     updateAttack: (marker) => ({ name: marker }),
     hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
   },
   {
     name: "members",
@@ -137,17 +150,19 @@ export const ISOLATION_TABLES: TableSpec[] = [
     }),
     updateAttack: () => ({ role: "owner" }),
     hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
   },
   {
     name: "profiles",
     visibility: "profiles",
     idColumn: "user_id",
     ownedByB: (fx) => `user_id = '${fx.personas.beto.userId}'`,
-    // Sin `last_tenant_id`: esa columna es privada de cada persona (migración 9).
+    // Sin `last_tenant_id`: esa columna es privada de cada persona (migración 12).
     readColumns: "user_id,tenant_id,full_name",
     insertAttack: (fx, _tenant, marker) => ({ user_id: fx.personas.ana.userId, full_name: marker }),
     updateAttack: (marker) => ({ full_name: marker }),
     hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
   },
   {
     name: "legal_acceptances",
@@ -158,6 +173,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
     insertAttack: (fx) => ({ user_id: fx.personas.beto.userId, context: "reaccept" }),
     updateAttack: () => ({ context: "signup" }),
     hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
   },
   {
     name: "legal_documents",
@@ -173,6 +189,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
     }),
     updateAttack: () => ({ is_current: false }),
     hasFixtureRowsInB: false,
+    ownWriteAccepted: false,
   },
   {
     name: "auth_rate_limits",
@@ -186,6 +203,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
     }),
     updateAttack: () => ({ failures: 0 }),
     hasFixtureRowsInB: false,
+    ownWriteAccepted: false,
   },
 ];
 
@@ -218,26 +236,73 @@ export const SERVER_ONLY_FUNCTIONS = [
   "auth_limit_clear",
 ];
 
-/** Una dirección de la aplicación (pantalla o API) y cómo se prueba. */
+/**
+ * Qué tablas NO son "de negocio" y cómo se ven. Lista cerrada: toda otra tabla con `tenant_id`
+ * debe declararse `business`. Así nadie puede esconder una tabla de negocio declarándola "public"
+ * u "own-user" para que la prueba la trate con menos rigor. Agregar una entrada aquí es una
+ * decisión de diseño que se revisa, no un trámite.
+ */
+export const NON_BUSINESS_VISIBILITY: Readonly<Record<string, Visibility>> = {
+  legal_documents: "public",
+  tenants: "selector-tenants",
+  members: "selector-members",
+  profiles: "profiles",
+  legal_acceptances: "own-user",
+  auth_rate_limits: "server-only",
+};
+
+/** Errores de declaración de visibilidad del registro (vacío si todo calza con la lista cerrada). */
+export function visibilityDeclarationErrors(
+  tables: readonly Pick<TableSpec, "name" | "visibility">[],
+): string[] {
+  const errors: string[] = [];
+  for (const table of tables) {
+    const expected = NON_BUSINESS_VISIBILITY[table.name] ?? "business";
+    if (table.visibility !== expected) {
+      errors.push(`${table.name}: declarada ${table.visibility}, debe ser ${expected}`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * Una dirección de la aplicación (pantalla o ruta de servidor) y cómo se prueba.
+ * - `tenant`: vive dentro de una organización (`/o/[tenantId]/...`) y exige `requireActiveTenant`.
+ * - `none`: no hay organización que aislar (ingreso, registro, términos, `/api/v1/ping`, etc.).
+ *   Cada una se declara a mano: una ruta nueva sin declarar rompe la guardia G5.
+ */
+export type RouteScope = "tenant" | "none";
+
 export interface AppRoute {
-  /** Como la escribe Next.js, p. ej. `/o/[tenantId]/clientes/[customerId]`. */
+  /** Como la escribe Next.js, p. ej. `/o/[tenantId]/clientes/[customerId]`. Sin grupos `(x)`. */
   path: string;
-  kind: "page" | "api";
-  /** Sin organización ni sesión: no hay nada que aislar (p. ej. `/api/v1/ping`). */
-  public?: boolean;
+  /** `page` = page.*; `api` = route.* bajo `/api/v1`; `route` = otro route.* (p. ej. `/auth/callback`). */
+  kind: "page" | "api" | "route";
+  scope: RouteScope;
 }
 
 export const APP_ROUTES: AppRoute[] = [
-  { path: "/api/v1/ping", kind: "api", public: true },
-  { path: "/o/[tenantId]", kind: "page" },
-  { path: "/o/[tenantId]/catalogo", kind: "page" },
-  { path: "/o/[tenantId]/clientes", kind: "page" },
-  { path: "/o/[tenantId]/clientes/nuevo", kind: "page" },
-  { path: "/o/[tenantId]/clientes/[customerId]", kind: "page" },
-  { path: "/o/[tenantId]/configuracion", kind: "page" },
-  { path: "/o/[tenantId]/configuracion/numeracion", kind: "page" },
-  { path: "/o/[tenantId]/cotizaciones", kind: "page" },
+  { path: "/", kind: "page", scope: "none" },
+  { path: "/ingresar", kind: "page", scope: "none" },
+  { path: "/registro", kind: "page", scope: "none" },
+  { path: "/aceptar-terminos", kind: "page", scope: "none" },
+  { path: "/organizaciones/nueva", kind: "page", scope: "none" },
+  { path: "/privacidad", kind: "page", scope: "none" },
+  { path: "/terminos", kind: "page", scope: "none" },
+  { path: "/auth/callback", kind: "route", scope: "none" },
+  { path: "/api/v1/ping", kind: "api", scope: "none" },
+  { path: "/o/[tenantId]", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/catalogo", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/clientes", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/clientes/nuevo", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/clientes/[customerId]", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/configuracion", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/configuracion/numeracion", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/cotizaciones", kind: "page", scope: "tenant" },
 ];
+
+/** Pantallas dentro de una organización (las que se atacan con la dirección de otra). */
+export const TENANT_PAGES = APP_ROUTES.filter((r) => r.kind === "page" && r.scope === "tenant");
 
 /** Dirección concreta de una ruta de pantalla para una organización (y un cliente, si lo pide). */
 export function concretePath(route: AppRoute, tenantId: string, customerId: string): string {

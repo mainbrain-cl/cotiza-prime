@@ -409,9 +409,6 @@ describe("criterio 3 · el dato de 'última organización usada' no se filtra a 
       headers: tenantHeader(fx.orgs.A.tenantId),
     });
     // Debe ser un rechazo, o filas sin el dato de B
-    if (peek.status < 400) {
-      expect(peek.text).not.toContain(fx.orgs.B.tenantId);
-    }
     expect(peek.text).not.toContain(fx.orgs.B.tenantId);
     // y tampoco por la puerta de atrás: filtrar por esa columna
     const probe = await rest(
@@ -447,7 +444,26 @@ describe("X4 · GraphQL aplica las mismas reglas", () => {
     profilesCollection { edges { node { user_id full_name } } }
   }`;
 
-  it("con la cabecera de B, Ana no ve nada de B; con A solo lo de A", async () => {
+  /**
+   * GraphQL no existe en Cotiza Prime (migración 13 quita pg_graphql y config.toml no expone
+   * `graphql_public`). La prueba exige la respuesta explícita de "no está habilitado": un rechazo
+   * sin datos. Si alguien reactivara GraphQL, responder 200 con `data` rompe esta prueba, aunque
+   * el contenido fuera inofensivo.
+   */
+  function expectGraphqlDisabled(res: HttpResult, label: string) {
+    expect(
+      res.status,
+      `${label}: GraphQL debe estar deshabilitado (${res.text.slice(0, 160)})`,
+    ).toBeGreaterThanOrEqual(400);
+    const body = (res.json ?? {}) as Record<string, unknown>;
+    expect(body, `${label}: GraphQL no debe devolver datos`).not.toHaveProperty("data");
+    // PostgREST: "Invalid schema: graphql_public" (PGRST106) o ruta inexistente (PGRST125)
+    expect(res.text, `${label}: se esperaba la respuesta de "no habilitado"`).toMatch(
+      /PGRST106|PGRST125|Invalid schema|not exposed|Not Found|not found/i,
+    );
+  }
+
+  it("con sesión, /graphql/v1 responde 'no habilitado' con cualquier cabecera de organización", async () => {
     const fx = fixture();
     const token = await tokenOf("ana");
     for (const [header, label] of [
@@ -456,17 +472,19 @@ describe("X4 · GraphQL aplica las mismas reglas", () => {
       [undefined, "ninguna"],
     ] as const) {
       const res = await graphql(token, query, tenantHeader(header));
+      expectGraphqlDisabled(res, `con ${label}`);
       for (const key of ["B", "C"] as OrgKey[]) {
-        expect(res.text, `GraphQL con ${label}`).not.toContain(fx.orgs[key].tenantId);
-        expect(res.text, `GraphQL con ${label}`).not.toContain(fx.orgs[key].canary);
+        expect(res.text).not.toContain(fx.orgs[key].tenantId);
+        expect(res.text).not.toContain(fx.orgs[key].canary);
       }
       expect(res.text).not.toContain(fx.personas.beto.userId);
     }
   });
 
-  it("sin sesión, GraphQL no entrega datos de negocio", async () => {
+  it("sin sesión, /graphql/v1 también responde 'no habilitado'", async () => {
     const fx = fixture();
     const res = await graphql(null, query, tenantHeader(fx.orgs.B.tenantId));
+    expectGraphqlDisabled(res, "sin sesión");
     for (const key of ORG_KEYS) {
       expect(res.text).not.toContain(fx.orgs[key].canary);
     }

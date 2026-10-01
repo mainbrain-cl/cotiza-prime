@@ -1,0 +1,90 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const rpc = vi.fn();
+vi.mock("@/lib/supabase/admin-client", () => ({ createAdminClient: () => ({ rpc }) }));
+vi.mock("@/lib/log/server-log", () => ({ serverLog: vi.fn() }));
+vi.mock("@/lib/crypto/search-hash", () => ({
+  // Huella legible para comprobar qué se está contando
+  searchHash: (field: string, _tenant: string, value: string) => `${field}|${value}`,
+}));
+
+import {
+  TENANT_DENIED_MAX_LOGGED_PER_WINDOW,
+  ipLimitKey,
+  recordSignupAttempt,
+  shouldLogTenantDenied,
+} from "./login-rate-limit";
+
+beforeEach(() => rpc.mockReset().mockResolvedValue({ data: null, error: null }));
+afterEach(() => vi.unstubAllEnvs());
+
+describe("ipLimitKey", () => {
+  it("una IPv4 cuenta tal cual", () => {
+    expect(ipLimitKey("203.0.113.7")).toBe("203.0.113.7");
+  });
+
+  it("una IPv6 se agrupa por bloque /64, sin importar los últimos 64 bits", () => {
+    const a = ipLimitKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd");
+    const b = ipLimitKey("2001:db8:1:2::1");
+    expect(a).toBe("2001:0db8:0001:0002::/64");
+    expect(b).toBe(a);
+    expect(ipLimitKey("2001:db8:1:3::1")).not.toBe(a);
+  });
+
+  it("expande bien las formas abreviadas", () => {
+    expect(ipLimitKey("::1")).toBe("0000:0000:0000:0000::/64");
+    expect(ipLimitKey("2001:db8::")).toBe("2001:0db8:0000:0000::/64");
+    expect(ipLimitKey("2001:DB8::5:6")).toBe("2001:0db8:0000:0000::/64");
+  });
+
+  it("una IPv4 escrita como IPv6 cuenta como IPv4", () => {
+    expect(ipLimitKey("::ffff:203.0.113.7")).toBe("203.0.113.7");
+  });
+});
+
+describe("registro sin IP conocida", () => {
+  it("en producción cuenta en el grupo 'desconocida'", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    await recordSignupAttempt(null);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_scope: "signup_ip",
+      p_key_hash: "signup_ip|desconocida",
+    });
+  });
+
+  it("fuera de producción no se limita sin IP", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    await recordSignupAttempt(null);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("shouldLogTenantDenied", () => {
+  it("registra hasta el tope y deja de registrar al pasarlo", async () => {
+    let calls = 0;
+    rpc.mockImplementation(async () => {
+      calls += 1;
+      // la base bloquea al llegar al máximo configurado (tope + 1)
+      return {
+        data: calls > TENANT_DENIED_MAX_LOGGED_PER_WINDOW ? "2026-10-01T00:00:00Z" : null,
+        error: null,
+      };
+    });
+    const results: boolean[] = [];
+    for (let i = 0; i < TENANT_DENIED_MAX_LOGGED_PER_WINDOW + 3; i += 1) {
+      results.push(await shouldLogTenantDenied("u1"));
+    }
+    expect(results.filter(Boolean)).toHaveLength(TENANT_DENIED_MAX_LOGGED_PER_WINDOW);
+    expect(results.slice(0, TENANT_DENIED_MAX_LOGGED_PER_WINDOW).every(Boolean)).toBe(true);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_scope: "tenant_denied_user",
+      p_max_failures: TENANT_DENIED_MAX_LOGGED_PER_WINDOW + 1,
+    });
+  });
+
+  it("si el contador falla, se registra igual", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    expect(await shouldLogTenantDenied("u1")).toBe(true);
+  });
+});

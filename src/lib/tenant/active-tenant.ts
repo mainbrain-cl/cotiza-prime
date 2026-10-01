@@ -20,6 +20,7 @@ import { cache } from "react";
 import { logAuditEvent } from "@/lib/audit/log";
 import { requireUser, type SessionUser } from "@/lib/auth/session";
 import { getRequestContext } from "@/lib/http/request-context";
+import { shouldLogTenantDenied } from "@/lib/security/login-rate-limit";
 import { createClient } from "@/lib/supabase/server";
 import {
   CLIENT_IP_HEADER,
@@ -94,14 +95,18 @@ export async function resolveActiveTenant(input: {
     : undefined;
 
   if (!membership) {
-    await logAuditEvent({
-      action: "tenant.access_denied",
-      result: "denied",
-      actorUserId: userId,
-      resourceType: "tenant",
-      resourceId: isUuid(requestedTenantId) ? requestedTenantId : undefined,
-      details: { reason: canonical ? "not_a_member" : "invalid_id" },
-    });
+    // Tope por persona y ventana: quien prueba direcciones ajenas en bucle no llena la auditoría.
+    // La respuesta es la misma (404) se escriba o no el registro.
+    if (await shouldLogTenantDenied(userId)) {
+      await logAuditEvent({
+        action: "tenant.access_denied",
+        result: "denied",
+        actorUserId: userId,
+        resourceType: "tenant",
+        resourceId: isUuid(requestedTenantId) ? requestedTenantId : undefined,
+        details: { reason: canonical ? "not_a_member" : "invalid_id" },
+      });
+    }
     return null;
   }
 

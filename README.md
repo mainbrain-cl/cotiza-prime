@@ -28,6 +28,8 @@ Para apagar la base local: `npx supabase stop`.
 | `npm run format:check` | Verifica el formato sin modificar         |
 | `npm test`             | Pruebas unitarias (Vitest)                |
 | `npm run test:e2e`     | Pruebas de extremo a extremo (Playwright) |
+| `npm run test:db`      | Pruebas de la base de datos (necesitan `supabase start` y `supabase db reset`) |
+| `npm run test:db:rollbacks` | Prueba los deshacer de las migraciones (borra los datos de la base local) |
 
 La primera vez, `npx playwright install chromium` descarga el navegador de las pruebas.
 

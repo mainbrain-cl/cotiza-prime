@@ -1,0 +1,317 @@
+<title>Plantilla 1 de cotización</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Geist:wght@400;500;600&display=swap">
+<style>
+/* Layout: mesa de revisión (tokens de la app) con la hoja carta al centro; la hoja es siempre papel blanco. */
+:root {
+  --ground: #EEF1F6; --panel: #FFFFFF; --line: #DDE2EA; --ink: #0F1729; --muted: #4B5468; --subtle: #6B7489;
+  --accent: #2B54E0; --accent-soft: #E8EEFF; --ok: #16794A; --warn: #8F5400; --warn-soft: #FFF1D6;
+  --ui: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* La hoja: siempre papel, nunca cambia con el tema */
+  --paper: #FFFFFF; --paper-ink: #1A1F2B; --paper-muted: #5B6273; --paper-line: #E3E6EC; --paper-zebra: #F7F8FA;
+  --doc: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --doc-mono: "IBM Plex Mono", "SF Mono", Consolas, monospace;
+  /* Marca de la organización (valores de ejemplo; los cambia el script) */
+  --brand: #0E4C7A; --brand-text: #0E4C7A; --brand-2: #E8A33D; --on-brand: #FFFFFF; --brand-tint: #E9F0F6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --ground: #0A0E16; --panel: #121823; --line: #242D3D; --ink: #EEF1F7; --muted: #AEB6C6; --subtle: #8A93A6; --accent: #7D9BFF; --accent-soft: #1A2547; --ok: #4CC38A; --warn: #F0B54A; --warn-soft: #2C210E; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --ground: #0A0E16; --panel: #121823; --line: #242D3D; --ink: #EEF1F7; --muted: #AEB6C6; --subtle: #8A93A6; --accent: #7D9BFF; --accent-soft: #1A2547; --ok: #4CC38A; --warn: #F0B54A; --warn-soft: #2C210E; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--ui); font-size: 15px; line-height: 1.5; padding-inline: 16px; margin: 0; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-block: 32px 64px; display: grid; gap: 24px; }
+h1 { font-size: 30px; letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+h2 { font-size: 17px; margin: 0; }
+p { margin: 0; max-width: 66ch; }
+.muted { color: var(--muted); }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--subtle); }
+
+.layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 960px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+.controls { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 20px; display: grid; gap: 20px; position: sticky; top: 16px; }
+@media (max-width: 960px) { .controls { position: static; } }
+.group { display: grid; gap: 8px; }
+.group > label, .group > span { font-size: 13px; font-weight: 600; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button { font: inherit; font-size: 13px; padding: 8px 12px; min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+.seg button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.colors { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.colors label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+input[type="color"] { width: 44px; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: none; padding: 2px; cursor: pointer; }
+.contrast { font-size: 12px; padding: 8px 10px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); }
+.contrast[hidden] { display: none; }
+.rules { font-size: 13px; color: var(--muted); display: grid; gap: 6px; padding-left: 1.1em; margin: 0; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- La hoja ---------- */
+.stage { min-width: 0; display: grid; gap: 24px; justify-items: center; }
+.sheet-scroll { width: 100%; overflow-x: auto; display: grid; justify-items: center; padding-bottom: 8px; }
+.sheet {
+  width: 816px; min-height: 1056px; /* carta: 8,5 × 11 pulgadas a 96 ppp */
+  background: var(--paper); color: var(--paper-ink);
+  font-family: var(--doc); font-size: 10.5pt; line-height: 1.45;
+  box-shadow: 0 16px 40px rgba(15,23,41,.16), 0 2px 6px rgba(15,23,41,.08);
+  display: flex; flex-direction: column; position: relative;
+  padding: 56px 60px 40px;
+  font-variant-numeric: tabular-nums;
+}
+.sheet.a4 { width: 794px; min-height: 1123px; }
+.sheet::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 6px; background: var(--brand); }
+.sheet::after { content: ""; position: absolute; left: 0; width: 34%; top: 6px; height: 3px; background: var(--brand-2); }
+
+.doc-head { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: start; }
+.issuer { display: grid; gap: 10px; }
+.logo { height: 52px; display: flex; align-items: center; gap: 12px; }
+.logo svg { height: 52px; width: auto; }
+.issuer-name { font-size: 15pt; font-weight: 700; letter-spacing: -.01em; color: var(--paper-ink); }
+.issuer-data { font-size: 8.5pt; color: var(--paper-muted); line-height: 1.55; }
+.docid { text-align: right; display: grid; gap: 4px; justify-items: end; }
+.docid .kind { font-size: 9pt; font-weight: 600; letter-spacing: .18em; color: var(--brand-text); }
+.docid .number { font-family: var(--doc-mono); font-size: 17pt; font-weight: 500; letter-spacing: -.01em; color: var(--paper-ink); }
+.docid .version { font-size: 8.5pt; color: var(--paper-muted); }
+.dates { margin-top: 10px; display: grid; grid-template-columns: auto auto; gap: 2px 14px; font-size: 8.5pt; }
+.dates dt { color: var(--paper-muted); text-align: right; }
+.dates dd { margin: 0; font-weight: 600; text-align: right; }
+
+.parties { margin-top: 32px; display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; padding: 16px 18px; background: var(--brand-tint); border-radius: 6px; }
+.party .label { font-size: 7.5pt; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--brand-text); margin-bottom: 4px; }
+.party .name { font-weight: 600; font-size: 11pt; }
+.party .data { font-size: 8.5pt; color: var(--paper-muted); line-height: 1.55; }
+
+.items { margin-top: 26px; width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+.items thead th { text-align: left; font-size: 7.5pt; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--paper-muted); padding: 0 8px 8px; border-bottom: 1.5px solid var(--paper-ink); }
+.items td { padding: 10px 8px; border-bottom: 1px solid var(--paper-line); vertical-align: top; }
+.items tbody tr:nth-child(even) td { background: var(--paper-zebra); }
+.items .r { text-align: right; white-space: nowrap; }
+.items .desc b { font-weight: 600; display: block; }
+.items .desc span { font-size: 8.5pt; color: var(--paper-muted); }
+.items .tag { display: inline-block; font-size: 7pt; font-weight: 600; letter-spacing: .06em; border: 1px solid var(--paper-line); color: var(--paper-muted); border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: 1px; }
+.items .disc { color: var(--paper-muted); font-size: 8.5pt; }
+
+.summary { margin-top: 22px; display: grid; grid-template-columns: 1fr 300px; gap: 28px; align-items: start; }
+.notes { display: grid; gap: 14px; font-size: 8.5pt; color: var(--paper-muted); }
+.notes h4 { margin: 0 0 4px; font-size: 7.5pt; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--brand-text); }
+.notes ul { margin: 0; padding-left: 1.1em; display: grid; gap: 2px; }
+.totals { display: grid; gap: 0; font-size: 9.5pt; }
+.totals .row { display: flex; justify-content: space-between; padding: 6px 2px; border-bottom: 1px solid var(--paper-line); }
+.totals .row span:first-child { color: var(--paper-muted); }
+.totals .grand { margin-top: 10px; background: var(--brand); color: var(--on-brand); border-radius: 6px; padding: 12px 14px; display: flex; justify-content: space-between; align-items: baseline; }
+.totals .grand span:first-child { font-size: 8pt; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; }
+.totals .grand span:last-child { font-size: 16pt; font-weight: 700; letter-spacing: -.01em; }
+.terms { margin-top: 10px; font-size: 8pt; color: var(--paper-muted); }
+
+.doc-foot { margin-top: auto; padding-top: 28px; display: flex; justify-content: space-between; gap: 16px; font-size: 7.5pt; color: var(--paper-muted); border-top: 1px solid var(--paper-line); }
+.continued { font-size: 8pt; color: var(--paper-muted); text-align: right; margin-top: 10px; font-style: italic; }
+
+.notes-card { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 20px 22px; display: grid; gap: 10px; width: 100%; max-width: 816px; }
+.notes-card ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:8px">
+    <span class="eyebrow">Propuesta para aprobar · H-028</span>
+    <h1>Plantilla 1 de cotización</h1>
+    <p class="muted">El documento que recibe el cliente final. Manda la marca de cada organización: aquí no aparece Cotiza Prime. Cambia la empresa de ejemplo, los colores, el tamaño de hoja y la cantidad de líneas para ver cómo se adapta.</p>
+  </header>
+
+  <div class="layout">
+    <aside class="controls" aria-label="Controles de la vista previa">
+      <div class="group">
+        <span>Empresa de ejemplo</span>
+        <div class="seg" role="group" aria-label="Empresa de ejemplo">
+          <button type="button" id="org-andes" data-org="andes" aria-pressed="true">Transportes Andes</button>
+          <button type="button" id="org-biobio" data-org="biobio" aria-pressed="false">Mudanzas Bío Bío</button>
+          <button type="button" id="org-tecno" data-org="tecno" aria-pressed="false">TecnoClima</button>
+        </div>
+      </div>
+      <div class="group">
+        <span>Colores de la marca</span>
+        <div class="colors">
+          <label for="c1"><input type="color" id="c1" value="#0E4C7A"> Principal</label>
+          <label for="c2"><input type="color" id="c2" value="#E8A33D"> Secundario</label>
+        </div>
+        <p class="contrast" id="contrast-note" hidden>Este color se lee mal sobre blanco. La plantilla lo usa en franjas y fondos, y para los textos usa una versión más oscura automáticamente.</p>
+      </div>
+      <div class="group">
+        <span>Hoja</span>
+        <div class="seg" role="group" aria-label="Tamaño de hoja">
+          <button type="button" id="size-letter" data-size="letter" aria-pressed="true">Carta</button>
+          <button type="button" id="size-a4" data-size="a4" aria-pressed="false">A4</button>
+        </div>
+      </div>
+      <div class="group">
+        <span>Líneas</span>
+        <div class="seg" role="group" aria-label="Cantidad de líneas">
+          <button type="button" id="lines-few" data-lines="few" aria-pressed="true">Pocas</button>
+          <button type="button" id="lines-many" data-lines="many" aria-pressed="false">Muchas (2 páginas)</button>
+        </div>
+      </div>
+      <div class="group">
+        <span>Lo que la organización puede cambiar</span>
+        <ul class="rules">
+          <li>Logo, color principal y secundario</li>
+          <li>Sus datos, condiciones y observaciones (texto con formato básico)</li>
+        </ul>
+        <span style="margin-top:6px">Lo que no</span>
+        <ul class="rules">
+          <li>La estructura, la tipografía y el orden de los bloques</li>
+          <li>Los cálculos: los montos vienen del servidor</li>
+          <li>Nada de HTML ni código libre</li>
+        </ul>
+      </div>
+    </aside>
+
+    <div class="stage" id="stage"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var ORGS = {
+    andes: { name: "Transportes Andes SpA", rut: "76.482.913-5", giro: "Transporte de carga por carretera", addr: "Av. Américo Vespucio 1520, Bodega 14, Quilicura, Santiago", contact: "ventas@transportesandes.cl · +56 2 2945 3100", c1: "#0E4C7A", c2: "#E8A33D", mark: "TA",
+      client: { name: "Distribuidora Maule Ltda.", rut: "77.120.554-K", attn: "Atención: Carolina Muñoz, Jefa de Logística", addr: "Camino a San Clemente km 4, Talca", mail: "cmunoz@distmaule.cl" },
+      number: "COT-2026-0043", version: "Versión 2",
+      lines: [
+        ["Flete Santiago – Talca, camión 3/4", "Carga paletizada, 6 pallets, 2.800 kg. Retiro en bodega del cliente.", 1, "servicio", 680000, "", false],
+        ["Ayudante de carga y descarga", "2 ayudantes, jornada completa", 2, "día", 45000, "", false],
+        ["Seguro de carga", "Cobertura hasta $25.000.000", 1, "servicio", 38000, "", true],
+        ["Retorno vacío", "Tramo Talca – Santiago", 1, "servicio", 210000, "10%", false]
+      ],
+      extra: ["Peaje Angostura y Río Maipo", "Según ruta declarada", 1, "servicio", 18600, "", false],
+      notes: ["Carga y descarga a pie de camión.", "No incluye embalaje ni almacenaje.", "Ventana de retiro: 08:00 a 12:00."],
+      pay: "50% al aceptar y 50% al finalizar el servicio." },
+    biobio: { name: "Mudanzas Bío Bío", rut: "12.345.678-5", giro: "Mudanzas y fletes", addr: "Calle Freire 845, Concepción", contact: "contacto@mudanzasbiobio.cl · +56 9 8765 4321", c1: "#1F6B4F", c2: "#9BD3AE", mark: "BB",
+      client: { name: "María José Contreras", rut: "16.554.201-3", attn: "", addr: "Los Carrera 1130, depto. 402, Concepción", mail: "mjcontreras@correo.cl" },
+      number: "COT-2043", version: "",
+      lines: [
+        ["Mudanza departamento 2D", "Camión 25 m³ con 3 auxiliares", 1, "servicio", 420000, "", false],
+        ["Embalaje de vajilla y libros", "Incluye cajas y film", 12, "caja", 3500, "", false],
+        ["Armado y desarmado de muebles", "Camas, closet y comedor", 4, "hora", 18000, "5%", false]
+      ],
+      extra: ["Subida por escalera", "Cuarto piso sin ascensor", 1, "servicio", 35000, "", false],
+      notes: ["Valores para una visita en día hábil.", "Objetos de valor los traslada el cliente."],
+      pay: "100% al aceptar la cotización." },
+    tecno: { name: "TecnoClima Servicios Ltda.", rut: "78.903.112-4", giro: "Instalación y mantención de climatización", addr: "Av. Brasil 2210, Valparaíso", contact: "cotizaciones@tecnoclima.cl · +56 32 245 8800", c1: "#F4D35E", c2: "#2D3142", mark: "TC",
+      client: { name: "Clínica Dental Sonrisa SpA", rut: "76.991.402-8", attn: "Atención: Dr. Felipe Rojas", addr: "Av. Libertad 560, Viña del Mar", mail: "administracion@sonrisa.cl" },
+      number: "COT-2026-0118", version: "",
+      lines: [
+        ["Mantención preventiva split 12.000 BTU", "Limpieza de filtros, serpentines y revisión de gas", 4, "equipo", 42000, "", false],
+        ["Técnico certificado", "Visita de diagnóstico", 3, "hora", 18000, "", false],
+        ["Kit de filtros de repuesto", "", 4, "unidad", 12500, "", false]
+      ],
+      extra: ["Traslado a Viña del Mar", "", 1, "servicio", 15000, "", false],
+      notes: ["Garantía de 90 días sobre la mano de obra.", "Repuestos adicionales se cotizan aparte."],
+      pay: "100% al aceptar la cotización." }
+  };
+  var state = { org: "andes", size: "letter", lines: "few", c1: ORGS.andes.c1, c2: ORGS.andes.c2 };
+  var IVA_RATE = 0.19;
+
+  function clp(n) { return "$" + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, "."); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function lum(hex) {
+    var v = hex.replace("#", ""); var rgb = [0, 2, 4].map(function (i) { var c = parseInt(v.substr(i, 2), 16) / 255; return c <= .03928 ? c / 12.92 : Math.pow((c + .055) / 1.055, 2.4); });
+    return .2126 * rgb[0] + .7152 * rgb[1] + .0722 * rgb[2];
+  }
+  function contrastWhite(hex) { return 1.05 / (lum(hex) + .05); }
+  function darken(hex, f) { var v = hex.replace("#", ""); return "#" + [0, 2, 4].map(function (i) { var c = Math.round(parseInt(v.substr(i, 2), 16) * f); return ("0" + c.toString(16)).slice(-2); }).join(""); }
+  function tint(hex) { var v = hex.replace("#", ""); return "#" + [0, 2, 4].map(function (i) { var c = parseInt(v.substr(i, 2), 16); var t = Math.round(c + (255 - c) * .9); return ("0" + t.toString(16)).slice(-2); }).join(""); }
+
+  function brandVars() {
+    var c1 = state.c1, text = c1, f = 0.95, guard = 0;
+    while (contrastWhite(text) < 4.5 && guard < 40) { text = darken(c1, f); f -= .05; guard++; }
+    var onBrand = contrastWhite(c1) >= 4.5 ? "#FFFFFF" : "#111111";
+    var r = document.documentElement.style;
+    r.setProperty("--brand", c1); r.setProperty("--brand-text", text); r.setProperty("--brand-2", state.c2);
+    r.setProperty("--on-brand", onBrand); r.setProperty("--brand-tint", tint(c1));
+    document.getElementById("contrast-note").hidden = contrastWhite(c1) >= 4.5;
+  }
+
+  function lineRows(org) {
+    var rows = org.lines.slice();
+    if (state.lines === "many") { for (var i = 0; i < 6; i++) { rows = rows.concat(org.lines.map(function (l, k) { var c = l.slice(); c[0] = l[0] + " · tramo " + (i + 2); return c; })); } }
+    rows.push(org.extra);
+    return rows;
+  }
+  function calc(rows) {
+    var afecto = 0, exento = 0, desc = 0;
+    rows.forEach(function (l) { var gross = l[2] * l[4]; var d = l[5] ? Math.round(gross * parseInt(l[5], 10) / 100) : 0; desc += d; if (l[6]) exento += gross - d; else afecto += gross - d; });
+    var iva = Math.round(afecto * IVA_RATE);
+    return { sub: afecto + exento + desc, desc: desc, afecto: afecto, exento: exento, iva: iva, total: afecto + exento + iva };
+  }
+  function logoSvg(org) {
+    return '<svg viewBox="0 0 52 52" aria-hidden="true"><rect width="52" height="52" rx="12" fill="var(--brand)"/><rect x="0" y="40" width="52" height="12" fill="var(--brand-2)" clip-path="inset(0 round 0 0 12px 12px)"/><text x="26" y="31" text-anchor="middle" font-family="IBM Plex Sans, Arial" font-weight="700" font-size="18" fill="var(--on-brand)">' + org.mark + '</text></svg>';
+  }
+  function rowHtml(l) {
+    var gross = l[2] * l[4]; var d = l[5] ? Math.round(gross * parseInt(l[5], 10) / 100) : 0;
+    return '<tr><td class="desc"><b>' + esc(l[0]) + (l[6] ? '<span class="tag">EXENTO</span>' : "") + '</b>' + (l[1] ? '<span>' + esc(l[1]) + '</span>' : "") + '</td>' +
+      '<td class="r">' + l[2] + '</td><td>' + esc(l[3]) + '</td><td class="r">' + clp(l[4]) + '</td>' +
+      '<td class="r disc">' + (l[5] ? "−" + l[5] : "—") + '</td><td class="r"><b>' + clp(gross - d) + '</b></td></tr>';
+  }
+  function head(org, pageNo, pages) {
+    return '<div class="doc-head"><div class="issuer"><div class="logo">' + logoSvg(org) + '<div class="issuer-name">' + esc(org.name) + '</div></div>' +
+      '<div class="issuer-data">RUT ' + org.rut + ' · ' + esc(org.giro) + '<br>' + esc(org.addr) + '<br>' + esc(org.contact) + '</div></div>' +
+      '<div class="docid"><span class="kind">COTIZACIÓN</span><span class="number">' + org.number + '</span>' + (org.version ? '<span class="version">' + org.version + '</span>' : "") +
+      (pageNo === 1 ? '<dl class="dates"><dt>Fecha</dt><dd>05-10-2026</dd><dt>Válida hasta</dt><dd>20-10-2026</dd></dl>' : '<span class="version">Página ' + pageNo + ' de ' + pages + '</span>') + '</div></div>';
+  }
+  function thead() { return '<thead><tr><th>Descripción</th><th class="r">Cant.</th><th>Unidad</th><th class="r">Precio unit.</th><th class="r">Desc.</th><th class="r">Total</th></tr></thead>'; }
+  function foot(org, pageNo, pages) {
+    return '<div class="doc-foot"><span>' + esc(org.name) + ' · ' + org.number + '</span><span>Esta cotización no es un documento tributario.</span><span>Página ' + pageNo + ' de ' + pages + '</span></div>';
+  }
+
+  function render() {
+    var org = ORGS[state.org]; var rows = lineRows(org); var t = calc(rows);
+    var perFirst = 11, perNext = 22;
+    var pages = rows.length <= perFirst ? 1 : 1 + Math.ceil((rows.length - perFirst) / perNext);
+    var html = "", idx = 0;
+    for (var p = 1; p <= pages; p++) {
+      var take = p === 1 ? perFirst : perNext; var chunk = rows.slice(idx, idx + take); idx += take; var last = p === pages;
+      html += '<div class="sheet-scroll"><article class="sheet' + (state.size === "a4" ? " a4" : "") + '" aria-label="Página ' + p + ' de la cotización">' + head(org, p, pages);
+      if (p === 1) {
+        html += '<section class="parties"><div class="party"><div class="label">Para</div><div class="name">' + esc(org.client.name) + '</div><div class="data">RUT ' + org.client.rut + (org.client.attn ? '<br>' + esc(org.client.attn) : "") + '<br>' + esc(org.client.addr) + '<br>' + esc(org.client.mail) + '</div></div>' +
+          '<div class="party"><div class="label">Preparada por</div><div class="name">Juan Pérez</div><div class="data">Ejecutivo comercial<br>juan.perez@' + (org.contact.split("@")[1] || "").split(" ")[0] + '</div></div></section>';
+      }
+      html += '<table class="items">' + thead() + '<tbody>' + chunk.map(rowHtml).join("") + '</tbody></table>';
+      if (!last) html += '<p class="continued">Continúa en la página ' + (p + 1) + '</p>';
+      if (last) {
+        html += '<section class="summary"><div class="notes"><div><h4>Condiciones</h4><ul>' + org.notes.map(function (n) { return "<li>" + esc(n) + "</li>"; }).join("") + '</ul></div>' +
+          '<div><h4>Forma de pago</h4>' + esc(org.pay) + ' Los datos de transferencia se envían al aceptar.</div></div>' +
+          '<div class="totals"><div class="row"><span>Subtotal</span><span>' + clp(t.sub) + '</span></div>' +
+          (t.desc ? '<div class="row"><span>Descuentos</span><span>−' + clp(t.desc) + '</span></div>' : "") +
+          '<div class="row"><span>Neto afecto</span><span>' + clp(t.afecto) + '</span></div>' +
+          (t.exento ? '<div class="row"><span>Exento</span><span>' + clp(t.exento) + '</span></div>' : "") +
+          '<div class="row"><span>IVA 19%</span><span>' + clp(t.iva) + '</span></div>' +
+          '<div class="grand"><span>Total</span><span>' + clp(t.total) + '</span></div>' +
+          '<p class="terms">Valores en pesos chilenos.</p></div></section>';
+      }
+      html += foot(org, p, pages) + '</article></div>';
+    }
+    html += '<div class="notes-card"><h2>Cómo se arma</h2><ul>' +
+      '<li>Franja superior con el color principal y un acento con el secundario: la marca se reconoce sin recargar la hoja.</li>' +
+      '<li>Número grande y en tipografía de ancho fijo, para que se vea serio y se lea bien al teléfono.</li>' +
+      '<li>Las filas nunca se cortan entre páginas; cada página repite el encabezado de la tabla y el número.</li>' +
+      '<li>Si el color de la marca se lee mal sobre blanco, los textos usan una versión más oscura y el total cambia a texto oscuro.</li>' +
+      '<li>Los datos de transferencia no van en este PDF: se envían recién al aceptar (§6.5 del plan).</li>' +
+      '<li>Tipografía IBM Plex Sans (licencia SIL OFL), incrustada en el PDF.</li></ul></div>';
+    document.getElementById("stage").innerHTML = html;
+  }
+
+  function wire(attr, key, after) {
+    document.querySelectorAll("[data-" + attr + "]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        state[key] = b.dataset[attr];
+        document.querySelectorAll("[data-" + attr + "]").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+        if (after) after(); render();
+      });
+    });
+  }
+  wire("org", "org", function () { var o = ORGS[state.org]; state.c1 = o.c1; state.c2 = o.c2; document.getElementById("c1").value = o.c1; document.getElementById("c2").value = o.c2; brandVars(); });
+  wire("size", "size"); wire("lines", "lines");
+  document.getElementById("c1").addEventListener("input", function (e) { state.c1 = e.target.value; brandVars(); });
+  document.getElementById("c2").addEventListener("input", function (e) { state.c2 = e.target.value; brandVars(); });
+  brandVars(); render();
+})();
+</script>

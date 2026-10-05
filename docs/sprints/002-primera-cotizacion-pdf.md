@@ -58,18 +58,18 @@ Enviar por correo, enlace del cliente y aceptar (sprint 3); plantillas 2 y 3 (sp
 
 ---
 
-## Estado al cerrar la sesión del 2026-10-01
+## Estado al 2026-10-05
 
 | Historia | Estado |
 |---|---|
-| H-003 · Recuperar contraseña | ✅ Integrada. Falta probar el aviso por correo tras reiniciar Supabase y la revisión de Opus |
-| H-007 · Logo y colores | 🟠 A medias: el subagente se cortó por el límite semanal; trabajo sin verificar en la rama `worktree-agent-a83e3c73c22f35487` (commit `8b6e3cc`) |
-| H-021 · Editar o desactivar un servicio | ✅ Integrada. Falta la revisión de Opus |
-| H-023 · Ver y editar clientes | ✅ Integrada. Falta la revisión de Opus |
-| H-025 · Crear una cotización | 📐 Plan listo (`docs/arquitectura/cotizaciones-y-calculo.md`) |
-| 🔒 H-026 · Cantidades, precios y descuentos | 🟡 Paso 1 integrado (cálculo puro, 39 casos exactos); faltan base, paridad SQL y pantallas |
-| H-027 · Descuento global, vigencia, observaciones | ⬜ |
-| H-028 · PDF | ⬜ Espera la aprobación de la plantilla 1 |
-| H-115 · Pulido visual | ⬜ |
+| H-003 · Recuperar contraseña | ✅ Integrada, revisada por Opus y corregida (solo por enlace del correo); aviso por correo verificado |
+| H-007 · Logo y colores | ✅ Integrada (Storage sí entrega las cabeceras a la base; el logo se sirve por el servidor) |
+| H-021 · Editar o desactivar un servicio | ✅ Integrada, revisada y corregida |
+| H-023 · Ver y editar clientes | ✅ Integrada, revisada y corregida (búsqueda sin datos en la URL; auditoría solo de lo cambiado) |
+| H-025 · Crear una cotización | ✅ Integrada y aprobada por Opus. Falta que Aarón la pruebe |
+| 🔒 H-026 · Cantidades, precios y descuentos | ✅ Integrada; cálculo y fase B aprobados por Opus (sin bloqueantes), hallazgo corregido. Falta que Aarón la pruebe |
+| H-027 · Descuento global, vigencia, observaciones | ✅ Integrada (vigencia por defecto de la organización). Falta revisión de Opus en lote |
+| H-028 · PDF | 🔵 En construcción con la plantilla 1 propuesta (Aarón aún no la aprueba; vista previa en `docs/diseno/plantilla-1-pdf-vista-previa.html`) |
+| H-115 · Pulido visual | ✅ Integrada (esqueletos, transiciones, avisos; móvil 87–89) |
 
-Detalle del traspaso y orden de los pasos siguientes: `CLAUDE.md`, sección "Traspaso del 2026-10-01".
+**Decisión nueva:** 015 (vulnerabilidades sin corrección en herramientas de desarrollo), pendiente de ratificación de Aarón.

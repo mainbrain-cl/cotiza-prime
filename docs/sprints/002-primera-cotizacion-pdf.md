@@ -26,7 +26,7 @@ PDF**. Es el sprint del dinero: el cálculo tiene que cuadrar al peso, siempre.
 | 🔒 H-026 · Cantidades, precios y descuentos | grande | **La planifica Opus antes.** Cálculo en el servidor, enteros, orden fijo, tabla de casos conocidos |
 | H-027 · Descuento global, vigencia y observaciones | chico | |
 | H-028 · Ver la cotización como la verá el cliente | grande | PDF en el servidor con la **plantilla 1** |
-| H-115 · Pulido visual | mediano | Pedido de Aarón: esqueletos, transiciones, avisos animados |
+| H-115 · Pulido visual | ✅ Integrada y revisada (esqueletos también en cotizaciones) |
 
 ## Orden de construcción
 
@@ -58,18 +58,18 @@ Enviar por correo, enlace del cliente y aceptar (sprint 3); plantillas 2 y 3 (sp
 
 ---
 
-## Estado al 2026-10-05
+## Estado al 2026-10-05 — todas las historias construidas y revisadas; falta la prueba en pantalla de Aarón
 
 | Historia | Estado |
 |---|---|
 | H-003 · Recuperar contraseña | ✅ Integrada, revisada por Opus y corregida (solo por enlace del correo); aviso por correo verificado |
-| H-007 · Logo y colores | ✅ Integrada (Storage sí entrega las cabeceras a la base; el logo se sirve por el servidor) |
+| H-007 · Logo y colores | ✅ Integrada, revisada; bloqueante (SVG que congelaba el servidor) y subida directa a Storage corregidos |
 | H-021 · Editar o desactivar un servicio | ✅ Integrada, revisada y corregida |
 | H-023 · Ver y editar clientes | ✅ Integrada, revisada y corregida (búsqueda sin datos en la URL; auditoría solo de lo cambiado) |
 | H-025 · Crear una cotización | ✅ Integrada y aprobada por Opus. Falta que Aarón la pruebe |
 | 🔒 H-026 · Cantidades, precios y descuentos | ✅ Integrada; cálculo y fase B aprobados por Opus (sin bloqueantes), hallazgo corregido. Falta que Aarón la pruebe |
-| H-027 · Descuento global, vigencia, observaciones | ✅ Integrada (vigencia por defecto de la organización). Falta revisión de Opus en lote |
-| H-028 · PDF | 🔵 En construcción con la plantilla 1 propuesta (Aarón aún no la aprueba; vista previa en `docs/diseno/plantilla-1-pdf-vista-previa.html`) |
+| H-027 · Descuento global, vigencia, observaciones | ✅ Integrada y revisada por Opus |
+| H-028 · PDF | ✅ Integrada, revisada; bloqueante (texto largo cortado) y hallazgos corregidos (tope, caché, contraste). Plantilla 1 pendiente de aprobación de Aarón |
 | H-115 · Pulido visual | ✅ Integrada (esqueletos, transiciones, avisos; móvil 87–89) |
 
 **Decisión nueva:** 015 (vulnerabilidades sin corrección en herramientas de desarrollo), pendiente de ratificación de Aarón.

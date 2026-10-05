@@ -56,13 +56,14 @@ la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con
 
 ### Estado al 2026-10-05 — empezar por aquí
 
-**Sprint 2 (~90%):** todas las historias integradas en `main` salvo **H-028 (PDF)**, en construcción
-con la plantilla 1 propuesta. Detalle por historia: `docs/sprints/002-primera-cotizacion-pdf.md`.
-Revisiones de Opus hechas: H-003, H-021, H-023, cálculo de H-026, H-025/H-026 fase B. **Falta revisar:**
-H-007, H-027, H-028, H-115 (en lote). Luego Aarón prueba en pantalla y se cierra el sprint 2.
+**Sprint 2 (~97%):** las 9 historias construidas, integradas en `main` y revisadas por Opus, con todos los
+hallazgos corregidos. **Falta solo que Aarón lo pruebe en pantalla** y apruebe la plantilla 1 del PDF;
+luego, cierre del sprint 2 (comparar planificado vs. real) y partir el sprint 3 (`docs/sprints/001-base-segura.md`,
+tabla de los 11 sprints: enviar por correo, enlace del cliente y aceptar). El sprint 3 necesita el
+**dominio de correo** verificado (SPF, DKIM, DMARC).
 
-**Pruebas al último integrar:** 482 unitarias, 334 de base de datos, 656 de aislamiento, 42+ de punta
-a punta, todo en verde. 19 migraciones.
+**Pruebas al último integrar:** 531 unitarias, 339 de base de datos, 656 de aislamiento, 45 de punta a
+punta, todo en verde. 22 migraciones.
 
 **Decisiones esperando a Aarón:** aprobar la plantilla 1 del PDF (vista previa
 https://claude.ai/artifact/Ckd62T8HreUpARrfXWLYdg, copia en `docs/diseno/plantilla-1-pdf-vista-previa.html`);

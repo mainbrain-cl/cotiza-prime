@@ -1888,7 +1888,9 @@ antes del piloto, porque la aceptación de términos es prueba de consentimiento
 **Datos personales:** no
 **Notas técnicas:** pedido de Aarón al cerrar el sprint 1 (2026-10-01). Candidatas ya verificadas en
 `DISENO.md`: Motion, Sonner, cmdk, Embla. Se repite como pasada de pulido al final de cada sprint
-sobre las pantallas nuevas.
+sobre las pantallas nuevas. Pendiente de la revisión de H-028: si la generación del PDF falla, la
+pestaña nueva que abre el botón hoy muestra un texto plano ("No pudimos generar el PDF."); debe
+mostrar una página amable, con la marca de la aplicación y un botón para reintentar o volver.
 
 ---
 

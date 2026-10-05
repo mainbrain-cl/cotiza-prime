@@ -27,6 +27,31 @@ const LOGO_MAX_WIDTH = 150;
 const TOTALS_WIDTH = 225;
 const FOOTER_BOTTOM = 24;
 
+// Qué tan largo puede ser un bloque para tratarlo como "sin partir". Más largo que esto, el texto
+// puede continuar en la página siguiente: nunca se recorta ni se pierde nada. Las cifras son
+// aproximadas (caracteres por renglón según el ancho de la columna) y quedan muy por debajo del
+// alto de una hoja, para que un bloque "sin partir" siempre quepa en una.
+const DESCRIPTION_CHARS_PER_LINE = 48;
+const NOTES_CHARS_PER_LINE = 58;
+const MAX_UNBROKEN_ROW_LINES = 8;
+const MAX_SIDE_BY_SIDE_NOTE_LINES = 22;
+const TITLE_MIN_PRESENCE_AHEAD = 40;
+
+/** Renglones aproximados de un texto: cada salto de línea y cada desborde cuentan. */
+export function estimateLines(text: string, charsPerLine: number): number {
+  return text
+    .split("\n")
+    .reduce((sum, paragraph) => sum + Math.max(1, Math.ceil(paragraph.length / charsPerLine)), 0);
+}
+
+/** Una fila corta no se parte entre páginas; una muy larga sí puede continuar, sin perder texto. */
+export function isCompactLine(line: PdfLine): boolean {
+  const lines =
+    estimateLines(line.name, DESCRIPTION_CHARS_PER_LINE) +
+    (line.description ? estimateLines(line.description, DESCRIPTION_CHARS_PER_LINE) : 0);
+  return lines <= MAX_UNBROKEN_ROW_LINES;
+}
+
 const COLUMNS = {
   description: { flexGrow: 1, flexShrink: 1, flexBasis: 0 },
   quantity: { width: 38, textAlign: "right" as const },
@@ -141,6 +166,9 @@ const s = StyleSheet.create({
     lineHeight: BODY_LINE_HEIGHT,
     color: MUTED,
   },
+  summaryStacked: { marginTop: 17 },
+  totalsRight: { flexDirection: "row", justifyContent: "flex-end" },
+  notesFull: { marginTop: 16, fontSize: 8.5, lineHeight: BODY_LINE_HEIGHT, color: MUTED },
   noteBlock: { marginBottom: 10 },
   noteTitle: { fontSize: 7.5, fontWeight: 600, letterSpacing: 1.05, marginBottom: 3 },
   totals: { width: TOTALS_WIDTH, fontSize: 9.5, lineHeight: BODY_LINE_HEIGHT },
@@ -256,8 +284,12 @@ function TableHead() {
 
 function Row({ line, index }: { line: PdfLine; index: number }) {
   return (
-    // Una fila nunca se corta entre páginas.
-    <View wrap={false} style={[s.row, index % 2 === 1 ? { backgroundColor: ZEBRA } : {}]}>
+    // Una fila corta nunca se corta entre páginas. Si la descripción es larguísima, continúa en la
+    // página siguiente en vez de recortarse (el nombre y los montos quedan arriba, enteros).
+    <View
+      wrap={!isCompactLine(line)}
+      style={[s.row, index % 2 === 1 ? { backgroundColor: ZEBRA } : {}]}
+    >
       <View style={COLUMNS.description}>
         <View style={s.nameRow}>
           <Text style={s.name}>{line.name}</Text>
@@ -274,37 +306,71 @@ function Row({ line, index }: { line: PdfLine; index: number }) {
   );
 }
 
-function Summary({ data }: { data: QuoteDocumentData }) {
+function Totals({ data }: { data: QuoteDocumentData }) {
   const { totals, brand } = data;
-  const titleColor = { color: brand.primaryText };
-  const blocks: { title: string; text: string }[] = [];
+  return (
+    // Los totales nunca se parten: si no caben, pasan enteros a la página siguiente.
+    <View wrap={false} style={s.totals}>
+      <TotalRow label="Subtotal" value={totals.subtotal} />
+      {totals.globalDiscount ? (
+        <TotalRow label="Descuento global" value={totals.globalDiscount} />
+      ) : null}
+      <TotalRow label="Neto afecto" value={totals.netTaxable} />
+      {totals.exempt ? <TotalRow label="Exento" value={totals.exempt} /> : null}
+      <TotalRow label={totals.taxLabel} value={totals.tax} />
+      <View style={[s.grand, { backgroundColor: brand.primary }]}>
+        <Text style={[s.grandLabel, { color: brand.onPrimary }]}>TOTAL</Text>
+        <Text style={[s.grandValue, { color: brand.onPrimary }]}>{totals.total}</Text>
+      </View>
+      <Text style={s.terms}>Valores en pesos chilenos.</Text>
+    </View>
+  );
+}
+
+function Notes({ blocks, color }: { blocks: NoteBlock[]; color: string }) {
+  return blocks.map((block) => (
+    <View key={block.title} style={s.noteBlock}>
+      {/* El título nunca queda solo al pie de una página. */}
+      <Text minPresenceAhead={TITLE_MIN_PRESENCE_AHEAD} style={[s.noteTitle, { color }]}>
+        {block.title}
+      </Text>
+      <Text>{block.text}</Text>
+    </View>
+  ));
+}
+
+type NoteBlock = { title: string; text: string };
+
+function Summary({ data }: { data: QuoteDocumentData }) {
+  const blocks: NoteBlock[] = [];
   if (data.observations) blocks.push({ title: "OBSERVACIONES", text: data.observations });
   if (data.conditions) blocks.push({ title: "CONDICIONES", text: data.conditions });
   if (data.paymentTerms) blocks.push({ title: "FORMA DE PAGO", text: data.paymentTerms });
-  return (
-    // El resumen no se parte: si no cabe en la página, pasa entero a la siguiente.
-    <View wrap={false} style={s.summary}>
-      <View style={s.notes}>
-        {blocks.map((block) => (
-          <View key={block.title} style={s.noteBlock}>
-            <Text style={[s.noteTitle, titleColor]}>{block.title}</Text>
-            <Text>{block.text}</Text>
-          </View>
-        ))}
-      </View>
-      <View style={s.totals}>
-        <TotalRow label="Subtotal" value={totals.subtotal} />
-        {totals.globalDiscount ? (
-          <TotalRow label="Descuento global" value={totals.globalDiscount} />
-        ) : null}
-        <TotalRow label="Neto afecto" value={totals.netTaxable} />
-        {totals.exempt ? <TotalRow label="Exento" value={totals.exempt} /> : null}
-        <TotalRow label={totals.taxLabel} value={totals.tax} />
-        <View style={[s.grand, { backgroundColor: brand.primary }]}>
-          <Text style={[s.grandLabel, { color: brand.onPrimary }]}>TOTAL</Text>
-          <Text style={[s.grandValue, { color: brand.onPrimary }]}>{totals.total}</Text>
+  const noteLines = blocks.reduce(
+    (sum, block) => sum + 2 + estimateLines(block.text, NOTES_CHARS_PER_LINE),
+    0,
+  );
+
+  if (noteLines <= MAX_SIDE_BY_SIDE_NOTE_LINES) {
+    // Lo habitual: notas a la izquierda y totales a la derecha, todo junto en una página.
+    return (
+      <View wrap={false} style={s.summary}>
+        <View style={s.notes}>
+          <Notes blocks={blocks} color={data.brand.primaryText} />
         </View>
-        <Text style={s.terms}>Valores en pesos chilenos.</Text>
+        <Totals data={data} />
+      </View>
+    );
+  }
+  // Notas largas: los totales primero (a la derecha) y las notas debajo, a todo el ancho, que
+  // pueden continuar en la página siguiente sin perder ni una línea.
+  return (
+    <View style={s.summaryStacked}>
+      <View style={s.totalsRight}>
+        <Totals data={data} />
+      </View>
+      <View style={s.notesFull}>
+        <Notes blocks={blocks} color={data.brand.primaryText} />
       </View>
     </View>
   );

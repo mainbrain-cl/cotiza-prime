@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import { getOptionalUser } from "@/lib/auth/session";
+import { consumePdfQuota, PDF_LOCK_SECONDS } from "@/lib/security/login-rate-limit";
+import { pdfCache, pdfCacheKey } from "@/lib/pdf/cache";
 import { serverLog } from "@/lib/log/server-log";
 import { quotePdfFileName } from "@/lib/pdf/file-name";
 import { loadQuoteDocumentData } from "@/lib/pdf/quote-document-data";
@@ -26,7 +28,8 @@ export async function GET(
   context: RouteContext<"/api/v1/tenants/[tenantId]/quotes/[quoteId]/pdf">,
 ) {
   const { tenantId, quoteId } = await context.params;
-  if (!(await getOptionalUser())) return new Response(null, { status: 401 });
+  const user = await getOptionalUser();
+  if (!user) return new Response(null, { status: 401 });
 
   const url = new URL(request.url);
   const paper = paperFrom(url.searchParams.get("size"));
@@ -39,9 +42,33 @@ export async function GET(
     return new Response("No pudimos generar el PDF.", { status: 500 });
   }
 
+  // Armar un PDF grande es costoso: si nada cambió, se entrega el ya armado (la clave lleva la
+  // organización y una huella del contenido); y los PDF que sí se arman tienen tope por persona y
+  // por organización.
+  const cacheKey = pdfCacheKey({
+    tenantId: active.tenantId,
+    quoteId,
+    revision: result.revision,
+    paper,
+    data: result.data,
+  });
   let pdf: Buffer;
   try {
-    pdf = await renderQuotePdf(result.data);
+    const built = await pdfCache.getOrRender(
+      cacheKey,
+      () => consumePdfQuota(user.id, active.tenantId),
+      () => renderQuotePdf(result.data),
+    );
+    if (!built.ok) {
+      return new Response(
+        "Pediste muchos PDF en poco tiempo. Espera un minuto e inténtalo de nuevo.",
+        {
+          status: 429,
+          headers: { "Retry-After": String(PDF_LOCK_SECONDS), "Cache-Control": "no-store" },
+        },
+      );
+    }
+    pdf = built.pdf;
   } catch {
     await serverLog("error", "quote_pdf_render_failed");
     return new Response("No pudimos generar el PDF.", { status: 500 });

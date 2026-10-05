@@ -58,6 +58,25 @@ describe("auth_rate_limits", () => {
       expect(await lockedUntil("login_email", key)).not.toBeNull();
     }));
 
+  it.each(["pdf_user", "pdf_tenant"])(
+    "el alcance %s (tope de PDF) bloquea al llegar al máximo",
+    (scope) =>
+      withTx(db, async () => {
+        const key = hash();
+        for (let i = 1; i < MAX_FAILURES; i++) expect(await fail(scope, key)).toBeNull();
+        expect(await fail(scope, key)).not.toBeNull();
+      }),
+  );
+
+  it("un alcance desconocido sigue rechazado", () =>
+    withTx(db, async () => {
+      const error = await expectSqlError(
+        db,
+        "select public.auth_limit_record_failure('pdf_otro', 'x', 5, 60, 60)",
+      );
+      expect(error.code).toBe("23514");
+    }));
+
   it("seguir fallando con la cuenta bloqueada no alarga el bloqueo", () =>
     withTx(db, async () => {
       const key = hash();

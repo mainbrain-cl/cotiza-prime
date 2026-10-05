@@ -10,7 +10,7 @@ import { buildQuoteDocumentData } from "./quote-document-model";
 import type { PdfLogo, PdfPaperSize, QuoteDocumentData } from "./types";
 
 export type QuoteDocumentResult =
-  | { ok: true; data: QuoteDocumentData; numberDisplay: string; version: number }
+  | { ok: true; data: QuoteDocumentData; numberDisplay: string; version: number; revision: number }
   | { ok: false; reason: "not_found" | "failed" };
 
 /**
@@ -56,6 +56,7 @@ export async function loadQuoteDocumentData(
     ok: true,
     numberDisplay: quote.number_display,
     version: quote.version,
+    revision: quote.revision,
     data: buildQuoteDocumentData({
       paper,
       today: todayInChile(),

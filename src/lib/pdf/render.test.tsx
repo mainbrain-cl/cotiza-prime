@@ -4,10 +4,21 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readPdf } from "@/test/read-pdf";
 import { renderQuotePdf } from "./render";
-import { sampleDocument, sampleInput } from "./sample-data";
+import { buildQuoteDocumentData } from "./quote-document-model";
+import { formatClp } from "@/lib/money/clp";
+import {
+  sampleDocument,
+  sampleInput,
+  sampleItem,
+  sampleItems,
+  sampleQuoteRow,
+  sampleTotals,
+} from "./sample-data";
 
 const SAMPLE_PATH = path.join(process.cwd(), "tmp", "ejemplo-cotizacion.pdf");
 const MAX_SECONDS_40_LINES = 2;
+const TOTAL_4_LINES = formatClp(sampleTotals(sampleItems(4)).totalClp);
+const TOTAL_40_LINES = formatClp(sampleTotals(sampleItems(40)).totalClp);
 
 describe("renderQuotePdf (plantilla 1)", () => {
   it("genera un PDF con número, cliente, totales exactos, IVA y el aviso tributario; sin Cotiza Prime", async () => {
@@ -20,7 +31,7 @@ describe("renderQuotePdf (plantilla 1)", () => {
     const text = read.text;
     expect(text).toContain("COT-2026-0043");
     expect(text).toContain("Distribuidora Maule Ltda.");
-    expect(text).toContain("$1.170.880");
+    expect(text).toContain(TOTAL_4_LINES);
     expect(text).toContain("IVA 19%");
     expect(text).toContain("EXENTO");
     expect(text).toContain("Válida hasta");
@@ -67,7 +78,7 @@ describe("renderQuotePdf (plantilla 1)", () => {
       expect(page.text).toContain(`Página ${index + 1} de ${read.pageCount}`),
     );
     // El total solo aparece una vez, en la última página.
-    expect(read.pages.at(-1)?.text).toContain("$1.170.880");
+    expect(read.pages.at(-1)?.text).toContain(TOTAL_40_LINES);
   }, 30_000);
 
   it("carta y A4 dan hojas de tamaño distinto", async () => {
@@ -96,4 +107,45 @@ describe("renderQuotePdf (plantilla 1)", () => {
     const read = await readPdf(await renderQuotePdf(data));
     expect(read.text).toContain("TecnoClima Servicios Ltda.");
   });
+
+  it("observaciones y condiciones larguísimas, con muchos saltos de renglón, salen completas", async () => {
+    const longText = (tag: string) =>
+      Array.from(
+        { length: 80 },
+        (_, i) => `${tag}${String(i).padStart(3, "0")} texto de relleno`,
+      ).join("\n");
+    const observations = longText("OBS");
+    const conditions = longText("CON");
+    const data = sampleDocument({ quote: sampleQuoteRow({ observations, conditions }) });
+    const read = await readPdf(await renderQuotePdf(data));
+    expect(read.pageCount).toBeGreaterThanOrEqual(2);
+    for (let i = 0; i < 80; i += 1) {
+      expect(read.text).toContain(`OBS${String(i).padStart(3, "0")}`);
+      expect(read.text).toContain(`CON${String(i).padStart(3, "0")}`);
+    }
+    expect(read.text).toContain(TOTAL_4_LINES);
+  }, 30_000);
+
+  it("observaciones de 4.000 caracteres seguidos aparecen completas", async () => {
+    const words = Array.from({ length: 500 }, (_, i) => `P${String(i).padStart(3, "0")}xx`);
+    const data = sampleDocument({
+      quote: sampleQuoteRow({ observations: words.join(" "), conditions: null }),
+    });
+    const read = await readPdf(await renderQuotePdf(data));
+    for (const word of words) expect(read.text).toContain(word);
+  }, 30_000);
+
+  it("la descripción de una línea de 2.000 caracteres con saltos aparece completa", async () => {
+    const rows = Array.from({ length: 150 }, (_, i) => `D${String(i).padStart(3, "0")} detalle`);
+    const description = rows.join("\n");
+    const items = [sampleItem(0, { description })];
+    const data = buildQuoteDocumentData({
+      ...sampleInput({ lineCount: 1 }),
+      items,
+      paper: "letter",
+    });
+    const read = await readPdf(await renderQuotePdf(data));
+    expect(read.pageCount).toBeGreaterThanOrEqual(2);
+    for (let i = 0; i < 150; i += 1) expect(read.text).toContain(`D${String(i).padStart(3, "0")}`);
+  }, 30_000);
 });

@@ -26,6 +26,27 @@ describe("logoForPdf", () => {
     expect(logo?.data.subarray(1, 4).toString()).toBe("PNG");
   });
 
+  it.each([
+    ["4000", "1000"],
+    ["20000", "20000"],
+    ["8000", "400"],
+    ["20", "5"],
+  ])(
+    "un SVG que declara %s × %s se convierte a un PNG de tamaño acotado",
+    async (width, height) => {
+      const svg = new TextEncoder().encode(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 200 50"><rect width="200" height="50" fill="#0e4c7a"/></svg>`,
+      );
+      const logo = await logoForPdf(svg);
+      expect(logo?.format).toBe("png");
+      // IHDR: ancho y alto del PNG resultante, dentro de lo razonable para un logo de 39 pt.
+      const pngWidth = logo!.data.readUInt32BE(16);
+      const pngHeight = logo!.data.readUInt32BE(20);
+      expect(pngWidth).toBeLessThanOrEqual(1200);
+      expect(pngHeight).toBeLessThanOrEqual(240);
+    },
+  );
+
   it("un archivo que no pasa la revisión (subido a mano a Storage) deja el documento sin logo", async () => {
     const script = new TextEncoder().encode(
       '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',

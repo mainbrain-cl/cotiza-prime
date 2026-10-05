@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { buildQuoteDocumentData, validityOf } from "./quote-document-model";
-import { sampleInput, sampleQuoteRow } from "./sample-data";
+import { formatClp } from "@/lib/money/clp";
+import { sampleInput, sampleItems, sampleQuoteRow, sampleTotals } from "./sample-data";
 
 describe("buildQuoteDocumentData: lee lo guardado, no recalcula", () => {
+  it("los datos de ejemplo cuadran con el cálculo de la aplicación", () => {
+    const items = sampleItems(4);
+    const totals = sampleTotals(items);
+    const data = buildQuoteDocumentData(sampleInput());
+    expect(data.totals.total).toBe(formatClp(totals.totalClp));
+    expect(data.totals.tax).toBe(formatClp(totals.taxClp));
+    expect(data.totals.subtotal).toBe(formatClp(totals.subtotalClp));
+    expect(items.reduce((sum, item) => sum + item.line_total_clp, 0)).toBe(totals.subtotalClp);
+  });
+
   it("los totales son exactamente los guardados, aunque no cuadren con las líneas", () => {
     const quote = sampleQuoteRow({ total_clp: 999_999, tax_clp: 12_345, subtotal_clp: 777_777 });
     const data = buildQuoteDocumentData(sampleInput({ quote }));
@@ -27,7 +38,7 @@ describe("buildQuoteDocumentData: lee lo guardado, no recalcula", () => {
     expect(none.totals.exempt).toBeNull();
     const some = buildQuoteDocumentData(sampleInput());
     expect(some.totals.globalDiscount).toBe("−$10.000");
-    expect(some.totals.exempt).toBe("$38.000");
+    expect(some.totals.exempt).toBe(formatClp(sampleTotals(sampleItems(4)).netExemptClp));
   });
 
   it("marca los exentos, formatea cantidades y descuentos", () => {

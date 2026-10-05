@@ -48,8 +48,25 @@ export const RESET_MAX_REQUESTS_PER_IP = 10;
 export const RESET_WINDOW_SECONDS = 15 * SECONDS_PER_MINUTE;
 export const RESET_LOCK_SECONDS = 15 * SECONDS_PER_MINUTE;
 
+/**
+ * PDF de cotizaciones (H-028): armar uno es costoso (hasta ~35 s y cientos de MB con 200 líneas), así
+ * que se limitan los PDF que realmente se arman (los que salen de la caché no cuentan), por persona y
+ * por organización. Los primeros N pasan; el siguiente queda bloqueado hasta que termine el bloqueo.
+ */
+export const PDF_MAX_PER_USER_PER_WINDOW = 10;
+export const PDF_MAX_PER_TENANT_PER_WINDOW = 30;
+export const PDF_WINDOW_SECONDS = SECONDS_PER_MINUTE;
+export const PDF_LOCK_SECONDS = SECONDS_PER_MINUTE;
+
 export type RateLimitScope =
-  "login_email" | "login_ip" | "signup_ip" | "tenant_denied_user" | "reset_email" | "reset_ip";
+  | "login_email"
+  | "login_ip"
+  | "signup_ip"
+  | "tenant_denied_user"
+  | "reset_email"
+  | "reset_ip"
+  | "pdf_user"
+  | "pdf_tenant";
 
 /**
  * La tabla `auth_rate_limits` solo admite ciertos valores en su columna `scope`. Los pedidos de
@@ -64,6 +81,8 @@ const STORAGE_SCOPE: Record<RateLimitScope, string> = {
   tenant_denied_user: "tenant_denied_user",
   reset_email: "login_email",
   reset_ip: "signup_ip",
+  pdf_user: "pdf_user",
+  pdf_tenant: "pdf_tenant",
 };
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
@@ -100,6 +119,17 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: RESET_MAX_REQUESTS_PER_IP,
     windowSeconds: RESET_WINDOW_SECONDS,
     lockSeconds: RESET_LOCK_SECONDS,
+  },
+  // El pedido número N+1 es el que bloquea: los primeros N pasan.
+  pdf_user: {
+    maxFailures: PDF_MAX_PER_USER_PER_WINDOW + 1,
+    windowSeconds: PDF_WINDOW_SECONDS,
+    lockSeconds: PDF_LOCK_SECONDS,
+  },
+  pdf_tenant: {
+    maxFailures: PDF_MAX_PER_TENANT_PER_WINDOW + 1,
+    windowSeconds: PDF_WINDOW_SECONDS,
+    lockSeconds: PDF_LOCK_SECONDS,
   },
 };
 
@@ -270,4 +300,23 @@ export function isResetLocked(email: string, ip: string | null): Promise<boolean
 /** Cada pedido cuenta, exista o no la cuenta: así el límite tampoco revela nada. */
 export function recordResetRequest(email: string, ip: string | null): Promise<boolean> {
   return failOpen("reset_request", false, () => recordAll(resetTargets(email, ip)));
+}
+
+/**
+ * ¿Esta persona, en esta organización, puede armar otro PDF ahora? Cuenta el pedido contra los dos
+ * límites (persona y organización) y responde `false` si alguno ya está bloqueado. Si el contador
+ * falla, se deja pasar y se avisa en el log (igual que el resto del limitador).
+ */
+export async function consumePdfQuota(userId: string, tenantId: string): Promise<boolean> {
+  const user: Target = {
+    scope: "pdf_user",
+    keyHash: searchHash("pdf_user", PLATFORM_TENANT_ID, userId),
+  };
+  const tenant: Target = {
+    scope: "pdf_tenant",
+    keyHash: searchHash("pdf_tenant", PLATFORM_TENANT_ID, tenantId),
+  };
+  // Primero la persona: quien ya está bloqueado no gasta el cupo de la organización.
+  if (await failOpen("pdf_quota_user", false, () => recordAll([user]))) return false;
+  return !(await failOpen("pdf_quota_tenant", false, () => recordAll([tenant])));
 }

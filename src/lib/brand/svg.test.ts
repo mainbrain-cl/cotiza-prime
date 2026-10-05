@@ -167,3 +167,51 @@ describe("sanitizeSvg: lo peligroso se elimina o se rechaza", () => {
     expect(clean(first)).toBe(first);
   });
 });
+
+describe("sanitizeSvg: resistencia a entradas hostiles (tiempo)", () => {
+  const TIME_LIMIT_MS = 50;
+
+  function timed(source: string) {
+    const start = performance.now();
+    const result = sanitizeSvg(source);
+    return { result, ms: performance.now() - start };
+  }
+
+  it("un <style> con muchas reglas y un `!` al final no congela el servidor", () => {
+    for (const rules of [14, 20, 200]) {
+      const css = `${"a{} ".repeat(rules)}!`;
+      const { result, ms } = timed(`<svg ${NS}><style>${css}</style></svg>`);
+      expect(result.ok).toBe(false);
+      expect(ms).toBeLessThan(TIME_LIMIT_MS);
+    }
+  });
+
+  it("lo mismo en el atributo style, con espacios y comas", () => {
+    for (const filler of ["a{} ", "a , b{} ", "a{}  "]) {
+      const { ms } = timed(`<svg ${NS}><rect style="${filler.repeat(15)}!"/></svg>`);
+      expect(ms).toBeLessThan(TIME_LIMIT_MS);
+    }
+  });
+
+  it("muchas reglas válidas (bajo el largo máximo) se procesan en pocos milisegundos", () => {
+    const { result, ms } = timed(`<svg ${NS}><style>${".a{fill:red} ".repeat(500)}</style></svg>`);
+    expect(result.ok).toBe(true);
+    expect(ms).toBeLessThan(TIME_LIMIT_MS);
+  });
+
+  it("un CSS más largo que el máximo se rechaza", () => {
+    const reason = rejected(`<svg ${NS}><style>${".a{fill:red} ".repeat(1000)}</style></svg>`);
+    expect(reason).toMatch(/complejo/);
+  });
+
+  it("un comentario CSS sin cerrar repetido no es cuadrático", () => {
+    const { ms } = timed(`<svg ${NS}><style>${"/*".repeat(3500)}</style></svg>`);
+    expect(ms).toBeLessThan(TIME_LIMIT_MS);
+  });
+
+  it("rechaza un archivo con `href` y `xlink:href` a la vez (no escribe dos `href`)", () => {
+    rejected(
+      `<svg ${NS}><linearGradient id="a" href="#b" xlink:href="#b"/><linearGradient id="b"/></svg>`,
+    );
+  });
+});

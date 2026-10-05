@@ -22,6 +22,8 @@ const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const MAX_DEPTH = 32;
 const MAX_ELEMENTS = 5_000;
 const MAX_TEXT_LENGTH = 20_000;
+/** Largo máximo de un bloque de CSS (`<style>` o `style=""`); un logo real usa una fracción de esto. */
+const MAX_CSS_LENGTH = 8_000;
 
 /** Etiquetas que se conservan. */
 const ALLOWED_ELEMENTS = new Set([
@@ -183,13 +185,16 @@ function isSafeValue(value: string): boolean {
 
 /** Un `style=""` o el contenido de un `<style>`: reglas simples, sin `@`, sin `url()` externo. */
 function sanitizeCss(css: string): string {
+  if (css.length > MAX_CSS_LENGTH) return reject("El SVG es demasiado complejo.");
   const clean = css.replace(/\/\*[\s\S]*?\*\//g, "").trim();
   if (clean === "") return "";
   const stripped = withoutInternalReferences(clean);
   if (FORBIDDEN_IN_VALUES.test(stripped) || /url\s*\(|@/i.test(stripped)) return reject(UNSAFE);
   // Reglas de la forma `selector, selector { propiedad: valor; ... }`
+  // Sin ambigüedad entre repeticiones (cada regla empieza con un selector y termina con `}`): no hay
+  // retroceso catastrófico aunque el texto termine en algo que no calza.
   const ruleList =
-    /^(?:\s*[.#]?[A-Za-z_][\w-]*(?:\s*,\s*[.#]?[A-Za-z_][\w-]*)*\s*\{[^{}]*\}\s*)*$/.test(stripped);
+    /^\s*(?:[.#]?[A-Za-z_][\w-]*(?:\s*,\s*[.#]?[A-Za-z_][\w-]*)*\s*\{[^{}]*\}\s*)*$/.test(stripped);
   const declarationsOnly = !/[{}]/.test(stripped);
   if (!ruleList && !declarationsOnly) return reject(UNSAFE);
   const bodies = ruleList ? [...stripped.matchAll(/\{([^{}]*)\}/g)].map((m) => m[1]) : [stripped];
@@ -225,6 +230,10 @@ function cleanAttributes(name: string, attributes: Map<string, string>): [string
   for (const [rawKey, value] of attributes) {
     // Los editores antiguos escriben `xlink:href`; es lo mismo que `href` (solo se aceptan referencias internas).
     const key = rawKey === "xlink:href" ? "href" : rawKey;
+    // `href` y `xlink:href` a la vez saldrían como dos `href` (XML mal formado): se rechaza.
+    if (key === "href" && attributes.has("href") && attributes.has("xlink:href")) {
+      return reject(MALFORMED);
+    }
     if (!ALLOWED_ATTRIBUTES.has(key)) continue; // onclick, data-*, xlink:*, inkscape:*… se eliminan
     if (key === "xmlns") {
       if (value !== SVG_NAMESPACE) return reject(UNSAFE);

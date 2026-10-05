@@ -17,7 +17,7 @@ export function Toaster() {
       visibleToasts={3}
       closeButton
       offset={{ bottom: "1.5rem", right: "1.5rem" }}
-      mobileOffset={{ bottom: "6.5rem", left: "1rem", right: "1rem" }}
+      mobileOffset={{ bottom: "6rem", left: "1rem", right: "1rem" }}
       containerAriaLabel="Avisos"
       toastOptions={{
         unstyled: true,

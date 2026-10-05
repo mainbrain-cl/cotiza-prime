@@ -72,7 +72,7 @@ describe("bucket de logos", () => {
     ]);
   });
 
-  it("solo tiene políticas de leer, crear y borrar, todas para `authenticated` y ninguna para anon", async () => {
+  it("solo tiene políticas de leer y borrar (nadie sube con su sesión: sube el servidor), todas para `authenticated` y ninguna para anon", async () => {
     const { rows } = await db.query<{ polname: string; polcmd: string; anon: boolean }>(
       `select polname, polcmd,
               (polroles = '{0}'::oid[]
@@ -82,7 +82,6 @@ describe("bucket de logos", () => {
     );
     expect(rows.map((r) => [r.polname, r.polcmd])).toEqual([
       ["tenant_logos_delete", "d"],
-      ["tenant_logos_insert", "a"],
       ["tenant_logos_select", "r"],
     ]);
     expect(rows.every((r) => !r.anon)).toBe(true);
@@ -90,7 +89,7 @@ describe("bucket de logos", () => {
 });
 
 describe("políticas de storage.objects", () => {
-  it("Dueño y Administrador suben a la carpeta de su organización activa", () =>
+  it("ni el Dueño ni el Administrador suben con su sesión: solo el servidor sube (la limpieza del SVG no se salta)", () =>
     withTx(db, async () => {
       const dueno = await createUser(db);
       const admin = await createUser(db);
@@ -102,13 +101,15 @@ describe("políticas de storage.objects", () => {
         [admin, "bbbbbbbbbbbb"],
       ] as const) {
         await actAs(db, user, { [TENANT_HEADER]: tenantId });
-        await db.query(`insert into storage.objects (bucket_id, name) values ($1, $2)`, [
-          BUCKET,
-          logoName(tenantId, code),
-        ]);
+        const err = await expectSqlError(
+          db,
+          `insert into storage.objects (bucket_id, name) values ($1, $2)`,
+          [BUCKET, logoName(tenantId, code)],
+        );
+        expect(err.code).toBe(INSUFFICIENT_PRIVILEGE);
       }
       await actAsPostgres(db);
-      expect(await visibleObjects(dueno, tenantId)).toHaveLength(2);
+      expect(await visibleObjects(dueno, tenantId)).toEqual([]);
     }));
 
   it("nadie sube a la carpeta de otra organización, con ninguna cabecera", () =>
@@ -250,7 +251,7 @@ describe("políticas de storage.objects", () => {
 });
 
 describe("columnas de marca en tenants", () => {
-  it("Dueño y Administrador guardan colores y ruta del logo; el Observador no", () =>
+  it("Dueño y Administrador guardan colores y ruta del logo con save_tenant_brand; el Observador no", () =>
     withTx(db, async () => {
       const dueno = await createUser(db);
       const admin = await createUser(db);
@@ -258,19 +259,17 @@ describe("columnas de marca en tenants", () => {
       const tenantId = await createTenantAs(db, dueno);
       await addMember(tenantId, admin, "admin");
       await addMember(tenantId, lector, "viewer");
-      const update = `update public.tenants
-                      set brand_primary_color = '#2b54e0', brand_secondary_color = '#0f1729', logo_path = $2
-                      where tenant_id = $1`;
+      await seedObject(logoName(tenantId));
+      const save = `select public.save_tenant_brand('#2b54e0', '#0f1729', 'set', $1)`;
 
       for (const user of [dueno, admin]) {
         await actAs(db, user, { [TENANT_HEADER]: tenantId });
-        const result = await db.query(update, [tenantId, logoName(tenantId)]);
-        expect(result.rowCount).toBe(1);
+        await db.query(save, [logoName(tenantId)]);
       }
 
       await actAs(db, lector, { [TENANT_HEADER]: tenantId });
-      const denied = await db.query(update, [tenantId, logoName(tenantId, "aaaaaaaaaaaa")]);
-      expect(denied.rowCount).toBe(0);
+      const denied = await expectSqlError(db, save, [logoName(tenantId)]);
+      expect(denied.code).toBe(INSUFFICIENT_PRIVILEGE);
 
       await actAsPostgres(db);
       const { rows } = await db.query(
@@ -282,6 +281,66 @@ describe("columnas de marca en tenants", () => {
         brand_secondary_color: "#0f1729",
         logo_path: logoName(tenantId),
       });
+
+      // "keep" conserva la ruta; "remove" la quita
+      await actAs(db, dueno, { [TENANT_HEADER]: tenantId });
+      await db.query(`select public.save_tenant_brand('#112233', null, 'keep', null)`);
+      await actAsPostgres(db);
+      let after = await db.query(`select logo_path from public.tenants where tenant_id = $1`, [
+        tenantId,
+      ]);
+      expect(after.rows[0].logo_path).toBe(logoName(tenantId));
+      await actAs(db, dueno, { [TENANT_HEADER]: tenantId });
+      await db.query(`select public.save_tenant_brand('#112233', null, 'remove', null)`);
+      await actAsPostgres(db);
+      after = await db.query(`select logo_path from public.tenants where tenant_id = $1`, [
+        tenantId,
+      ]);
+      expect(after.rows[0].logo_path).toBeNull();
+    }));
+
+  it("`logo_path` no se puede cambiar con un update directo, ni por el Dueño", () =>
+    withTx(db, async () => {
+      const dueno = await createUser(db);
+      const tenantId = await createTenantAs(db, dueno);
+      await actAs(db, dueno, { [TENANT_HEADER]: tenantId });
+      const err = await expectSqlError(
+        db,
+        `update public.tenants set logo_path = $2 where tenant_id = $1`,
+        [tenantId, logoName(tenantId)],
+      );
+      expect(err.code).toBe(INSUFFICIENT_PRIVILEGE);
+    }));
+
+  it("save_tenant_brand rechaza un logo que no está en Storage, uno de otra organización y modos raros", () =>
+    withTx(db, async () => {
+      const ana = await createUser(db);
+      const beto = await createUser(db);
+      const tenantA = await createTenantAs(db, ana);
+      const tenantB = await createTenantAs(db, beto);
+      await seedObject(logoName(tenantB));
+      await actAs(db, ana, { [TENANT_HEADER]: tenantA });
+      for (const path of [logoName(tenantA), logoName(tenantB), null]) {
+        const err = await expectSqlError(
+          db,
+          `select public.save_tenant_brand('#112233', null, 'set', $1)`,
+          [path],
+        );
+        expect(err.code, String(path)).toBe("CP422");
+      }
+      const mode = await expectSqlError(
+        db,
+        `select public.save_tenant_brand('#112233', null, 'otro', null)`,
+      );
+      expect(mode.code).toBe("CP422");
+      // anon no la ejecuta
+      await db.query("reset role");
+      await db.query("set local role anon");
+      const anon = await expectSqlError(
+        db,
+        `select public.save_tenant_brand('#112233', null, 'keep', null)`,
+      );
+      expect(anon.code).toBe(INSUFFICIENT_PRIVILEGE);
     }));
 
   it("el cambio de marca queda en la auditoría", () =>
@@ -322,7 +381,6 @@ describe("columnas de marca en tenants", () => {
     withTx(db, async () => {
       const dueno = await createUser(db);
       const tenantId = await createTenantAs(db, dueno);
-      await actAs(db, dueno, { [TENANT_HEADER]: tenantId });
       for (const path of [
         logoName(randomUUID()),
         `${tenantId}/../${randomUUID()}/logo-0123456789ab.png`,
@@ -331,12 +389,14 @@ describe("columnas de marca en tenants", () => {
         `${tenantId}/sub/logo-0123456789ab.png`,
         "logo-0123456789ab.png",
       ]) {
+        await seedObject(path);
+        await actAs(db, dueno, { [TENANT_HEADER]: tenantId });
         const err = await expectSqlError(
           db,
-          `update public.tenants set logo_path = $2 where tenant_id = $1`,
-          [tenantId, path],
+          `select public.save_tenant_brand(null, null, 'set', $1)`,
+          [path],
         );
-        expect(err.code, path).toBe(CHECK_VIOLATION);
+        expect(["CP422", CHECK_VIOLATION], path).toContain(err.code);
       }
     }));
 

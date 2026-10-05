@@ -7,6 +7,7 @@ import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import type { BrandSaveState } from "./form-state";
 import { inspectLogo, LOGO_MAX_BYTES, LOGO_TOO_BIG_MESSAGE, newLogoPath } from "./logo";
+import { removeUploadedLogo, uploadCleanedLogo } from "./logo-storage";
 import { brandColorsSchema } from "./schemas";
 import { loadBrand, LOGO_BUCKET } from "./service";
 
@@ -69,14 +70,11 @@ export async function saveBrandAction(
     return { status: "error", message: SAVE_FAILED_MESSAGE, values };
   }
 
-  // 2. Subir el logo nuevo con el cliente de la organización: Storage aplica sus políticas.
-  const storage = active.supabase.storage.from(LOGO_BUCKET);
+  // 2. Subir el logo ya limpiado. La sesión de la persona no puede escribir en el bucket
+  //    (migración 19): sube el servidor, y solo lo que acaba de pasar por `inspectLogo`.
   if (upload) {
-    const { error } = await storage.upload(upload.path, upload.bytes, {
-      contentType: upload.mime,
-      upsert: false,
-    });
-    if (error) {
+    const uploaded = await uploadCleanedLogo(upload.path, upload.bytes, upload.mime);
+    if (!uploaded.ok) {
       await serverLog("error", "logo_upload_failed", { tenantId: active.tenantId });
       return {
         status: "error",
@@ -86,27 +84,25 @@ export async function saveBrandAction(
     }
   }
 
-  // 3. Guardar colores y ruta del logo.
+  // 3. Guardar colores y ruta del logo, juntos, con la función de base de datos (vuelve a
+  //    verificar rol y que el archivo exista en la carpeta de la organización).
   const logoPath = upload ? upload.path : removeLogo ? null : current.logoPath;
-  const { data: updated, error: updateError } = await active.supabase
-    .from("tenants")
-    .update({
-      brand_primary_color: parsed.data.primaryColor,
-      brand_secondary_color: parsed.data.secondaryColor,
-      logo_path: logoPath,
-    })
-    .eq("tenant_id", active.tenantId)
-    .select("tenant_id");
+  const { error: saveError } = await active.supabase.rpc("save_tenant_brand", {
+    p_primary_color: parsed.data.primaryColor,
+    p_secondary_color: parsed.data.secondaryColor,
+    p_logo_mode: upload ? "set" : removeLogo ? "remove" : "keep",
+    p_logo_path: upload ? upload.path : null,
+  });
 
-  if (updateError || !updated || updated.length === 0) {
-    if (upload) await storage.remove([upload.path]); // no dejar un archivo huérfano
-    await serverLog("error", "brand_update_failed", { code: updateError?.code });
+  if (saveError) {
+    if (upload) await removeUploadedLogo(upload.path); // no dejar un archivo huérfano
+    await serverLog("error", "brand_update_failed", { code: saveError.code });
     return { status: "error", message: SAVE_FAILED_MESSAGE, values };
   }
 
   // 4. Borrar el logo anterior (si falla, queda un archivo suelto, nunca un logo roto).
   if (current.logoPath && current.logoPath !== logoPath) {
-    const { error } = await storage.remove([current.logoPath]);
+    const { error } = await active.supabase.storage.from(LOGO_BUCKET).remove([current.logoPath]);
     if (error) await serverLog("warn", "old_logo_cleanup_failed", { tenantId: active.tenantId });
   }
 

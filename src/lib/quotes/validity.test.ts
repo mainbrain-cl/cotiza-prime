@@ -52,6 +52,10 @@ describe("fechas de vigencia", () => {
       "Vence 15 días después de enviarla. Si la envías hoy, vence el 20-10-2026.",
     );
     expect(describeValidity({ mode: "days", days: 1 }, "2026-10-05")).toContain("1 día después");
+    // quien solo mira: sin "si la envías hoy"
+    expect(describeValidity({ mode: "days", days: 15 }, "2026-10-05", false)).toBe(
+      "Vence 15 días después del envío.",
+    );
     expect(describeValidity({ mode: "date", date: "2026-12-31" }, "2026-10-05")).toBe(
       "Vence el 31-12-2026.",
     );

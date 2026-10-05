@@ -37,7 +37,12 @@ describe("guardias estáticas del aislamiento", () => {
   });
 
   it("2. el cliente con la llave maestra solo se importa donde se permite", () => {
-    const allowedPrefixes = ["src/lib/audit/", "src/lib/security/", "src/server/jobs/"];
+    const allowedPrefixes = [
+      "src/lib/audit/",
+      "src/lib/security/",
+      "src/lib/brand/logo-storage.ts",
+      "src/server/jobs/",
+    ];
     const offenders = sourceFiles
       .filter((f) => /admin-client/.test(stripComments(read(f))))
       .map(rel)

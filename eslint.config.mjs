@@ -50,7 +50,7 @@ const eslintConfig = defineConfig([
             {
               group: ["**/admin-client", "**/admin-client.ts"],
               message:
-                "El cliente con la llave maestra solo puede importarse desde src/lib/audit/, src/lib/security/, src/server/jobs/, scripts/ y tests/.",
+                "El cliente con la llave maestra solo puede importarse desde src/lib/audit/, src/lib/security/, src/lib/brand/logo-storage.ts, src/server/jobs/, scripts/ y tests/.",
             },
           ],
         },
@@ -61,6 +61,8 @@ const eslintConfig = defineConfig([
     files: [
       "src/lib/audit/**",
       "src/lib/security/**",
+      // Subida de logos ya limpiados: único uso de la llave maestra en el módulo de marca (H-007).
+      "src/lib/brand/logo-storage.ts",
       "src/server/jobs/**",
       "scripts/**",
       "tests/**",

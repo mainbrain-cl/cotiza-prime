@@ -81,11 +81,15 @@ const validitySchema = z.discriminatedUnion("mode", [
     .strict(),
 ]);
 
+const CONTROL_CHARACTERS = /[--]/;
+
 /** Observaciones y condiciones: texto simple (nunca HTML); vacío = sin texto. */
 const quoteTextSchema = z
   .string()
   .trim()
   .max(QUOTE_TEXT_MAX_LENGTH, "El texto es demasiado largo (máximo 4.000 caracteres).")
+  // Sin caracteres de control (salvo tabulación, salto de línea y retorno de carro): la base los rechaza igual.
+  .refine((text) => !CONTROL_CHARACTERS.test(text), "El texto tiene caracteres no permitidos.")
   .nullable();
 
 export const saveQuotePayloadSchema = z

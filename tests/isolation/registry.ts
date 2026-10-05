@@ -296,6 +296,16 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: false,
   },
   my_last_tenant_id: { args: {}, writesActiveTenant: false },
+  // Ataque: apuntar el logo a un archivo que no existe en la carpeta de la organización activa.
+  save_tenant_brand: {
+    args: {
+      p_primary_color: "#000000",
+      p_secondary_color: "#000000",
+      p_logo_mode: "set",
+      p_logo_path: `${randomUUID()}/logo-000000000000.png`,
+    },
+    writesActiveTenant: true,
+  },
   create_quote: {
     args: { p_customer_id: randomUUID(), p_creation_key: randomUUID() },
     writesActiveTenant: true,

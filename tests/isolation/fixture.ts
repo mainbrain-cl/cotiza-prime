@@ -16,6 +16,7 @@ import { PLATFORM_TENANT_ID, TENANT_HEADER } from "@/lib/tenant/constants";
 import { connect } from "../db/helpers";
 import {
   adminCreateUser,
+  localEnv,
   rest,
   rpc,
   signIn,
@@ -242,26 +243,30 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       );
       orgs[key].catalogIds.push(id);
     }
-    // Logo: se sube por la API de Storage con el pase de la dueña y su cabecera, y se registra por PostgREST
+    // Logo: la sesión de las personas ya no sube a Storage (sube el servidor, migración 19); aquí lo
+    // sube la llave maestra, como la aplicación, y se registra con la función `save_tenant_brand`.
     const logoPath = `${orgs[key].tenantId}/logo-${key === "A" ? "aaaaaaaaaaaa" : "bbbbbbbbbbbb"}.png`;
+    const { secretKey } = localEnv();
     await mustOk(
-      storage(token, "POST", `object/${LOGO_BUCKET}/${logoPath}`, {
-        headers: headers,
+      storage(secretKey, "POST", `object/${LOGO_BUCKET}/${logoPath}`, {
+        headers: { apikey: secretKey },
         body: FIXTURE_LOGO_PNG,
         contentType: "image/png",
       }),
       `logo ${key}`,
     );
     await mustOk(
-      rest(token, `tenants?tenant_id=eq.${orgs[key].tenantId}`, {
-        method: "PATCH",
-        headers: { ...headers, Prefer: "return=representation" },
-        body: {
-          logo_path: logoPath,
-          brand_primary_color: "#2b54e0",
-          brand_secondary_color: "#0f1729",
+      rpc(
+        token,
+        "save_tenant_brand",
+        {
+          p_primary_color: "#2b54e0",
+          p_secondary_color: "#0f1729",
+          p_logo_mode: "set",
+          p_logo_path: logoPath,
         },
-      }),
+        headers,
+      ),
       `marca ${key}`,
     );
     orgs[key].logoPath = logoPath;

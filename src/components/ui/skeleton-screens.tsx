@@ -97,3 +97,60 @@ export function SettingsIndexSkeleton() {
     </SkeletonRegion>
   );
 }
+
+/** Lista de cotizaciones: título con botón y tabla (tarjetas en teléfono). */
+export function QuotesListSkeleton() {
+  return (
+    <SkeletonRegion>
+      <HeaderSkeleton action />
+      <ListSkeleton rows={6} columns={5} />
+    </SkeletonRegion>
+  );
+}
+
+/** Nueva cotización: volver, título y el selector de cliente (búsqueda y lista corta). */
+export function NewQuoteSkeleton() {
+  return (
+    <SkeletonRegion className="max-w-3xl">
+      <BackHeaderSkeleton />
+      <SearchSkeleton />
+      <ListSkeleton rows={4} columns={3} />
+    </SkeletonRegion>
+  );
+}
+
+/** Editor de una cotización: líneas a la izquierda; panel de totales a la derecha en escritorio. */
+export function QuoteEditorSkeleton() {
+  return (
+    <SkeletonRegion>
+      <BackHeaderSkeleton />
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="flex min-w-0 flex-col gap-4">
+          <Skeleton className="h-16 w-full rounded-lg" />
+          {Array.from({ length: 3 }, (_, index) => (
+            <div
+              key={index}
+              className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-1"
+            >
+              <Skeleton className="h-5 w-2/3" />
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            </div>
+          ))}
+          <Skeleton className="h-11 w-48 rounded-md" />
+        </div>
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-5 shadow-1">
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-8 w-40" />
+        </div>
+      </div>
+    </SkeletonRegion>
+  );
+}

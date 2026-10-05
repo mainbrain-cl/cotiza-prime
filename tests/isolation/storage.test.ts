@@ -323,24 +323,24 @@ describe("S4 · escribir, reemplazar y borrar", () => {
     expect(await folderState(fx.orgs.B.tenantId)).toEqual(beforeB);
   });
 
-  it("subir a la carpeta de A con la cabecera de A funciona, y borrarlo también (control positivo)", async () => {
+  it("ni a su propia carpeta, con la cabecera correcta, Ana sube con su sesión: sube solo el servidor (H-007)", async () => {
     const fx = fixture();
     const token = await tokenOf("ana");
     const path = `${fx.orgs.A.tenantId}/logo-123456789abc.png`;
+    const before = await folderState(fx.orgs.A.tenantId);
     const up = await storage(token, "POST", object(path), {
       headers: tenantHeader(fx.orgs.A.tenantId),
       body: FIXTURE_LOGO_PNG,
       contentType: "image/png",
     });
-    expect(up.status).toBe(200);
-    expect((await folderState(fx.orgs.A.tenantId)).names).toContain(path);
-
-    // sin la cabecera de A no se borra ni lo propio
-    await storage(token, "DELETE", object(path), { headers: tenantHeader(fx.orgs.B.tenantId) });
-    expect((await folderState(fx.orgs.A.tenantId)).names).toContain(path);
-
-    await storage(token, "DELETE", object(path), { headers: tenantHeader(fx.orgs.A.tenantId) });
-    expect((await folderState(fx.orgs.A.tenantId)).names).not.toContain(path);
+    expect(up.status).toBeGreaterThanOrEqual(400);
+    const upsert = await storage(token, "PUT", object(path), {
+      headers: tenantHeader(fx.orgs.A.tenantId),
+      body: FIXTURE_LOGO_PNG,
+      contentType: "image/png",
+    });
+    expect(upsert.status).toBeGreaterThanOrEqual(400);
+    expect(await folderState(fx.orgs.A.tenantId)).toEqual(before);
   });
 
   it("el bucket solo acepta PNG, JPG y SVG de hasta 1 MB aunque la política deje pasar", async () => {
@@ -478,9 +478,17 @@ describe("S6 · la administración de buckets y de la marca no es de las persona
     const editB = await rest(token, `tenants?tenant_id=eq.${fx.orgs.B.tenantId}`, {
       method: "PATCH",
       headers: { ...tenantHeader(fx.orgs.A.tenantId), Prefer: "return=representation" },
-      body: { logo_path: null, brand_primary_color: "#000000" },
+      body: { brand_primary_color: "#000000" },
     });
     expect(editB.json).toEqual([]);
+
+    // y ni Ana ni nadie cambia `logo_path` con un update directo, ni en su propia organización
+    const ownPath = await rest(token, `tenants?tenant_id=eq.${fx.orgs.A.tenantId}`, {
+      method: "PATCH",
+      headers: { ...tenantHeader(fx.orgs.A.tenantId), Prefer: "return=representation" },
+      body: { logo_path: null },
+    });
+    expect(ownPath.status).toBeGreaterThanOrEqual(400);
     const { rows } = await db.query(
       `select logo_path, brand_primary_color from public.tenants where tenant_id = $1`,
       [fx.orgs.B.tenantId],

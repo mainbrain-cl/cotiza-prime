@@ -49,6 +49,7 @@ describe(
       for (const allowed of [
         "src/lib/audit/otro.ts",
         "src/lib/security/otro.ts",
+        "src/lib/brand/logo-storage.ts",
         "src/server/jobs/tarea.ts",
         "scripts/semilla.mjs",
         "tests/db/x.ts",

@@ -92,10 +92,15 @@ export function parseValidityDate(
   return { ok: true, value: text };
 }
 
-/** Texto que explica cuándo vence, para mostrar antes de enviar. */
-export function describeValidity(validity: Validity, today: string): string {
+/**
+ * Texto que explica cuándo vence. Con `canSendNow` (quien edita el borrador) agrega "si la envías
+ * hoy, vence el…"; para quien solo mira, la vigencia en días cuenta desde el envío y nada más.
+ */
+export function describeValidity(validity: Validity, today: string, canSendNow = true): string {
   if (validity.mode === "date") return `Vence el ${isoToDisplay(validity.date)}.`;
   const unit = validity.days === 1 ? "día" : "días";
+  const base = `Vence ${validity.days} ${unit} después del envío.`;
+  if (!canSendNow) return base;
   return (
     `Vence ${validity.days} ${unit} después de enviarla. ` +
     `Si la envías hoy, vence el ${isoToDisplay(addDaysIso(today, validity.days))}.`

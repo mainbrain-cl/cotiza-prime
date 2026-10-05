@@ -421,7 +421,7 @@ test("H-027: vigencia en días o con fecha, por defecto la de la organización; 
   await page.goto(quoteUrl);
   await expect(page.getByTestId("quote-read-only")).toBeVisible();
   await expect(page.getByTestId("validity-summary")).toContainText(
-    "Vence 45 días después de enviarla",
+    "Vence 45 días después del envío",
   );
   await expect(page.getByText(html)).toBeVisible();
   await expect(page.getByText("50% al aceptar y 50% contra entrega.")).toBeVisible();

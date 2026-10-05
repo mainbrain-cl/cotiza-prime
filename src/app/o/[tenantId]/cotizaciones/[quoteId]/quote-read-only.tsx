@@ -17,9 +17,9 @@ function discountText(item: QuoteItemRow): string | null {
 
 function validityText(quote: QuoteRow): string {
   if (quote.valid_until)
-    return describeValidity({ mode: "date", date: quote.valid_until }, todayInChile());
+    return describeValidity({ mode: "date", date: quote.valid_until }, todayInChile(), false);
   if (quote.validity_mode === "days" && quote.validity_days) {
-    return describeValidity({ mode: "days", days: quote.validity_days }, todayInChile());
+    return describeValidity({ mode: "days", days: quote.validity_days }, todayInChile(), false);
   }
   return "Sin vigencia definida.";
 }

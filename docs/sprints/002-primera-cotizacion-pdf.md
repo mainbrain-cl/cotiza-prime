@@ -55,3 +55,21 @@ PDF**. Es el sprint del dinero: el cálculo tiene que cuadrar al peso, siempre.
 ## Fuera
 
 Enviar por correo, enlace del cliente y aceptar (sprint 3); plantillas 2 y 3 (sprint 8).
+
+---
+
+## Estado al cerrar la sesión del 2026-10-01
+
+| Historia | Estado |
+|---|---|
+| H-003 · Recuperar contraseña | ✅ Integrada. Falta probar el aviso por correo tras reiniciar Supabase y la revisión de Opus |
+| H-007 · Logo y colores | 🟠 A medias: el subagente se cortó por el límite semanal; trabajo sin verificar en la rama `worktree-agent-a83e3c73c22f35487` (commit `8b6e3cc`) |
+| H-021 · Editar o desactivar un servicio | ✅ Integrada. Falta la revisión de Opus |
+| H-023 · Ver y editar clientes | ✅ Integrada. Falta la revisión de Opus |
+| H-025 · Crear una cotización | 📐 Plan listo (`docs/arquitectura/cotizaciones-y-calculo.md`) |
+| 🔒 H-026 · Cantidades, precios y descuentos | 🟡 Paso 1 integrado (cálculo puro, 39 casos exactos); faltan base, paridad SQL y pantallas |
+| H-027 · Descuento global, vigencia, observaciones | ⬜ |
+| H-028 · PDF | ⬜ Espera la aprobación de la plantilla 1 |
+| H-115 · Pulido visual | ⬜ |
+
+Detalle del traspaso y orden de los pasos siguientes: `CLAUDE.md`, sección "Traspaso del 2026-10-01".

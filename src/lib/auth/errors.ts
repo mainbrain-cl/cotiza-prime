@@ -1,7 +1,12 @@
 /** Traduce los errores de Supabase Auth a mensajes en español de Chile, sin revelar si una cuenta existe. */
 
 export type AuthFailureKind =
-  "rate_limited" | "weak_password" | "invalid_credentials" | "email_not_confirmed" | "unknown";
+  | "rate_limited"
+  | "weak_password"
+  | "same_password"
+  | "invalid_credentials"
+  | "email_not_confirmed"
+  | "unknown";
 
 type AuthErrorLike = { code?: string | null; status?: number | null };
 
@@ -13,6 +18,7 @@ export function classifyAuthError(error: AuthErrorLike): AuthFailureKind {
     return "rate_limited";
   }
   if (error.code === "weak_password") return "weak_password";
+  if (error.code === "same_password") return "same_password";
   if (error.code === "invalid_credentials") return "invalid_credentials";
   if (error.code === "email_not_confirmed") return "email_not_confirmed";
   return "unknown";
@@ -22,6 +28,7 @@ export const AUTH_MESSAGES: Record<AuthFailureKind, string> = {
   rate_limited: "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
   weak_password:
     "Esa contraseña es muy fácil de adivinar. Prueba con otra más larga o más variada.",
+  same_password: "La contraseña nueva tiene que ser distinta de la actual.",
   invalid_credentials: "Correo o contraseña incorrectos.",
   email_not_confirmed:
     "Todavía no verificas tu correo. Abre el enlace que te enviamos al registrarte y luego ingresa.",

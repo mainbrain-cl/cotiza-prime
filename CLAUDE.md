@@ -54,6 +54,51 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
+### Traspaso del 2026-10-01 (fin de sesión) — empezar por aquí
+
+**Integrado en `main` del sprint 2:** H-021 (editar/desactivar servicios), H-003 (recuperar
+contraseña), H-023 (lista paginada, búsqueda por nombre/RUT/correo y edición de clientes) y el **paso 1 de H-026** (cálculo puro: `src/lib/money/rounding.ts`,
+`src/lib/quotes/calc.ts`, `calc-cases.ts` con K01–K39 exactos, `parse.ts`). 301 pruebas unitarias en
+verde. La suite completa (`test:db`, `test:isolation`, `test:e2e`) **pasó en GitHub Actions** en
+la corrida del último commit (verificado el 2026-10-05).
+
+**H-007 quedó a medias:** el subagente se cortó por el **límite semanal de uso** (se reinició el
+2026-10-04). Su trabajo (34 archivos, ~3.300 líneas: migración `20261001170000_tenant_branding`,
+pantallas Configuración → Empresa y Marca, `src/lib/brand/`, ruta `src/app/api/v1/tenants/`, pruebas
+de Storage en `tests/isolation/storage.test.ts`) se guardó **sin verificar** como commit `8b6e3cc`
+en la rama `worktree-agent-a83e3c73c22f35487` (copia `.claude/worktrees/agent-a83e3c73c22f35487`).
+Lo último que hacía: "agrego el helper de Storage y extiendo la fixture". **Para retomarlo:** lanzar
+un subagente en esa misma copia para que termine H-007 desde ese punto (no desde cero), corra todas
+las pruebas y responda si Storage entrega las cabeceras a la base; después integrar como siempre.
+
+**Pendientes del sprint 2, en este orden:**
+1. Integrar H-007 (arriba).
+2. **H-003:** reiniciar Supabase local (`npx supabase stop && npx supabase start`) para cargar el
+   aviso por correo de cambio de contraseña, y correr el e2e con
+   `E2E_EXPECT_PASSWORD_CHANGED_MAIL=1`. En el límite de intentos reutiliza los alcances
+   `login_email`/`signup_ip` de `auth_rate_limits`: darles alcance propio con una migración.
+3. **Revisión de Opus en lote** de H-003, H-007, H-021, H-023.
+4. **H-025 + H-026 🔒** según `docs/arquitectura/cotizaciones-y-calculo.md` (plan del planificador),
+   desde su paso 2: migración Q1 (`app.quote_calc_v1`) + prueba de paridad con `calc-cases.ts`
+   (el paso 1 dejó definido el orden de errores y el código extra `invalid_tax_rate`: la copia SQL
+   debe seguirlo) → **revisión del cálculo por Opus** → Q2 (`quotes`, `quote_items`,
+   `quote_events`, `create_quote`, `save_quote_draft`) → aislamiento → acciones → pantallas.
+   Un solo agente, sin paralelo.
+5. H-027 → H-028 (PDF con la plantilla 1, **cuando Aarón la apruebe**) → H-115 (pulido visual).
+
+**Decisiones esperando a Aarón** (aplicar el supuesto si no responde):
+- **Plantilla 1 del PDF:** vista previa en https://claude.ai/artifact/Ckd62T8HreUpARrfXWLYdg
+  (archivo fuente en el scratchpad de la sesión; si se pierde, rehacerla desde la descripción del
+  traspaso: franja de color principal, acento secundario, número grande en monoespaciada, bloque
+  "Para", tabla con exentos marcados, totales con el total en el color de la marca, condiciones,
+  pie "no es documento tributario", IBM Plex Sans, carta y A4, filas que no se cortan).
+- Preguntas del plan de cotizaciones (§10): solo el autor edita su borrador; descuento global mayor
+  que el subtotal se rechaza; topes de 200 líneas y $1 billón; vigencia en días desde el envío.
+- GitHub Pro (~US$4/mes) para bloquear integraciones en rojo, o seguir con la regla del proceso.
+
+**Avance estimado al cerrar:** sprint 2 ~45% · hasta el piloto (sprints 1–6) ~22% · construcción
+completa ~13%.
+
 **Cómo se integra el trabajo de los subagentes:** cada uno trabaja en una copia aislada y hace commit
 en su rama; la sesión principal cierra servidores abiertos, une la rama, corre todas las pruebas,
 sube a `main` y borra la copia. Los cambios de base de datos, de a uno. Las 🔒, solas.

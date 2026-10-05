@@ -1,7 +1,8 @@
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Pencil } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { buttonVariants } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
 import { formatRut } from "@/lib/chile/rut";
 import { getCustomer } from "@/lib/customers/queries";
@@ -13,6 +14,7 @@ import { tenantPath } from "@/lib/tenant/constants";
 export const metadata: Metadata = { title: "Cliente · Cotiza Prime" };
 
 const EMPTY = "Sin registrar";
+const WRITER_ROLES = ["owner", "admin", "sales"];
 
 export default async function CustomerDetailPage({
   params,
@@ -22,7 +24,10 @@ export default async function CustomerDetailPage({
   const active = await requireActiveTenant(tenantId);
   const customer = await getCustomer(active, customerId);
   if (customer === null) notFound();
-  const justCreated = (await searchParams).creado === "1";
+  const query = await searchParams;
+  const justCreated = query.creado === "1";
+  const justEdited = query.editado === "1";
+  const canEdit = WRITER_ROLES.includes(active.role);
   const listPath = tenantPath(active.tenantId, "clientes");
 
   return (
@@ -35,14 +40,26 @@ export default async function CustomerDetailPage({
           <ChevronLeft aria-hidden className="size-4" />
           Clientes
         </Link>
-        {customer === "unreadable" ? (
-          <h1 className="text-xl md:text-2xl">Cliente</h1>
-        ) : (
-          <h1 className="text-xl md:text-2xl">{customer.displayName}</h1>
-        )}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {customer === "unreadable" ? (
+            <h1 className="text-xl md:text-2xl">Cliente</h1>
+          ) : (
+            <h1 className="text-xl md:text-2xl">{customer.displayName}</h1>
+          )}
+          {canEdit && customer !== "unreadable" ? (
+            <Link
+              href={tenantPath(active.tenantId, `clientes/${customerId}/editar`)}
+              className={buttonVariants({ variant: "secondary", size: "default" })}
+            >
+              <Pencil aria-hidden />
+              Editar
+            </Link>
+          ) : null}
+        </div>
       </header>
 
       {justCreated ? <FormAlert tone="success">Cliente guardado.</FormAlert> : null}
+      {justEdited ? <FormAlert tone="success">Cambios guardados.</FormAlert> : null}
 
       {customer === "unreadable" ? (
         <FormAlert tone="warning">
@@ -63,6 +80,9 @@ export default async function CustomerDetailPage({
               {customer.address ?? EMPTY}
             </Item>
             <Item label="Registrado el">{formatDate(customer.createdAt)}</Item>
+            {customer.updatedAt && customer.updatedAt !== customer.createdAt ? (
+              <Item label="Última modificación">{formatDate(customer.updatedAt)}</Item>
+            ) : null}
           </dl>
         </section>
       )}

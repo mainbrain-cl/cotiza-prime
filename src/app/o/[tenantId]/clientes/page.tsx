@@ -1,11 +1,12 @@
-import { Plus, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FormAlert } from "@/components/ui/form-controls";
+import { FormAlert, Input } from "@/components/ui/form-controls";
 import { maskEmail, maskPhone, maskRut } from "@/lib/customers/mask";
 import { listCustomers } from "@/lib/customers/queries";
+import { CUSTOMER_SEARCH_MAX_LENGTH } from "@/lib/customers/search";
 import { CUSTOMER_KINDS } from "@/lib/customers/schemas";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
@@ -18,9 +19,21 @@ const KIND_LABEL: Record<string, string> = Object.fromEntries(
 const EMPTY = "—";
 const WRITER_ROLES = ["owner", "admin", "sales"];
 
-export default async function CustomersPage({ params }: PageProps<"/o/[tenantId]/clientes">) {
+function firstValue(value: string | string[] | undefined): string {
+  return (Array.isArray(value) ? value[0] : value) ?? "";
+}
+
+export default async function CustomersPage({
+  params,
+  searchParams,
+}: PageProps<"/o/[tenantId]/clientes">) {
   const active = await requireActiveTenant((await params).tenantId);
-  const items = await listCustomers(active);
+  const query = await searchParams;
+  const search = firstValue(query.q).slice(0, CUSTOMER_SEARCH_MAX_LENGTH);
+  const requestedPage = Number(firstValue(query.pagina)) || 1;
+  const result = await listCustomers(active, { search, page: requestedPage });
+  const items = result?.items ?? null;
+  const searching = search.trim() !== "";
   const canCreate = WRITER_ROLES.includes(active.role);
   const newPath = tenantPath(active.tenantId, "clientes/nuevo");
 
@@ -41,9 +54,45 @@ export default async function CustomersPage({ params }: PageProps<"/o/[tenantId]
         ) : null}
       </header>
 
-      {items === null ? (
+      {result !== null && (result.items.length > 0 || searching) ? (
+        <form
+          role="search"
+          method="get"
+          className="flex flex-col gap-2"
+          action={tenantPath(active.tenantId, "clientes")}
+        >
+          <label htmlFor="customer-search" className="text-sm font-semibold text-fg">
+            Buscar un cliente
+          </label>
+          <div className="flex gap-2">
+            <Input
+              id="customer-search"
+              name="q"
+              type="search"
+              defaultValue={search}
+              maxLength={CUSTOMER_SEARCH_MAX_LENGTH}
+              autoComplete="off"
+              placeholder="Nombre, RUT o correo"
+              aria-describedby="customer-search-hint"
+              className="flex-1"
+            />
+            <button
+              type="submit"
+              className={buttonVariants({ variant: "secondary", size: "default" })}
+            >
+              <Search aria-hidden />
+              Buscar
+            </button>
+          </div>
+          <p id="customer-search-hint" className="text-sm text-fg-muted">
+            El nombre se busca por partes. El RUT y el correo, completos.
+          </p>
+        </form>
+      ) : null}
+
+      {result === null || items === null ? (
         <FormAlert>No pudimos cargar tus clientes. Recarga la página en unos minutos.</FormAlert>
-      ) : items.length === 0 ? (
+      ) : items.length === 0 && !searching ? (
         <EmptyState
           icon={Users}
           title="Aún no tienes clientes"
@@ -55,6 +104,20 @@ export default async function CustomersPage({ params }: PageProps<"/o/[tenantId]
             </Link>
           ) : null}
         </EmptyState>
+      ) : items.length === 0 ? (
+        <div
+          role="status"
+          data-testid="no-results"
+          className="rounded-lg border border-border bg-surface p-6 text-center text-fg-muted shadow-1"
+        >
+          No encontramos clientes con lo que escribiste.{" "}
+          <Link
+            href={tenantPath(active.tenantId, "clientes")}
+            className="font-semibold text-accent underline underline-offset-4"
+          >
+            Ver todos los clientes
+          </Link>
+        </div>
       ) : (
         <>
           {/* Teléfono: tarjetas */}
@@ -158,8 +221,68 @@ export default async function CustomersPage({ params }: PageProps<"/o/[tenantId]
               </tbody>
             </table>
           </div>
+
+          {result.pageCount > 1 ? (
+            <nav
+              aria-label="Páginas de clientes"
+              className="flex items-center justify-between gap-3"
+            >
+              <PageLink
+                href={pageHref(active.tenantId, search, result.page - 1)}
+                disabled={result.page <= 1}
+              >
+                <ChevronLeft aria-hidden />
+                Anterior
+              </PageLink>
+              <p className="text-sm text-fg-muted" data-testid="page-status">
+                Página {result.page} de {result.pageCount} · {result.total} clientes
+              </p>
+              <PageLink
+                href={pageHref(active.tenantId, search, result.page + 1)}
+                disabled={result.page >= result.pageCount}
+              >
+                Siguiente
+                <ChevronRight aria-hidden />
+              </PageLink>
+            </nav>
+          ) : null}
         </>
       )}
     </div>
+  );
+}
+
+function pageHref(tenantId: string, search: string, page: number): string {
+  const params = new URLSearchParams();
+  if (search.trim() !== "") params.set("q", search);
+  if (page > 1) params.set("pagina", String(page));
+  const queryString = params.toString();
+  const base = tenantPath(tenantId, "clientes");
+  return queryString ? `${base}?${queryString}` : base;
+}
+
+function PageLink({
+  href,
+  disabled,
+  children,
+}: {
+  href: string;
+  disabled: boolean;
+  children: React.ReactNode;
+}) {
+  if (disabled) {
+    return (
+      <span
+        aria-disabled="true"
+        className={buttonVariants({ variant: "secondary", size: "default" }) + " opacity-50"}
+      >
+        {children}
+      </span>
+    );
+  }
+  return (
+    <Link href={href} className={buttonVariants({ variant: "secondary", size: "default" })}>
+      {children}
+    </Link>
   );
 }

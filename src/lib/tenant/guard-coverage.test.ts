@@ -14,6 +14,10 @@ const GUARD = "requireActiveTenant(";
 const ACTIONS_WITHOUT_ACTIVE_TENANT: Record<string, string> = {
   "lib/auth/actions.ts#signUpAction": "todavía no hay sesión ni organización",
   "lib/auth/actions.ts#signInAction": "todavía no hay sesión ni organización",
+  "lib/auth/actions.ts#requestPasswordResetAction":
+    "todavía no hay sesión: la persona olvidó su clave",
+  "lib/auth/actions.ts#resetPasswordAction":
+    "cambia la contraseña de la cuenta, no actúa sobre una organización",
   "lib/auth/actions.ts#signOutAction":
     "cierra la sesión de la cuenta, no actúa sobre una organización",
   "lib/auth/actions.ts#acceptLegalAction": "los términos son de la cuenta, no de una organización",

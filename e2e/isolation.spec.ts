@@ -81,7 +81,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
     const rowsBefore = await bRowCount(B.tenantId);
 
     for (const route of PAGE_ROUTES) {
-      const path = concretePath(route, B.tenantId, B.customerIds[0]);
+      const path = concretePath(route, B.tenantId, B.customerIds[0], B.catalogIds[0]);
       await expectNotFound(page, path);
       const html = await page.content();
       expect(html, path).not.toContain(B.canary);
@@ -142,7 +142,12 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
     test.setTimeout(240_000);
     const fx = loadFixture();
     for (const route of PAGE_ROUTES) {
-      const path = concretePath(route, fx.orgs.A.tenantId, fx.orgs.A.customerIds[0]);
+      const path = concretePath(
+        route,
+        fx.orgs.A.tenantId,
+        fx.orgs.A.customerIds[0],
+        fx.orgs.A.catalogIds[0],
+      );
       const response = await page.goto(path);
       expect(response?.status(), path).toBe(200);
       const cacheControl = response?.headers()["cache-control"] ?? "";

@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
 import { signInAction } from "@/lib/auth/actions";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
+import { FORGOT_PASSWORD_PATH } from "@/lib/auth/paths";
 
 export function LoginForm() {
   const [state, formAction] = useActionState(signInAction, INITIAL_FORM_STATE);
@@ -44,7 +46,12 @@ export function LoginForm() {
       <SubmitButton pendingLabel="Ingresando…">Ingresar</SubmitButton>
 
       <p className="text-center text-sm text-fg-subtle">
-        ¿Olvidaste tu contraseña? Recuperarla estará disponible pronto.
+        <Link
+          href={FORGOT_PASSWORD_PATH}
+          className="font-semibold text-accent underline-offset-4 hover:underline"
+        >
+          ¿Olvidaste tu contraseña?
+        </Link>
       </p>
     </form>
   );

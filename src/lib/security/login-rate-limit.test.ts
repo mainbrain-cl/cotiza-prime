@@ -11,12 +11,21 @@ vi.mock("@/lib/crypto/search-hash", () => ({
 import {
   TENANT_DENIED_MAX_LOGGED_PER_WINDOW,
   ipLimitKey,
+  recordResetRequest,
   recordSignupAttempt,
   shouldLogTenantDenied,
 } from "./login-rate-limit";
 
 beforeEach(() => rpc.mockReset().mockResolvedValue({ data: null, error: null }));
 afterEach(() => vi.unstubAllEnvs());
+
+describe("pedidos de restablecer contraseña (H-003)", () => {
+  it("cuenta por cuenta y por IP, con huellas distintas a las del ingreso", async () => {
+    await recordResetRequest("Ana@Ejemplo.test", "203.0.113.7");
+    const keys = rpc.mock.calls.map(([, args]) => args.p_key_hash);
+    expect(keys).toEqual(["reset_email|ana@ejemplo.test", "reset_ip|203.0.113.7"]);
+  });
+});
 
 describe("ipLimitKey", () => {
   it("una IPv4 cuenta tal cual", () => {

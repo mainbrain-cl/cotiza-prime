@@ -8,11 +8,18 @@ import type { FormState } from "@/lib/auth/form-state";
 import {
   ACCEPT_TERMS_PATH,
   AUTH_CALLBACK_PATH,
+  AUTH_RECOVERY_PATH,
   HOME_PATH,
   LOGIN_NOTICES,
   LOGIN_PATH,
 } from "@/lib/auth/paths";
-import { fieldErrorsOf, signInSchema, signUpSchema } from "@/lib/auth/schemas";
+import {
+  fieldErrorsOf,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  signInSchema,
+  signUpSchema,
+} from "@/lib/auth/schemas";
 import { getOptionalUser, requireUser } from "@/lib/auth/session";
 import { getAppOrigin, getRequestContext } from "@/lib/http/request-context";
 import { legalDocuments } from "@/lib/legal/documents";
@@ -22,8 +29,10 @@ import {
   clearLoginFailures,
   emailFingerprint,
   isLoginLocked,
+  isResetLocked,
   isSignupLocked,
   recordLoginFailure,
+  recordResetRequest,
   recordSignupAttempt,
 } from "@/lib/security/login-rate-limit";
 import { createClient } from "@/lib/supabase/server";
@@ -171,6 +180,107 @@ export async function signOutAction(): Promise<void> {
   redirect(
     `${LOGIN_PATH}?aviso=${error ? LOGIN_NOTICES.signOutIncomplete : LOGIN_NOTICES.signedOut}`,
   );
+}
+
+/**
+ * H-003: pide el enlace para elegir una contraseña nueva. La respuesta es la misma exista o no la
+ * cuenta (también cuando Supabase falla o limita el envío): no se revela quién tiene cuenta.
+ * Solo el límite propio de pedidos (por cuenta y por IP) responde distinto, y cuenta todo pedido.
+ */
+export async function requestPasswordResetAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const raw = { email: readText(formData, "email") };
+  const values = { email: raw.email ?? "" };
+
+  const parsed = forgotPasswordSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { status: "error", fieldErrors: fieldErrorsOf(parsed.error), values };
+  }
+
+  const { clientIp } = await getRequestContext();
+  const emailHash = emailFingerprint(parsed.data.email);
+
+  if (await isResetLocked(parsed.data.email, clientIp)) {
+    await logAuditEvent({
+      action: "session.password_reset_requested",
+      result: "denied",
+      details: { emailHash, stage: "blocked" },
+    });
+    return { status: "error", message: RATE_LIMITED_MESSAGE, values };
+  }
+  await recordResetRequest(parsed.data.email, clientIp);
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
+    redirectTo: `${getAppOrigin()}${AUTH_RECOVERY_PATH}`,
+  });
+  if (error) {
+    await serverLog("error", "password_reset_request_failed", {
+      code: error.code ?? String(error.status ?? ""),
+    });
+  }
+  await logAuditEvent({
+    action: "session.password_reset_requested",
+    result: error ? "failure" : "success",
+    details: { emailHash },
+  });
+
+  return { status: "sent", values: { email: parsed.data.email } };
+}
+
+/**
+ * H-003: guarda la contraseña nueva. Quien llega aquí tiene una sesión abierta con el enlace del
+ * correo. Al cambiarla se cierran todas las demás sesiones de la cuenta (esta se mantiene).
+ * El aviso por correo de que la contraseña cambió lo envía Supabase Auth (supabase/config.toml).
+ */
+export async function resetPasswordAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const user = await getOptionalUser();
+  if (!user) redirect(`${LOGIN_PATH}?aviso=${LOGIN_NOTICES.resetLinkExpired}`);
+
+  const parsed = resetPasswordSchema.safeParse({
+    password: readText(formData, "password"),
+    confirmPassword: readText(formData, "confirmPassword"),
+  });
+  if (!parsed.success) {
+    return { status: "error", fieldErrors: fieldErrorsOf(parsed.error) };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
+  if (error) {
+    const kind = classifyAuthError(error);
+    await logAuditEvent({
+      action: "session.password_changed",
+      result: "failure",
+      actorUserId: user.id,
+      details: { reason: kind },
+    });
+    if (kind === "weak_password" || kind === "same_password") {
+      return { status: "error", fieldErrors: { password: AUTH_MESSAGES[kind] } };
+    }
+    return { status: "error", message: AUTH_MESSAGES[kind] };
+  }
+
+  // Cierra las sesiones de otros dispositivos. Si falla, la contraseña ya cambió: se avisa en el
+  // registro y se deja constancia, pero no se le dice a la persona que no cambió.
+  const { error: othersError } = await supabase.auth.signOut({ scope: "others" });
+  if (othersError) {
+    await serverLog("error", "signout_others_failed", {
+      code: othersError.code ?? String(othersError.status ?? ""),
+    });
+  }
+  await logAuditEvent({
+    action: "session.password_changed",
+    result: "success",
+    actorUserId: user.id,
+    details: { otherSessionsClosed: !othersError },
+  });
+  redirect(HOME_PATH);
 }
 
 /** H-110: "Acepta la nueva versión". Registra la aceptación de los documentos vigentes. */

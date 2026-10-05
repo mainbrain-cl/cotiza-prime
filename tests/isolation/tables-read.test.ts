@@ -19,7 +19,7 @@ import {
   tenantHeader,
   tokenOf,
 } from "./context";
-import { canReadRole, ISOLATION_TABLES, type TableSpec } from "./registry";
+import { allColumnsOf, canReadRole, ISOLATION_TABLES, type TableSpec } from "./registry";
 import { ORG_KEYS, PERSONA_KEYS, type OrgKey, type PersonaKey } from "./fixture";
 
 let db: Client;
@@ -291,7 +291,9 @@ describe("a Ana con su organización A, nada que no sea de A", () => {
     const A = fixture().orgs.A.tenantId;
     const token = await tokenOf("ana");
     for (const spec of ISOLATION_TABLES.filter((t) => t.visibility === "business")) {
-      const res = await rest(token, `${spec.name}?select=*`, { headers: tenantHeader(A) });
+      const res = await rest(token, `${spec.name}?select=${allColumnsOf(spec)}`, {
+        headers: tenantHeader(A),
+      });
       const rows = res.json as Row[];
       expect(rows.length, spec.name).toBeGreaterThan(0);
       expect(
@@ -307,7 +309,7 @@ describe("X1 · el conteo exacto no delata filas ajenas", () => {
     const B = fixture().orgs.B.tenantId;
     const token = await tokenOf("ana");
     for (const spec of ISOLATION_TABLES.filter((t) => t.visibility === "business")) {
-      const res = await rest(token, `${spec.name}?select=*`, {
+      const res = await rest(token, `${spec.name}?select=${allColumnsOf(spec)}`, {
         method: "HEAD",
         headers: { Prefer: "count=exact", ...tenantHeader(B) },
       });
@@ -388,7 +390,9 @@ describe("A10 · quien está en dos organizaciones no mezcla datos", () => {
         [fx.orgs.A.tenantId, fx.orgs.B.tenantId],
         [fx.orgs.B.tenantId, fx.orgs.A.tenantId],
       ]) {
-        const res = await rest(token, `${spec.name}?select=*`, { headers: tenantHeader(mine) });
+        const res = await rest(token, `${spec.name}?select=${allColumnsOf(spec)}`, {
+          headers: tenantHeader(mine),
+        });
         const rows = res.json as Row[];
         expect(rows.length, `${spec.name} con ${mine}`).toBeGreaterThan(0);
         expect(
@@ -495,7 +499,7 @@ describe("X4 · GraphQL aplica las mismas reglas", () => {
 describe("A19 · sin sesión no se entrega nada de negocio", () => {
   it("las tablas con permisos solo para personas rechazan a quien viene solo con la llave pública", async () => {
     for (const spec of ISOLATION_TABLES.filter((t) => t.visibility !== "public")) {
-      const res = await rest(null, `${spec.name}?select=*`, {
+      const res = await rest(null, `${spec.name}?select=${allColumnsOf(spec)}`, {
         headers: tenantHeader(fixture().orgs.A.tenantId),
       });
       expect(res.status, spec.name).toBeGreaterThanOrEqual(400);

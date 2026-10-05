@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rest, rpc } from "../support/local-supabase";
 import { countWhere, fixture, isRejectedOrEmpty, openDb, tenantHeader, tokenOf } from "./context";
 import { removeExMember } from "./fixture";
-import { ISOLATION_TABLES } from "./registry";
+import { allColumnsOf, ISOLATION_TABLES } from "./registry";
 
 let db: Client;
 beforeAll(async () => {
@@ -32,7 +32,7 @@ describe("A12 · una persona quitada de la organización, con su pase todavía v
 
     // Lectura: cero filas en toda tabla de negocio
     for (const spec of ISOLATION_TABLES.filter((t) => t.visibility === "business")) {
-      const res = await rest(token, `${spec.name}?select=*`, {
+      const res = await rest(token, `${spec.name}?select=${allColumnsOf(spec)}`, {
         headers: { Prefer: "count=exact", ...tenantHeader(A) },
       });
       expect(res.json, spec.name).toEqual([]);
@@ -98,7 +98,7 @@ describe("X9 · una organización archivada", () => {
     expect(await countWhere(db, "customers", `tenant_id = '${C}'`)).toBeGreaterThan(0);
 
     for (const spec of ISOLATION_TABLES.filter((t) => t.visibility === "business")) {
-      const res = await rest(token, `${spec.name}?select=*`, {
+      const res = await rest(token, `${spec.name}?select=${allColumnsOf(spec)}`, {
         headers: { Prefer: "count=exact", ...tenantHeader(C) },
       });
       expect(res.json, spec.name).toEqual([]);

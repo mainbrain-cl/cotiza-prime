@@ -35,6 +35,11 @@ export interface TableSpec {
   ownedByB: (fx: IsolationFixture) => string;
   /** Columnas que un pase puede leer: para el control positivo y como alternativa a `*`. */
   readColumns: string;
+  /**
+   * ¿La tabla da permiso de lectura solo por columnas (hay columnas privadas)? Entonces `select=*`
+   * es rechazado para todos y los controles positivos piden las columnas legibles.
+   */
+  starSelectRejected?: boolean;
   /** Cuerpo de un intento de crear una fila apuntando a otra organización. */
   insertAttack: (fx: IsolationFixture, targetTenant: string, marker: string) => object;
   /** Cambio de un intento de editar una fila ajena (o propia sin permiso). */
@@ -85,6 +90,70 @@ export const ISOLATION_TABLES: TableSpec[] = [
     updateAttack: (marker) => ({ name: marker }),
     hasFixtureRowsInB: true,
     ownWriteAccepted: true,
+  },
+  {
+    name: "quotes",
+    visibility: "business",
+    idColumn: "id",
+    ownedByB: byTenantB,
+    readColumns: "id,tenant_id,number_display,status,total_clp",
+    insertAttack: (fx, tenant) => ({
+      tenant_id: tenant,
+      number_seq: 1,
+      number_scope: "continuous",
+      number_display: "ATAQUE-1",
+      root_quote_id: randomUUID(),
+      customer_id: fx.orgs.B.customerIds[0],
+      creation_key: randomUUID(),
+      tax_rate_bp: 1900,
+      created_by: fx.personas.ana.userId,
+    }),
+    updateAttack: () => ({ total_clp: 1, status: "paid" }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
+    name: "quote_items",
+    visibility: "business",
+    idColumn: "id",
+    ownedByB: byTenantB,
+    readColumns: "id,tenant_id,quote_id,name,line_total_clp",
+    starSelectRejected: true,
+    insertAttack: (fx, tenant, marker) => ({
+      id: randomUUID(),
+      tenant_id: tenant,
+      quote_id: fx.orgs.B.quoteIds[0],
+      position: 9,
+      name: marker,
+      unit: "unit",
+      tax_treatment: "exempt",
+      quantity_milli: 1000,
+      unit_price_clp: 1,
+      discount_kind: "none",
+      discount_value: 0,
+      gross_clp: 1,
+      discount_clp: 0,
+      line_total_clp: 1,
+    }),
+    updateAttack: (marker) => ({ name: marker, unit_price_clp: 1 }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
+    name: "quote_events",
+    visibility: "business",
+    idColumn: "id",
+    ownedByB: byTenantB,
+    readColumns: "id,tenant_id,quote_id,type",
+    insertAttack: (fx, tenant) => ({
+      tenant_id: tenant,
+      quote_id: fx.orgs.B.quoteIds[0],
+      type: "ataque",
+      actor_type: "user",
+    }),
+    updateAttack: () => ({ type: "ataque" }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
   },
   {
     name: "numbering_settings",
@@ -227,6 +296,21 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: false,
   },
   my_last_tenant_id: { args: {}, writesActiveTenant: false },
+  create_quote: {
+    args: { p_customer_id: randomUUID(), p_creation_key: randomUUID() },
+    writesActiveTenant: true,
+  },
+  save_quote_draft: {
+    args: {
+      p_quote_id: randomUUID(),
+      p_expected_revision: 1,
+      p_save_id: randomUUID(),
+      p_header: { customer_id: randomUUID(), global_discount: { kind: "none", value: 0 } },
+      p_items: [],
+      p_expected_totals: {},
+    },
+    writesActiveTenant: true,
+  },
 };
 
 /** Funciones de `public` que solo ejecuta el servidor con la llave maestra: nadie con pase las llama. */
@@ -307,6 +391,8 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/configuracion/marca", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/numeracion", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/cotizaciones/nueva", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/cotizaciones/[quoteId]", kind: "page", scope: "tenant" },
 ];
 
 /** Pantallas dentro de una organización (las que se atacan con la dirección de otra). */
@@ -318,12 +404,18 @@ export function concretePath(
   tenantId: string,
   customerId: string,
   itemId: string,
+  quoteId: string = itemId,
 ): string {
   return route.path
     .replace("[tenantId]", tenantId)
     .replace("[customerId]", customerId)
-    .replace("[itemId]", itemId);
+    .replace("[itemId]", itemId)
+    .replace("[quoteId]", quoteId);
 }
+
+/** Qué se pide para "ver todo" de una tabla: `*`, o las columnas legibles si hay columnas privadas. */
+export const allColumnsOf = (spec: Pick<TableSpec, "starSelectRejected" | "readColumns">) =>
+  spec.starSelectRejected ? spec.readColumns : "*";
 
 /** Personas con acceso de lectura a una organización, según el rol. */
 export function canReadRole(spec: TableSpec, role: Role | null): boolean {

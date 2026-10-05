@@ -10,6 +10,7 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { buildCustomerInsertRow } from "@/lib/customers/record";
+import { calculateQuote } from "@/lib/quotes/calc";
 import type { CustomerInput } from "@/lib/customers/schemas";
 import { PLATFORM_TENANT_ID, TENANT_HEADER } from "@/lib/tenant/constants";
 import { connect } from "../db/helpers";
@@ -67,6 +68,8 @@ export interface OrgData {
   canary: string;
   customerIds: string[];
   catalogIds: string[];
+  /** Cotizaciones de la organización (con líneas cuyo nombre lleva el canario). A y B tienen una. */
+  quoteIds: string[];
 }
 
 export interface IsolationFixture {
@@ -181,6 +184,7 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       logoPath: null,
       customerIds: [],
       catalogIds: [],
+      quoteIds: [],
     };
   }
 
@@ -270,6 +274,86 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       );
       orgs[key].customerIds.push(id);
     }
+  }
+  // Una cotización con dos líneas en A y en B, por el camino legítimo (create_quote + save_quote_draft).
+  // El texto de las líneas lleva el canario de la organización: si sale en otra respuesta, hay filtración.
+  for (const key of ["A", "B"] as const) {
+    const token = personas[owners[key]].session.accessToken;
+    const headers = org(orgs[key].tenantId);
+    const created = await mustOk<{ quote_id: string; number_display: string }[]>(
+      rpc(
+        token,
+        "create_quote",
+        { p_customer_id: orgs[key].customerIds[0], p_creation_key: randomUUID() },
+        headers,
+      ),
+      `create_quote ${key}`,
+    );
+    const quoteId = created[0].quote_id;
+    const items = [
+      {
+        id: randomUUID(),
+        catalog_item_id: orgs[key].catalogIds[0],
+        name: `${orgs[key].canary} Línea del catálogo`,
+        description: `Detalle ${orgs[key].canary}`,
+        unit: "service",
+        tax_treatment: "taxable",
+        quantity_milli: 2500,
+        unit_price_clp: 10_000,
+        discount_kind: "percent",
+        discount_value: 1000,
+      },
+      {
+        id: randomUUID(),
+        name: `${orgs[key].canary} Línea libre`,
+        description: null,
+        unit: "unit",
+        tax_treatment: "exempt",
+        quantity_milli: 1000,
+        unit_price_clp: 5_000,
+        discount_kind: "none",
+        discount_value: 0,
+      },
+    ];
+    const calc = calculateQuote({
+      lines: [
+        {
+          quantityMilli: 2500,
+          unitPriceClp: 10_000,
+          taxTreatment: "taxable",
+          discount: { kind: "percent", bp: 1000 },
+        },
+        {
+          quantityMilli: 1000,
+          unitPriceClp: 5_000,
+          taxTreatment: "exempt",
+          discount: { kind: "none" },
+        },
+      ],
+      globalDiscount: { kind: "none" },
+      taxRateBp: 1900,
+    });
+    if (!calc.ok) throw new Error("Fixture: el cálculo de la cotización de prueba falló");
+    await mustOk(
+      rpc(
+        token,
+        "save_quote_draft",
+        {
+          p_quote_id: quoteId,
+          p_expected_revision: 1,
+          p_save_id: randomUUID(),
+          p_header: {
+            customer_id: orgs[key].customerIds[0],
+            global_discount: { kind: "none", value: 0 },
+          },
+          p_items: items,
+          p_expected_totals: calc.totals,
+        },
+        headers,
+      ),
+      `save_quote_draft ${key}`,
+    );
+    orgs[key].quoteIds.push(quoteId);
   }
   // C: un cliente, y luego se archiva
   {

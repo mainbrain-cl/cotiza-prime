@@ -229,6 +229,151 @@ describe("app.quote_calc_v1 coincide con calculateQuote", () => {
   });
 });
 
+/** Pasa un arreglo JSON crudo (como llega a SQL) a la entrada de TypeScript, tal como la leería JSON.parse. */
+function rawToInput(items: unknown[], globalDiscount: Discount = NONE): CalcInput {
+  return {
+    lines: items.map((item) => {
+      const o = (
+        typeof item === "object" && item !== null && !Array.isArray(item) ? item : {}
+      ) as Record<string, unknown>;
+      const kind = o.discount_kind;
+      const discount = (
+        kind === "none"
+          ? { kind: "none" }
+          : kind === "percent"
+            ? { kind, bp: o.discount_value }
+            : kind === "amount"
+              ? { kind, clp: o.discount_value }
+              : { kind }
+      ) as Discount;
+      return {
+        quantityMilli: o.quantity_milli as number,
+        unitPriceClp: o.unit_price_clp as number,
+        taxTreatment: o.tax_treatment as "taxable",
+        discount,
+      };
+    }),
+    globalDiscount,
+    taxRateBp: 1900,
+  };
+}
+
+const goodItem = (over: Record<string, string> = {}) => {
+  const base: Record<string, string> = {
+    quantity_milli: "1000",
+    unit_price_clp: "100",
+    tax_treatment: '"taxable"',
+    discount_kind: '"none"',
+    discount_value: "0",
+    ...over,
+  };
+  return `{${Object.entries(base)
+    .map(([k, v]) => `"${k}": ${v}`)
+    .join(", ")}}`;
+};
+
+// Casos fijos de forma del JSON (revisión del cálculo): SQL recibe el texto crudo; TypeScript, lo
+// que daría JSON.parse del mismo texto.
+const RAW_CASES: [string, string][] = [
+  ["cantidad 1.0 (entero escrito con decimal)", `[${goodItem({ quantity_milli: "1.0" })}]`],
+  ["cantidad 1e3 (notación científica)", `[${goodItem({ quantity_milli: "1e3" })}]`],
+  ["precio -0", `[${goodItem({ unit_price_clp: "-0" })}]`],
+  ["cantidad -0", `[${goodItem({ quantity_milli: "-0" })}]`],
+  ["precio como texto", `[${goodItem({ unit_price_clp: '"100"' })}]`],
+  [
+    "descuento en porcentaje como texto",
+    `[${goodItem({ discount_kind: '"percent"', discount_value: '"10"' })}]`,
+  ],
+  [
+    "descuento en pesos como texto",
+    `[${goodItem({ discount_kind: '"amount"', discount_value: '"10"' })}]`,
+  ],
+  ["líneas que no son objeto", `[1, "x", null, true, [1], ${goodItem()}]`],
+  [
+    "cantidad exactamente en el tope",
+    `[${goodItem({ quantity_milli: "1000000000", unit_price_clp: "1000" })}]`,
+  ],
+  [
+    "precio exactamente en el tope, cantidad mínima",
+    `[${goodItem({ quantity_milli: "1", unit_price_clp: "1000000000000" })}]`,
+  ],
+  [
+    "una unidad al precio tope: el total pasa el tope por el IVA",
+    `[${goodItem({ unit_price_clp: "1000000000000" })}]`,
+  ],
+  [
+    "descuento en pesos igual al bruto máximo",
+    `[${goodItem({ unit_price_clp: "1000000000000", discount_kind: '"amount"', discount_value: "1000000000000" })}]`,
+  ],
+  [
+    "descuento en pesos un peso sobre el bruto máximo",
+    `[${goodItem({ unit_price_clp: "1000000000000", discount_kind: '"amount"', discount_value: "1000000000001" })}]`,
+  ],
+  [
+    "none con valor distinto de 0: el valor se ignora, igual que en TypeScript",
+    `[${goodItem({ discount_kind: '"none"', discount_value: "500" })}]`,
+  ],
+  ["none con valor texto", `[${goodItem({ discount_kind: '"none"', discount_value: '"x"' })}]`],
+  ["cantidad fuera del tope por 1", `[${goodItem({ quantity_milli: "1000000001" })}]`],
+];
+
+describe("forma del JSON: SQL y TypeScript responden igual", () => {
+  for (const [name, raw] of RAW_CASES) {
+    it(name, async () => {
+      const { rows } = await db.query<{ r: unknown }>(
+        "select app.quote_calc_v1($1::jsonb, 'none', 0, 1900) as r",
+        [raw],
+      );
+      const input = rawToInput(JSON.parse(raw) as unknown[]);
+      expect(rows[0].r).toEqual(tsCalc(input));
+    });
+  }
+
+  it("el resultado de los casos de tope es el esperado (no solo igual)", async () => {
+    const run = async (raw: string) =>
+      (
+        await db.query<{ r: { ok: boolean; issues?: { code: string }[] } }>(
+          "select app.quote_calc_v1($1::jsonb, 'none', 0, 1900) as r",
+          [raw],
+        )
+      ).rows[0].r;
+    expect((await run(`[${goodItem({ quantity_milli: "1.0" })}]`)).ok).toBe(true);
+    expect((await run(`[${goodItem({ quantity_milli: "1e3" })}]`)).ok).toBe(true);
+    expect((await run(`[${goodItem({ unit_price_clp: "-0" })}]`)).ok).toBe(true);
+    expect((await run(`[${goodItem({ quantity_milli: "-0" })}]`)).issues?.[0].code).toBe(
+      "invalid_quantity",
+    );
+    expect((await run(`[1, ${goodItem()}]`)).issues?.length).toBe(4);
+    const top = await run(
+      `[${goodItem({ unit_price_clp: "1000000000000", discount_kind: '"amount"', discount_value: "1000000000000" })}]`,
+    );
+    expect(top.ok).toBe(true);
+    const over = await run(`[${goodItem({ unit_price_clp: "1000000000000" })}]`);
+    expect(over.issues?.[0].code).toBe("total_too_large");
+  });
+});
+
+describe("permisos de las funciones internas del cálculo", () => {
+  const functions = [
+    "app.quote_calc_v1(jsonb, text, bigint, integer)",
+    "app.round_half_up_div(numeric, numeric)",
+    "app.calc_jsonb_int_in_range(jsonb, numeric, numeric)",
+    "app.vat_rate_bp()",
+  ];
+  for (const fn of functions) {
+    it(`${fn} no es ejecutable por anon, authenticated ni PUBLIC`, async () => {
+      const { rows } = await db.query<{ anon: boolean; auth: boolean; pub: boolean }>(
+        `select has_function_privilege('anon', $1::regprocedure, 'execute') as anon,
+                has_function_privilege('authenticated', $1::regprocedure, 'execute') as auth,
+                exists (select 1 from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                         where p.oid = $1::regprocedure and a.grantee = 0 and a.privilege_type = 'EXECUTE') as pub`,
+        [fn],
+      );
+      expect(rows[0]).toEqual({ anon: false, auth: false, pub: false });
+    });
+  }
+});
+
 describe("app.round_half_up_div", () => {
   it.each([
     [1, 2, 1],

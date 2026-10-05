@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import type { FormState } from "@/lib/auth/form-state";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
@@ -8,8 +7,9 @@ import { serverLog } from "@/lib/log/server-log";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { findDuplicates, getCustomer, type DuplicateMatch } from "./queries";
-import { buildCustomerChangeRow, buildCustomerInsertRow } from "./record";
+import { buildCustomerChangeRow } from "./record";
 import { customerSchema } from "./schemas";
+import { createCustomer } from "./service";
 import { SEARCH_ACTIVE_PARAM, clearCustomerSearch, saveCustomerSearch } from "./search-cookie";
 
 export type CustomerFormState = FormState & { duplicates?: DuplicateMatch[] };
@@ -45,25 +45,18 @@ export async function createCustomerAction(
     return { status: "error", fieldErrors: fieldErrorsOf(parsed.error), values: raw };
   }
 
-  if (readText(formData, "confirmDuplicate") !== "1") {
-    const duplicates = await findDuplicates(active, parsed.data);
-    if (duplicates.length > 0) return { status: "error", duplicates, values: raw };
+  const created = await createCustomer(
+    active,
+    parsed.data,
+    readText(formData, "confirmDuplicate") === "1",
+  );
+  if (!created.ok) {
+    if (created.reason === "duplicates") {
+      return { status: "error", duplicates: created.duplicates, values: raw };
+    }
+    return { status: "error", message: created.message, values: raw };
   }
-
-  const customerId = randomUUID();
-  const row = buildCustomerInsertRow(parsed.data, active.tenantId, customerId);
-  const { error } = await active.supabase.from("customers").insert(row);
-  if (error) {
-    await serverLog("error", "customer_insert_failed", { code: error.code });
-    return {
-      status: "error",
-      message:
-        error.code === SQLSTATE_INSUFFICIENT_PRIVILEGE
-          ? NO_PERMISSION
-          : "No pudimos guardar el cliente. Intenta de nuevo en unos minutos.",
-      values: raw,
-    };
-  }
+  const customerId = created.id;
 
   redirect(`${tenantPath(active.tenantId, `clientes/${customerId}`)}?creado=1`);
 }

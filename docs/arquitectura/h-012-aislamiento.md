@@ -303,3 +303,7 @@ para el sprint 6 (antes del piloto).
 
 **Correcciones de la revisión: hechas** (GraphQL desactivado con la migración 13, registro de visibilidades cerrado, guardias de
 rutas completas, control positivo en escrituras, CI con tiempo límite y caché, tope a los registros de acceso denegado con la migración 14). Verificación: 504 ataques en verde, 31 pruebas de punta a punta en verde.
+
+## Registro de H-025 / H-026 (cotizaciones)
+
+Suma al registro: tablas `quotes`, `quote_items` (lectura por columnas, sin `unit_cost_clp`: `starSelectRejected`) y `quote_events`, todas `business` y sin escritura directa; funciones `create_quote` y `save_quote_draft` (`writesActiveTenant`); rutas `/o/[tenantId]/cotizaciones/nueva` y `/o/[tenantId]/cotizaciones/[quoteId]`. La fixture crea una cotizacion con dos lineas (canario) en A y en B. Ataques propios: `tests/isolation/quotes.test.ts`.

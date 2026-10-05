@@ -48,6 +48,9 @@ async function bRowCount(tenantId: string): Promise<number> {
       "audit_log",
       "members",
       "numbering_sequences",
+      "quotes",
+      "quote_items",
+      "quote_events",
     ]) {
       total += await countRows(db, `select 1 from public.${table} where tenant_id = $1`, [
         tenantId,
@@ -81,7 +84,13 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
     const rowsBefore = await bRowCount(B.tenantId);
 
     for (const route of PAGE_ROUTES) {
-      const path = concretePath(route, B.tenantId, B.customerIds[0], B.catalogIds[0]);
+      const path = concretePath(
+        route,
+        B.tenantId,
+        B.customerIds[0],
+        B.catalogIds[0],
+        B.quoteIds[0],
+      );
       await expectNotFound(page, path);
       const html = await page.content();
       expect(html, path).not.toContain(B.canary);
@@ -98,6 +107,16 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
     await expect(page.getByRole("heading", { name: NOT_FOUND_HEADING })).toBeVisible();
     expect(foreign?.status()).toBe(missing?.status());
     expect(await mainText(page)).toBe(missingText);
+    expect(await page.content()).not.toContain(B.canary);
+
+    // Lo mismo con una cotización de B pedida DESDE la organización A: idéntico a una que no existe.
+    await page.goto(`/o/${fx.orgs.A.tenantId}/cotizaciones/${crypto.randomUUID()}`);
+    await expect(page.getByRole("heading", { name: NOT_FOUND_HEADING })).toBeVisible();
+    const missingQuoteText = await mainText(page);
+    const foreignQuote = await page.goto(`/o/${fx.orgs.A.tenantId}/cotizaciones/${B.quoteIds[0]}`);
+    await expect(page.getByRole("heading", { name: NOT_FOUND_HEADING })).toBeVisible();
+    expect(foreignQuote?.status()).toBe(missing?.status());
+    expect(await mainText(page)).toBe(missingQuoteText);
     expect(await page.content()).not.toContain(B.canary);
 
     // constancia en la plataforma (nunca en B), sin datos personales
@@ -147,6 +166,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         fx.orgs.A.tenantId,
         fx.orgs.A.customerIds[0],
         fx.orgs.A.catalogIds[0],
+        fx.orgs.A.quoteIds[0],
       );
       const response = await page.goto(path);
       expect(response?.status(), path).toBe(200);

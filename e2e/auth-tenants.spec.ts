@@ -76,9 +76,10 @@ test("registro, organizaciones, cambio, cierre de sesión y aislamiento", async 
   await expect(page).toHaveURL(new RegExp(`/o/${tenantA}$`));
   await expect(page.locator('[data-testid="tenant-switcher"]:visible')).toContainText("Negocio 1");
 
-  // Destinos que aún no existen: dicen la verdad
+  // Cotizaciones (H-025): una organización nueva no tiene ninguna y lo dice con honestidad
   await page.getByRole("link", { name: "Cotizaciones" }).first().click();
-  await expect(page.getByText("Disponible pronto")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Cotizaciones", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Aún no tienes cotizaciones" })).toBeVisible();
 
   // ── Teléfono: sin desplazamiento horizontal y con barra inferior ────────────────────────────
   await page.setViewportSize(MOBILE);

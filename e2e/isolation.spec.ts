@@ -119,6 +119,22 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
     expect(await mainText(page)).toBe(missingQuoteText);
     expect(await page.content()).not.toContain(B.canary);
 
+    // H-028: el PDF de una cotización de B pedido DESDE la organización A es idéntico a pedir uno que
+    // no existe, y no entrega ningún byte del documento ni del dato de prueba de B.
+    const pdfPath = (quoteId: string) =>
+      `/api/v1/tenants/${fx.orgs.A.tenantId}/quotes/${quoteId}/pdf`;
+    const missingPdf = await page.request.get(pdfPath(crypto.randomUUID()));
+    const foreignPdf = await page.request.get(pdfPath(B.quoteIds[0]));
+    expect(missingPdf.status()).toBe(404);
+    expect(foreignPdf.status()).toBe(404);
+    expect(foreignPdf.headers()["content-type"]).toBe(missingPdf.headers()["content-type"]);
+    expect(await foreignPdf.text()).toBe(await missingPdf.text());
+    // y con el pase de Ana pero la dirección de B también: 404
+    const foreignTenantPdf = await page.request.get(
+      `/api/v1/tenants/${B.tenantId}/quotes/${B.quoteIds[0]}/pdf`,
+    );
+    expect(foreignTenantPdf.status()).toBe(404);
+
     // constancia en la plataforma (nunca en B), sin datos personales
     const events = await deniedEvents(fx.personas.ana.userId, B.tenantId);
     // (otra prueba de este archivo, P22b, escribe el mismo identificador en mayúsculas: "invalid_id")
@@ -208,7 +224,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         expect(await res.text()).not.toContain(fx.orgs.B.canary);
       } else {
         // Ana (con sesión, miembro solo de A) pide una dirección de B: 404, con o sin cabecera.
-        const attackPath = concretePath(route, fx.orgs.B.tenantId, "", "");
+        const attackPath = concretePath(route, fx.orgs.B.tenantId, "", "", fx.orgs.B.quoteIds[0]);
         const res = await page.request.get(attackPath, {
           headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
         });

@@ -379,6 +379,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/auth/recuperar", kind: "route", scope: "none" },
   { path: "/api/v1/ping", kind: "api", scope: "none" },
   { path: "/api/v1/tenants/[tenantId]/logo", kind: "api", scope: "tenant" },
+  { path: "/api/v1/tenants/[tenantId]/quotes/[quoteId]/pdf", kind: "api", scope: "tenant" },
   { path: "/o/[tenantId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo/[itemId]", kind: "page", scope: "tenant" },

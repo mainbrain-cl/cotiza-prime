@@ -3,6 +3,7 @@ import { formatClp } from "@/lib/money/clp";
 import { formatPercentBp, formatQuantity } from "@/lib/quotes/format";
 import type { QuoteItemRow, QuoteRow } from "@/lib/quotes/queries";
 import { describeValidity, todayInChile } from "@/lib/quotes/validity";
+import { PdfActions } from "./pdf-actions";
 import { TotalsPanel } from "./totals-panel";
 
 const taxLabel = (value: string) => TAX_TREATMENTS.find((t) => t.value === value)?.label ?? value;
@@ -26,10 +27,12 @@ function validityText(quote: QuoteRow): string {
 
 /** Vista de solo lectura: lo guardado, tal cual (nunca se recalcula aquí). */
 export function QuoteReadOnly({
+  tenantId,
   quote,
   items,
   inactiveCatalogIds,
 }: {
+  tenantId: string;
   quote: QuoteRow;
   items: QuoteItemRow[];
   inactiveCatalogIds: string[];
@@ -94,7 +97,7 @@ export function QuoteReadOnly({
           </div>
         ) : null}
       </section>
-      <aside className="lg:sticky lg:top-6 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start">
+      <aside className="flex flex-col gap-4 lg:sticky lg:top-6 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start">
         <TotalsPanel
           totals={{
             subtotalClp: quote.subtotal_clp,
@@ -107,6 +110,7 @@ export function QuoteReadOnly({
             taxRateBp: quote.tax_rate_bp,
           }}
         />
+        <PdfActions tenantId={tenantId} quoteId={quote.id} />
       </aside>
     </div>
   );

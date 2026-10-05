@@ -123,7 +123,12 @@ export default async function QuotePage({
           initialCatalog={initialCatalog}
         />
       ) : (
-        <QuoteReadOnly quote={quote} items={items} inactiveCatalogIds={inactiveCatalogIds} />
+        <QuoteReadOnly
+          tenantId={active.tenantId}
+          quote={quote}
+          items={items}
+          inactiveCatalogIds={inactiveCatalogIds}
+        />
       )}
     </div>
   );

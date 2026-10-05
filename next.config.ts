@@ -29,6 +29,12 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // El PDF se arma en el servidor con @react-pdf/renderer; las tipografías incrustadas viven en el
+  // repositorio y hay que llevarlas al despliegue (se leen en tiempo de ejecución, no se importan).
+  serverExternalPackages: ["@react-pdf/renderer"],
+  outputFileTracingIncludes: {
+    "/api/v1/tenants/[tenantId]/quotes/[quoteId]/pdf": ["./src/lib/pdf/fonts/**/*"],
+  },
   experimental: {
     // El logo (hasta 1 MB, LOGO_MAX_BYTES) viaja en el formulario de Marca; el límite por defecto es 1 MB.
     serverActions: { bodySizeLimit: "2mb" },

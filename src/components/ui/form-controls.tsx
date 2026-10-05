@@ -13,6 +13,15 @@ export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input className={cn(CONTROL_CLASS, className)} {...props} />;
 }
 
+export function Textarea({ className, ...props }: ComponentProps<"textarea">) {
+  return (
+    <textarea
+      className={cn(CONTROL_CLASS, "h-auto min-h-28 py-2 md:h-auto", className)}
+      {...props}
+    />
+  );
+}
+
 export function Select({ className, children, ...props }: ComponentProps<"select">) {
   return (
     <select className={cn(CONTROL_CLASS, "appearance-auto", className)} {...props}>

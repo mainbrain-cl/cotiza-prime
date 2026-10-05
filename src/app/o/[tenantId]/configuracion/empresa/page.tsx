@@ -17,7 +17,7 @@ export default async function CompanyPage({
 
   const { data, error } = await active.supabase
     .from("tenants")
-    .select("name, rut, industry, contact_email, contact_phone")
+    .select("name, rut, industry, contact_email, contact_phone, default_validity_days")
     .eq("tenant_id", active.tenantId)
     .maybeSingle();
 
@@ -52,6 +52,7 @@ export default async function CompanyPage({
             industry: (data.industry as string | null) ?? "",
             contactEmail: (data.contact_email as string | null) ?? "",
             contactPhone: (data.contact_phone as string | null) ?? "",
+            defaultValidityDays: String(data.default_validity_days ?? 15),
           }}
         />
       )}

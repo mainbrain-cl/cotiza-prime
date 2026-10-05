@@ -22,8 +22,15 @@ const state = (lines: EditorLine[], over: Partial<EditorState> = {}): EditorStat
   lines,
   globalDiscountKind: "none",
   globalDiscount: "",
+  validityMode: "days",
+  validityDays: "15",
+  validityDate: "",
+  observations: "",
+  conditions: "",
   ...over,
 });
+
+const CONTEXT = { today: "2026-10-05", savedValidUntil: null };
 
 describe("evaluateEditor", () => {
   it("una línea con cantidad con coma da los mismos totales que el caso K04 (2,5 × 18.000)", () => {
@@ -179,5 +186,84 @@ describe("líneas", () => {
     expect(moveLine(lines, 0, 1).map((l) => l.id)).toEqual(["b", "a", "c"]);
     expect(moveLine(lines, 0, -1)).toBe(lines);
     expect(moveLine(lines, 2, 1)).toBe(lines);
+  });
+});
+
+describe("evaluateEditor · vigencia, observaciones y condiciones (H-027)", () => {
+  const eval1 = (over: Partial<EditorState>, savedValidUntil: string | null = null) =>
+    evaluateEditor(state([line("a")], over), 1900, { ...CONTEXT, savedValidUntil });
+
+  it("la vigencia en días por defecto es válida y viaja al guardado", () => {
+    const view = eval1({});
+    expect(view.errors).toEqual({});
+    expect(view.content?.validity).toEqual({ mode: "days", days: 15 });
+    expect(view.content?.observations).toBeNull();
+    expect(view.content?.conditions).toBeNull();
+  });
+
+  it.each([
+    ["vacío", ""],
+    ["cero", "0"],
+    ["366", "366"],
+    ["decimal", "7,5"],
+    ["texto", "quince"],
+    ["negativo", "-3"],
+  ])("rechaza una vigencia en días inválida: %s", (_name, days) => {
+    const view = eval1({ validityDays: days });
+    expect(view.errors.validity).toBeTruthy();
+    expect(view.content).toBeNull();
+  });
+
+  it("acepta 1 y 365 días", () => {
+    expect(eval1({ validityDays: "1" }).content?.validity).toEqual({ mode: "days", days: 1 });
+    expect(eval1({ validityDays: "365" }).content?.validity).toEqual({ mode: "days", days: 365 });
+  });
+
+  it("con fecha: acepta hoy y el futuro; rechaza el pasado y fechas inexistentes", () => {
+    expect(eval1({ validityMode: "date", validityDate: "2026-10-05" }).errors).toEqual({});
+    expect(eval1({ validityMode: "date", validityDate: "2026-12-31" }).content?.validity).toEqual({
+      mode: "date",
+      date: "2026-12-31",
+    });
+    expect(eval1({ validityMode: "date", validityDate: "2026-10-04" }).errors.validity).toMatch(
+      /pasado/,
+    );
+    expect(
+      eval1({ validityMode: "date", validityDate: "2026-02-30" }).errors.validity,
+    ).toBeTruthy();
+    expect(eval1({ validityMode: "date", validityDate: "" }).errors.validity).toBeTruthy();
+  });
+
+  it("una fecha pasada que ya estaba guardada se puede conservar", () => {
+    const view = eval1({ validityMode: "date", validityDate: "2026-09-01" }, "2026-09-01");
+    expect(view.errors).toEqual({});
+  });
+
+  it("observaciones y condiciones: se recortan, vacío es null y pasan de 4.000 caracteres se rechazan", () => {
+    const ok = eval1({ observations: "  Entrega en bodega  ", conditions: "50% al aceptar" });
+    expect(ok.content?.observations).toBe("Entrega en bodega");
+    expect(ok.content?.conditions).toBe("50% al aceptar");
+    expect(eval1({ observations: "   " }).content?.observations).toBeNull();
+    expect(eval1({ observations: "x".repeat(4000) }).errors).toEqual({});
+    expect(eval1({ observations: "x".repeat(4001) }).errors.observations).toBeTruthy();
+    expect(eval1({ conditions: "x".repeat(4001) }).errors.conditions).toBeTruthy();
+  });
+
+  it("el HTML se trata como texto: no se interpreta ni se altera", () => {
+    const view = eval1({ observations: "<script>alert(1)</script>" });
+    expect(view.content?.observations).toBe("<script>alert(1)</script>");
+  });
+
+  it("descuento global mayor que el subtotal: mensaje claro en el campo", () => {
+    const view = evaluateEditor(
+      state([line("a", { price: "10000" })], {
+        globalDiscountKind: "amount",
+        globalDiscount: "10001",
+      }),
+      1900,
+      CONTEXT,
+    );
+    expect(view.errors.globalDiscount).toMatch(/mayor que el subtotal/);
+    expect(view.content).toBeNull();
   });
 });

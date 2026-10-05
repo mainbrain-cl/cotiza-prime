@@ -10,7 +10,7 @@ import { normalizeRut } from "@/lib/rut";
 import { createClient } from "@/lib/supabase/server";
 import { rememberLastTenant, requireActiveTenant } from "./active-tenant";
 import { tenantPath } from "./constants";
-import { createTenantSchema } from "./schemas";
+import { createTenantSchema, updateCompanySchema } from "./schemas";
 
 function readText(formData: FormData, name: string): string {
   const value = formData.get(name);
@@ -86,7 +86,7 @@ export async function createTenantAction(
 const COMPANY_NOT_ALLOWED_MESSAGE =
   "Solo el Dueño o un Administrador puede cambiar los datos de la empresa.";
 
-/** H-007: edita nombre, RUT, rubro y contacto. La base de datos vuelve a verificar el rol (RLS) y el RUT. */
+/** H-007: edita nombre, RUT, rubro y contacto; H-027: vigencia por defecto de las cotizaciones. La base de datos vuelve a verificar el rol (RLS) y el RUT. */
 export async function updateCompanyAction(
   tenantId: string,
   _previous: FormState,
@@ -99,13 +99,14 @@ export async function updateCompanyAction(
     industry: readText(formData, "industry"),
     contactEmail: readText(formData, "contactEmail"),
     contactPhone: readText(formData, "contactPhone"),
+    defaultValidityDays: readText(formData, "defaultValidityDays"),
   };
 
   if (active.role !== "owner" && active.role !== "admin") {
     return { status: "error", message: COMPANY_NOT_ALLOWED_MESSAGE, values: raw };
   }
 
-  const parsed = createTenantSchema.safeParse(raw);
+  const parsed = updateCompanySchema.safeParse(raw);
   if (!parsed.success) {
     return { status: "error", fieldErrors: fieldErrorsOf(parsed.error), values: raw };
   }
@@ -118,6 +119,7 @@ export async function updateCompanyAction(
       industry: parsed.data.industry,
       contact_email: parsed.data.contactEmail,
       contact_phone: parsed.data.contactPhone,
+      default_validity_days: parsed.data.defaultValidityDays,
     })
     .eq("tenant_id", active.tenantId)
     .select("tenant_id");

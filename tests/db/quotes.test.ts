@@ -262,7 +262,7 @@ describe("create_quote", () => {
     await withTx(db, async () => {
       const key = randomUUID();
       const first = await createQuote(sales, customerA, key);
-      const again = await createQuote(sales, customerA2, key);
+      const again = await createQuote(sales, customerA, key);
       expect(again.id).toBe(first.id);
       expect(again.number).toBe(first.number);
       const { rows } = await db.query(
@@ -830,5 +830,295 @@ describe("restricciones y permisos de las tablas", () => {
          from unnest(array['public.quotes', 'public.quote_items', 'public.quote_events']) t`,
     );
     expect(tables.every((r) => !r.anon)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Migración 18: correcciones de la revisión y datos de H-027
+// ---------------------------------------------------------------------------------------------
+const withHeader = (over: Record<string, unknown>): Header => ({ ...header(), ...over }) as Header;
+const NONE = { kind: "none", value: 0 };
+
+describe("create_quote · correcciones (migración 18)", () => {
+  it("la misma clave con otro cliente no devuelve la cotización existente: CP422", async () => {
+    await withTx(db, async () => {
+      const key = randomUUID();
+      await createQuote(sales, customerA, key);
+      await asUser(sales);
+      const error = await expectSqlError(db, "select * from public.create_quote($1, $2)", [
+        customerA2,
+        key,
+      ]);
+      expect(error.code).toBe("CP422");
+      await actAsPostgres(db);
+      // con el mismo cliente sigue siendo un reintento válido
+      expect((await createQuote(sales, customerA, key)).key).toBe(key);
+    });
+  });
+
+  it("la cotización nueva parte con la vigencia de la organización (15 días por defecto)", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      expect(await quoteRow(q.id)).toMatchObject({
+        validity_mode: "days",
+        validity_days: 15,
+        valid_until: null,
+        observations: null,
+        conditions: null,
+      });
+      await asUser(owner);
+      await db.query("update public.tenants set default_validity_days = 30 where tenant_id = $1", [
+        tenantA,
+      ]);
+      await actAsPostgres(db);
+      const q2 = await createQuote();
+      expect((await quoteRow(q2.id)).validity_days).toBe(30);
+      // la cotización anterior no cambia
+      expect((await quoteRow(q.id)).validity_days).toBe(15);
+    });
+  });
+});
+
+describe("tenants.default_validity_days", () => {
+  it("dueño y administrador lo cambian; comercial no; solo entre 1 y 365", async () => {
+    await withTx(db, async () => {
+      for (const user of [owner, admin]) {
+        await asUser(user);
+        const { rowCount } = await db.query(
+          "update public.tenants set default_validity_days = 20 where tenant_id = $1",
+          [tenantA],
+        );
+        expect(rowCount).toBe(1);
+      }
+      await asUser(sales);
+      const denied = await db.query(
+        "update public.tenants set default_validity_days = 99 where tenant_id = $1",
+        [tenantA],
+      );
+      expect(denied.rowCount).toBe(0);
+      await asUser(owner);
+      for (const bad of [0, 366, -5]) {
+        const error = await expectSqlError(
+          db,
+          "update public.tenants set default_validity_days = $1 where tenant_id = $2",
+          [bad, tenantA],
+        );
+        expect(error.code).toBe(CHECK_VIOLATION);
+      }
+      await asUser(ownerB, tenantB);
+      const foreign = await db.query(
+        "update public.tenants set default_validity_days = 7 where tenant_id = $1",
+        [tenantA],
+      );
+      expect(foreign.rowCount).toBe(0);
+      await actAsPostgres(db);
+      const { rows } = await db.query(
+        "select default_validity_days from public.tenants where tenant_id = $1",
+        [tenantA],
+      );
+      expect(rows[0].default_validity_days).toBe(20);
+    });
+  });
+});
+
+describe("save_quote_draft · línea libre y datos de H-027 (migración 18)", () => {
+  it("una línea libre guardada puede pasar a exenta y cambiar de unidad, con el IVA recalculado", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      const line = item({ unit_price_clp: 10000 });
+      const first = await save(sales, q.id, 1, [line]);
+      expect((first.totals as { taxClp: number }).taxClp).toBe(1900);
+
+      const exempt = { ...line, tax_treatment: "exempt", unit: "hour" };
+      const second = await save(sales, q.id, 2, [exempt]);
+      expect((second.totals as { taxClp: number }).taxClp).toBe(0);
+      expect((second.totals as { totalClp: number }).totalClp).toBe(10000);
+      expect(await lineRows(q.id)).toMatchObject([{ unit: "hour", tax_treatment: "exempt" }]);
+      expect(await quoteRow(q.id)).toMatchObject({ tax_clp: "0", total_clp: "10000" });
+
+      // volver a afecta también funciona
+      const back = { ...line, unit: "km" };
+      const third = await save(sales, q.id, 3, [back]);
+      expect((third.totals as { taxClp: number }).taxClp).toBe(1900);
+    });
+  });
+
+  it("una línea del catálogo sigue sin poder cambiar de unidad ni de trato", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      const line = catalogItem(catTaxable, 10000);
+      await save(sales, q.id, 1, [line]);
+      const changed = { ...line, tax_treatment: "exempt" };
+      expect(
+        (
+          await saveError(sales, q.id, 2, [changed], header(), {
+            totals: expectedTotals([changed], NONE),
+          })
+        ).code,
+      ).toBe("CP422");
+    });
+  });
+
+  it("vigencia en días: se guarda sin fecha de vencimiento (se fija al enviar)", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      await save(sales, q.id, 1, [], withHeader({ validity: { mode: "days", days: 45 } }));
+      expect(await quoteRow(q.id)).toMatchObject({
+        validity_mode: "days",
+        validity_days: 45,
+        valid_until: null,
+      });
+      for (const days of [1, 365]) {
+        const rev = (await quoteRow(q.id)).revision;
+        await save(sales, q.id, rev, [], withHeader({ validity: { mode: "days", days } }));
+        expect((await quoteRow(q.id)).validity_days).toBe(days);
+      }
+    });
+  });
+
+  it("vigencia con fecha: hoy y el futuro valen; el pasado no (CP422)", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      const { rows } = await db.query<{ today: string; yesterday: string; future: string }>(
+        `select app.current_business_date()::text as today,
+                (app.current_business_date() - 1)::text as yesterday,
+                (app.current_business_date() + 30)::text as future`,
+      );
+      const { today, yesterday, future } = rows[0];
+      const empty = { totals: expectedTotals([], NONE) };
+
+      await save(sales, q.id, 1, [], withHeader({ validity: { mode: "date", date: future } }));
+      const saved = await db.query<{ d: string; mode: string; days: number | null }>(
+        "select valid_until::text as d, validity_mode as mode, validity_days as days from public.quotes where id = $1",
+        [q.id],
+      );
+      expect(saved.rows[0]).toEqual({ d: future, mode: "date", days: null });
+      await save(sales, q.id, 2, [], withHeader({ validity: { mode: "date", date: today } }));
+
+      const past = await saveError(
+        sales,
+        q.id,
+        3,
+        [],
+        withHeader({ validity: { mode: "date", date: yesterday } }),
+        empty,
+      );
+      expect(past.code).toBe("CP422");
+      expect(past.message).toContain("validity_in_past");
+      expect((await quoteRow(q.id)).revision).toBe(3);
+
+      // volver a días limpia la fecha
+      await save(sales, q.id, 3, [], withHeader({ validity: { mode: "days", days: 10 } }));
+      expect(await quoteRow(q.id)).toMatchObject({ validity_mode: "days", valid_until: null });
+    });
+  });
+
+  it("una fecha que ya estaba guardada y quedó en el pasado se conserva al guardar otros cambios", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      await db.query(
+        `update public.quotes set validity_mode = 'date', validity_days = null,
+                valid_until = app.current_business_date() - 10 where id = $1`,
+        [q.id],
+      );
+      const { rows } = await db.query<{ d: string }>(
+        "select valid_until::text as d from public.quotes where id = $1",
+        [q.id],
+      );
+      await save(
+        sales,
+        q.id,
+        1,
+        [item()],
+        withHeader({ validity: { mode: "date", date: rows[0].d } }),
+      );
+      expect((await quoteRow(q.id)).revision).toBe(2);
+    });
+  });
+
+  it.each([
+    ["0 días", { mode: "days", days: 0 }],
+    ["366 días", { mode: "days", days: 366 }],
+    ["días decimales", { mode: "days", days: 1.5 }],
+    ["días como texto", { mode: "days", days: "10" }],
+    ["fecha inexistente", { mode: "date", date: "2099-02-30" }],
+    ["fecha mal escrita", { mode: "date", date: "05-10-2099" }],
+    ["fecha muy lejana", { mode: "date", date: "2101-01-01" }],
+    ["fecha como número", { mode: "date", date: 20990101 }],
+    ["modo desconocido", { mode: "forever" }],
+    ["sin modo", { days: 10 }],
+    ["nulo", null],
+    ["arreglo", []],
+  ])("vigencia inválida: %s (CP422)", async (_name, validity) => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      const error = await saveError(sales, q.id, 1, [], withHeader({ validity }), {
+        totals: expectedTotals([], NONE),
+      });
+      expect(error.code).toBe("CP422");
+      expect((await quoteRow(q.id)).revision).toBe(1);
+    });
+  });
+
+  it("observaciones y condiciones: se guardan, el vacío es null y pasar de 4.000 se rechaza", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      await save(
+        sales,
+        q.id,
+        1,
+        [],
+        withHeader({
+          observations: "  Entrega en bodega.\nSin embalaje.  ",
+          conditions: "x".repeat(4000),
+        }),
+      );
+      expect(await quoteRow(q.id)).toMatchObject({
+        observations: "Entrega en bodega.\nSin embalaje.",
+        conditions: "x".repeat(4000),
+      });
+      // sin las claves, no cambian
+      await save(sales, q.id, 2, [], header());
+      expect((await quoteRow(q.id)).observations).toBe("Entrega en bodega.\nSin embalaje.");
+      // vacío y null los borran
+      await save(sales, q.id, 3, [], withHeader({ observations: "   ", conditions: null }));
+      expect(await quoteRow(q.id)).toMatchObject({ observations: null, conditions: null });
+      for (const bad of [
+        { observations: "x".repeat(4001) },
+        { conditions: "x".repeat(4001) },
+        { observations: 5 },
+        { conditions: { a: 1 } },
+      ]) {
+        const error = await saveError(sales, q.id, 4, [], withHeader(bad), {
+          totals: expectedTotals([], NONE),
+        });
+        expect(error.code).toBe("CP422");
+      }
+      expect((await quoteRow(q.id)).revision).toBe(4);
+    });
+  });
+
+  it("el texto con HTML se guarda tal cual (se escapa al mostrarlo, nunca se interpreta)", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      const html = '<script>alert("x")</script><b>negrita</b>';
+      await save(sales, q.id, 1, [], withHeader({ observations: html }));
+      expect((await quoteRow(q.id)).observations).toBe(html);
+    });
+  });
+
+  it("la base impide una vigencia incoherente aunque se escriba como postgres", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      for (const sql of [
+        "update public.quotes set validity_mode = null where id = $1",
+        "update public.quotes set validity_mode = 'date', validity_days = null where id = $1",
+        "update public.quotes set validity_days = 0 where id = $1",
+        "update public.quotes set validity_days = 366 where id = $1",
+        "update public.quotes set observations = repeat('x', 4001) where id = $1",
+      ]) {
+        expect((await expectSqlError(db, sql, [q.id])).code).toBe(CHECK_VIOLATION);
+      }
+    });
   });
 });

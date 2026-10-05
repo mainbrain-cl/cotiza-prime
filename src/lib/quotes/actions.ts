@@ -54,6 +54,9 @@ function invalidMessage(rpcMessage: string): string {
   if (rpcMessage.startsWith("catalog_item_changed")) {
     return "El servicio cambió en el catálogo; vuelve a agregarlo.";
   }
+  if (rpcMessage.startsWith("validity_in_past")) {
+    return "La fecha de vigencia no puede estar en el pasado.";
+  }
   if (rpcMessage.startsWith("customer_not_found") || rpcMessage.startsWith("invalid_customer")) {
     return "El cliente ya no está disponible. Elige otro.";
   }
@@ -70,12 +73,16 @@ async function mapSaveError(error: { code?: string; message?: string }): Promise
       return { status: "forbidden", message: "Solo quien creó este borrador puede editarlo." };
     case SQLSTATE_NOT_FOUND:
       return { status: "not_found", message: "No encontramos esta cotización." };
-    case SQLSTATE_INVALID:
+    case SQLSTATE_INVALID: {
+      const message = error.message ?? "";
       return {
         status: "invalid",
-        message: invalidMessage(error.message ?? ""),
-        fieldErrors: {},
+        message: invalidMessage(message),
+        fieldErrors: message.startsWith("validity_in_past")
+          ? { validity: "La fecha de vigencia no puede estar en el pasado." }
+          : {},
       };
+    }
     case SQLSTATE_CALC_MISMATCH:
       // El cálculo de la aplicación y el de la base no coinciden: error grave, sin datos personales.
       await serverLog("error", "quote_calc_mismatch", { code: error.code });
@@ -181,6 +188,10 @@ async function callCreateQuote(
     if (error.code === SQLSTATE_NOT_FOUND) {
       return { ok: false, message: "Ese cliente ya no está disponible. Elige otro." };
     }
+    if (error.code === SQLSTATE_INVALID) {
+      // La misma clave de creación con otro cliente: la pantalla genera una clave nueva y reintenta.
+      return { ok: false, message: "No pudimos crear la cotización. Intenta de nuevo." };
+    }
     if (error.code === SQLSTATE_INSUFFICIENT_PRIVILEGE) {
       return { ok: false, message: NO_PERMISSION_CREATE };
     }
@@ -210,7 +221,11 @@ export async function createQuoteAction(
   redirect(tenantPath(active.tenantId, `cotizaciones/${outcome.quoteId}`));
 }
 
-export type QuoteCustomerFormState = FormState & { duplicates?: DuplicateMatch[] };
+export type QuoteCustomerFormState = FormState & {
+  duplicates?: DuplicateMatch[];
+  /** El cliente se creó pero la cotización no: el reintento solo crea la cotización. */
+  createdCustomerId?: string;
+};
 
 const CUSTOMER_FIELDS = ["kind", "displayName", "rut", "email", "phone", "address"] as const;
 
@@ -234,6 +249,22 @@ export async function createCustomerAndQuoteAction(
   if (!QUOTE_WRITER_ROLES.includes(active.role)) {
     return { status: "error", message: NO_PERMISSION_CREATE, values: raw };
   }
+  // Reintento: el cliente ya se había creado y solo falló la cotización. No se crea otro cliente
+  // (ni se avisa de un "duplicado" de sí mismo): solo se vuelve a pedir la cotización.
+  const alreadyCreated = readText(formData, "createdCustomerId");
+  if (isUuid(alreadyCreated)) {
+    const retry = await callCreateQuote(active, alreadyCreated, creationKey);
+    if (!retry.ok) {
+      return {
+        status: "error",
+        message: retry.message,
+        values: raw,
+        createdCustomerId: alreadyCreated,
+      };
+    }
+    redirect(tenantPath(active.tenantId, `cotizaciones/${retry.quoteId}`));
+  }
+
   const parsed = customerSchema.safeParse(raw);
   if (!parsed.success) {
     return { status: "error", fieldErrors: fieldErrorsOf(parsed.error), values: raw };
@@ -250,7 +281,14 @@ export async function createCustomerAndQuoteAction(
     return { status: "error", message: created.message, values: raw };
   }
   const outcome = await callCreateQuote(active, created.id, creationKey);
-  if (!outcome.ok) return { status: "error", message: outcome.message, values: raw };
+  if (!outcome.ok) {
+    return {
+      status: "error",
+      message: `Guardamos al cliente, pero no pudimos crear la cotización. ${outcome.message}`,
+      values: raw,
+      createdCustomerId: created.id,
+    };
+  }
   redirect(tenantPath(active.tenantId, `cotizaciones/${outcome.quoteId}`));
 }
 

@@ -2,6 +2,7 @@ import { TAX_TREATMENTS, unitLabel } from "@/lib/catalog/schemas";
 import { formatClp } from "@/lib/money/clp";
 import { formatPercentBp, formatQuantity } from "@/lib/quotes/format";
 import type { QuoteItemRow, QuoteRow } from "@/lib/quotes/queries";
+import { describeValidity, todayInChile } from "@/lib/quotes/validity";
 import { TotalsPanel } from "./totals-panel";
 
 const taxLabel = (value: string) => TAX_TREATMENTS.find((t) => t.value === value)?.label ?? value;
@@ -12,6 +13,15 @@ function discountText(item: QuoteItemRow): string | null {
   }
   if (item.discount_kind === "amount") return `Descuento −${formatClp(item.discount_clp)}`;
   return null;
+}
+
+function validityText(quote: QuoteRow): string {
+  if (quote.valid_until)
+    return describeValidity({ mode: "date", date: quote.valid_until }, todayInChile());
+  if (quote.validity_mode === "days" && quote.validity_days) {
+    return describeValidity({ mode: "days", days: quote.validity_days }, todayInChile());
+  }
+  return "Sin vigencia definida.";
 }
 
 /** Vista de solo lectura: lo guardado, tal cual (nunca se recalcula aquí). */
@@ -63,7 +73,28 @@ export function QuoteReadOnly({
           </ol>
         )}
       </section>
-      <aside className="lg:sticky lg:top-6 lg:self-start">
+      <section
+        aria-label="Condiciones de la oferta"
+        className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-1 md:p-5 lg:col-start-1"
+      >
+        <h2 className="text-lg">Condiciones de la oferta</h2>
+        <p data-testid="validity-summary" className="text-fg-muted">
+          {validityText(quote)}
+        </p>
+        {quote.observations ? (
+          <div className="flex flex-col gap-1">
+            <h3 className="text-sm font-semibold text-fg">Observaciones</h3>
+            <p className="whitespace-pre-wrap text-fg-muted">{quote.observations}</p>
+          </div>
+        ) : null}
+        {quote.conditions ? (
+          <div className="flex flex-col gap-1">
+            <h3 className="text-sm font-semibold text-fg">Condiciones comerciales</h3>
+            <p className="whitespace-pre-wrap text-fg-muted">{quote.conditions}</p>
+          </div>
+        ) : null}
+      </section>
+      <aside className="lg:sticky lg:top-6 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start">
         <TotalsPanel
           totals={{
             subtotalClp: quote.subtotal_clp,

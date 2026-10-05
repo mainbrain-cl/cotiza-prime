@@ -36,6 +36,12 @@ export function toSaveRpcArgs(quoteId: string, payload: SaveQuotePayload, totals
     p_header: {
       customer_id: payload.customerId,
       global_discount: { kind: global.kind, value: global.value },
+      validity:
+        payload.validity.mode === "days"
+          ? { mode: "days", days: payload.validity.days }
+          : { mode: "date", date: payload.validity.date },
+      observations: payload.observations === "" ? null : payload.observations,
+      conditions: payload.conditions === "" ? null : payload.conditions,
     },
     p_items: payload.items.map((item) => {
       const discount = discountColumns(item.discount);

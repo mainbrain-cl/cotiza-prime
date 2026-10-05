@@ -16,6 +16,7 @@ import {
   toBadgeStatus,
 } from "@/lib/quotes/format";
 import { getQuote } from "@/lib/quotes/queries";
+import { editorValidity } from "@/lib/quotes/editor-model";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { QuoteEditor } from "./quote-editor";
@@ -23,6 +24,7 @@ import { QuoteReadOnly } from "./quote-read-only";
 
 export const metadata: Metadata = { title: "Cotización · Cotiza Prime" };
 
+const DEFAULT_VALIDITY_DAYS_FALLBACK = 15;
 const WRITER_ROLES = ["owner", "admin", "sales"];
 
 export default async function QuotePage({
@@ -55,6 +57,17 @@ export default async function QuotePage({
     } else readOnlyReason = `Solo ${authorName} puede editar este borrador. Tú puedes verlo.`;
   }
 
+  // Cotizaciones sin vigencia guardada: parten con la de la organización.
+  let organizationDays = DEFAULT_VALIDITY_DAYS_FALLBACK;
+  if (quote.validity_mode === null) {
+    const { data: tenantRow } = await active.supabase
+      .from("tenants")
+      .select("default_validity_days")
+      .eq("tenant_id", active.tenantId)
+      .maybeSingle();
+    organizationDays = (tenantRow?.default_validity_days as number | undefined) ?? organizationDays;
+  }
+
   const inactive = new Set(inactiveCatalogIds);
   const initialState: EditorState = {
     customerId: quote.customer_id,
@@ -68,6 +81,9 @@ export default async function QuotePage({
         : quote.global_discount_kind === "percent"
           ? formatPercentBp(quote.global_discount_value)
           : String(quote.global_discount_value),
+    ...editorValidity(quote, organizationDays),
+    observations: quote.observations ?? "",
+    conditions: quote.conditions ?? "",
   };
   const initialCatalog = editable ? await listQuotableCatalogItems(active, "") : [];
 
@@ -103,6 +119,7 @@ export default async function QuotePage({
           initialState={initialState}
           initialRevision={quote.revision}
           taxRateBp={quote.tax_rate_bp}
+          savedValidUntil={quote.valid_until}
           initialCatalog={initialCatalog}
         />
       ) : (

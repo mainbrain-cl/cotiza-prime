@@ -18,6 +18,13 @@ import { calcIssueFieldErrors } from "./payload";
 import { parsePercent, parseQuantity } from "./parse";
 import type { QuoteItemPayload } from "./schemas";
 import { QUOTE_ITEM_DESCRIPTION_MAX_LENGTH, QUOTE_ITEM_NAME_MAX_LENGTH } from "./schemas";
+import {
+  parseValidityDate,
+  parseValidityDays,
+  QUOTE_TEXT_MAX_LENGTH,
+  todayInChile,
+  type Validity,
+} from "./validity";
 
 export type DiscountKind = "none" | "percent" | "amount";
 
@@ -38,22 +45,43 @@ export type EditorLine = {
   discount: string;
 };
 
+export type ValidityMode = "days" | "date";
+
 export type EditorState = {
   customerId: string;
   lines: EditorLine[];
   globalDiscountKind: DiscountKind;
   globalDiscount: string;
+  /** Vigencia en días (desde el envío) o hasta una fecha. */
+  validityMode: ValidityMode;
+  validityDays: string;
+  /** `aaaa-mm-dd` (formato de `<input type="date">`). */
+  validityDate: string;
+  observations: string;
+  conditions: string;
+};
+
+/** Contexto de las reglas que dependen de la fecha de hoy. */
+export type EditorContext = {
+  /** Hoy en Chile, `aaaa-mm-dd`. */
+  today: string;
+  /** Fecha de vigencia ya guardada (si no se toca, aunque esté en el pasado, se puede guardar). */
+  savedValidUntil: string | null;
 };
 
 /** Contenido que se guarda (sin la revisión ni la clave del guardado, que pone quien guarda). */
 export type DraftContent = {
   customerId: string;
   globalDiscount: Discount;
+  validity: Validity;
+  /** `null` cuando está vacío. */
+  observations: string | null;
+  conditions: string | null;
   items: QuoteItemPayload[];
 };
 
 export type EditorView = {
-  /** Errores por campo: `items.2.price`, `items.0.name`, `globalDiscount`, `form`. */
+  /** Errores por campo: `items.2.price`, `items.0.name`, `globalDiscount`, `validity`, `form`. */
   errors: Record<string, string>;
   content: DraftContent | null;
   totals: QuoteTotals | null;
@@ -129,7 +157,11 @@ export function parseLine(
 }
 
 /** Todo lo que se ve de una cotización: errores por campo, contenido a guardar y totales. */
-export function evaluateEditor(state: EditorState, taxRateBp: number): EditorView {
+export function evaluateEditor(
+  state: EditorState,
+  taxRateBp: number,
+  context: EditorContext = { today: todayInChile(), savedValidUntil: null },
+): EditorView {
   const errors: Record<string, string> = {};
   const items: QuoteItemPayload[] = [];
   let allLinesOk = true;
@@ -141,7 +173,29 @@ export function evaluateEditor(state: EditorState, taxRateBp: number): EditorVie
   });
   const global = parseDiscountText(state.globalDiscountKind, state.globalDiscount);
   if (!global.ok) errors.globalDiscount = global.message;
-  if (!allLinesOk || !global.ok) return { errors, content: null, totals: null };
+
+  let validity: Validity | null = null;
+  if (state.validityMode === "days") {
+    const days = parseValidityDays(state.validityDays);
+    if (days.ok) validity = { mode: "days", days: days.value };
+    else errors.validity = days.message;
+  } else {
+    const date = parseValidityDate(state.validityDate, context.today, context.savedValidUntil);
+    if (date.ok) validity = { mode: "date", date: date.value };
+    else errors.validity = date.message;
+  }
+  const observations = state.observations.trim();
+  const conditions = state.conditions.trim();
+  if (observations.length > QUOTE_TEXT_MAX_LENGTH) {
+    errors.observations = "Las observaciones son demasiado largas (máximo 4.000 caracteres).";
+  }
+  if (conditions.length > QUOTE_TEXT_MAX_LENGTH) {
+    errors.conditions = "Las condiciones son demasiado largas (máximo 4.000 caracteres).";
+  }
+
+  if (!allLinesOk || !global.ok || validity === null || errors.observations || errors.conditions) {
+    return { errors, content: null, totals: null };
+  }
 
   const calc = calculateQuote({ lines: items, globalDiscount: global.value, taxRateBp });
   if (!calc.ok) {
@@ -153,7 +207,14 @@ export function evaluateEditor(state: EditorState, taxRateBp: number): EditorVie
   }
   return {
     errors,
-    content: { customerId: state.customerId, globalDiscount: global.value, items },
+    content: {
+      customerId: state.customerId,
+      globalDiscount: global.value,
+      validity,
+      observations: observations === "" ? null : observations,
+      conditions: conditions === "" ? null : conditions,
+      items,
+    },
     totals: calc.totals,
   };
 }
@@ -250,4 +311,27 @@ export function moveLine(lines: EditorLine[], index: number, direction: -1 | 1):
   const next = [...lines];
   [next[index], next[target]] = [next[target], next[index]];
   return next;
+}
+
+/** Vigencia guardada -> campos del editor. Sin vigencia guardada, parte con los días de la organización. */
+export function editorValidity(
+  quote: {
+    validity_mode: "days" | "date" | null;
+    validity_days: number | null;
+    valid_until: string | null;
+  },
+  organizationDays: number,
+): Pick<EditorState, "validityMode" | "validityDays" | "validityDate"> {
+  if (quote.validity_mode === "date" && quote.valid_until) {
+    return {
+      validityMode: "date",
+      validityDays: String(organizationDays),
+      validityDate: quote.valid_until,
+    };
+  }
+  return {
+    validityMode: "days",
+    validityDays: String(quote.validity_days ?? organizationDays),
+    validityDate: "",
+  };
 }

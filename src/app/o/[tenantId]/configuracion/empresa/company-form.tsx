@@ -17,6 +17,7 @@ export type CompanyValues = {
   industry: string;
   contactEmail: string;
   contactPhone: string;
+  defaultValidityDays: string;
 };
 
 export function CompanyForm({
@@ -143,6 +144,28 @@ export function CompanyForm({
             onChange={(event) => set("contactPhone")(event.target.value)}
             maxLength={CONTACT_PHONE_MAX_LENGTH}
             disabled={!canEdit}
+          />
+        )}
+      </Field>
+
+      <Field
+        label="Vigencia por defecto de tus cotizaciones (días)"
+        error={errors.defaultValidityDays}
+        hint="Cada cotización nueva parte con estos días, contados desde que la envías. Se puede cambiar en cada cotización."
+        required
+      >
+        {(control) => (
+          <Input
+            {...control}
+            name="defaultValidityDays"
+            inputMode="numeric"
+            autoComplete="off"
+            value={values.defaultValidityDays}
+            onChange={(event) => set("defaultValidityDays")(event.target.value)}
+            maxLength={3}
+            disabled={!canEdit}
+            className="tabular-nums"
+            required
           />
         )}
       </Field>

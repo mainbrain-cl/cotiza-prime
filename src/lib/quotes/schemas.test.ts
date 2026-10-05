@@ -22,6 +22,9 @@ const payload = (over: Record<string, unknown> = {}) => ({
   expectedRevision: 1,
   customerId: randomUUID(),
   globalDiscount: { kind: "none" },
+  validity: { mode: "days", days: 15 },
+  observations: null,
+  conditions: null,
   items: [item()],
   ...over,
 });
@@ -53,6 +56,16 @@ describe("saveQuotePayloadSchema", () => {
     ["revisión 0", { expectedRevision: 0 }],
     ["clave de guardado mala", { saveId: "x" }],
     ["demasiadas líneas", { items: Array.from({ length: 201 }, () => item()) }],
+    ["vigencia 0 días", { validity: { mode: "days", days: 0 } }],
+    ["vigencia 366 días", { validity: { mode: "days", days: 366 } }],
+    ["vigencia decimal", { validity: { mode: "days", days: 1.5 } }],
+    ["vigencia con fecha inexistente", { validity: { mode: "date", date: "2026-02-30" } }],
+    ["vigencia con fecha mal escrita", { validity: { mode: "date", date: "05-10-2026" } }],
+    ["vigencia con modo inventado", { validity: { mode: "forever" } }],
+    ["vigencia sin modo", { validity: { days: 15 } }],
+    ["observaciones sobre 4.000", { observations: "x".repeat(4001) }],
+    ["condiciones sobre 4.000", { conditions: "x".repeat(4001) }],
+    ["observaciones que no son texto", { observations: 5 }],
     ["campo de más (organización)", { tenantId: randomUUID() }],
     ["campo de más en la línea", { items: [item({ unitCostClp: 5 })] }],
   ])("rechaza: %s", (_name, over) => {
@@ -103,6 +116,9 @@ describe("del guardado a la base", () => {
     ]);
     expect(JSON.stringify(args)).not.toMatch(/tenant|cost/i);
     expect(args.p_header.global_discount).toEqual({ kind: "percent", value: 500 });
+    expect(args.p_header.validity).toEqual({ mode: "days", days: 15 });
+    expect(args.p_header.observations).toBeNull();
+    expect(args.p_header.conditions).toBeNull();
     expect(args.p_items.map((i) => [i.discount_kind, i.discount_value])).toEqual([
       ["percent", 1000],
       ["amount", 500],

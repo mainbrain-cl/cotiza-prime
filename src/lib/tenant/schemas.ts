@@ -51,3 +51,19 @@ export const createTenantSchema = z.object({
 });
 
 export type CreateTenantInput = z.infer<typeof createTenantSchema>;
+
+export const DEFAULT_VALIDITY_DAYS_MIN = 1;
+export const DEFAULT_VALIDITY_DAYS_MAX = 365;
+
+/** Datos de la empresa al editarla (H-007): lo de crearla más la vigencia por defecto de las cotizaciones (H-027). */
+export const updateCompanySchema = createTenantSchema.extend({
+  defaultValidityDays: z
+    .string()
+    .trim()
+    .regex(/^\d+$/, "Escribe los días con números enteros. Por ejemplo, 15.")
+    .transform(Number)
+    .refine(
+      (days) => days >= DEFAULT_VALIDITY_DAYS_MIN && days <= DEFAULT_VALIDITY_DAYS_MAX,
+      "La vigencia debe estar entre 1 y 365 días.",
+    ),
+});

@@ -34,7 +34,7 @@ export function CustomerPicker({
   tenantId: string;
   initial: CustomerChoice[];
 }) {
-  const [creationKey] = useState(() => crypto.randomUUID());
+  const [creationKey, setCreationKey] = useState(() => crypto.randomUUID());
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<CustomerChoice[]>(initial);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +61,12 @@ export function CustomerPicker({
     startTransition(async () => {
       const result = await createQuoteAction(tenantId, customerId, creationKey);
       // Si salió bien, la acción redirige al editor y no llega aquí.
-      if (result?.status === "error") setError(result.message);
+      if (result?.status === "error") {
+        setError(result.message);
+        // Una respuesta de error es definitiva: el próximo intento usa una clave nueva, para no
+        // chocar con la clave de un intento anterior (que podría ser de otro cliente).
+        setCreationKey(crypto.randomUUID());
+      }
     });
   }
 
@@ -196,6 +201,9 @@ function NewCustomerForm({
       </div>
 
       {state.message ? <FormAlert>{state.message}</FormAlert> : null}
+      {state.createdCustomerId ? (
+        <input type="hidden" name="createdCustomerId" value={state.createdCustomerId} />
+      ) : null}
 
       {duplicates.length > 0 ? (
         <div

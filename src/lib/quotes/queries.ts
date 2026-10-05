@@ -11,7 +11,8 @@ const QUOTE_COLUMNS =
   "id, number_display, version, status, revision, customer_id, created_by, created_at, updated_at, tax_rate_bp, " +
   "global_discount_kind, global_discount_value, subtotal_taxable_clp, subtotal_exempt_clp, subtotal_clp, " +
   "line_discounts_clp, global_discount_clp, global_discount_taxable_clp, global_discount_exempt_clp, " +
-  "net_taxable_clp, net_exempt_clp, tax_clp, total_clp";
+  "net_taxable_clp, net_exempt_clp, tax_clp, total_clp, validity_mode, validity_days, valid_until, " +
+  "observations, conditions";
 const ITEM_COLUMNS =
   "id, position, catalog_item_id, catalog_unit_price_clp, name, description, unit, tax_treatment, " +
   "quantity_milli, unit_price_clp, discount_kind, discount_value, gross_clp, discount_clp, line_total_clp";
@@ -40,6 +41,12 @@ export type QuoteRow = {
   net_exempt_clp: number;
   tax_clp: number;
   total_clp: number;
+  validity_mode: "days" | "date" | null;
+  validity_days: number | null;
+  /** `aaaa-mm-dd`. Con vigencia en días queda vacío hasta que se envía la cotización. */
+  valid_until: string | null;
+  observations: string | null;
+  conditions: string | null;
 };
 
 export type QuoteItemRow = {

@@ -307,3 +307,7 @@ rutas completas, control positivo en escrituras, CI con tiempo límite y caché,
 ## Registro de H-025 / H-026 (cotizaciones)
 
 Suma al registro: tablas `quotes`, `quote_items` (lectura por columnas, sin `unit_cost_clp`: `starSelectRejected`) y `quote_events`, todas `business` y sin escritura directa; funciones `create_quote` y `save_quote_draft` (`writesActiveTenant`); rutas `/o/[tenantId]/cotizaciones/nueva` y `/o/[tenantId]/cotizaciones/[quoteId]`. La fixture crea una cotizacion con dos lineas (canario) en A y en B. Ataques propios: `tests/isolation/quotes.test.ts`.
+
+## Registro de H-027 (vigencia y textos de la cotización; migración 18)
+
+No suma tablas ni funciones: `save_quote_draft` acepta tres claves nuevas en `p_header` (`validity`, `observations`, `conditions`) y la función `create_quote` ahora lee `tenants.default_validity_days`. La columna nueva `tenants.default_validity_days` queda bajo las mismas políticas de `tenants` (solo Dueño y Administrador de la organización activa la cambian; el permiso de columna se agregó en la migración). Ataques propios, en `tests/isolation/quotes.test.ts`: guardar vigencia y textos en la cotización de B, y cambiar la vigencia por defecto de B, con las tres cabeceras. Con la corrección de la revisión, `create_quote` también rechaza (CP422) reutilizar una clave de creación con otro cliente.

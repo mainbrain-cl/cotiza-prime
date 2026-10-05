@@ -3,7 +3,7 @@
 import { ChevronDown, ChevronUp, Loader2, Plus, Save, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { FormAlert, Input, Select } from "@/components/ui/form-controls";
+import { FormAlert, Input, Select, Textarea } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
 import { TAX_TREATMENTS, unitLabel } from "@/lib/catalog/schemas";
 import { formatClp } from "@/lib/money/clp";
@@ -23,8 +23,16 @@ import {
   type DiscountKind,
   type EditorLine,
   type EditorState,
+  type ValidityMode,
 } from "@/lib/quotes/editor-model";
 import type { SaveQuotePayload } from "@/lib/quotes/schemas";
+import {
+  describeValidity,
+  QUOTE_TEXT_MAX_LENGTH,
+  todayInChile,
+  VALIDITY_DAYS_MAX,
+  VALIDITY_DAYS_MIN,
+} from "@/lib/quotes/validity";
 import { cn } from "@/lib/utils";
 import { TotalsPanel, type TotalsView } from "./totals-panel";
 import { useQuoteSaver } from "./use-quote-saver";
@@ -46,12 +54,61 @@ function FieldError({ id, message }: { id: string; message?: string }) {
   );
 }
 
+function TextField({
+  id,
+  label,
+  hint,
+  value,
+  error,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  value: string;
+  error?: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const length = value.trim().length;
+  const over = length > QUOTE_TEXT_MAX_LENGTH;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-semibold text-fg">
+        {label} (opcional)
+      </label>
+      <Textarea
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        aria-invalid={Boolean(error)}
+        aria-describedby={`${id}-hint${error ? ` ${id}-error` : ""}`}
+        disabled={disabled}
+      />
+      <div className="flex items-start justify-between gap-3">
+        <p id={`${id}-hint`} className="text-sm text-fg-muted">
+          {hint}
+        </p>
+        <p
+          data-testid={`${id}-count`}
+          className={cn("shrink-0 text-sm tabular-nums", over ? "text-danger" : "text-fg-subtle")}
+        >
+          {length.toLocaleString("es-CL")} / {QUOTE_TEXT_MAX_LENGTH.toLocaleString("es-CL")}
+        </p>
+      </div>
+      <FieldError id={`${id}-error`} message={error} />
+    </div>
+  );
+}
+
 export function QuoteEditor({
   tenantId,
   quoteId,
   initialState,
   initialRevision,
   taxRateBp,
+  savedValidUntil,
   initialCatalog,
 }: {
   tenantId: string;
@@ -59,6 +116,8 @@ export function QuoteEditor({
   initialState: EditorState;
   initialRevision: number;
   taxRateBp: number;
+  /** Fecha de vigencia ya guardada (`aaaa-mm-dd`), si la hay. */
+  savedValidUntil: string | null;
   initialCatalog: QuotableCatalogItem[];
 }) {
   const [state, setState] = useState<EditorState>(initialState);
@@ -66,10 +125,16 @@ export function QuoteEditor({
   const [catalogTerm, setCatalogTerm] = useState("");
   const [announcement, setAnnouncement] = useState("");
   const searchTimer = useRef<number | undefined>(undefined);
+  const pendingFocus = useRef<string | null>(null);
 
-  const view = useMemo(() => evaluateEditor(state, taxRateBp), [state, taxRateBp]);
+  const [today] = useState(() => todayInChile());
+  const context = useMemo(() => ({ today, savedValidUntil }), [today, savedValidUntil]);
+  const view = useMemo(
+    () => evaluateEditor(state, taxRateBp, context),
+    [state, taxRateBp, context],
+  );
   const [initialKey] = useState(() => {
-    const initial = evaluateEditor(initialState, taxRateBp);
+    const initial = evaluateEditor(initialState, taxRateBp, context);
     return initial.content ? contentKey(initial.content) : "";
   });
 
@@ -94,6 +159,13 @@ export function QuoteEditor({
   }, [dirty]);
 
   useEffect(() => () => window.clearTimeout(searchTimer.current), []);
+
+  // Devuelve el foco a la flecha elegida después de reordenar (ver `move`).
+  useEffect(() => {
+    if (pendingFocus.current === null) return;
+    document.getElementById(pendingFocus.current)?.focus();
+    pendingFocus.current = null;
+  }, [state.lines]);
 
   function updateLine(index: number, patch: Partial<EditorLine>) {
     setState((current) => ({
@@ -130,6 +202,16 @@ export function QuoteEditor({
   }
 
   function move(index: number, direction: -1 | 1) {
+    // Al llegar al primer o al último lugar, el botón que se apretó queda desactivado y el foco se
+    // perdería: se pasa a la otra flecha de la misma línea.
+    const target = index + direction;
+    const lineId = state.lines[index]?.id;
+    if (lineId) {
+      const atEdge = target === 0 || target === state.lines.length - 1;
+      const pressed = direction === -1 ? "up" : "down";
+      const other = direction === -1 ? "down" : "up";
+      pendingFocus.current = `${lineId}-${atEdge ? other : pressed}`;
+    }
     setState((current) => ({ ...current, lines: moveLine(current.lines, index, direction) }));
     setAnnouncement(`Línea ${index + 1} movida a la posición ${index + 1 + direction}.`);
   }
@@ -292,6 +374,7 @@ export function QuoteEditor({
                           type="button"
                           variant="ghost"
                           size="icon-sm"
+                          id={idFor("up")}
                           aria-label={`Subir la línea ${index + 1}`}
                           disabled={blocked || index === 0}
                           onClick={() => move(index, -1)}
@@ -302,6 +385,7 @@ export function QuoteEditor({
                           type="button"
                           variant="ghost"
                           size="icon-sm"
+                          id={idFor("down")}
                           aria-label={`Bajar la línea ${index + 1}`}
                           disabled={blocked || index === state.lines.length - 1}
                           onClick={() => move(index, 1)}
@@ -333,6 +417,9 @@ export function QuoteEditor({
                         value={line.description}
                         onChange={(event) => updateLine(index, { description: event.target.value })}
                         aria-invalid={Boolean(err("description"))}
+                        aria-describedby={
+                          err("description") ? idFor("description-error") : undefined
+                        }
                         autoComplete="off"
                         disabled={blocked}
                       />
@@ -496,6 +583,110 @@ export function QuoteEditor({
           <p className="sr-only" role="status" aria-live="polite">
             {announcement}
           </p>
+        </section>
+
+        <section
+          aria-label="Condiciones de la oferta"
+          className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4 shadow-1 md:p-5"
+        >
+          <h2 className="text-lg">Condiciones de la oferta</h2>
+
+          <div className="flex flex-col gap-3" data-testid="validity">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="validity-mode" className="text-sm font-semibold text-fg">
+                  Vigencia
+                </label>
+                <Select
+                  id="validity-mode"
+                  value={state.validityMode}
+                  onChange={(event) =>
+                    setState((current) => ({
+                      ...current,
+                      validityMode: event.target.value as ValidityMode,
+                    }))
+                  }
+                  disabled={blocked}
+                >
+                  <option value="days">En días (desde que la envíes)</option>
+                  <option value="date">Hasta una fecha</option>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {state.validityMode === "days" ? (
+                  <>
+                    <label htmlFor="validity-days" className="text-sm font-semibold text-fg">
+                      Días de vigencia
+                    </label>
+                    <Input
+                      id="validity-days"
+                      inputMode="numeric"
+                      value={state.validityDays}
+                      onChange={(event) =>
+                        setState((current) => ({ ...current, validityDays: event.target.value }))
+                      }
+                      aria-invalid={Boolean(view.errors.validity)}
+                      aria-describedby={view.errors.validity ? "validity-error" : "validity-help"}
+                      autoComplete="off"
+                      disabled={blocked}
+                      className="tabular-nums"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="validity-date" className="text-sm font-semibold text-fg">
+                      Vale hasta
+                    </label>
+                    <Input
+                      id="validity-date"
+                      type="date"
+                      min={savedValidUntil && savedValidUntil < today ? savedValidUntil : today}
+                      value={state.validityDate}
+                      onChange={(event) =>
+                        setState((current) => ({ ...current, validityDate: event.target.value }))
+                      }
+                      aria-invalid={Boolean(view.errors.validity)}
+                      aria-describedby={view.errors.validity ? "validity-error" : "validity-help"}
+                      disabled={blocked}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+            <FieldError id="validity-error" message={view.errors.validity} />
+            {view.content ? (
+              <p
+                id="validity-help"
+                data-testid="validity-summary"
+                className="text-sm text-fg-muted"
+              >
+                {describeValidity(view.content.validity, today)}
+              </p>
+            ) : (
+              <p id="validity-help" className="sr-only">
+                Vigencia de {VALIDITY_DAYS_MIN} a {VALIDITY_DAYS_MAX} días, o hasta una fecha.
+              </p>
+            )}
+          </div>
+
+          <TextField
+            id="observations"
+            label="Observaciones"
+            hint="Aparecen en el documento que recibe tu cliente. Solo texto."
+            value={state.observations}
+            error={view.errors.observations}
+            disabled={blocked}
+            onChange={(value) => setState((current) => ({ ...current, observations: value }))}
+          />
+          <TextField
+            id="conditions"
+            label="Condiciones comerciales"
+            hint="Plazos, forma de pago, exclusiones. Solo texto."
+            value={state.conditions}
+            error={view.errors.conditions}
+            disabled={blocked}
+            onChange={(value) => setState((current) => ({ ...current, conditions: value }))}
+          />
         </section>
       </div>
 

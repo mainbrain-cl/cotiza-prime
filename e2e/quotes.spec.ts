@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { generateRut } from "../src/lib/chile/rut";
 import { connect } from "../tests/db/helpers";
 import { expect, randomTestIp, test, type Page } from "./fixtures";
+import { addDaysIso, isoToDisplay, todayInChile } from "../src/lib/quotes/validity";
 import { createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
 
 // H-025 y H-026: crear una cotización y ajustar cantidades, precios y descuentos, de punta a punta.
@@ -124,6 +125,19 @@ test("crear una cotización con un cliente existente, armarla, guardarla y recup
   await expect(total(page, "total-total")).toHaveText("$59.241");
   await expect(total(page, "total-subtotal")).toHaveText("$50.501");
 
+  // Una línea libre ya guardada puede cambiar de unidad y pasar a exenta: el IVA se recalcula
+  await lines(page).nth(3).getByLabel("Unidad").selectOption("hour");
+  await lines(page).nth(3).getByLabel("IVA").selectOption("exempt");
+  // Neto afecto 43.000 (IVA 8.170) + exento 4.500 + 3.001 = 58.671
+  await expect(total(page, "total-tax")).toHaveText("$8.170");
+  await expect(total(page, "total-total")).toHaveText("$58.671");
+  await page.getByTestId("save-quote").click();
+  await expect(page.getByTestId("save-status")).toHaveText("Guardado.");
+  await page.reload();
+  await expect(lines(page).nth(3).getByLabel("Unidad")).toHaveValue("hour");
+  await expect(lines(page).nth(3).getByLabel("IVA")).toHaveValue("exempt");
+  await expect(total(page, "total-total")).toHaveText("$58.671");
+
   // Reordenar con el teclado y quitar una línea; todo queda guardado
   await lines(page).nth(0).getByRole("button", { name: "Bajar la línea 1" }).focus();
   await page.keyboard.press("Enter");
@@ -132,6 +146,11 @@ test("crear una cotización con un cliente existente, armarla, guardarla y recup
       .nth(1)
       .getByLabel(/Nombre de la línea/),
   ).toHaveValue("Servicio Alfa");
+  // Al llegar al último lugar, el foco pasa a la otra flecha de la misma línea (no se pierde)
+  await lines(page).nth(2).getByRole("button", { name: "Bajar la línea 3" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(lines(page).nth(3).getByRole("button", { name: "Subir la línea 4" })).toBeFocused();
+  await page.keyboard.press("Enter");
   await lines(page).nth(3).getByRole("button", { name: "Quitar la línea 4" }).click();
   await expect(lines(page)).toHaveCount(3);
   await page.getByTestId("save-quote").click();
@@ -311,4 +330,102 @@ test("dos pestañas: la segunda recibe el aviso y no sobrescribe; un Observador 
     expect(overflow, url).toBeLessThanOrEqual(0);
   }
   expect(customerId).toBeTruthy();
+});
+
+test("H-027: vigencia en días o con fecha, por defecto la de la organización; observaciones y condiciones", async ({
+  page,
+}) => {
+  test.setTimeout(300_000);
+  const { tenantId } = await setup(page, "vigencia");
+  const today = todayInChile();
+
+  // La vigencia por defecto de la organización se cambia en Configuración -> Empresa
+  await page.goto(`/o/${tenantId}/configuracion/empresa`);
+  const defaultDays = page.getByLabel(/Vigencia por defecto de tus cotizaciones/);
+  await expect(defaultDays).toHaveValue("15");
+  await defaultDays.fill("0");
+  await page.getByRole("button", { name: "Guardar datos" }).click();
+  await expect(page.getByText("La vigencia debe estar entre 1 y 365 días.")).toBeVisible();
+  await defaultDays.fill("30");
+  await page.getByRole("button", { name: "Guardar datos" }).click();
+  await expect(page.getByText("Guardamos los datos de tu empresa.")).toBeVisible();
+
+  // La cotización nueva parte con los 30 días y muestra la fecha exacta si se envía hoy
+  await page.goto(`/o/${tenantId}/cotizaciones/nueva`);
+  await page.getByRole("button", { name: /Cliente Existente Ltda/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${tenantId}/cotizaciones/[0-9a-f-]{36}$`));
+  const quoteUrl = page.url();
+  const days = page.getByLabel("Días de vigencia");
+  const summary = page.getByTestId("validity-summary");
+  await expect(days).toHaveValue("30");
+  await expect(summary).toHaveText(
+    `Vence 30 días después de enviarla. Si la envías hoy, vence el ${isoToDisplay(addDaysIso(today, 30))}.`,
+  );
+
+  // Días inválidos: se marca y no deja guardar
+  for (const bad of ["0", "366", "1,5", ""]) {
+    await days.fill(bad);
+    await expect(page.locator("#validity-error")).toBeVisible();
+    await expect(page.getByTestId("save-quote")).toBeDisabled();
+  }
+  await days.fill("20");
+  await expect(summary).toContainText(isoToDisplay(addDaysIso(today, 20)));
+  await expect(page.locator("#validity-error")).toHaveCount(0);
+
+  // Con fecha: una fecha pasada se rechaza; una futura se muestra tal cual
+  await page.getByLabel("Vigencia", { exact: true }).selectOption("date");
+  const date = page.getByLabel("Vale hasta");
+  await date.fill("2020-01-01");
+  await expect(page.getByText("La fecha de vigencia no puede estar en el pasado.")).toBeVisible();
+  await expect(page.getByTestId("save-quote")).toBeDisabled();
+  await date.fill("2099-12-31");
+  await expect(summary).toHaveText("Vence el 31-12-2099.");
+
+  // Observaciones y condiciones: contador y tope de 4.000 caracteres
+  const observations = page.getByLabel("Observaciones (opcional)");
+  const conditions = page.getByLabel("Condiciones comerciales (opcional)");
+  await expect(page.getByTestId("observations-count")).toHaveText("0 / 4.000");
+  await observations.fill("x".repeat(4001));
+  await expect(page.getByTestId("observations-count")).toHaveText("4.001 / 4.000");
+  await expect(page.getByText(/Las observaciones son demasiado largas/)).toBeVisible();
+  await expect(page.getByTestId("save-quote")).toBeDisabled();
+  const html = "<b>Entrega</b> en bodega <script>window.__xss = 1</script>";
+  await observations.fill(html);
+  await conditions.fill("50% al aceptar y 50% contra entrega.");
+  await expect(page.getByTestId("observations-count")).toHaveText(`${html.length} / 4.000`);
+
+  // Guardar y recargar: todo vuelve igual
+  await page.getByTestId("save-quote").click();
+  await expect(page.getByTestId("save-status")).toHaveText("Guardado.");
+  await page.reload();
+  await expect(page.getByLabel("Vigencia", { exact: true })).toHaveValue("date");
+  await expect(page.getByLabel("Vale hasta")).toHaveValue("2099-12-31");
+  await expect(page.getByLabel("Observaciones (opcional)")).toHaveValue(html);
+  await expect(page.getByLabel("Condiciones comerciales (opcional)")).toHaveValue(
+    "50% al aceptar y 50% contra entrega.",
+  );
+  expect(
+    await page.evaluate(() => (window as unknown as { __xss?: number }).__xss),
+  ).toBeUndefined();
+
+  // Volver a días y guardar
+  await page.getByLabel("Vigencia", { exact: true }).selectOption("days");
+  await page.getByLabel("Días de vigencia").fill("45");
+  await page.getByTestId("save-quote").click();
+  await expect(page.getByTestId("save-status")).toHaveText("Guardado.");
+
+  // Ya no editable: la vista de solo lectura muestra el texto como texto, sin interpretarlo
+  await withDb((db) =>
+    db.query("update public.quotes set status = 'sent' where tenant_id = $1", [tenantId]),
+  );
+  await page.goto(quoteUrl);
+  await expect(page.getByTestId("quote-read-only")).toBeVisible();
+  await expect(page.getByTestId("validity-summary")).toContainText(
+    "Vence 45 días después de enviarla",
+  );
+  await expect(page.getByText(html)).toBeVisible();
+  await expect(page.getByText("50% al aceptar y 50% contra entrega.")).toBeVisible();
+  expect(
+    await page.evaluate(() => (window as unknown as { __xss?: number }).__xss),
+  ).toBeUndefined();
 });

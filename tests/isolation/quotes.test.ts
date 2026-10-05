@@ -266,3 +266,61 @@ describe("cotizaciones · lectura y escritura directa", () => {
     expect(await countWhere(db, "quote_items", `quote_id = '${fx.orgs.A.quoteIds[0]}'`)).toBe(2);
   });
 });
+
+// Migración 18 (H-027): vigencia, observaciones, condiciones y vigencia por defecto de la organización.
+describe("cotizaciones · vigencia y textos (H-027)", () => {
+  it("Ana no puede guardar vigencia ni textos en la cotización de B, con ninguna cabecera (B idéntica)", async () => {
+    const fx = fixture();
+    const before = await bQuoteFingerprints();
+    const token = await tokenOf("ana");
+    const draft = emptyDraft(fx.orgs.A.customerIds[0]);
+    for (const header of [fx.orgs.A.tenantId, fx.orgs.B.tenantId, undefined]) {
+      const res = await rpc(
+        token,
+        "save_quote_draft",
+        {
+          p_quote_id: fx.orgs.B.quoteIds[0],
+          ...draft,
+          p_header: {
+            ...draft.p_header,
+            validity: { mode: "days", days: 1 },
+            observations: "texto de ataque",
+            conditions: "texto de ataque",
+          },
+        },
+        tenantHeader(header),
+      );
+      expect(res.status, `${header ?? "sin cabecera"}: ${res.text}`).toBeGreaterThanOrEqual(400);
+      expect(res.text).not.toContain(fx.orgs.B.canary);
+    }
+    expect(await bQuoteFingerprints()).toEqual(before);
+    expect(
+      await countWhere(
+        db,
+        "quotes",
+        `tenant_id = '${fx.orgs.B.tenantId}' and (observations = 'texto de ataque' or conditions = 'texto de ataque')`,
+      ),
+    ).toBe(0);
+  });
+
+  it("Ana no puede cambiar la vigencia por defecto de B ", async () => {
+    const fx = fixture();
+    const before = await db.query(
+      "select tenant_id, default_validity_days from public.tenants where tenant_id = $1",
+      [fx.orgs.B.tenantId],
+    );
+    const token = await tokenOf("ana");
+    for (const header of [fx.orgs.A.tenantId, fx.orgs.B.tenantId, undefined]) {
+      await rest(token, `tenants?tenant_id=eq.${fx.orgs.B.tenantId}`, {
+        method: "PATCH",
+        headers: { ...tenantHeader(header), prefer: "return=representation" },
+        body: { default_validity_days: 1 },
+      });
+    }
+    const after = await db.query(
+      "select tenant_id, default_validity_days from public.tenants where tenant_id = $1",
+      [fx.orgs.B.tenantId],
+    );
+    expect(after.rows).toEqual(before.rows);
+  });
+});

@@ -8,6 +8,12 @@ import { z } from "zod";
 import { CATALOG_UNITS } from "@/lib/catalog/schemas";
 import { MAX_CLP } from "@/lib/money/clp";
 import { PERCENT_MAX_BP, QUANTITY_MAX_MILLI, QUANTITY_MIN_MILLI, QUOTE_MAX_LINES } from "./calc";
+import {
+  isValidIsoDate,
+  QUOTE_TEXT_MAX_LENGTH,
+  VALIDITY_DAYS_MAX,
+  VALIDITY_DAYS_MIN,
+} from "./validity";
 
 export const QUOTE_ITEM_NAME_MAX_LENGTH = 150;
 export const QUOTE_ITEM_DESCRIPTION_MAX_LENGTH = 2000;
@@ -56,12 +62,41 @@ export const quoteItemSchema = z
   })
   .strict();
 
+const validitySchema = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("days"),
+      days: z
+        .number()
+        .int("La vigencia se cuenta en días enteros.")
+        .min(VALIDITY_DAYS_MIN, "La vigencia mínima es 1 día.")
+        .max(VALIDITY_DAYS_MAX, "La vigencia máxima es 365 días."),
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("date"),
+      date: z.string().refine(isValidIsoDate, "Elige una fecha válida."),
+    })
+    .strict(),
+]);
+
+/** Observaciones y condiciones: texto simple (nunca HTML); vacío = sin texto. */
+const quoteTextSchema = z
+  .string()
+  .trim()
+  .max(QUOTE_TEXT_MAX_LENGTH, "El texto es demasiado largo (máximo 4.000 caracteres).")
+  .nullable();
+
 export const saveQuotePayloadSchema = z
   .object({
     saveId: z.uuid(),
     expectedRevision: z.number().int().min(1).max(2_147_483_647),
     customerId: z.uuid(),
     globalDiscount: discountSchema,
+    validity: validitySchema,
+    observations: quoteTextSchema,
+    conditions: quoteTextSchema,
     items: z.array(quoteItemSchema).max(QUOTE_MAX_LINES, "Una cotización admite hasta 200 líneas."),
   })
   .strict();

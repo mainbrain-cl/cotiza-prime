@@ -62,6 +62,10 @@ export function useQuoteSaver({
             queued.current = null;
             return;
           }
+          // TODO(H-072): si la respuesta se pierde (la base guardó pero el navegador no se enteró) y se
+          // reintenta con otra clave de guardado, la base ve una revisión vieja y hoy se muestra el
+          // falso aviso de "cambió en otra pestaña". Al recibir un conflicto, comparar el contenido
+          // guardado con el propio antes de avisar.
           if (result.status !== "saved") {
             setState(result);
             queued.current = null;

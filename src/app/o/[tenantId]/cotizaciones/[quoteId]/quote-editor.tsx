@@ -34,6 +34,7 @@ import {
   VALIDITY_DAYS_MIN,
 } from "@/lib/quotes/validity";
 import { cn } from "@/lib/utils";
+import { PdfActions } from "./pdf-actions";
 import { TotalsPanel, type TotalsView } from "./totals-panel";
 import { useQuoteSaver } from "./use-quote-saver";
 
@@ -779,6 +780,8 @@ export function QuoteEditor({
                   : "Guardado."}
           </p>
         </div>
+
+        <PdfActions tenantId={tenantId} quoteId={quoteId} unsaved={dirty || hasErrors} />
       </aside>
     </div>
   );

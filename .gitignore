@@ -42,3 +42,6 @@ next-env.d.ts
 # Copias aisladas de los subagentes
 .claude/worktrees/
 e2e/.auth/
+
+# PDF de ejemplo generado a mano (H-028)
+/tmp/

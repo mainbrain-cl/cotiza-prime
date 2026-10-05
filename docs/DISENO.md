@@ -100,6 +100,9 @@ Licencia y última versión revisadas en npm y en el repositorio de cada una.
 | **Embla Carousel** | Carruseles: elegir plantilla, pasos del onboarding | MIT | 8.6.0 | ~7 kB | ✅ |
 | **TanStack Virtual** | Listas largas sin ponerse lentas | MIT | 3.14.13 | ~4 kB | ✅ |
 | **React Day Picker** | Selector de fechas | MIT | 10.0.2 | ~10 kB | ✅ |
+| **@react-pdf/renderer** | PDF de la cotización, generado en el servidor (H-028). Sus 36 paquetes de apoyo (fontkit, pdfkit, yoga-layout…) son MIT, ISC o MIT\* | MIT | 4.9.0 | ~2 MB en el servidor; no llega al navegador | ✅ Verificada el 2026-10-05 |
+| **IBM Plex Sans** e **IBM Plex Mono** (`@fontsource`) | Tipografía del PDF (la de la aplicación sigue siendo Geist). Se copian al repositorio, subconjunto latino, y se incrustan en cada PDF; licencia en `src/lib/pdf/fonts/LICENSE-IBM-Plex.txt` | SIL OFL 1.1 | 5.3.0 | ~140 kB en total | ✅ Verificada el 2026-10-05 |
+| **pdfjs-dist** | Leer el texto de un PDF en las pruebas (solo desarrollo; no se despliega) | Apache-2.0 | 6.4.299 | — | ✅ Verificada el 2026-10-05 |
 | **Transiciones de vista** (`ViewTransition` de React, incluido en Next 16) | Transición corta entre pantallas | — (parte de React/Next, sin paquete nuevo) | — | 0 kB | ✅ En uso desde H-115 (2026-10-05); se apaga con "reducir movimiento" |
 | **Vaul** | Hojas que suben desde abajo en el teléfono | MIT | 1.1.2 | ~5 kB | ⚠️ Sin actualizaciones desde dic-2024. Usar la hoja (`Sheet`) de shadcn; Vaul solo si hace falta arrastrar |
 | **React Bits** | Fondos y efectos animados | **MIT + Commons Clause** | — | Por componente | ⚠️ Se puede usar dentro de Cotiza Prime (también comercialmente), pero **no revender ni redistribuir los componentes sueltos**. **Decidido (2026-10-01):** fondos animados propios en CSS (más livianos, sin esta condición); React Bits solo para un efecto puntual y con aprobación previa de Aarón |

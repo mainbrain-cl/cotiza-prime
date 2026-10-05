@@ -69,4 +69,9 @@ jobs:
       - run: npm run test:db:rollbacks
       - run: npx supabase stop
         if: always()
-      - run: npm audit --audit-level=high
+      # Decisión 015: bloquea toda vulnerabilidad alta o crítica en lo que llega a producción.
+      - name: Vulnerabilidades en dependencias de producción (bloquea)
+        run: npm audit --omit=dev --audit-level=high
+      # Herramientas de desarrollo: se informa siempre; bloquea solo si aparece algo crítico.
+      - name: Vulnerabilidades en herramientas de desarrollo (informa)
+        run: npm audit --audit-level=critical

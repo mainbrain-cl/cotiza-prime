@@ -59,18 +59,17 @@ la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con
 **Integrado en `main` del sprint 2:** H-021 (editar/desactivar servicios), H-003 (recuperar
 contraseña), H-023 (lista paginada, búsqueda por nombre/RUT/correo y edición de clientes) y el **paso 1 de H-026** (cálculo puro: `src/lib/money/rounding.ts`,
 `src/lib/quotes/calc.ts`, `calc-cases.ts` con K01–K39 exactos, `parse.ts`). 301 pruebas unitarias en
-verde. **No se corrió la suite completa (`test:db`, `test:isolation`, `test:e2e`) después de estas
-tres integraciones**: correrla primero.
+verde. La suite completa (`test:db`, `test:isolation`, `test:e2e`) **pasó en GitHub Actions** en
+la corrida del último commit (verificado el 2026-10-05).
 
-**Quedó trabajando un subagente al cerrar la sesión.** Su trabajo queda como commit en su rama
-(o sin commit si se cortaron). Revisar cada copia con `git -C <ruta> status` y `git log`:
-- **H-007 logo, colores y datos de la empresa** → rama `worktree-agent-a83e3c73c22f35487`, copia
-  `.claude/worktrees/agent-a83e3c73c22f35487`. Es el único que creaba migraciones (marca en
-  `tenants`, bucket de Storage). Debía verificar si Storage entrega las cabeceras a la base.
-- Si la rama tiene commit: cerrar procesos `node`, unir, `npm ci`, `npm run check:lockfile`,
-  `supabase db reset`, correr todas las pruebas, subir y borrar la copia. Si no tiene commit:
-  relanzar la historia con un subagente nuevo (los encargos están en el traspaso de la sesión;
-  basta con apuntarlo a la historia, a `CLAUDE.md` y a los documentos de arquitectura).
+**H-007 quedó a medias:** el subagente se cortó por el **límite semanal de uso** (se reinició el
+2026-10-04). Su trabajo (34 archivos, ~3.300 líneas: migración `20261001170000_tenant_branding`,
+pantallas Configuración → Empresa y Marca, `src/lib/brand/`, ruta `src/app/api/v1/tenants/`, pruebas
+de Storage en `tests/isolation/storage.test.ts`) se guardó **sin verificar** como commit `8b6e3cc`
+en la rama `worktree-agent-a83e3c73c22f35487` (copia `.claude/worktrees/agent-a83e3c73c22f35487`).
+Lo último que hacía: "agrego el helper de Storage y extiendo la fixture". **Para retomarlo:** lanzar
+un subagente en esa misma copia para que termine H-007 desde ese punto (no desde cero), corra todas
+las pruebas y responda si Storage entrega las cabeceras a la base; después integrar como siempre.
 
 **Pendientes del sprint 2, en este orden:**
 1. Integrar H-007 (arriba).

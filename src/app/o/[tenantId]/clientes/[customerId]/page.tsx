@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
+import { FlashToast } from "@/components/ui/use-result-toast";
 import { formatRut } from "@/lib/chile/rut";
 import { getCustomer } from "@/lib/customers/queries";
 import { CUSTOMER_KINDS } from "@/lib/customers/schemas";
@@ -58,8 +59,8 @@ export default async function CustomerDetailPage({
         </div>
       </header>
 
-      {justCreated ? <FormAlert tone="success">Cliente guardado.</FormAlert> : null}
-      {justEdited ? <FormAlert tone="success">Cambios guardados.</FormAlert> : null}
+      {justCreated ? <FlashToast message="Cliente guardado." /> : null}
+      {justEdited ? <FlashToast message="Cambios guardados." /> : null}
 
       {customer === "unreadable" ? (
         <FormAlert tone="warning">

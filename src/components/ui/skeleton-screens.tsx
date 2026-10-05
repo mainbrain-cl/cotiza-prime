@@ -1,0 +1,99 @@
+import {
+  BackHeaderSkeleton,
+  DetailSkeleton,
+  FormSkeleton,
+  HeaderSkeleton,
+  ListSkeleton,
+  SearchSkeleton,
+  Skeleton,
+  SkeletonRegion,
+} from "@/components/ui/skeleton";
+
+/** Esqueletos con la forma de cada pantalla de una organización (se usan desde cada `loading.tsx`). */
+
+/** Inicio y pantallas sin forma propia: título y un panel. */
+export function PanelScreenSkeleton() {
+  return (
+    <SkeletonRegion>
+      <HeaderSkeleton />
+      <Skeleton className="h-56 w-full rounded-lg md:h-72" />
+    </SkeletonRegion>
+  );
+}
+
+/** Lista de clientes: título con botón, búsqueda y tabla (tarjetas en teléfono). */
+export function CustomersListSkeleton() {
+  return (
+    <SkeletonRegion>
+      <HeaderSkeleton action />
+      <SearchSkeleton />
+      <ListSkeleton rows={6} columns={5} />
+    </SkeletonRegion>
+  );
+}
+
+/** Ficha de un cliente. */
+export function CustomerDetailSkeleton() {
+  return (
+    <SkeletonRegion className="max-w-3xl">
+      <BackHeaderSkeleton />
+      <DetailSkeleton items={6} />
+    </SkeletonRegion>
+  );
+}
+
+/** Pantallas con un formulario (nuevo cliente, editar, empresa, marca, numeración, servicio). */
+export function FormScreenSkeleton({ fields = 5 }: { fields?: number }) {
+  return (
+    <SkeletonRegion className="max-w-2xl">
+      <BackHeaderSkeleton />
+      <FormSkeleton fields={fields} />
+    </SkeletonRegion>
+  );
+}
+
+/** Catálogo: búsqueda, filtros y lista a la izquierda; formulario de alta a la derecha en escritorio. */
+export function CatalogSkeleton() {
+  return (
+    <SkeletonRegion>
+      <HeaderSkeleton />
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_24rem] 2xl:grid-cols-[minmax(0,1fr)_28rem]">
+        <div className="flex min-w-0 flex-col gap-4">
+          <Skeleton className="h-11 w-full md:h-10" />
+          <div className="flex gap-2">
+            <Skeleton className="h-9 w-24 rounded-full" />
+            <Skeleton className="h-9 w-28 rounded-full" />
+            <Skeleton className="h-9 w-20 rounded-full" />
+          </div>
+          <ListSkeleton rows={5} columns={4} />
+        </div>
+        <div className="hidden rounded-lg border border-border bg-surface p-6 shadow-1 lg:block">
+          <FormSkeleton fields={4} />
+        </div>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
+/** Índice de configuración: una fila por sección. */
+export function SettingsIndexSkeleton() {
+  return (
+    <SkeletonRegion className="max-w-2xl">
+      <HeaderSkeleton />
+      <div className="flex flex-col gap-3">
+        {Array.from({ length: 5 }, (_, index) => (
+          <div
+            key={index}
+            className="flex items-center gap-4 rounded-lg border border-border bg-surface px-4 py-4 shadow-1"
+          >
+            <Skeleton className="size-10 shrink-0 rounded-md" />
+            <div className="flex flex-1 flex-col gap-2">
+              <Skeleton className="h-5 w-32" />
+              <Skeleton className="h-4 w-3/4" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </SkeletonRegion>
+  );
+}

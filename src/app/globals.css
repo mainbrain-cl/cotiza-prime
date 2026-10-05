@@ -347,16 +347,90 @@
   }
 }
 
-/* ───────────── Movimiento reducido ───────────── */
+/* ───────────── Movimiento reducido ─────────────
+   Sin animaciones ni transiciones decorativas: ni las nuestras, ni las de las transiciones de
+   vista entre pantallas. Los avisos (Sonner) y los menús aparecen y desaparecen sin movimiento. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
     scroll-behavior: auto !important;
   }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+}
+
+/* ───────────── Transiciones entre pantallas ─────────────
+   React <ViewTransition> (Next 16): el contenido nuevo sube y aparece en `dur-base`; el viejo se
+   desvanece en `dur-fast`. La barra lateral y el resto de la página no se mueven. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+@keyframes page-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+::view-transition {
+  /* Que los clics no se pierdan mientras dura la transición */
+  pointer-events: none;
+}
+::view-transition-group(root) {
+  animation: none;
+}
+::view-transition-old(.page-out) {
+  animation: page-out var(--dur-fast) var(--ease-ios) both;
+}
+::view-transition-new(.page-in) {
+  animation: page-in var(--dur-base) var(--ease-ios) both;
+}
+
+/* Menús desplegables (Base UI): entran con un leve crecimiento y desvanecimiento. */
+@utility menu-popup {
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity var(--dur-base) var(--ease-ios),
+    transform var(--dur-base) var(--ease-ios);
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* Mensajes dentro de un formulario: entran suave, más corto que la entrada de pantallas. */
+@keyframes alert-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+@utility animate-alert {
+  animation: alert-in var(--dur-base) var(--ease-ios) both;
 }
 
 /* ───────────── Fondo animado (ingreso, onboarding y estados vacíos) ─────────────

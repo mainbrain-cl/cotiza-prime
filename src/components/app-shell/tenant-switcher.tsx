@@ -109,7 +109,7 @@ export function TenantSwitcher({
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner sideOffset={8} align="start" className="z-50">
-          <Menu.Popup className="min-w-64 rounded-md p-1.5 glass outline-none">
+          <Menu.Popup className="min-w-64 menu-popup rounded-md p-1.5 glass outline-none">
             <Menu.Group>
               <Menu.GroupLabel className="px-3 py-2 text-xs font-medium text-fg-muted">
                 Tus organizaciones

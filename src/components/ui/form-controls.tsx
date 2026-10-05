@@ -71,9 +71,12 @@ export function Field({ label, error, hint, required, className, children }: Fie
 
 export function FormAlert({
   tone = "danger",
+  silent = false,
   children,
 }: {
   tone?: "danger" | "success" | "warning";
+  /** Sin anuncio para lectores de pantalla: cuando el mismo mensaje ya sale como aviso. */
+  silent?: boolean;
   children: ReactNode;
 }) {
   const tones = {
@@ -83,8 +86,8 @@ export function FormAlert({
   } as const;
   return (
     <div
-      role={tone === "danger" ? "alert" : "status"}
-      className={cn("rounded-sm px-3 py-2.5 text-sm font-medium", tones[tone])}
+      role={silent ? undefined : tone === "danger" ? "alert" : "status"}
+      className={cn("animate-alert rounded-sm px-3 py-2.5 text-sm font-medium", tones[tone])}
     >
       {children}
     </div>

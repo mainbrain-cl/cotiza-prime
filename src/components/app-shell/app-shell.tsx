@@ -10,6 +10,7 @@ import { APP_ENV, isTestEnv } from "@/lib/env/app-env";
 import type { MemberRole, Membership } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { MobileNav } from "./mobile-nav";
+import { PageTransition } from "./page-transition";
 import { SidebarNav } from "./sidebar-nav";
 import { TenantSwitcher } from "./tenant-switcher";
 
@@ -92,7 +93,7 @@ export function AppShell({
           id="contenido"
           className="min-w-0 flex-1 px-4 pt-4 pb-6 md:px-4 md:pt-2 md:pb-8 xl:px-8"
         >
-          {children}
+          <PageTransition>{children}</PageTransition>
         </main>
         {/* En escritorio los enlaces legales van en la barra lateral */}
         <LegalFooter className="pb-[calc(env(safe-area-inset-bottom)+5.5rem)] md:pb-3 xl:hidden" />

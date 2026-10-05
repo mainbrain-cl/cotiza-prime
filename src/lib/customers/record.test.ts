@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { searchHash } from "@/lib/crypto/search-hash";
 import {
   buildCustomerInsertRow,
-  buildCustomerUpdateRow,
+  buildCustomerChangeRow,
   customerHashes,
   decodeCustomer,
 } from "./record";
@@ -91,29 +91,71 @@ describe("registro cifrado del cliente", () => {
     expect(() => decodeCustomer({ ...stored, id: randomUUID() }, tenantId)).toThrow();
   });
 
-  it("la edición vuelve a cifrar con el mismo contexto y recalcula las huellas", () => {
+  it("la edición cifra solo lo que cambió y recalcula esas huellas", () => {
     const tenantId = randomUUID();
     const id = randomUUID();
+    const current = {
+      kind: "person" as const,
+      displayName: "Ana Ficticia",
+      rut: "12345678-5",
+      email: "ana@ejemplo.test",
+      phone: "+56 9 1111 2222",
+      address: "Calle Ficticia 1",
+    };
     const edited = customerSchema.parse({
       kind: "company",
       displayName: "Ana Ficticia Ltda",
       rut: "76.086.428-5",
       email: "NUEVO@Ejemplo.test",
       phone: "",
-      address: "Otra calle 2",
+      address: "Calle Ficticia 1",
     });
-    const update = buildCustomerUpdateRow(edited, tenantId, id);
-    expect(Object.keys(update)).not.toContain("id");
-    expect(Object.keys(update)).not.toContain("tenant_id");
+    const update = buildCustomerChangeRow(edited, current, tenantId, id);
+    expect(Object.keys(update).sort()).toEqual(
+      [
+        "display_name",
+        "email_enc",
+        "email_hash",
+        "kind",
+        "phone_enc",
+        "rut_enc",
+        "rut_hash",
+      ].sort(),
+    );
     expect(update.rut_hash).toBe(searchHash("rut", tenantId, "76086428-5"));
     expect(update.email_hash).toBe(searchHash("email", tenantId, "nuevo@ejemplo.test"));
     expect(update.phone_enc).toBeNull();
-    // Lo cifrado se abre con la misma organización y el mismo cliente
     const reopened = decodeCustomer(
-      { ...update, id, created_at: "2026-10-01T00:00:00Z" },
+      {
+        id,
+        kind: "company",
+        display_name: "x",
+        email_enc: update.email_enc ?? null,
+        phone_enc: null,
+        rut_enc: update.rut_enc ?? null,
+        address_enc: null,
+        created_at: "2026-10-01T00:00:00Z",
+      },
       tenantId,
     );
-    expect(reopened).toMatchObject({ rut: "76086428-5", email: "nuevo@ejemplo.test", phone: null });
+    expect(reopened).toMatchObject({ rut: "76086428-5", email: "nuevo@ejemplo.test" });
     expect(JSON.stringify(update)).not.toContain("nuevo@ejemplo.test");
+  });
+
+  it("si solo cambia el nombre, solo se actualiza el nombre", () => {
+    const tenantId = randomUUID();
+    const current = {
+      kind: input.kind,
+      displayName: input.displayName,
+      rut: input.rut,
+      email: input.email,
+      phone: input.phone,
+      address: input.address,
+    };
+    const renamed = customerSchema.parse({ ...input, displayName: "Ana Renombrada" });
+    expect(buildCustomerChangeRow(renamed, current, tenantId, randomUUID())).toEqual({
+      display_name: "Ana Renombrada",
+    });
+    expect(buildCustomerChangeRow(input, current, tenantId, randomUUID())).toEqual({});
   });
 });

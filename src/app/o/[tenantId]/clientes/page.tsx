@@ -4,6 +4,8 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FormAlert, Input } from "@/components/ui/form-controls";
+import { clearCustomerSearchAction, searchCustomersAction } from "@/lib/customers/actions";
+import { SEARCH_ACTIVE_PARAM, readCustomerSearch } from "@/lib/customers/search-cookie";
 import { maskEmail, maskPhone, maskRut } from "@/lib/customers/mask";
 import { listCustomers } from "@/lib/customers/queries";
 import { CUSTOMER_SEARCH_MAX_LENGTH } from "@/lib/customers/search";
@@ -29,7 +31,11 @@ export default async function CustomersPage({
 }: PageProps<"/o/[tenantId]/clientes">) {
   const active = await requireActiveTenant((await params).tenantId);
   const query = await searchParams;
-  const search = firstValue(query.q).slice(0, CUSTOMER_SEARCH_MAX_LENGTH);
+  // Lo buscado no viaja en la dirección (datos personales): está en una cookie del servidor.
+  const search =
+    firstValue(query[SEARCH_ACTIVE_PARAM]) === "1"
+      ? (await readCustomerSearch()).slice(0, CUSTOMER_SEARCH_MAX_LENGTH)
+      : "";
   const requestedPage = Number(firstValue(query.pagina)) || 1;
   const result = await listCustomers(active, { search, page: requestedPage });
   const items = result?.items ?? null;
@@ -57,15 +63,15 @@ export default async function CustomersPage({
       {result !== null && (result.items.length > 0 || searching) ? (
         <form
           role="search"
-          method="get"
           className="flex flex-col gap-2"
-          action={tenantPath(active.tenantId, "clientes")}
+          action={searchCustomersAction.bind(null, active.tenantId)}
         >
           <label htmlFor="customer-search" className="text-sm font-semibold text-fg">
             Buscar un cliente
           </label>
           <div className="flex gap-2">
             <Input
+              key={search}
               id="customer-search"
               name="q"
               type="search"
@@ -89,6 +95,16 @@ export default async function CustomersPage({
           </p>
         </form>
       ) : null}
+      {result !== null && searching ? (
+        <form action={clearCustomerSearchAction.bind(null, active.tenantId)}>
+          <button
+            type="submit"
+            className="text-sm font-semibold text-accent underline underline-offset-4"
+          >
+            Limpiar búsqueda
+          </button>
+        </form>
+      ) : null}
 
       {result === null || items === null ? (
         <FormAlert>No pudimos cargar tus clientes. Recarga la página en unos minutos.</FormAlert>
@@ -110,13 +126,8 @@ export default async function CustomersPage({
           data-testid="no-results"
           className="rounded-lg border border-border bg-surface p-6 text-center text-fg-muted shadow-1"
         >
-          No encontramos clientes con lo que escribiste.{" "}
-          <Link
-            href={tenantPath(active.tenantId, "clientes")}
-            className="font-semibold text-accent underline underline-offset-4"
-          >
-            Ver todos los clientes
-          </Link>
+          No encontramos clientes con lo que escribiste. Usa «Limpiar búsqueda» para ver todos los
+          clientes.
         </div>
       ) : (
         <>
@@ -228,7 +239,7 @@ export default async function CustomersPage({
               className="flex items-center justify-between gap-3"
             >
               <PageLink
-                href={pageHref(active.tenantId, search, result.page - 1)}
+                href={pageHref(active.tenantId, searching, result.page - 1)}
                 disabled={result.page <= 1}
               >
                 <ChevronLeft aria-hidden />
@@ -238,7 +249,7 @@ export default async function CustomersPage({
                 Página {result.page} de {result.pageCount} · {result.total} clientes
               </p>
               <PageLink
-                href={pageHref(active.tenantId, search, result.page + 1)}
+                href={pageHref(active.tenantId, searching, result.page + 1)}
                 disabled={result.page >= result.pageCount}
               >
                 Siguiente
@@ -252,9 +263,9 @@ export default async function CustomersPage({
   );
 }
 
-function pageHref(tenantId: string, search: string, page: number): string {
+function pageHref(tenantId: string, searching: boolean, page: number): string {
   const params = new URLSearchParams();
-  if (search.trim() !== "") params.set("q", search);
+  if (searching) params.set(SEARCH_ACTIVE_PARAM, "1");
   if (page > 1) params.set("pagina", String(page));
   const queryString = params.toString();
   const base = tenantPath(tenantId, "clientes");

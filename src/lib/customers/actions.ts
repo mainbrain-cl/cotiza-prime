@@ -8,8 +8,9 @@ import { serverLog } from "@/lib/log/server-log";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { findDuplicates, getCustomer, type DuplicateMatch } from "./queries";
-import { buildCustomerInsertRow, buildCustomerUpdateRow } from "./record";
+import { buildCustomerChangeRow, buildCustomerInsertRow } from "./record";
 import { customerSchema } from "./schemas";
+import { SEARCH_ACTIVE_PARAM, clearCustomerSearch, saveCustomerSearch } from "./search-cookie";
 
 export type CustomerFormState = FormState & { duplicates?: DuplicateMatch[] };
 
@@ -113,7 +114,11 @@ export async function updateCustomerAction(
     if (duplicates.length > 0) return { status: "error", duplicates, values: raw };
   }
 
-  const row = buildCustomerUpdateRow(parsed.data, active.tenantId, customerId);
+  const row = buildCustomerChangeRow(parsed.data, current, active.tenantId, customerId);
+  // Sin cambios no se toca la base: no queda un "cambio" vacío en la auditoría.
+  if (Object.keys(row).length === 0) {
+    redirect(`${tenantPath(active.tenantId, `clientes/${customerId}`)}?editado=1`);
+  }
   // `select` devuelve las filas tocadas: si la base no dejó editar (rol, otra organización), llega vacío.
   const { data, error } = await active.supabase
     .from("customers")
@@ -137,4 +142,27 @@ export async function updateCustomerAction(
   }
 
   redirect(`${tenantPath(active.tenantId, `clientes/${customerId}`)}?editado=1`);
+}
+
+/**
+ * Buscar clientes. El término no viaja en la dirección: se guarda unos minutos en una cookie del
+ * servidor y la lista lo lee de ahí (`search-cookie.ts`).
+ */
+export async function searchCustomersAction(tenantId: string, formData: FormData): Promise<void> {
+  const active = await requireActiveTenant(tenantId);
+  const term = readText(formData, "q");
+  const base = tenantPath(active.tenantId, "clientes");
+  if (term.trim() === "") {
+    await clearCustomerSearch(active.tenantId);
+    redirect(base);
+  }
+  await saveCustomerSearch(active.tenantId, term);
+  redirect(`${base}?${SEARCH_ACTIVE_PARAM}=1`);
+}
+
+/** "Limpiar búsqueda": borra el término guardado y vuelve a la lista completa. */
+export async function clearCustomerSearchAction(tenantId: string): Promise<void> {
+  const active = await requireActiveTenant(tenantId);
+  await clearCustomerSearch(active.tenantId);
+  redirect(tenantPath(active.tenantId, "clientes"));
 }

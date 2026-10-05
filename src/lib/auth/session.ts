@@ -14,6 +14,7 @@
  *   "Acepta la nueva versión".
  */
 import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse, type NextRequest } from "next/server";
 import { cache } from "react";
@@ -38,6 +39,46 @@ export const getOptionalUser = cache(async (): Promise<SessionUser | null> => {
     emailVerified: data.user.email_confirmed_at != null,
   };
 });
+
+/** Cookie de corta vida que deja `/auth/recuperar` al canjear el enlace del correo (H-003). */
+const RECOVERY_COOKIE = "cp_recovery";
+const RECOVERY_COOKIE_MAX_AGE_SECONDS = 15 * 60;
+/** Métodos con que Supabase marca una sesión nacida de un enlace del correo. */
+const EMAIL_LINK_METHODS = new Set(["otp", "recovery"]);
+
+/** Marca la sesión recién abierta con el enlace de recuperación. Solo `/auth/recuperar` la llama. */
+export async function markRecoverySession(): Promise<void> {
+  const store = await cookies();
+  store.set(RECOVERY_COOKIE, "1", {
+    ...hardenCookieOptions(undefined),
+    // Lax a propósito: el enlace llega desde el correo (otro sitio) y Strict no enviaría la marca.
+    path: "/",
+    maxAge: RECOVERY_COOKIE_MAX_AGE_SECONDS,
+  });
+}
+
+export async function clearRecoverySession(): Promise<void> {
+  const store = await cookies();
+  store.delete(RECOVERY_COOKIE);
+}
+
+/**
+ * ¿La sesión actual nació del enlace de recuperación del correo? Exige dos señales a la vez:
+ * la marca que dejó `/auth/recuperar` y que el pase verificado diga que la sesión se abrió con un
+ * enlace del correo (`amr`: `otp`; Supabase no usa `recovery` aquí) y no con contraseña. Una
+ * sesión normal, aunque alguien le agregue la cookie, no pasa.
+ */
+export async function hasRecoverySession(): Promise<boolean> {
+  const store = await cookies();
+  if (store.get(RECOVERY_COOKIE)?.value !== "1") return false;
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.getClaims();
+  if (error || !data) return false;
+  const methods = (data.claims.amr ?? []).map((entry) =>
+    typeof entry === "string" ? entry : entry.method,
+  );
+  return methods.some((m) => EMAIL_LINK_METHODS.has(m)) && !methods.includes("password");
+}
 
 /** ¿Aceptó esta persona todas las versiones vigentes de términos y privacidad? */
 const hasAcceptedCurrentLegal = cache(async (userId: string): Promise<boolean> => {

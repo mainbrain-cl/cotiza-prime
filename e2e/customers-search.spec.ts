@@ -30,7 +30,11 @@ async function search(page: Page, tenantId: string, text: string) {
   await page.goto(`/o/${tenantId}/clientes`);
   await page.getByLabel("Buscar un cliente").fill(text);
   await page.getByRole("button", { name: "Buscar" }).click();
-  await expect(page).toHaveURL(/q=/);
+  await expect(page).toHaveURL(/buscar=1/);
+  // Lo buscado son datos personales: nunca debe quedar en la dirección
+  const visibleUrl = decodeURIComponent(page.url()).toLowerCase();
+  expect(visibleUrl).not.toContain("q=");
+  expect(visibleUrl).not.toContain(text.trim().toLowerCase());
 }
 
 test("buscar, paginar y editar clientes", async ({ page }) => {
@@ -120,10 +124,21 @@ test("buscar, paginar y editar clientes", async ({ page }) => {
   await page.goto(`/o/${tenantId}/clientes?pagina=99`);
   await expect(page.getByTestId("page-status")).toContainText("Página 1 de 2");
   // La búsqueda se conserva al paginar
-  await page.goto(`/o/${tenantId}/clientes?q=relleno`);
+  await search(page, tenantId, "relleno");
   await expect(page.getByTestId("page-status")).toContainText("27 clientes");
   await page.getByRole("link", { name: "Siguiente" }).click();
-  await expect(page).toHaveURL(/q=relleno&pagina=2/);
+  await expect(page).toHaveURL(/buscar=1&pagina=2/);
+  expect(page.url()).not.toContain("relleno");
+  await expect(page.getByTestId("page-status")).toContainText("Página 2 de 2 · 27 clientes");
+  // "Limpiar búsqueda" borra el término y vuelve a la lista completa
+  await page.getByRole("button", { name: "Limpiar búsqueda" }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${tenantId}/clientes$`));
+  await expect(page.getByTestId("page-status")).toContainText("30 clientes");
+  await expect(page.getByLabel("Buscar un cliente")).toHaveValue("");
+  // Sin `buscar=1` la cookie no aplica aunque siga viva
+  await search(page, tenantId, "relleno");
+  await page.goto(`/o/${tenantId}/clientes`);
+  await expect(page.getByTestId("page-status")).toContainText("30 clientes");
 
   // Editar un cliente
   await search(page, tenantId, "Ana Cliente");
@@ -193,11 +208,20 @@ test("buscar, paginar y editar clientes", async ({ page }) => {
     expect(stored.rows[0].updated_by).toBe(stored.rows[0].created_by);
     expect(stored.rows[0].address_enc).toMatch(/^v1\./);
     const audit = await check.query(
-      `select actor_user_id, details::text as d from public.audit_log
-        where tenant_id = $1 and resource_id = $2 and action = 'customer.updated'`,
+      `select actor_user_id, details::text as d, details as j from public.audit_log
+        where tenant_id = $1 and resource_id = $2 and action = 'customer.updated' order by id`,
       [tenantId, customerId],
     );
     expect(audit.rows.length).toBe(3);
+    // Solo se marcan los campos que de verdad cambiaron (el RUT volvió al original en el 1.º guardado)
+    expect(audit.rows[0].j.changed).toEqual([
+      "display_name",
+      "email_enc",
+      "email_hash",
+      "phone_enc",
+    ]);
+    expect(audit.rows[1].j.changed).toEqual(["rut_enc", "rut_hash"]);
+    expect(audit.rows[2].j.changed).toEqual(["address_enc"]);
     for (const row of audit.rows) expect(row.actor_user_id).toBeTruthy();
     const dump = audit.rows
       .map((row) => row.d)
@@ -213,7 +237,7 @@ test("buscar, paginar y editar clientes", async ({ page }) => {
 
   // Teléfono: tarjetas, buscador visible y sin desplazamiento horizontal
   await page.setViewportSize(MOBILE);
-  await page.goto(`/o/${tenantId}/clientes?q=ficti`);
+  await search(page, tenantId, "ficti");
   await expect(page.getByTestId("customer-cards")).toBeVisible();
   await expect(page.getByRole("table")).toBeHidden();
   await expect(page.getByLabel("Buscar un cliente")).toBeVisible();

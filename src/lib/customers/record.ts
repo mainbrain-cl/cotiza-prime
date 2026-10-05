@@ -70,25 +70,35 @@ export function customerHashes(
 export type CustomerUpdateRow = Omit<CustomerInsertRow, "id" | "tenant_id">;
 
 /**
- * Arma los datos de una edición: vuelve a cifrar con el MISMO contexto (tabla, campo, organización
- * y cliente) y recalcula las huellas de RUT y correo. `input` ya viene validado y normalizado.
+ * Solo las columnas que de verdad cambiaron respecto de `current` (lo ya guardado, descifrado).
+ * Cifra y calcula huellas únicamente de esos campos: así un guardado que cambia el nombre no
+ * re-cifra el resto ni lo marca como cambiado en la auditoría. `{}` si no cambió nada.
  */
-export function buildCustomerUpdateRow(
+export function buildCustomerChangeRow(
   input: CustomerInput,
+  current: Pick<CustomerView, "kind" | "displayName" | "email" | "phone" | "rut" | "address">,
   tenantId: string,
   customerId: string,
-): CustomerUpdateRow {
-  const row = buildCustomerInsertRow(input, tenantId, customerId);
-  return {
-    kind: row.kind,
-    display_name: row.display_name,
-    email_enc: row.email_enc,
-    email_hash: row.email_hash,
-    phone_enc: row.phone_enc,
-    rut_enc: row.rut_enc,
-    rut_hash: row.rut_hash,
-    address_enc: row.address_enc,
-  };
+): Partial<CustomerUpdateRow> {
+  const changed = (next: string | null, previous: string | null) =>
+    (next ?? null) !== (previous ?? null);
+  const seal = (field: string, value: string | null) =>
+    value === null ? null : encryptPii(value, context(field, tenantId, customerId));
+  const row: Partial<CustomerUpdateRow> = {};
+  if (input.kind !== current.kind) row.kind = input.kind;
+  if (input.displayName !== current.displayName) row.display_name = input.displayName;
+  const { rutHash, emailHash } = customerHashes(tenantId, input);
+  if (changed(input.email, current.email)) {
+    row.email_enc = seal("email", input.email);
+    row.email_hash = emailHash;
+  }
+  if (changed(input.phone, current.phone)) row.phone_enc = seal("phone", input.phone);
+  if (changed(input.rut, current.rut)) {
+    row.rut_enc = seal("rut", input.rut);
+    row.rut_hash = rutHash;
+  }
+  if (changed(input.address, current.address)) row.address_enc = seal("address", input.address);
+  return row;
 }
 
 /** `input` ya viene validado y normalizado (RUT canónico, correo en minúsculas). */

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { LOGIN_NOTICES, LOGIN_PATH, RESET_PASSWORD_PATH } from "@/lib/auth/paths";
+import { markRecoverySession } from "@/lib/auth/session";
 import { getAppOrigin } from "@/lib/http/request-context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -19,5 +20,6 @@ export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) return NextResponse.redirect(failure);
+  await markRecoverySession();
   return NextResponse.redirect(`${origin}${RESET_PASSWORD_PATH}`);
 }

@@ -36,6 +36,8 @@ export type Membership = {
   tenantId: string;
   name: string;
   role: MemberRole;
+  /** Ruta del logo en Storage, si la organización tiene uno. */
+  logoPath: string | null;
 };
 
 type ScopedClient = Awaited<ReturnType<typeof createClient>>;
@@ -51,15 +53,22 @@ export type ResolvedTenant = {
 
 export type ActiveTenant = ResolvedTenant & { user: SessionUser };
 
+type TenantRef = { name: string; logo_path: string | null };
+
 type MembershipRow = {
   tenant_id: string;
   role: MemberRole;
-  tenants: { name: string } | { name: string }[] | null;
+  tenants: TenantRef | TenantRef[] | null;
 };
 
 function toMembership(row: MembershipRow): Membership {
   const tenant = Array.isArray(row.tenants) ? row.tenants[0] : row.tenants;
-  return { tenantId: row.tenant_id, name: tenant?.name ?? "", role: row.role };
+  return {
+    tenantId: row.tenant_id,
+    name: tenant?.name ?? "",
+    role: row.role,
+    logoPath: tenant?.logo_path ?? null,
+  };
 }
 
 /** Organizaciones a las que pertenece la persona (para el selector). */
@@ -67,7 +76,7 @@ export const listMemberships = cache(async (userId: string): Promise<Membership[
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("members")
-    .select("tenant_id, role, tenants!inner(name, status, kind)")
+    .select("tenant_id, role, tenants!inner(name, logo_path, status, kind)")
     .eq("user_id", userId)
     .eq("status", "active")
     .eq("tenants.status", "active")

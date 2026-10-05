@@ -13,7 +13,14 @@ import { buildCustomerInsertRow } from "@/lib/customers/record";
 import type { CustomerInput } from "@/lib/customers/schemas";
 import { PLATFORM_TENANT_ID, TENANT_HEADER } from "@/lib/tenant/constants";
 import { connect } from "../db/helpers";
-import { adminCreateUser, rest, rpc, signIn, type Session } from "../support/local-supabase";
+import {
+  adminCreateUser,
+  rest,
+  rpc,
+  signIn,
+  storage,
+  type Session,
+} from "../support/local-supabase";
 
 export type PersonaKey = "ana" | "beto" | "carla" | "mixta" | "ex" | "dante";
 export type OrgKey = "A" | "B" | "C";
@@ -42,8 +49,19 @@ export interface Persona {
   session: Session;
 }
 
+/** PNG de 1 × 1 píxel, válido: es el "logo" de las organizaciones de la fixture. */
+export const FIXTURE_LOGO_PNG = Uint8Array.from(
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  ),
+  (c) => c.charCodeAt(0),
+);
+export const LOGO_BUCKET = "tenant-logos";
+
 export interface OrgData {
   tenantId: string;
+  /** Ruta del logo en Storage (`{tenant_id}/logo-....png`); C no tiene. */
+  logoPath: string | null;
   name: string;
   /** Texto que solo aparece en datos de esa organización: si sale en otra respuesta, hay filtración. */
   canary: string;
@@ -160,6 +178,7 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       tenantId,
       name,
       canary: key === "A" ? canary("A") : canary(key),
+      logoPath: null,
       customerIds: [],
       catalogIds: [],
     };
@@ -219,6 +238,29 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       );
       orgs[key].catalogIds.push(id);
     }
+    // Logo: se sube por la API de Storage con el pase de la dueña y su cabecera, y se registra por PostgREST
+    const logoPath = `${orgs[key].tenantId}/logo-${key === "A" ? "aaaaaaaaaaaa" : "bbbbbbbbbbbb"}.png`;
+    await mustOk(
+      storage(token, "POST", `object/${LOGO_BUCKET}/${logoPath}`, {
+        headers: headers,
+        body: FIXTURE_LOGO_PNG,
+        contentType: "image/png",
+      }),
+      `logo ${key}`,
+    );
+    await mustOk(
+      rest(token, `tenants?tenant_id=eq.${orgs[key].tenantId}`, {
+        method: "PATCH",
+        headers: { ...headers, Prefer: "return=representation" },
+        body: {
+          logo_path: logoPath,
+          brand_primary_color: "#2b54e0",
+          brand_secondary_color: "#0f1729",
+        },
+      }),
+      `marca ${key}`,
+    );
+    orgs[key].logoPath = logoPath;
     for (const input of SEED_CUSTOMERS(key, orgs[key].canary)) {
       const id = randomUUID();
       const row = buildCustomerInsertRow(input, orgs[key].tenantId, id);

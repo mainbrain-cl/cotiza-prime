@@ -146,6 +146,45 @@ export async function rest(
   return toResult(res);
 }
 
+/**
+ * Pedido directo a la API de Storage (`fetch`). `body` puede ser texto/bytes (se manda tal cual,
+ * con `contentType`) o un objeto (se manda como JSON).
+ */
+export async function storage(
+  token: Token,
+  method: string,
+  pathAndQuery: string,
+  options: {
+    headers?: ExtraHeaders;
+    body?: object | Uint8Array;
+    contentType?: string;
+  } = {},
+): Promise<HttpResult> {
+  const { apiUrl } = localEnv();
+  const raw = options.body instanceof Uint8Array;
+  const res = await fetch(`${apiUrl}/storage/v1/${pathAndQuery}`, {
+    method,
+    headers: {
+      ...baseHeaders(token),
+      ...(options.body === undefined
+        ? {}
+        : {
+            "content-type": raw
+              ? (options.contentType ?? "application/octet-stream")
+              : "application/json",
+          }),
+      ...options.headers,
+    },
+    body:
+      options.body === undefined
+        ? undefined
+        : raw
+          ? (options.body as BodyInit)
+          : JSON.stringify(options.body),
+  });
+  return toResult(res);
+}
+
 export function rpc(
   token: Token,
   name: string,

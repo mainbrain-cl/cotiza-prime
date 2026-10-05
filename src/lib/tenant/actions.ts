@@ -1,10 +1,12 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { FormState } from "@/lib/auth/form-state";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
 import { requireUser } from "@/lib/auth/session";
 import { serverLog } from "@/lib/log/server-log";
+import { normalizeRut } from "@/lib/rut";
 import { createClient } from "@/lib/supabase/server";
 import { rememberLastTenant, requireActiveTenant } from "./active-tenant";
 import { tenantPath } from "./constants";
@@ -79,6 +81,61 @@ export async function createTenantAction(
   }
 
   redirect(tenantPath(data));
+}
+
+const COMPANY_NOT_ALLOWED_MESSAGE =
+  "Solo el Dueño o un Administrador puede cambiar los datos de la empresa.";
+
+/** H-007: edita nombre, RUT, rubro y contacto. La base de datos vuelve a verificar el rol (RLS) y el RUT. */
+export async function updateCompanyAction(
+  tenantId: string,
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const active = await requireActiveTenant(tenantId);
+  const raw = {
+    name: readText(formData, "name"),
+    rut: readText(formData, "rut"),
+    industry: readText(formData, "industry"),
+    contactEmail: readText(formData, "contactEmail"),
+    contactPhone: readText(formData, "contactPhone"),
+  };
+
+  if (active.role !== "owner" && active.role !== "admin") {
+    return { status: "error", message: COMPANY_NOT_ALLOWED_MESSAGE, values: raw };
+  }
+
+  const parsed = createTenantSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { status: "error", fieldErrors: fieldErrorsOf(parsed.error), values: raw };
+  }
+
+  const { data, error } = await active.supabase
+    .from("tenants")
+    .update({
+      name: parsed.data.name,
+      rut: normalizeRut(parsed.data.rut),
+      industry: parsed.data.industry,
+      contact_email: parsed.data.contactEmail,
+      contact_phone: parsed.data.contactPhone,
+    })
+    .eq("tenant_id", active.tenantId)
+    .select("tenant_id");
+
+  if (error || !data || data.length === 0) {
+    if (error?.code === SQLSTATE_INSUFFICIENT_PRIVILEGE || (!error && data?.length === 0)) {
+      return { status: "error", message: COMPANY_NOT_ALLOWED_MESSAGE, values: raw };
+    }
+    await serverLog("error", "update_company_failed", { code: error?.code });
+    return {
+      status: "error",
+      message: "No pudimos guardar los datos. Intenta de nuevo en unos minutos.",
+      values: raw,
+    };
+  }
+
+  revalidatePath(tenantPath(active.tenantId), "layout");
+  return { status: "saved", values: raw };
 }
 
 /** H-006: cambiar de organización. Verifica la membresía y recuerda la elección para el próximo ingreso. */

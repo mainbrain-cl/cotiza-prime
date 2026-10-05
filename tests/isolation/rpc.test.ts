@@ -331,9 +331,6 @@ describe("X6 · los servicios de Auth no sirven para llegar a datos ajenos", () 
 
 describe("pendientes de sprints futuros (se muestran en el informe, no se saltan)", () => {
   it.todo(
-    "Storage: logos y PDF de B no se leen ni se listan con el pase de Ana (sprints 2 y 3, cuando haya buckets)",
-  );
-  it.todo(
     "Búsqueda global (Ctrl + K): solo resultados de la organización activa (sprint 2, H-023)",
   );
   it.todo(

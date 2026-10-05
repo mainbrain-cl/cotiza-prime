@@ -1,6 +1,6 @@
 /** Estado que devuelven las acciones de formulario a las pantallas. */
 export type FormState = {
-  status: "idle" | "error" | "sent";
+  status: "idle" | "error" | "sent" | "saved";
   /** Mensaje general, arriba del formulario. */
   message?: string;
   /** Mensajes por campo, con el nombre del campo del formulario como llave. */

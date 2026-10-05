@@ -3,17 +3,67 @@
 import { Menu } from "@base-ui/react/menu";
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import Link from "next/link";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { NEW_TENANT_PATH } from "@/lib/auth/paths";
 import { switchTenantAction } from "@/lib/tenant/actions";
 import { cn } from "@/lib/utils";
 
-export type SwitcherTenant = { tenantId: string; name: string; roleLabel: string };
+export type SwitcherTenant = {
+  tenantId: string;
+  name: string;
+  roleLabel: string;
+  /** Dirección del logo, si la organización tiene uno. */
+  logoUrl: string | null;
+};
 
 export function tenantInitials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
   const letters = words.length >= 2 ? words[0][0] + words[1][0] : (words[0] ?? "?").slice(0, 2);
   return letters.toUpperCase();
+}
+
+/** El logo de la organización, o sus iniciales mientras no haya uno (o si no carga). */
+function TenantAvatar({
+  name,
+  logoUrl,
+  className,
+}: {
+  name: string;
+  logoUrl: string | null;
+  className?: string;
+}) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (logoUrl && logoUrl !== failedUrl) {
+    return (
+      <span
+        className={cn(
+          "bg-white flex shrink-0 items-center justify-center overflow-hidden rounded-sm p-0.5 ring-1 ring-border",
+          className,
+        )}
+      >
+        {/* Logo servido por la aplicación (privado y con sesión): no pasa por el optimizador de imágenes. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={logoUrl}
+          alt=""
+          data-testid="tenant-logo"
+          onError={() => setFailedUrl(logoUrl)}
+          className="size-full object-contain"
+        />
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-sm bg-accent-soft text-sm font-semibold text-accent",
+        className,
+      )}
+    >
+      {tenantInitials(name)}
+    </span>
+  );
 }
 
 /** Muestra la organización activa y deja pasar a otra. La elección va en la dirección, no en una cookie. */
@@ -44,12 +94,7 @@ export function TenantSwitcher({
           className,
         )}
       >
-        <span
-          aria-hidden
-          className="flex size-9 shrink-0 items-center justify-center rounded-sm bg-accent-soft text-sm font-semibold text-accent"
-        >
-          {tenantInitials(activeName)}
-        </span>
+        <TenantAvatar name={activeName} logoUrl={active?.logoUrl ?? null} className="size-9" />
         <span className={cn("min-w-0 flex-1", collapsed && "max-xl:hidden")}>
           <span className="block truncate text-sm font-semibold text-fg">{activeName}</span>
           {active ? (
@@ -77,6 +122,7 @@ export function TenantSwitcher({
                     onClick={() => startTransition(() => switchTenantAction(tenant.tenantId))}
                     className="flex min-h-11 cursor-pointer items-center gap-3 rounded-sm px-3 py-2 text-sm outline-none data-highlighted:bg-accent-soft data-highlighted:text-accent"
                   >
+                    <TenantAvatar name={tenant.name} logoUrl={tenant.logoUrl} className="size-8" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-semibold">{tenant.name}</span>
                       <span className="block truncate text-xs text-fg-muted">

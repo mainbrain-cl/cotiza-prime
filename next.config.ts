@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { LOGO_CONTENT_SECURITY_POLICY } from "./src/lib/brand/headers";
 
 const isDev = process.env.NODE_ENV !== "production";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -28,6 +29,10 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  experimental: {
+    // El logo (hasta 1 MB, LOGO_MAX_BYTES) viaja en el formulario de Marca; el límite por defecto es 1 MB.
+    serverActions: { bodySizeLimit: "2mb" },
+  },
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
@@ -37,6 +42,11 @@ const nextConfig: NextConfig = {
         source,
         headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }],
       })),
+      // El logo es un archivo de una organización: política propia y estricta, más fuerte que la general.
+      {
+        source: "/api/v1/tenants/:tenantId/logo",
+        headers: [{ key: "Content-Security-Policy", value: LOGO_CONTENT_SECURITY_POLICY }],
+      },
     ];
   },
 };

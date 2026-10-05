@@ -5,6 +5,7 @@ import { LegalFooter } from "@/components/legal/legal-footer";
 import { LegalLinks } from "@/components/legal/legal-page";
 import { Button } from "@/components/ui/button";
 import { signOutAction } from "@/lib/auth/actions";
+import { logoUrl } from "@/lib/brand/logo";
 import { APP_ENV, isTestEnv } from "@/lib/env/app-env";
 import type { MemberRole, Membership } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
@@ -42,6 +43,7 @@ export function AppShell({
     tenantId: m.tenantId,
     name: m.name,
     roleLabel: ROLE_LABELS[m.role],
+    logoUrl: logoUrl(m.tenantId, m.logoPath),
   }));
 
   return (

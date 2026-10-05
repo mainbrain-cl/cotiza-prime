@@ -102,9 +102,14 @@ describe("guardia del registro de aislamiento", () => {
 
   it("G5b. el alcance declarado de cada ruta calza con su dirección", () => {
     for (const route of APP_ROUTES) {
-      const underTenant = route.path === "/o/[tenantId]" || route.path.startsWith("/o/[tenantId]/");
-      expect(route.scope === "tenant", `${route.path}: alcance ${route.scope}`).toBe(underTenant);
-      if (route.scope === "tenant") expect(route.kind).toBe("page");
+      // Pantallas de una organización (/o/[tenantId]/...) y rutas de la API que llevan la organización
+      // en la dirección (/api/v1/tenants/[tenantId]/...).
+      const isPage = route.path === "/o/[tenantId]" || route.path.startsWith("/o/[tenantId]/");
+      const isApi = route.path.startsWith("/api/v1/tenants/[tenantId]/");
+      expect(route.scope === "tenant", `${route.path}: alcance ${route.scope}`).toBe(
+        isPage || isApi,
+      );
+      if (route.scope === "tenant") expect(route.kind).toBe(isPage ? "page" : "api");
     }
   });
 

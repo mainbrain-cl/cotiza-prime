@@ -1,9 +1,10 @@
 "use client";
 
-import { CheckCircle2, ImageUp, TriangleAlert } from "lucide-react";
+import { ImageUp, TriangleAlert } from "lucide-react";
 import { useActionState, useEffect, useRef, useState } from "react";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
+import { useResultToast } from "@/components/ui/use-result-toast";
 import { saveBrandAction } from "@/lib/brand/actions";
 import {
   contrastOnWhite,
@@ -40,19 +41,12 @@ export function BrandForm({
     saveBrandAction.bind(null, tenantId),
     INITIAL_BRAND_STATE,
   );
+  useResultToast(state, { successMessage: "Guardamos la marca de tu empresa." });
 
   return (
     <form action={formAction} className="flex flex-col gap-6" noValidate>
       <OfflineNotice />
       {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
-      {state.status === "saved" ? (
-        <FormAlert tone="success">
-          <span className="inline-flex items-center gap-2" data-testid="brand-saved">
-            <CheckCircle2 aria-hidden className="size-4" />
-            Guardamos la marca de tu empresa.
-          </span>
-        </FormAlert>
-      ) : null}
 
       {/* Al cambiar el logo guardado, los campos se arman de nuevo con lo recién guardado. */}
       <BrandFields

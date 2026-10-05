@@ -94,7 +94,7 @@ test("subir logo y colores, ver la muestra, la advertencia de contraste y el log
   });
   await expect(page.getByTestId("brand-logo-preview").locator("img")).toBeVisible();
   await page.getByRole("button", { name: "Guardar marca" }).click();
-  await expect(page.getByTestId("brand-saved")).toBeVisible();
+  await expect(page.getByText("Guardamos la marca de tu empresa.")).toBeVisible();
 
   // El logo guardado se entrega por el servidor, ya limpio y con cabeceras que lo encierran
   const logoUrl = await page.getByTestId("brand-logo-preview").locator("img").getAttribute("src");
@@ -121,7 +121,7 @@ test("subir logo y colores, ver la muestra, la advertencia de contraste y el log
     buffer: PNG_1X1,
   });
   await page.getByRole("button", { name: "Guardar marca" }).click();
-  await expect(page.getByTestId("brand-saved")).toBeVisible();
+  await expect(page.getByText("Guardamos la marca de tu empresa.")).toBeVisible();
   const pngUrl = await page.getByTestId("brand-logo-preview").locator("img").getAttribute("src");
   expect(pngUrl).not.toBe(logoUrl);
   const pngResponse = await page.request.get(pngUrl!);
@@ -130,7 +130,7 @@ test("subir logo y colores, ver la muestra, la advertencia de contraste y el log
 
   await page.getByLabel("Quitar el logo actual").check();
   await page.getByRole("button", { name: "Guardar marca" }).click();
-  await expect(page.getByTestId("brand-saved")).toBeVisible();
+  await expect(page.getByText("Guardamos la marca de tu empresa.")).toBeVisible();
   await expect(page.getByTestId("brand-logo-preview")).toContainText("Sin logo");
   await expect(page.getByTestId("tenant-logo")).toHaveCount(0);
   expect((await page.request.get(`/api/v1/tenants/${tenantId}/logo`)).status()).toBe(404);
@@ -155,7 +155,7 @@ test("editar los datos de la empresa", async ({ page }) => {
   await page.getByLabel("Correo de contacto (opcional)").fill("contacto@ejemplo.test");
   await page.getByLabel("Teléfono de contacto (opcional)").fill("+56 9 1234 5678");
   await page.getByRole("button", { name: "Guardar datos" }).click();
-  await expect(page.getByTestId("company-saved")).toBeVisible();
+  await expect(page.getByText("Guardamos los datos de tu empresa.")).toBeVisible();
 
   // Sobrevive a recargar, y el nombre nuevo llega al selector
   await page.reload();

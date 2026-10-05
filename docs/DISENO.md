@@ -96,10 +96,11 @@ Licencia y última versión revisadas en npm y en el repositorio de cada una.
 | **Lucide** (`lucide-react`) | Íconos — **la única familia** | ISC (algunos íconos de origen Feather, MIT) | 1.49.0 | Solo los íconos usados | ✅ |
 | **Geist** y **Geist Mono** | Tipografía | SIL Open Font License 1.1 | 1.7.2 | 2 familias, autoalojadas con `next/font` | ✅ |
 | **cmdk** | Búsqueda `Ctrl + K` | MIT | 1.1.1 | ~6 kB | ✅ (última actualización: ago-2025; vigilar) |
-| **Sonner** | Avisos breves ("Anticipo confirmado") | MIT | 2.0.8 | ~4 kB | ✅ |
+| **Sonner** | Avisos breves ("Anticipo confirmado") | MIT (verificada en npm, 2026-10-05) | 2.0.8 (fija) | ~4 kB | ✅ En uso desde H-115 (`src/components/ui/toaster.tsx`) |
 | **Embla Carousel** | Carruseles: elegir plantilla, pasos del onboarding | MIT | 8.6.0 | ~7 kB | ✅ |
 | **TanStack Virtual** | Listas largas sin ponerse lentas | MIT | 3.14.13 | ~4 kB | ✅ |
 | **React Day Picker** | Selector de fechas | MIT | 10.0.2 | ~10 kB | ✅ |
+| **Transiciones de vista** (`ViewTransition` de React, incluido en Next 16) | Transición corta entre pantallas | — (parte de React/Next, sin paquete nuevo) | — | 0 kB | ✅ En uso desde H-115 (2026-10-05); se apaga con "reducir movimiento" |
 | **Vaul** | Hojas que suben desde abajo en el teléfono | MIT | 1.1.2 | ~5 kB | ⚠️ Sin actualizaciones desde dic-2024. Usar la hoja (`Sheet`) de shadcn; Vaul solo si hace falta arrastrar |
 | **React Bits** | Fondos y efectos animados | **MIT + Commons Clause** | — | Por componente | ⚠️ Se puede usar dentro de Cotiza Prime (también comercialmente), pero **no revender ni redistribuir los componentes sueltos**. **Decidido (2026-10-01):** fondos animados propios en CSS (más livianos, sin esta condición); React Bits solo para un efecto puntual y con aprobación previa de Aarón |
 

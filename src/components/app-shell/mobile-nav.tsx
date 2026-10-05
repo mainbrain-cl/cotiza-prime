@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { MOBILE_PRIMARY_SEGMENTS, NAV_ITEMS, isActive } from "./nav-items";
 
 const TAB_CLASS =
-  "flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-xs font-semibold outline-none transition-colors duration-(--dur-fast) ease-ios focus-visible:ring-3 focus-visible:ring-ring/40";
+  "flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-xs font-semibold outline-none transition-[background-color,color,transform] duration-(--dur-fast) ease-ios active:scale-[0.97] focus-visible:ring-3 focus-visible:ring-ring/40";
 
 /** Barra inferior flotante del teléfono: tres destinos y "Más". Cada uno mide al menos 44 px. */
 export function MobileNav({ basePath }: { basePath: string }) {
@@ -58,7 +58,7 @@ export function MobileNav({ basePath }: { basePath: string }) {
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner side="top" align="end" sideOffset={12} className="z-50">
-            <Menu.Popup className="min-w-56 rounded-md p-1.5 glass outline-none">
+            <Menu.Popup className="min-w-56 menu-popup rounded-md p-1.5 glass outline-none">
               {secondary.map(({ segment, label, icon: Icon }) => (
                 <Menu.LinkItem
                   key={segment}

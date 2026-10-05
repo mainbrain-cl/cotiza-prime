@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
+import { useResultToast } from "@/components/ui/use-result-toast";
 import {
   previewNumberingAction,
   saveNumberingAction,
@@ -36,6 +37,9 @@ export function NumberingForm({
     saveNumberingAction.bind(null, tenantId),
     INITIAL_NUMBERING_STATE,
   );
+  useResultToast(state, {
+    successMessage: `Guardamos tu numeración. La próxima cotización será ${state.savedPreview}.`,
+  });
   const [prefix, setPrefix] = useState(initial.prefix);
   const [mode, setMode] = useState<NumberingMode>(initial.mode);
   const [startNumber, setStartNumber] = useState(String(initial.startNumber));
@@ -80,7 +84,7 @@ export function NumberingForm({
       <OfflineNotice />
       {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
       {showSaved ? (
-        <FormAlert tone="success">
+        <FormAlert tone="success" silent>
           <span className="inline-flex items-center gap-2" data-testid="numbering-saved">
             <CheckCircle2 aria-hidden className="size-4" />
             Guardamos tu numeración. La próxima cotización será {state.savedPreview}.

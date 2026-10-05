@@ -1,9 +1,9 @@
 "use client";
 
-import { CheckCircle2 } from "lucide-react";
 import { useActionState, useState } from "react";
 import { Field, FormAlert, Input, Select, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
+import { useResultToast } from "@/components/ui/use-result-toast";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 import { formatRut, isValidRut } from "@/lib/rut";
 import { updateCompanyAction } from "@/lib/tenant/actions";
@@ -32,6 +32,7 @@ export function CompanyForm({
     updateCompanyAction.bind(null, tenantId),
     INITIAL_FORM_STATE,
   );
+  useResultToast(state, { successMessage: "Guardamos los datos de tu empresa." });
   const [values, setValues] = useState<CompanyValues>(initial);
   const [rutError, setRutError] = useState<string | undefined>();
   const errors = state.status === "error" ? (state.fieldErrors ?? {}) : {};
@@ -53,14 +54,6 @@ export function CompanyForm({
     <form action={formAction} className="flex flex-col gap-4" noValidate>
       <OfflineNotice />
       {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
-      {state.status === "saved" ? (
-        <FormAlert tone="success">
-          <span className="inline-flex items-center gap-2" data-testid="company-saved">
-            <CheckCircle2 aria-hidden className="size-4" />
-            Guardamos los datos de tu empresa.
-          </span>
-        </FormAlert>
-      ) : null}
 
       <Field label="Nombre de la empresa" error={errors.name} required>
         {(control) => (

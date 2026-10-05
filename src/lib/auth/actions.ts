@@ -20,7 +20,12 @@ import {
   signInSchema,
   signUpSchema,
 } from "@/lib/auth/schemas";
-import { getOptionalUser, requireUser } from "@/lib/auth/session";
+import {
+  clearRecoverySession,
+  getOptionalUser,
+  hasRecoverySession,
+  requireUser,
+} from "@/lib/auth/session";
 import { getAppOrigin, getRequestContext } from "@/lib/http/request-context";
 import { legalDocuments } from "@/lib/legal/documents";
 import { serverLog } from "@/lib/log/server-log";
@@ -240,7 +245,9 @@ export async function resetPasswordAction(
   formData: FormData,
 ): Promise<FormState> {
   const user = await getOptionalUser();
-  if (!user) redirect(`${LOGIN_PATH}?aviso=${LOGIN_NOTICES.resetLinkExpired}`);
+  if (!user || !(await hasRecoverySession())) {
+    redirect(`${LOGIN_PATH}?aviso=${LOGIN_NOTICES.resetLinkExpired}`);
+  }
 
   const parsed = resetPasswordSchema.safeParse({
     password: readText(formData, "password"),
@@ -280,6 +287,7 @@ export async function resetPasswordAction(
     actorUserId: user.id,
     details: { otherSessionsClosed: !othersError },
   });
+  await clearRecoverySession();
   redirect(HOME_PATH);
 }
 

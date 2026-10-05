@@ -121,6 +121,29 @@ test("recuperar la contraseña cierra las otras sesiones y la vieja deja de serv
   ]);
 });
 
+test("una sesión normal no puede cambiar la contraseña sin el enlace del correo", async ({
+  page,
+}) => {
+  await signUpAndVerify(page, uniqueEmail("sesion"), "Sesión Ficticia");
+  await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+  await page.waitForLoadState("networkidle");
+  // Se la saca de la pantalla (/ingresar manda a quien ya tiene sesión a su inicio)
+  await page.goto("/restablecer-contrasena");
+  await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+  await expect(page.locator("input[name=password]")).toHaveCount(0);
+  // Ni siquiera con la marca de recuperación puesta a mano: la sesión no nació del enlace
+  await page.context().addCookies([
+    {
+      name: "cp_recovery",
+      value: "1",
+      url: test.info().project.use.baseURL!,
+    },
+  ]);
+  await page.goto("/restablecer-contrasena");
+  await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+  await expect(page.locator("input[name=password]")).toHaveCount(0);
+});
+
 test("las pantallas de recuperación se ven bien en el teléfono", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   for (const path of ["/recuperar-contrasena", "/restablecer-contrasena"]) {

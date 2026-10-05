@@ -2,14 +2,16 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AuthCard } from "@/components/auth/auth-card";
 import { LOGIN_NOTICES, LOGIN_PATH } from "@/lib/auth/paths";
-import { getOptionalUser } from "@/lib/auth/session";
+import { hasRecoverySession } from "@/lib/auth/session";
 import { ResetPasswordForm } from "./reset-password-form";
 
 export const metadata: Metadata = { title: "Elige tu contraseña nueva · Cotiza Prime" };
 
 export default async function ResetPasswordPage() {
-  // Se llega con la sesión que abre el enlace del correo. Sin ella, no hay nada que restablecer.
-  if (!(await getOptionalUser())) redirect(`${LOGIN_PATH}?aviso=${LOGIN_NOTICES.resetLinkExpired}`);
+  // Solo con la sesión que abre el enlace del correo. Una sesión normal no puede cambiar la
+  // contraseña sin conocer la actual.
+  if (!(await hasRecoverySession()))
+    redirect(`${LOGIN_PATH}?aviso=${LOGIN_NOTICES.resetLinkExpired}`);
 
   return (
     <AuthCard

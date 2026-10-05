@@ -78,6 +78,7 @@ export type CalcIssueCode =
   | "invalid_quantity"
   | "invalid_price"
   | "invalid_discount"
+  | "invalid_tax_treatment"
   | "invalid_tax_rate"
   | "line_discount_exceeds_gross"
   | "line_gross_too_large"
@@ -114,6 +115,20 @@ function discountAmount(discount: Discount, base: bigint): bigint {
   return ZERO;
 }
 
+/**
+ * Orden exacto de evaluación de errores (la copia SQL `app.quote_calc_v1` debe seguirlo):
+ *  1. Más de 200 líneas: devuelve solo `too_many_lines` y no mira nada más.
+ *  2. Tasa de IVA fuera de 0..10.000 pb: `invalid_tax_rate` (sin posición). No corta: sigue.
+ *  3. Por cada línea, en orden, se acumulan todos sus problemas de forma, en este orden:
+ *     `invalid_quantity`, `invalid_price`, `invalid_discount`, `invalid_tax_treatment`.
+ *  4. Solo si esa línea quedó bien de forma, se calcula y se revisa, y se informa a lo más uno:
+ *     `line_gross_too_large`, y si no, `line_discount_exceeds_gross`.
+ *  5. Si hasta aquí hay algún problema (tasa o líneas), se devuelven todos juntos, en orden de
+ *     aparición, y no se evalúa el descuento global.
+ *  6. Descuento global con forma mala: solo `invalid_discount` (posición null).
+ *  7. Descuento global mayor que el subtotal: solo `global_discount_exceeds_subtotal`.
+ *  8. Total sobre el tope: solo `total_too_large`.
+ */
 export function calculateQuote(input: CalcInput): CalcResult {
   if (input.lines.length > QUOTE_MAX_LINES) {
     return { ok: false, issues: [{ code: "too_many_lines", lineIndex: null }] };
@@ -137,6 +152,10 @@ export function calculateQuote(input: CalcInput): CalcResult {
     }
     if (!isValidDiscount(line.discount)) {
       issues.push({ code: "invalid_discount", lineIndex });
+      valid = false;
+    }
+    if (line.taxTreatment !== "taxable" && line.taxTreatment !== "exempt") {
+      issues.push({ code: "invalid_tax_treatment", lineIndex });
       valid = false;
     }
     if (!valid) return;

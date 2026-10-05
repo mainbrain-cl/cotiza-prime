@@ -4,6 +4,7 @@ export type AuthFailureKind =
   | "rate_limited"
   | "weak_password"
   | "same_password"
+  | "reauthentication_needed"
   | "invalid_credentials"
   | "email_not_confirmed"
   | "unknown";
@@ -19,6 +20,7 @@ export function classifyAuthError(error: AuthErrorLike): AuthFailureKind {
   }
   if (error.code === "weak_password") return "weak_password";
   if (error.code === "same_password") return "same_password";
+  if (error.code === "reauthentication_needed") return "reauthentication_needed";
   if (error.code === "invalid_credentials") return "invalid_credentials";
   if (error.code === "email_not_confirmed") return "email_not_confirmed";
   return "unknown";
@@ -29,6 +31,8 @@ export const AUTH_MESSAGES: Record<AuthFailureKind, string> = {
   weak_password:
     "Esa contraseña es muy fácil de adivinar. Prueba con otra más larga o más variada.",
   same_password: "La contraseña nueva tiene que ser distinta de la actual.",
+  reauthentication_needed:
+    "Por seguridad, pide un enlace nuevo para cambiar tu contraseña y ábrelo de inmediato.",
   invalid_credentials: "Correo o contraseña incorrectos.",
   email_not_confirmed:
     "Todavía no verificas tu correo. Abre el enlace que te enviamos al registrarte y luego ingresa.",

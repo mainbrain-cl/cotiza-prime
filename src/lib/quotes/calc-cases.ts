@@ -601,3 +601,24 @@ export const CALC_CASES: CalcCase[] = [
     expected: ok([...K21_EXPECTED_LINES].reverse(), K21_COLUMNS),
   },
 ];
+
+/**
+ * Casos extra, sin número K (la prueba exige que K01 a K39 sean exactamente 39). Fijan el orden
+ * de errores que la copia SQL debe imitar.
+ */
+export const EXTRA_CALC_CASES: CalcCase[] = [
+  {
+    id: "X01",
+    description: "línea mala y descuento global malo a la vez: solo se informa la línea",
+    input: input([A(0, 100)], pct(10_001)),
+    expected: fails("invalid_quantity", 0),
+  },
+  {
+    id: "X02",
+    description: "tratamiento de impuesto que no es afecto ni exento",
+    input: input([
+      { ...A(1000, 100), taxTreatment: "otro" as unknown as LineInput["taxTreatment"] },
+    ]),
+    expected: fails("invalid_tax_treatment", 0),
+  },
+];

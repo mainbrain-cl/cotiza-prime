@@ -187,7 +187,7 @@ export default async function CatalogPage({
                               {item.name}
                             </Link>
                             {item.is_active ? null : (
-                              <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-fg-muted">
+                              <span className="rounded-full bg-surface-2 px-2 py-1 text-xs font-semibold text-fg-muted">
                                 Desactivado
                               </span>
                             )}

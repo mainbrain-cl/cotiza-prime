@@ -8,7 +8,7 @@ import {
   type Discount,
   type LineInput,
 } from "./calc";
-import { CALC_CASES } from "./calc-cases";
+import { CALC_CASES, EXTRA_CALC_CASES } from "./calc-cases";
 
 describe("casos conocidos K01 a K39", () => {
   it("son 39, con identificadores únicos y seguidos", () => {
@@ -19,6 +19,14 @@ describe("casos conocidos K01 a K39", () => {
   });
 
   for (const testCase of CALC_CASES) {
+    it(`${testCase.id} · ${testCase.description}`, () => {
+      expect(calculateQuote(testCase.input)).toEqual(testCase.expected);
+    });
+  }
+});
+
+describe("casos extra del orden de errores", () => {
+  for (const testCase of EXTRA_CALC_CASES) {
     it(`${testCase.id} · ${testCase.description}`, () => {
       expect(calculateQuote(testCase.input)).toEqual(testCase.expected);
     });

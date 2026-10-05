@@ -662,6 +662,11 @@ describe("catálogo y clientes: RLS, columnas y auditoría", () => {
         "update public.customers set display_name = 'Cliente Nuevo', email_enc = $2, email_hash = $3 where id = $1",
         [customerId, "v1.OTRO-SECRETO.xyz", hex64()],
       );
+      // Editar solo el nombre: la auditoría marca solo el nombre (la app ya no re-cifra lo demás)
+      await db.query(
+        "update public.customers set display_name = 'Cliente Renombrado' where id = $1",
+        [customerId],
+      );
 
       await actAs(db, lector, { [TENANT_HEADER]: tenantId });
       expect((await db.query("select 1 from public.customers")).rowCount).toBe(1); // ve
@@ -694,9 +699,14 @@ describe("catálogo y clientes: RLS, columnas y auditoría", () => {
         "select action, details from public.audit_log where resource_id = $1 order by id",
         [customerId],
       );
-      expect(rows.map((r) => r.action)).toEqual(["customer.created", "customer.updated"]);
+      expect(rows.map((r) => r.action)).toEqual([
+        "customer.created",
+        "customer.updated",
+        "customer.updated",
+      ]);
       expect(rows[1].details).toEqual({ changed: ["display_name", "email_enc", "email_hash"] });
-      expect(JSON.stringify(rows)).not.toMatch(/SECRETO|Cliente Nuevo/);
+      expect(rows[2].details).toEqual({ changed: ["display_name"] });
+      expect(JSON.stringify(rows)).not.toMatch(/SECRETO|Cliente Nuevo|Cliente Renombrado/);
     }));
 
   it("members y tenants: sin escritura directa de miembros; el rol no se puede escalar", () =>

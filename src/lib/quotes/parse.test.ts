@@ -31,6 +31,7 @@ describe("parseQuantity", () => {
     for (const text of ["", "   ", "-1", "0", "0,000", "abc", "1,2,3", "1.0.0", "1,a", "2.50,5"]) {
       expect(parseQuantity(text).ok, text).toBe(false);
     }
+    expect(parseQuantity("2%").ok).toBe(false);
     expect(parseQuantity("1.000.001").ok).toBe(false);
     expect(parseQuantity("1.000.000").ok).toBe(true);
   });

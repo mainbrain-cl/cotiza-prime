@@ -3,6 +3,9 @@ import { appSupabaseEnv } from "./tests/support/local-supabase";
 import { ensureTestCryptoEnv } from "./tests/support/test-env";
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
+const USE_PRODUCTION_BUILD = !!process.env.CI || process.env.E2E_PROD === "1";
+// Compilar la app antes de arrancar puede tardar varios minutos en CI.
+const WEB_SERVER_STARTUP_TIMEOUT_MS = USE_PRODUCTION_BUILD ? 600_000 : 120_000;
 
 // Claves de cifrado de PRUEBAS (de .env.local o al azar) y dirección de la Supabase local: la misma
 // fixture de aislamiento y el servidor de la prueba tienen que usar las mismas, también en CI.
@@ -37,7 +40,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npm run dev -- --port ${PORT}`,
+    // En CI (o con E2E_PROD=1) se prueba la app compilada, igual que en producción: el servidor de
+    // desarrollo compila cada pantalla al abrirla y en las máquinas de CI supera los tiempos de espera.
+    command: USE_PRODUCTION_BUILD
+      ? `npm run build && npm run start -- --port ${PORT}`
+      : `npm run dev -- --port ${PORT}`,
     url: `http://localhost:${PORT}`,
     // Las pruebas corren siempre como entorno de pruebas, sin depender de .env.local.
     // APP_ORIGIN: los enlaces de los correos deben apuntar al servidor de la prueba.
@@ -50,6 +57,6 @@ export default defineConfig({
       APP_ORIGIN: `http://localhost:${PORT}`,
     },
     reuseExistingServer: false,
-    timeout: 120_000,
+    timeout: WEB_SERVER_STARTUP_TIMEOUT_MS,
   },
 });

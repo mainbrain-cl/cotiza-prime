@@ -1318,7 +1318,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** grande
 **Depende de:** H-028
 **Datos personales:** no
-**Notas técnicas:** plantillas 2 y 3 diseñadas en la fase 0
+**Notas técnicas:** adelantada al sprint 3 (2026-10-06, pedido de Aarón). Las plantillas 2 y 3 las propone la sesión principal con vista previa que Aarón aprueba antes de construirlas, igual que la 1. Todas salen con el logo, los colores y los datos de la organización ya cargados (H-007), listas para cotizar. Agregar plantillas después no debe tocar la estructura: cada plantilla es un módulo en `src/lib/pdf/templates/`
 
 ---
 

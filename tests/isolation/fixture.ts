@@ -10,6 +10,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { buildCustomerInsertRow } from "@/lib/customers/record";
+import { encryptPii } from "@/lib/crypto/pii";
 import { calculateQuote } from "@/lib/quotes/calc";
 import type { CustomerInput } from "@/lib/customers/schemas";
 import { PLATFORM_TENANT_ID, TENANT_HEADER } from "@/lib/tenant/constants";
@@ -89,6 +90,8 @@ export interface ShareData {
   token: string;
   tokenSha256: string;
   pdfPath: string;
+  emailMessageId: string;
+  responseId: string;
 }
 
 export interface IsolationFixture {
@@ -463,7 +466,7 @@ async function buildShareData(
     `insert into public.quote_packages
        (id, tenant_id, quote_id, send_key, issue_date, valid_until, email_subject, email_body_md,
         customer_snapshot_enc, created_by)
-     values ($1, $2, $3, $4, app.current_business_date(), app.current_business_date() + 15, $5, $6, 'v1.fixture.fixture', $7)`,
+     values ($1, $2, $3, $4, app.current_business_date(), app.current_business_date() + 15, $5, $6, $8, $7)`,
     [
       packageId,
       data.tenantId,
@@ -472,6 +475,16 @@ async function buildShareData(
       `Cotización ${data.canary}`,
       `Texto del correo ${data.canary}`,
       owner.userId,
+      // Datos del cliente al enviar, cifrados y sellados con la tabla, la organización y el paquete.
+      encryptPii(
+        JSON.stringify({ name: `Cliente ${data.canary}`, email: "cliente@ejemplo.test" }),
+        {
+          table: "quote_packages",
+          field: "customer_snapshot",
+          tenantId: data.tenantId,
+          rowId: packageId,
+        },
+      ),
     ],
   );
   await db.query(
@@ -492,24 +505,108 @@ async function buildShareData(
     `update public.quote_packages set state = 'sent' where tenant_id = $1 and id = $2`,
     [data.tenantId, packageId],
   );
-  await db.query(
-    `insert into public.share_links
-       (id, tenant_id, quote_id, package_id, email_message_id, token_sha256, activated_at,
-        first_viewed_at, last_viewed_at, view_count)
-     values ($1, $2, $3, $4, $5, $6, now(), now(), now(), 1)`,
-    [shareLinkId, data.tenantId, quoteId, packageId, randomUUID(), tokenSha256],
-  );
+  const emailMessageId = randomUUID();
+  const responseId = randomUUID();
+  // El enlace y su correo se crean juntos (cada uno apunta al otro; la relación se revisa al confirmar).
+  await db.query("begin");
+  try {
+    await db.query(
+      `insert into public.share_links
+         (id, tenant_id, quote_id, package_id, email_message_id, token_sha256, activated_at,
+          first_viewed_at, last_viewed_at, view_count)
+       values ($1, $2, $3, $4, $5, $6, now(), now(), now(), 1)`,
+      [shareLinkId, data.tenantId, quoteId, packageId, emailMessageId, tokenSha256],
+    );
+    await db.query(
+      `insert into public.email_messages
+         (id, tenant_id, quote_id, package_id, share_link_id, kind, to_email_enc, to_email_hash, provider,
+          provider_message_id, status, sent_at, created_by)
+       values ($1, $2, $3, $4, $5, 'quote', $9, $6, 'memory', $7, 'sent', now(), $8)`,
+      [
+        emailMessageId,
+        data.tenantId,
+        quoteId,
+        packageId,
+        shareLinkId,
+        createHash("sha256").update(`correo-${packageId}`).digest("hex"),
+        `fixture-${packageId}`,
+        owner.userId,
+        encryptPii("cliente@ejemplo.test", {
+          table: "email_messages",
+          field: "to_email",
+          tenantId: data.tenantId,
+          rowId: emailMessageId,
+        }),
+      ],
+    );
+    await db.query("commit");
+  } catch (error) {
+    await db.query("rollback");
+    throw error;
+  }
   await db.query(
     `insert into public.share_link_views (tenant_id, share_link_id, ip_enc, user_agent_short)
-     values ($1, $2, 'v1.fixture.fixture', $3)`,
-    [data.tenantId, shareLinkId, `Agente ${data.canary}`],
+     values ($1, $2, $4, $3)`,
+    [
+      data.tenantId,
+      shareLinkId,
+      `Agente ${data.canary}`,
+      encryptPii("203.0.113.7", {
+        table: "share_link_views",
+        field: "ip",
+        tenantId: data.tenantId,
+        rowId: shareLinkId,
+      }),
+    ],
   );
   await db.query(
     `update public.quotes set status = 'sent', sent_at = now(), valid_until = app.current_business_date() + 15,
        current_package_id = $1 where tenant_id = $2 and id = $3`,
     [packageId, data.tenantId, quoteId],
   );
-  return { quoteId, packageId, shareLinkId, token, tokenSha256, pdfPath };
+  // El cliente aceptó: la respuesta queda en el registro de conformidad.
+  await db.query(
+    `update public.quotes set status = 'accepted', responded_at = now() where tenant_id = $1 and id = $2`,
+    [data.tenantId, quoteId],
+  );
+  await db.query(
+    `insert into public.quote_responses
+       (id, tenant_id, quote_id, package_id, share_link_id, decision, response_key, acceptor_name_enc,
+        package_content_sha256, acceptance_text_version, ip_enc, user_agent_short)
+     values ($1, $2, $3, $4, $5, 'accepted', $6, $9, $7, 'v1', $10, $8)`,
+    [
+      responseId,
+      data.tenantId,
+      quoteId,
+      packageId,
+      shareLinkId,
+      randomUUID(),
+      createHash("sha256").update(`content-${packageId}`).digest("hex"),
+      `Agente ${data.canary}`,
+      encryptPii(`Aceptante ${data.canary}`, {
+        table: "quote_responses",
+        field: "acceptor_name",
+        tenantId: data.tenantId,
+        rowId: responseId,
+      }),
+      encryptPii("203.0.113.7", {
+        table: "quote_responses",
+        field: "ip",
+        tenantId: data.tenantId,
+        rowId: responseId,
+      }),
+    ],
+  );
+  return {
+    quoteId,
+    packageId,
+    shareLinkId,
+    token,
+    tokenSha256,
+    pdfPath,
+    emailMessageId,
+    responseId,
+  };
 }
 
 /** Quita a "ex" de la organización A (el camino real todavía no existe: llega en el sprint 4). */

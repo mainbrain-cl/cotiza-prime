@@ -5,6 +5,7 @@ import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rest, storage } from "../support/local-supabase";
 import { fixture, openDb, tenantHeader, tokenOf } from "./context";
+import { decryptPii, PiiCryptoError } from "@/lib/crypto/pii";
 import { FIXTURE_PDF, QUOTE_DOCUMENTS_BUCKET } from "./fixture";
 
 let db: Client;
@@ -38,11 +39,14 @@ describe("Ataque 4 · columnas secretas y aperturas", () => {
         "share_link_views?select=ip_enc",
         "share_link_views?select=user_agent_short",
         "share_link_views?select=*",
+        "quote_responses?select=ip_enc",
+        "quote_responses?select=user_agent_short",
+        "quote_responses?select=*",
       ]) {
         const res = await rest(token, query, { headers });
         expect(res.status, `${persona} ${query}`).toBeGreaterThanOrEqual(400);
         expect(res.text).not.toContain(fx.orgs.A.share!.tokenSha256);
-        expect(res.text).not.toContain("v1.fixture.fixture");
+        expect(res.text).not.toMatch(/"v1.[A-Za-z0-9_-]{16}/); // ningún dato cifrado
       }
     }
   });
@@ -260,5 +264,90 @@ describe("Ataque 7 · un enlace de A no apunta a un paquete de B (relación comp
         [fx.orgs.B.share!.packageId, fx.orgs.A.tenantId, fx.orgs.A.share!.quoteId],
       ),
     ).toBe("23503");
+  });
+});
+
+describe("Ataque 6 · lo cifrado del paquete y de la respuesta no se abre desde otra organización", () => {
+  it("copiar el cifrado de B a una fila de A no permite leerlo, y con su propio sello sí se abre", async () => {
+    const fx = fixture();
+    const b = fx.orgs.B.share!;
+    const { rows: pkg } = await db.query<{ enc: string }>(
+      "select customer_snapshot_enc as enc from public.quote_packages where id = $1",
+      [b.packageId],
+    );
+    const { rows: resp } = await db.query<{ name: string; ip: string }>(
+      "select acceptor_name_enc as name, ip_enc as ip from public.quote_responses where id = $1",
+      [b.responseId],
+    );
+    const { rows: mail } = await db.query<{ enc: string }>(
+      "select to_email_enc as enc from public.email_messages where id = $1",
+      [b.emailMessageId],
+    );
+    const own = {
+      snapshot: {
+        table: "quote_packages",
+        field: "customer_snapshot",
+        tenantId: fx.orgs.B.tenantId,
+        rowId: b.packageId,
+      },
+      name: {
+        table: "quote_responses",
+        field: "acceptor_name",
+        tenantId: fx.orgs.B.tenantId,
+        rowId: b.responseId,
+      },
+      ip: {
+        table: "quote_responses",
+        field: "ip",
+        tenantId: fx.orgs.B.tenantId,
+        rowId: b.responseId,
+      },
+      mail: {
+        table: "email_messages",
+        field: "to_email",
+        tenantId: fx.orgs.B.tenantId,
+        rowId: b.emailMessageId,
+      },
+    };
+    // control positivo: con su propio contexto se abre y trae el canario de B
+    expect(decryptPii(pkg[0].enc, own.snapshot)).toContain(fx.orgs.B.canary);
+    expect(decryptPii(resp[0].name, own.name)).toContain(fx.orgs.B.canary);
+    expect(decryptPii(mail[0].enc, own.mail)).toBe("cliente@ejemplo.test");
+    // copiado a las filas de A (como lo haría alguien con acceso a la base): falla
+    const a = fx.orgs.A.share!;
+    const asIfInA = {
+      snapshot: { ...own.snapshot, tenantId: fx.orgs.A.tenantId, rowId: a.packageId },
+      name: { ...own.name, tenantId: fx.orgs.A.tenantId, rowId: a.responseId },
+      ip: { ...own.ip, tenantId: fx.orgs.A.tenantId, rowId: a.responseId },
+      mail: { ...own.mail, tenantId: fx.orgs.A.tenantId, rowId: a.emailMessageId },
+    };
+    expect(() => decryptPii(pkg[0].enc, asIfInA.snapshot)).toThrow(PiiCryptoError);
+    expect(() => decryptPii(resp[0].name, asIfInA.name)).toThrow(PiiCryptoError);
+    expect(() => decryptPii(resp[0].ip, asIfInA.ip)).toThrow(PiiCryptoError);
+    expect(() => decryptPii(mail[0].enc, asIfInA.mail)).toThrow(PiiCryptoError);
+    // y entre campos de la misma fila (el sello incluye el campo)
+    expect(() => decryptPii(resp[0].name, own.ip)).toThrow(PiiCryptoError);
+  });
+
+  it("Ana no lee por la API ninguna de esas filas de B, con la cabecera de A ni con la de B", async () => {
+    const fx = fixture();
+    const token = await tokenOf("ana");
+    for (const header of [fx.orgs.A.tenantId, fx.orgs.B.tenantId]) {
+      for (const [table, columns] of [
+        ["quote_packages", "id,customer_snapshot_enc,email_subject"],
+        ["email_messages", "id,to_email_enc"],
+        ["quote_responses", "id,acceptor_name_enc,reason_text_enc"],
+      ]) {
+        const res = await rest(
+          token,
+          `${table}?select=${columns}&tenant_id=eq.${fx.orgs.B.tenantId}`,
+          {
+            headers: tenantHeader(header),
+          },
+        );
+        expect(res.json, `${table} con la cabecera ${header}`).toEqual([]);
+        expect(res.text).not.toContain(fx.orgs.B.canary);
+      }
+    }
   });
 });

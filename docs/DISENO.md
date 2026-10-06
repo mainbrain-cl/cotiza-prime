@@ -92,7 +92,11 @@ Licencia y última versión revisadas en npm y en el repositorio de cada una.
 |---|---|---|---|---|---|
 | **shadcn/ui** | Base de componentes (se copian al proyecto, no se instalan) | MIT | — | Solo lo que se usa | ✅ |
 | **Radix UI** (`radix-ui`) | Lo que hay debajo de shadcn: menús, diálogos, accesibilidad | MIT | 1.6.7 | Por componente | ✅ |
-| **Motion** (`motion`) | Animaciones y transiciones | MIT | 13.5.0 | ~5 kB con carga mínima (`LazyMotion`) | ✅ |
+| **Motion** (`motion`) | Animaciones y transiciones. Hoy lo usan el menú flotante (resorte de la magnificación) y los contadores del inicio, solo con sus valores de movimiento (sin componentes `motion.*`, para no cargar el motor completo). Dependencias que trae: `framer-motion`, `motion-dom` y `motion-utils`, las tres MIT | MIT | **14.0.0** (fija; verificada 2026-10-06) | Solo se incluye lo que se importa (`animate`, `useSpring`, `useTransform`, `useInView`) | ✅ |
+| **Dock** (de React Bits, copiado a `src/components/react-bits/dock.tsx`) | Menú flotante vertical de la aplicación (escritorio y tableta). Adaptado: vertical, enlaces reales, vidrio y colores del sistema, sin magnificación con "reducir movimiento" ni con dedo | MIT + Commons Clause (React Bits) | Código de la rama principal, 2026-10-06 | Sin dependencias propias (usa Motion) | ✅ 2026-10-06 |
+| **Spotlight Card** (de React Bits, `src/components/react-bits/spotlight-card.tsx`) | Tarjetas del resumen por estado del inicio, con foco de luz tenue; sobre superficie sólida | MIT + Commons Clause (React Bits) | 2026-10-06 | Sin dependencias, ~1 kB | ✅ 2026-10-06 |
+| **Count Up** (de React Bits, `src/components/react-bits/count-up.tsx`) | Contadores del resumen por estado. Adaptado: el valor final viene escrito desde el servidor, puntos de miles, lectores de pantalla leen el valor final | MIT + Commons Clause (React Bits) | 2026-10-06 | Usa Motion; ~1 kB propio | ✅ 2026-10-06 |
+| **Waves** (de React Bits, `src/components/react-bits/waves.tsx`) | Líneas onduladas de fondo en ingreso, registro y estados vacíos. Adaptado: sin dependencias (lienzo 2D), 30 cuadros por segundo, se detiene fuera de pantalla o en otra pestaña. Carga diferida; no se monta en teléfonos, con "reducir movimiento" ni en equipos con 4 GB de memoria o 4 núcleos o menos | MIT + Commons Clause (React Bits) | 2026-10-06 | Sin dependencias, ~3 kB, solo se descarga donde se usa | ✅ 2026-10-06 |
 | **Lucide** (`lucide-react`) | Íconos — **la única familia** | ISC (algunos íconos de origen Feather, MIT) | 1.49.0 | Solo los íconos usados | ✅ |
 | **Geist** y **Geist Mono** | Tipografía | SIL Open Font License 1.1 | 1.7.2 | 2 familias, autoalojadas con `next/font` | ✅ |
 | **cmdk** | Búsqueda `Ctrl + K` | MIT | 1.1.1 | ~6 kB | ✅ (última actualización: ago-2025; vigilar) |
@@ -105,7 +109,7 @@ Licencia y última versión revisadas en npm y en el repositorio de cada una.
 | **pdfjs-dist** | Leer el texto de un PDF en las pruebas (solo desarrollo; no se despliega) | Apache-2.0 | 6.4.299 | — | ✅ Verificada el 2026-10-05 |
 | **Transiciones de vista** (`ViewTransition` de React, incluido en Next 16) | Transición corta entre pantallas | — (parte de React/Next, sin paquete nuevo) | — | 0 kB | ✅ En uso desde H-115 (2026-10-05); se apaga con "reducir movimiento" |
 | **Vaul** | Hojas que suben desde abajo en el teléfono | MIT | 1.1.2 | ~5 kB | ⚠️ Sin actualizaciones desde dic-2024. Usar la hoja (`Sheet`) de shadcn; Vaul solo si hace falta arrastrar |
-| **React Bits** | Fondos y efectos animados | **MIT + Commons Clause** | — | Por componente | ⚠️ Se puede usar dentro de Cotiza Prime (también comercialmente), pero **no revender ni redistribuir los componentes sueltos**. **Decisión 018 (2026-10-06, Aarón):** se usan sus componentes gratuitos para menú flotante, tarjetas, contadores y fondos; cada dependencia nueva se verifica antes de adoptarla |
+| **React Bits** | Fondos y efectos animados | **MIT + Commons Clause** | — | Por componente | ⚠️ Se puede usar dentro de Cotiza Prime (también comercialmente), pero **no revender ni redistribuir los componentes sueltos**. **Decisión 018 (2026-10-06, Aarón):** se usan sus componentes gratuitos para menú flotante, tarjetas, contadores y fondos; cada dependencia nueva se verifica antes de adoptarla. Los componentes se copian a `src/components/react-bits/` con su aviso de licencia (`LICENSE.md`). **No usados por sus dependencias** (2026-10-06): los fondos WebGL (Aurora, Particles, Galaxy, Silk…) traen `ogl` (Unlicense, ~420 kB sin comprimir) o `three`, y varios efectos traen `gsap` (licencia propia, no es MIT ni similar). Se eligió Waves, que no necesita ninguna |
 
 ---
 
@@ -204,7 +208,7 @@ Valores en la vista previa; en oscuro las sombras son más densas porque el negr
 | Desenfoque | 22 px, saturación 180% | igual |
 | Borde | 1 px al 8% de opacidad + brillo interior de 1 px arriba | 1 px al 6% + brillo al 10% |
 
-**Dónde va:** barra lateral y barra inferior flotantes, menús desplegables, selector de
+**Dónde va:** menú flotante vertical y barra inferior flotante, menús desplegables, selector de
 organización, búsqueda `Ctrl + K`, avisos breves. **Dónde no:** tablas, formularios, detalle de
 una cotización, cualquier cosa que se lea con atención.
 
@@ -236,8 +240,8 @@ transiciones decorativas.
 
 | Ancho | Disposición |
 |---|---|
-| **Escritorio, desde 1.280 px** | Barra lateral flotante de vidrio (232 px, se puede contraer) · lista · detalle a la derecha (hasta 380 px), los tres a la vista |
-| **Tableta, 768–1.279 px** | Barra lateral contraída a íconos · lista · el detalle se abre como panel lateral |
+| **Escritorio, desde 1.280 px** | Menú flotante vertical de vidrio pegado a la izquierda (72 px, solo íconos; el nombre aparece al lado al pasar el ratón o tabular; decisión 018) · lista · detalle a la derecha (hasta 380 px), los tres a la vista |
+| **Tableta, 768–1.279 px** | El mismo menú flotante vertical · lista · el detalle se abre como panel lateral |
 | **Teléfono, hasta 767 px** | Barra inferior flotante con cuatro destinos (Inicio, Cotizaciones, Clientes, Más) · botón flotante para la acción principal, abajo a la derecha · tablas convertidas en tarjetas · diálogos como hojas desde abajo |
 
 Área táctil mínima de 44 × 44 px. Sin desplazamiento horizontal a 375 px.

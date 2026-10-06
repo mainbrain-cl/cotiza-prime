@@ -574,7 +574,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Criterios de aceptación**
 - [ ] Veo dos botones claros: **Aceptar** y **Rechazar**
 - [ ] Al aceptar, ingreso mi nombre y confirmo; queda registrado quién aceptó, cuándo y desde dónde
-- [ ] Al rechazar, puedo indicar el motivo (precio, plazo, eligió otro proveedor, ya no lo necesita, otro), sin que sea obligatorio
+- [ ] Al rechazar, **tengo que indicar el motivo** (precio demasiado alto, no está en el presupuesto, ya acepté la cotización de otra empresa, plazo, ya no lo necesito, otro con texto breve); sin motivo no se registra el rechazo
 - [ ] Después de responder veo una confirmación y ya no puedo cambiar la respuesta desde el enlace
 - [ ] No puedo aceptar una cotización vencida, revocada o reemplazada
 
@@ -1480,23 +1480,23 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 ---
 
-### H-088 · Ver un estimado al pedir la cotización · M15, M16
+### H-088 · Ver en vivo lo que estoy pidiendo · M15
 
 **Como** visitante
-**quiero** ver un valor aproximado antes de enviar mi solicitud
-**para** saber si está dentro de lo que puedo pagar.
+**quiero** ver, mientras lleno el formulario, cómo va quedando lo que estoy solicitando
+**para** confirmar que pedí lo correcto antes de enviarlo.
 
 **Criterios de aceptación**
-- [ ] Al ingresar los datos del trabajo veo un estimado, como total o rango
-- [ ] Dice claramente "estimado, sujeto a confirmación"
-- [ ] No veo tarifas, costos ni el desglose del cálculo
-- [ ] El Administrador puede apagar el estimado en su formulario
+- [ ] A medida que elijo servicios e ingreso datos, veo al lado un resumen que se actualiza solo: qué pedí, cantidades y datos del trabajo
+- [ ] El resumen se ve como un desglose, **sin ningún precio ni estimado**
+- [ ] En el teléfono el resumen se ve debajo o en una hoja que puedo abrir, sin perder lo escrito
+- [ ] Lo que veo es exactamente lo que recibirá la empresa
 
 **Prioridad:** usable
 **Tamaño:** mediano
-**Depende de:** H-087, H-083
-**Datos personales:** no
-**Notas técnicas:** el cálculo ocurre en el servidor; la lista de precios nunca llega al navegador
+**Depende de:** H-087
+**Datos personales:** no (la vista previa no se guarda hasta enviar)
+**Notas técnicas:** reemplaza al estimado del plan original (decisión de Aarón, 2026-10-06): quien solicita no ve precios. Ningún monto ni tarifa llega al navegador
 
 ---
 
@@ -1507,7 +1507,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **para** que ninguna quede sin respuesta.
 
 **Criterios de aceptación**
-- [ ] Veo la lista de solicitudes con fecha, solicitante, servicios y estimado
+- [ ] Veo la lista de solicitudes con fecha, solicitante y servicios pedidos
 - [ ] Asigno cada una a un comercial, que recibe un aviso
 - [ ] Veo cuáles siguen sin asignar o sin convertir, y hace cuánto llegaron
 - [ ] Puedo descartar una solicitud (basura, duplicada) indicando el motivo
@@ -1575,6 +1575,28 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Notas técnicas:** `PROYECTO.md` §13.5
 
 ---
+
+### H-093 · Poner el formulario en mi sitio web · M15
+
+**Como** Administrador
+**quiero** un código para pegar mi formulario dentro de mi propia web
+**para** que mis clientes pidan cotización sin salir de mi sitio.
+
+**Criterios de aceptación**
+- [ ] Desde el formulario copio un código para incrustarlo, junto con su enlace público
+- [ ] Pegado en una página de prueba, el formulario se ve con mi marca y funciona igual que el enlace
+- [ ] Se ajusta al ancho de la página y se ve bien en el teléfono
+- [ ] Solo se puede incrustar donde yo lo autorice (lista de sitios permitidos); en otros sitios no carga
+- [ ] Si pauso el formulario, el incrustado muestra un mensaje de que no está disponible
+
+**Prioridad:** usable
+**Tamaño:** mediano
+**Depende de:** H-086, H-087
+**Datos personales:** no
+**Notas técnicas:** 🔒 superficie pública. Cabeceras de seguridad con lista blanca de sitios (`frame-ancestors`), mismos límites y protecciones de H-092. Decisión de Aarón, 2026-10-06: entra en la v1 (antes M23)
+
+---
+
 
 # Fase 7 — Autoservicio y lanzamiento
 

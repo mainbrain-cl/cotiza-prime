@@ -106,17 +106,18 @@ Con 1, 2 y 3 aplicadas, a 5 h/día: **todo construido en ~3,5–4 semanas** y **
 | **1** | **Base segura, catálogo y clientes** | H-110, H-013, H-001, H-002, H-005, H-006, 🔒H-012, H-020, H-022, H-024 | 9 | Aarón se registra, crea **Negocio 1 y Negocio 2**, carga servicios y clientes en cada uno, y **uno nunca ve los datos del otro** (prueba automática en verde) |
 | **2** | **La primera cotización en PDF** | H-003, H-007, H-021, H-023, H-025, 🔒H-026, H-027, H-028 | 9½ | Aarón arma una **cotización real con su logo**, con totales e IVA correctos, y **descarga el PDF** |
 | **3** | **El cliente la recibe y responde** | 🔒H-029, 🔒H-030, H-031, H-032, H-033, H-034, H-035, H-014 | 9 | La cotización **llega al correo** de un cliente de prueba, que la **abre en su teléfono y la acepta**. **Primer recorrido de punta a punta completo** |
-| **4** | **Equipo y permisos** | H-004, H-008, H-009, H-010, 🔒H-011, H-040, H-041, H-042, H-048 | 9 | Aarón invita a Juan como Comercial; Juan cotiza con precios bloqueados y no ve la configuración |
-| **5** | **Aprobación y datos de pago** | H-043, 🔒H-044, H-045, H-046, H-047, 🔒H-050, 🔒H-051, 🔒H-052, 🔒H-053 | 9 | Juan pide aprobación, Aarón aprueba y **el correo sale solo**; al aceptar, el cliente recibe los **datos de transferencia** |
-| **6** | **Cobro completo y listo para el piloto** | 🔒H-054, H-055, H-056, H-057, H-060, H-061, H-069, H-070, H-071, H-072, H-075, H-114 | 8 | Ciclo completo hasta **Pagada**, en 100% y 50/50, con historia de la cotización, versiones y WhatsApp |
+| **4** | **Formulario público y solicitudes** | H-086, H-087, H-088, H-089, H-090, H-091, 🔒H-092, 🔒H-093 | 9 | Un desconocido pide cotización por el enlace, por el QR o desde una web con el formulario incrustado, ve en vivo lo que pide (sin precios), y la solicitud llega al equipo y se convierte en cotización |
+| **5** | **Equipo y permisos** | H-004, H-008, H-009, H-010, 🔒H-011, H-040, H-041, H-042, H-048 | 9 | Aarón invita a Juan como Comercial; Juan cotiza con precios bloqueados y no ve la configuración |
+| **6** | **Aprobación y datos de pago** | H-043, 🔒H-044, H-045, H-046, H-047, 🔒H-050, 🔒H-051, 🔒H-052, 🔒H-053 | 9 | Juan pide aprobación, Aarón aprueba y **el correo sale solo**; al aceptar, el cliente recibe los **datos de transferencia** |
+| **7** | **Cobro completo y listo para el piloto** | 🔒H-054, H-055, H-056, H-057, H-060, H-061, H-069, H-070, H-071, H-072, H-075, H-114 | 8 | Ciclo completo hasta **Pagada**, en 100% y 50/50, con historia de la cotización, versiones y WhatsApp |
 | ⭐ | **Piloto privado** | — | — | 1 a 3 empresas reales. **Requisito:** decisiones 7, 8 y 9 resueltas (plazos de conservación, incidentes, abogado) y un respaldo restaurado |
-| **7** | **Encontrar y seguir** | H-062, H-063, H-064, H-065, H-066, H-067, H-068, H-073, H-074 | 8½ | Inicio con "lo que requiere mi atención", búsqueda con `Ctrl + K`, filtros, ficha del cliente y alertas |
-| **8** | **Plantillas y modelos de cálculo** | H-076, H-080, H-081, H-082, H-083 | 8 | Tres plantillas a elegir; el comercial ingresa horas o km y se proponen las líneas con precio |
-| **9** | **Margen y formulario público** | H-084, H-085, 🔒H-086, 🔒H-087, H-088, H-089, H-090, H-091, 🔒H-092 | 9 | Un desconocido pide cotización por el formulario (o su QR), ve un estimado y la solicitud se convierte en cotización |
-| **10** | **Onboarding y autoservicio** | H-100, H-101, H-102, H-103, H-104, H-105, H-109, H-111, H-113 | 8 | Una empresa nueva queda **configurada sola** con el recorrido guiado y recibe su cotización de prueba |
-| **11** | **Cumplimiento y lanzamiento** | 🔒H-106, 🔒H-107, H-108, H-112 + listas de salida a producción | 4 + tareas | **Lanzamiento público** |
+| **8** | **Encontrar y seguir** | H-062, H-063, H-064, H-065, H-066, H-067, H-068, H-073, H-074 | 8½ | Inicio con "lo que requiere mi atención", búsqueda con `Ctrl + K`, filtros, ficha del cliente y alertas |
+| **9** | **Plantillas y modelos de cálculo** | H-076, H-080, H-081, H-082, H-083 | 8 | Tres plantillas a elegir; el comercial ingresa horas o km y se proponen las líneas con precio |
+| **10** | **Margen de ganancia** | H-084, H-085 | 3 | El semáforo de margen y la regla de aprobación por margen mínimo |
+| **11** | **Onboarding y autoservicio** | H-100, H-101, H-102, H-103, H-104, H-105, H-109, H-111, H-113 | 8 | Una empresa nueva queda **configurada sola** con el recorrido guiado y recibe su cotización de prueba |
+| **12** | **Cumplimiento y lanzamiento** | 🔒H-106, 🔒H-107, H-108, H-112 + listas de salida a producción | 4 + tareas | **Lanzamiento público** |
 
-**Total:** 91 historias en 11 sprints, unas **22 semanas**, más la preparación. Es una estimación
+**Total:** 92 historias en 12 sprints, unas **22 semanas** (el formulario público se adelantó al sprint 4 el 2026-10-06; el sprint de margen quedó corto, así que el total casi no cambia), más la preparación. Es una estimación
 que se recalibra al cerrar el sprint 1.
 
 ## Preparación que cada sprint necesita antes de partir

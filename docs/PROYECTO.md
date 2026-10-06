@@ -26,7 +26,7 @@ language: es-CL
 | **El problema** | Plantillas dispersas, precios desactualizados, descuentos sin control, formularios de contacto que no sirven, y nadie sabe qué se envió ni quién pagó |
 | **La promesa** | *"Cotiza en minutos, con tu marca, sin perder el control."* (frase de trabajo, por confirmar) |
 | **Cómo se quiere mostrar** | **Profesional, confiable y simple.** Hacia el cliente final, la protagonista es **la marca de cada empresa**: sus cotizaciones tienen que verse serias y hacerla parecer más grande y con más trayectoria —por eso las plantillas cuidadas y la numeración corrida—. Hacia quien la usa, una herramienta clara, en español de Chile y sin jerga técnica. (Tono por confirmar; la identidad visual se define en `DISENO.md`) |
-| **Lo que la hace distinta** | Se aprueba el **paquete completo** que recibirá el cliente · cobro por **transferencia con seguimiento, sin comisiones** · **formulario público** que llega con estimado · **modelos de cálculo** por rubro · **varias empresas** en una misma cuenta |
+| **Lo que la hace distinta** | Se aprueba el **paquete completo** que recibirá el cliente · cobro por **transferencia con seguimiento, sin comisiones** · **formulario público** con vista previa en vivo de lo que se pide · **modelos de cálculo** por rubro · **varias empresas** en una misma cuenta |
 | **Qué no es** | No factura ni se conecta al SII, no procesa pagos, no es un CRM completo ni un sistema de operación logística (§3) |
 | **Principios** | 1. La marca del cliente primero. 2. Nada sale sin control. 3. El dinero nunca pasa por nosotros. 4. Nada enviado se borra. 5. Seguridad y ley desde el diseño |
 | **País** | Chile — Ley 21.719, RUT, IVA 19%, CLP |
@@ -224,6 +224,54 @@ Además puede limitar, por comercial, qué servicios del catálogo puede cotizar
 
 ## 6. Flujos
 
+### 6.0 El recorrido completo de una cotización
+
+> Indicado por Aarón el 2026-10-06. **Es el mapa de cómo se manejan las cotizaciones**: Cotiza
+> Prime no es solo crear una cotización y descargarla. Cada paso se detalla en §6.2 a §6.8; si
+> algo de abajo contradice esas secciones, manda este mapa y se ajustan.
+
+**1. Formulario público y solicitud.**
+- La organización comparte un **enlace público** a su formulario **y** puede **incrustarlo** (código
+  para pegar) en su sitio web. Ambas opciones desde la v1.
+- El formulario es **muy profesional**: mientras la persona escribe sus datos, ve **en tiempo real
+  lo que está solicitando y cómo lo solicita**, como un desglose **sin precios**. Quien solicita
+  una cotización no ve ningún monto (§9.5).
+- Al enviarlo, la solicitud **llega directo a la organización dueña del enlace** y queda disponible
+  para el equipo con acceso a cotizaciones.
+
+**2. Armado de la cotización.**
+El equipo toma la solicitud y arma la cotización, con servicios preestablecidos **o con precios
+ingresados a mano** para poder negociar. Al armarla:
+- **(a) Diseño:** elige la plantilla. Si ya hay una predefinida, queda lista sola, con el logo
+  subido antes y los datos del solicitante y de la empresa emisora.
+- **(b) Correo:** redacta el texto al cliente, partiendo de una **plantilla de correo** para no
+  escribir todo a mano cada vez.
+- **(c) Vista previa completa:** a un lado, el correo tal como lo leerá el cliente ("Estimado tal,
+  se le hace envío de la cotización correspondiente a su solicitud…"); al otro, el **PDF adjunto**
+  ya armado con toda la información.
+
+**3. Roles y aprobación.**
+- **(a)** Los usuarios con permiso de **enviar directo** despachan la cotización sin autorización.
+- **(b)** Los que **requieren aprobación** solicitan la revisión. El administrador ve exactamente
+  cómo quedó: la cotización, el correo y el PDF. **Al aprobar, el correo final sale solo**, con el
+  resumen redactado y el PDF adjunto.
+
+**4. Respuesta del cliente.**
+- **(a) Acepta:** la confirmación se refleja en la plataforma.
+- **(b) Rechaza:** **el motivo es obligatorio** y se elige de una lista (precio demasiado alto, no
+  está en el presupuesto, ya aceptó la cotización de otra empresa…, §8.11). Con eso se cierra el
+  ciclo.
+
+**Enviar es siempre desde la plataforma**, en un clic: nadie descarga el PDF, arma el correo a mano
+ni lo manda por fuera. Esa es la razón de ser del producto.
+
+| Paso | Detalle en |
+|---|---|
+| 1. Formulario y solicitud | §6.7, §13.5 |
+| 2. Armado | §6.3, §9 |
+| 3. Roles y aprobación | §5, §6.4 |
+| 4. Respuesta del cliente | §6.5, §8.11 |
+
 ### 6.1 Registro y onboarding
 
 1. Alguien se registra con su correo y lo verifica. *(Sin verificación no se crea nada.)*
@@ -342,7 +390,8 @@ visibles en el enlace del cliente, ya aceptado.
 1. El administrador arma un formulario con los campos y los servicios que se pueden pedir.
 2. Publica el enlace en su web, Instagram o firma de correo.
 3. Alguien lo llena y **acepta la política de privacidad** antes de enviar.
-4. Llega como **solicitud**, con los servicios elegidos y un valor estimado calculado en el servidor.
+4. Llega como **solicitud**, con los servicios elegidos y los datos del trabajo, **sin precio**
+   (§9.5). Mientras la llena, la persona ve en vivo un resumen de lo que está pidiendo.
 5. El comercial la convierte en cotización con un clic y sigue desde §6.3.
 
 ### 6.8 Una cotización que se renegocia
@@ -517,9 +566,10 @@ Cada organización define sus X.
 
 ### 8.11 Motivo de rechazo
 
-Cuando el cliente rechaza, se le ofrece —opcional— indicar por qué: **precio, plazo, eligió otro
-proveedor, ya no lo necesita, otro**. Cuesta un clic y es la información más valiosa para vender
-mejor.
+Cuando el cliente rechaza, **tiene que indicar el motivo** (decisión de Aarón, 2026-10-06; antes
+era opcional). Elige uno de una lista: **precio demasiado alto, no está en el presupuesto, ya
+acepté la cotización de otra empresa, plazo, ya no lo necesito, otro** (con un texto breve). Cuesta
+un clic y es la información más valiosa para vender mejor. Sin motivo, el rechazo no se registra.
 
 ### 8.12 Nada se borra
 
@@ -625,9 +675,12 @@ cliente nunca**.
 
 ### 9.5 El mismo cálculo en el formulario público
 
-El formulario público usa los mismos modelos: el cliente ingresa sus datos y recibe un **estimado**
-calculado en el servidor. Se muestra como total o rango, marcado como **"estimado, sujeto a
-confirmación"**, y **nunca con el desglose, las tarifas ni los costos**.
+El formulario público **no muestra precios** (decisión de Aarón, 2026-10-06): quien lo llena está
+*solicitando* una cotización, y darle el precio sería cotizarle sin que el equipo intervenga. Lo
+que ve, en tiempo real, es **lo que está pidiendo y cómo lo está pidiendo**: el desglose de su
+solicitud (servicios, cantidades, datos del trabajo), **sin ningún monto**. Los datos que ingresa
+sirven para que el equipo calcule después con los modelos de §9.2, en el servidor y con sus
+tarifas, que nunca llegan al navegador.
 
 ### 9.6 Los modelos y sus módulos
 
@@ -660,7 +713,7 @@ Mejoras pensadas para quien cotiza todos los días, sin salirse de cotizar.
 | **Precios especiales por cliente** | Tarifas preferentes para clientes frecuentes | M23 |
 | **Fotos en el formulario público** | El cliente sube una foto de la carga y se cotiza sin visita | M23 |
 | **Adjuntos extra en el correo** | Fichas técnicas, fotos, certificados | M23 |
-| **Formulario público dentro de la web** de la organización | Se pega en su sitio sin que el cliente salga | M23 |
+| **Formulario público dentro de la web** de la organización | Se pega (código incrustable) en su sitio sin que el cliente salga. **Entra en la v1**, junto con el enlace (decisión 2026-10-06) | M15 |
 | **Peajes automáticos** según la ruta | Hoy se ingresan a mano | M26 |
 | **Cotizaciones recurrentes** | El mismo flete cada semana, sin rehacerlo | M26 |
 | **Tiempo de respuesta a solicitudes** | Cuánto se demora el equipo en cotizar lo que llega | M25 |
@@ -810,7 +863,7 @@ original. El comercial nunca marca pagos, ni los suyos.
 
 - Límite de tasa por IP y por formulario, más protección anti-robot.
 - Validación estricta en el servidor.
-- **Nunca expone la lista de precios**: el estimado se calcula en el servidor.
+- **Nunca expone precios ni tarifas**: el formulario no muestra ningún monto (§9.5).
 - Tope de solicitudes por organización.
 
 ### 13.6 El enlace del cliente
@@ -918,7 +971,7 @@ historias de usuario, en los sprints y en la hoja de ruta.
 | **M12** | Seguimiento | Estados, línea de tiempo, notas internas, inicio "Lo que requiere mi atención", resumen por estado, avisos y alertas internas | §7, §8.5, §8.6, §8.8, §8.9 |
 | **M13** | Orden y búsqueda | Búsqueda con `Ctrl + K`, filtros y orden, categorías y etiquetas, archivar, exportar a Excel | §8.2–§8.4, §8.12, §8.13 |
 | **M14** | Productividad | Duplicar, extender vigencia, guardado automático, compartir por WhatsApp | §8.10, §10 |
-| **M15** | Formulario público | Campos y servicios configurables, consentimiento, protección anti-robot, límites, estimado, código QR, asignación de solicitudes | §6.7, §10, §13.5 |
+| **M15** | Formulario público | Campos y servicios configurables, consentimiento, protección anti-robot, límites, previsualización en vivo de lo solicitado (sin precios), enlace público y código incrustable, código QR, asignación de solicitudes | §6.7, §10, §13.5 |
 | **M16** | Modelos de cálculo generales | Por unidad, servicio por tiempo, productos; costo, margen y semáforo | §9.1, §9.2, §9.4, §9.5 |
 | **M17** | Onboarding | Doce pasos guiados, lista de avance, cotización de prueba | §6.1 |
 | **M18** | Cumplimiento | Registro de auditoría, los cinco derechos del titular, retención y borrado automático, consentimiento, política de privacidad y términos | §11.2, §13 |
@@ -931,7 +984,7 @@ historias de usuario, en los sprints y en la hoja de ruta.
 | **M20** | Logística detallada | Estudio de costeo, flota, peso volumétrico, tramos, retorno vacío, peajes manuales, asistente de costos logísticos, distancia automática, datos del servicio en el PDF, reajuste por combustible | §9.3 |
 | **M21** | Comprobante de pago | El cliente sube el comprobante en su enlace y el administrador lo revisa antes de marcar pagado | §6.6 |
 | **M22** | Productividad avanzada | Importar clientes y catálogo desde Excel, paquetes de ítems frecuentes, vistas guardadas, tablero por estado, historial de precios del catálogo | §8 |
-| **M23** | Experiencia del cliente | Ítems opcionales, alternativas A/B/C, precios especiales por cliente, preguntas desde el enlace, fotos en el formulario, adjuntos, formulario dentro de la web | §10 |
+| **M23** | Experiencia del cliente | Ítems opcionales, alternativas A/B/C, precios especiales por cliente, preguntas desde el enlace, fotos en el formulario, adjuntos | §10 |
 | **M24** | Plantillas y pagos avanzados | Más plantillas y editor visual, otros esquemas de pago (30/70, cuotas), modelo de proyectos por partidas | §9.6, §11.1 |
 | **M25** | Métricas | Conversión, ranking de vendedores, monto por cobrar, motivos de rechazo, servicios más cotizados, ventas por categoría, tiempo de respuesta | §8 |
 | **M26** | Automatizaciones y ampliaciones | Recordatorios automáticos al cliente, cotización en UF, base de clientes externa, peajes automáticos, cotizaciones recurrentes | §10 |
@@ -975,11 +1028,12 @@ No son una fase: son condiciones de cualquier cosa que se construya.
 | **0** | **Preparación** | Decisiones que bloquean (§16.2), `DISENO.md` y diseño de las tres plantillas, infraestructura (repositorio, dos Supabase, Vercel, dominio de correo con SPF, DKIM y DMARC, Sentry), diseño del modelo de datos y de RLS, borradores legales al abogado. **En paralelo: parte el estudio de costeo logístico** | Documentos, diseño y cuentas listas | Todo lo demás depende de esto. El estudio logístico y la revisión del abogado tardan: conviene partirlos al principio |
 | **1** | **Cimientos** | M01, M02, M03, M19, auditoría base | Dos organizaciones separadas, un miembro invitado con su rol, y la prueba automática de aislamiento en verde | El aislamiento entre organizaciones es el riesgo número uno; todo se construye encima |
 | **2** | **Primera cotización de punta a punta** | M04 (básico), M05 (básico), M06, M07 con una plantilla, M08 (correo 1), M10 | Un comercial arma una cotización, la envía y el cliente la acepta desde su enlace | Valida lo más riesgoso del producto: PDF, entrega del correo y enlace público |
+| **2b** | **Formulario público** *(adelantada el 2026-10-06)* | M15 | Un desconocido pide una cotización por enlace, QR o formulario incrustado en una web, ve en vivo lo que pide (sin precios), y el comercial la convierte en cotización | Es el paso 1 del recorrido (§6.0). Se construye tras el primer recorrido de punta a punta, con la protección de superficie pública (§13.5) |
 | **3** | **Control** | M09, campos bloqueados, avisos internos | Juan pide aprobación, Aarón la revisa y el correo sale solo | Es la pieza que diferencia el producto y depende del envío de la fase 2 |
 | **4** | **Cobro** | M11, verificación en dos pasos obligatoria para Dueño y Administrador | El ciclo completo hasta **Pagada**, en 100% y en 50/50 | Cierra el valor completo: cotizar, aprobar, enviar, aceptar, cobrar |
 | ⭐ | **Hito: piloto privado** | — | Una a tres empresas reales usando la plataforma, sin registro abierto al público | Aprender con uso real antes de pulir. **Requisito:** política de privacidad, acuerdo de tratamiento, cifrado, auditoría, plazos de conservación y responsable de incidentes ya definidos |
 | **5** | **Seguimiento y orden** | M12, M13, M14, M05 (ficha completa), plantillas 2 y 3 | "¿En qué quedó esa cotización?" se responde en segundos | Tiene sentido cuando ya hay cotizaciones reales; los datos se vienen registrando desde la fase 2 |
-| **6** | **Captación y cálculo** | M15, M16 | Un desconocido pide una cotización por el formulario, recibe un estimado y el comercial la convierte en cotización | El formulario público es superficie hostil: se abre cuando la base ya está firme |
+| **6** | **Cálculo** | M16 | El comercial ingresa horas o km y el sistema propone los ítems con su precio | Los modelos de cálculo se construyen cuando la base ya está firme |
 | **7** | **Autoservicio y lanzamiento** | M17, M18 completo, tope de uso, revisión del abogado, listas de salida a producción de `SEGURIDAD.md` y `LEGAL.md`, prueba con 50.000 cotizaciones | **Lanzamiento público** | El onboarding configura todo lo anterior, así que solo se puede construir al final. Nada sale al público sin las listas de verificación |
 
 **Al lanzar, se puede mostrar esto de punta a punta:** una empresa se registra y el onboarding la deja
@@ -1062,6 +1116,8 @@ Cada una indica **antes de qué fase** tiene que estar resuelta.
 | 12 | **Modo de cobro de Cotiza Prime** (planes, precios) | Sin cobro hasta decidirlo | Fase 7. Puede exigir una migración: mientras antes, mejor |
 | 13 | **Tope de uso mínimo** para el registro abierto | — | Fase 7 |
 | 14 | **Proveedor de mapas** para la distancia automática | — | M20 |
+| 15 | **Quién puede enviar directo**: ¿se define por rol, por persona o por regla de la organización? (§5.3 es por organización). Enviar siempre es desde la plataforma, en un clic: nunca descargar el PDF ni armar el correo a mano | Por organización, con excepción por persona | Fase 3 |
+| 16 | **Orden de construcción:** el formulario público (paso 1 del recorrido) hoy va en la fase 6 | Sin cambio hasta que Aarón decida adelantarlo | Antes de armar el sprint 4 |
 
 ---
 

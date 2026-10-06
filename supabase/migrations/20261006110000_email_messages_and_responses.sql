@@ -49,7 +49,7 @@ create function app.email_messages_guard() returns trigger
 language plpgsql set search_path = '' as $$
 declare
   c_moving constant text[] := array['status', 'status_at', 'sent_at', 'delivered_at', 'bounced_at',
-                                    'bounce_type', 'error_code', 'provider_message_id'];
+                                    'bounce_type', 'error_code', 'provider', 'provider_message_id'];
   v_new jsonb;
   v_old jsonb;
   v_key text;
@@ -69,6 +69,10 @@ begin
       raise exception 'email_messages.% is immutable', v_key using errcode = '42501';
     end if;
   end loop;
+  -- El proveedor se conoce al enviar: nace como 'pending' y se fija una sola vez.
+  if old.provider <> 'pending' and new.provider is distinct from old.provider then
+    raise exception 'provider is fixed once known' using errcode = '42501';
+  end if;
   if old.provider_message_id is not null and new.provider_message_id is distinct from old.provider_message_id then
     raise exception 'provider_message_id is fixed once known' using errcode = '42501';
   end if;

@@ -423,6 +423,61 @@ export const RPC_CASES: Record<string, RpcCase> = {
     },
     writesActiveTenant: true,
   },
+  // Sprint 3 · envío de la cotización. Los argumentos son válidos en forma y apuntan a nada propio.
+  prepare_quote_send: {
+    args: {
+      p_quote_id: randomUUID(),
+      p_expected_revision: 1,
+      p_send_key: randomUUID(),
+      p_package_id: randomUUID(),
+      p_email_message_id: randomUUID(),
+      p_share_link_id: randomUUID(),
+      p_token_sha256: "a".repeat(64),
+      p_email_subject: "Ataque",
+      p_email_body_md: "Ataque",
+      p_to_email_enc: "ataque",
+      p_to_email_hash: "b".repeat(64),
+      p_customer_snapshot_enc: "ataque",
+    },
+    writesActiveTenant: true,
+  },
+  attach_quote_package_document: {
+    args: {
+      p_package_id: randomUUID(),
+      p_pdf_path: `${randomUUID()}/${randomUUID()}/${randomUUID()}.pdf`,
+      p_pdf_sha256: "a".repeat(64),
+      p_pdf_bytes: 10,
+      p_logo_path: null,
+      p_document_snapshot: {},
+      p_content_sha256: "b".repeat(64),
+    },
+    writesActiveTenant: true,
+  },
+  confirm_email_dispatch: {
+    args: {
+      p_email_message_id: randomUUID(),
+      p_provider: "memory",
+      p_provider_message_id: "ataque",
+    },
+    writesActiveTenant: true,
+  },
+  fail_email_dispatch: {
+    args: { p_email_message_id: randomUUID(), p_error_code: "ataque" },
+    writesActiveTenant: true,
+  },
+  prepare_quote_resend: {
+    args: {
+      p_quote_id: randomUUID(),
+      p_resend_key: randomUUID(),
+      p_email_message_id: randomUUID(),
+      p_share_link_id: randomUUID(),
+      p_token_sha256: "a".repeat(64),
+      p_to_email_enc: "ataque",
+      p_to_email_hash: "b".repeat(64),
+    },
+    writesActiveTenant: true,
+  },
+  revoke_quote_links: { args: { p_quote_id: randomUUID() }, writesActiveTenant: true },
 };
 
 /** Funciones de `public` que solo ejecuta el servidor con la llave maestra: nadie con pase las llama. */

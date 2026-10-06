@@ -6,18 +6,20 @@ const TOAST_DURATION_MS = 4000;
 
 /**
  * Avisos breves (docs/DISENO.md): vidrio, entran y salen con animación y no tapan acciones.
- * En teléfono suben por encima de la barra inferior flotante; en escritorio van abajo a la derecha.
+ * Van arriba (a la derecha en escritorio, a lo ancho en teléfono): los formularios y sus botones de
+ * acción quedan abajo, y como Sonner pausa el temporizador con el mouse encima, un aviso puesto
+ * sobre el botón se quedaba pegado. Arriba solo cubre el encabezado, nunca la acción que se acaba de usar.
  * Sonner apaga sus animaciones con "reducir movimiento" y anuncia cada aviso con `aria-live`.
  */
 export function Toaster() {
   return (
     <SonnerToaster
-      position="bottom-right"
+      position="top-right"
       duration={TOAST_DURATION_MS}
       visibleToasts={3}
       closeButton
-      offset={{ bottom: "1.5rem", right: "1.5rem" }}
-      mobileOffset={{ bottom: "6rem", left: "1rem", right: "1rem" }}
+      offset={{ top: "1.5rem", right: "1.5rem" }}
+      mobileOffset={{ top: "1rem", left: "1rem", right: "1rem" }}
       containerAriaLabel="Avisos"
       toastOptions={{
         unstyled: true,

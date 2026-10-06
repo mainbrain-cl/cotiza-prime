@@ -22,6 +22,10 @@ async function addService(
   await page.getByLabel(/^IVA/).selectOption(service.tax);
   await page.getByRole("button", { name: "Agregar al catálogo" }).click();
   await expect(page.getByText(`Agregaste "${service.name}" al catálogo.`)).toBeVisible();
+  // Cierra el aviso para que no quede encima del formulario en el paso siguiente.
+  for (const button of await page.locator("[data-sonner-toast] [data-close-button]").all())
+    await button.click({ force: true });
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 }
 
 test("cargar servicios en el catálogo y verlos con el precio bien formateado", async ({ page }) => {

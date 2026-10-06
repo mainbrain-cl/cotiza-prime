@@ -3,7 +3,15 @@ import { createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
 
 // H-115: avisos animados (Sonner) y movimiento reducido.
 
+/** Cierra los avisos abiertos para que ninguno quede encima de lo que se va a tocar. */
+async function dismissToasts(page: Page) {
+  const closeButtons = page.locator("[data-sonner-toast] [data-close-button]");
+  for (const button of await closeButtons.all()) await button.click({ force: true });
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+}
+
 async function addService(page: Page, name: string) {
+  await dismissToasts(page);
   await page.getByLabel(/^Nombre/).fill(name);
   await page.getByLabel(/^Unidad/).selectOption({ index: 1 });
   await page.getByLabel("Precio neto (en pesos)").fill("10000");

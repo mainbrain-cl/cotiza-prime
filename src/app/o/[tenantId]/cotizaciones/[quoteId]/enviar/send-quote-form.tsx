@@ -2,7 +2,7 @@
 
 import { ExternalLink, Loader2, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Field, FormAlert, Input, Textarea } from "@/components/ui/form-controls";
@@ -15,8 +15,13 @@ import { BUTTON_LABEL, MAX_SUBJECT_LENGTH } from "@/lib/email/quote-email";
 import { sendQuoteAction } from "@/lib/quotes/send/actions";
 import { cn } from "@/lib/utils";
 
+// Si la respuesta no llegó, el correo pudo haber salido. Repetir con la misma clave de envío es
+// seguro: si ya salió, solo se confirma; si no, se envía.
 const OFFLINE_MESSAGE =
-  "No pudimos conectarnos. No se envió nada: revisa tu internet e inténtalo de nuevo.";
+  "No sabemos si alcanzó a salir. Presiona Enviar de nuevo y te lo confirmamos: no se duplica.";
+/** Caracteres de holgura de los campos sobre el máximo: la validación de arriba es la que manda. */
+const SUBJECT_INPUT_SLACK = 20;
+const BODY_INPUT_SLACK = 500;
 const IN_PROGRESS_MESSAGE =
   "Tu envío sigue en curso. Espera unos segundos y revisa el estado de la cotización.";
 const SENT_MESSAGE = "Cotización enviada.";
@@ -40,6 +45,16 @@ type Props = {
   pdfSrc: string;
 };
 
+// Ancho desde el que el PDF se muestra incrustado (el `md` de Tailwind).
+const FRAME_MIN_WIDTH_QUERY = "(min-width: 768px)";
+const subscribeToWidth = (onChange: () => void) => {
+  const query = window.matchMedia(FRAME_MIN_WIDTH_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+};
+const widthMatches = () => window.matchMedia(FRAME_MIN_WIDTH_QUERY).matches;
+const widthOnServer = () => false;
+
 /**
  * Redactar y enviar la cotización (H-029): asunto y texto con formato básico, y a la vista —lado a
  * lado en escritorio, apilados en teléfono— el correo como lo leerá el cliente y el PDF adjunto.
@@ -47,6 +62,7 @@ type Props = {
  */
 export function SendQuoteForm(props: Props) {
   const router = useRouter();
+  const showFrame = useSyncExternalStore(subscribeToWidth, widthMatches, widthOnServer);
   const [subject, setSubject] = useState(props.initialSubject);
   const [body, setBody] = useState(props.initialBody);
   const [pending, setPending] = useState(false);
@@ -121,7 +137,7 @@ export function SendQuoteForm(props: Props) {
               {...control}
               name="subject"
               value={subject}
-              maxLength={MAX_SUBJECT_LENGTH + 20}
+              maxLength={MAX_SUBJECT_LENGTH + SUBJECT_INPUT_SLACK}
               onChange={(event) => setSubject(event.target.value)}
               disabled={pending}
               data-testid="send-subject"
@@ -135,7 +151,7 @@ export function SendQuoteForm(props: Props) {
               name="body"
               rows={10}
               value={body}
-              maxLength={MAX_BODY_LENGTH + 500}
+              maxLength={MAX_BODY_LENGTH + BODY_INPUT_SLACK}
               onChange={(event) => setBody(event.target.value)}
               disabled={pending}
               data-testid="send-body"
@@ -227,14 +243,18 @@ export function SendQuoteForm(props: Props) {
               Abrir en otra pestaña
             </a>
           </div>
-          <iframe
-            title="PDF de la cotización"
-            src={props.pdfSrc}
-            data-testid="pdf-frame"
-            className={cn(
-              "h-[70vh] min-h-96 w-full rounded-lg border border-border bg-surface shadow-1",
-            )}
-          />
+          {/* En teléfono el visor incrustado es incómodo y pesado: ni siquiera se carga; solo se
+              ofrece abrir el PDF en otra pestaña (el botón de arriba, de 44 px de alto). */}
+          {showFrame ? (
+            <iframe
+              title="PDF de la cotización"
+              src={props.pdfSrc}
+              data-testid="pdf-frame"
+              className={cn(
+                "h-[70vh] min-h-96 w-full rounded-lg border border-border bg-surface shadow-1",
+              )}
+            />
+          ) : null}
           <p className="text-sm text-fg-muted">
             La fecha del documento será la del día en que lo envíes.
           </p>

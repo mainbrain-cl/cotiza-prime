@@ -6,18 +6,23 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
 // CSP inicial. Next.js inserta scripts en línea, por eso 'unsafe-inline' en script-src;
 // más adelante se puede pasar a una CSP con nonce. 'unsafe-eval' solo en desarrollo.
-const contentSecurityPolicy = [
-  "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  `connect-src 'self' ${supabaseUrl}${isDev ? " ws: wss:" : ""}`.trim(),
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'",
-].join("; ");
+const buildContentSecurityPolicy = (frameAncestors: "'none'" | "'self'") =>
+  [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    `connect-src 'self' ${supabaseUrl}${isDev ? " ws: wss:" : ""}`.trim(),
+    `frame-ancestors ${frameAncestors}`,
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+  ].join("; ");
+const contentSecurityPolicy = buildContentSecurityPolicy("'none'");
+// El PDF de la cotización es lo único que la propia aplicación enmarca (vista previa de enviar).
+// Conserva TODA la política base y solo cambia quién puede enmarcarlo.
+const pdfContentSecurityPolicy = buildContentSecurityPolicy("'self'");
 
 const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
@@ -56,8 +61,7 @@ const nextConfig: NextConfig = {
         source: "/api/v1/tenants/:tenantId/quotes/:quoteId/pdf",
         headers: [
           { key: "X-Frame-Options", value: "SAMEORIGIN" },
-          // Un PDF no ejecuta nada: basta con limitar quién puede enmarcarlo.
-          { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+          { key: "Content-Security-Policy", value: pdfContentSecurityPolicy },
         ],
       },
       // El logo es un archivo de una organización: política propia y estricta, más fuerte que la general.

@@ -36,22 +36,25 @@ export function PdfActions({
       data-testid="pdf-actions"
     >
       <h2 className="text-lg">Documento para el cliente</h2>
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="pdf-paper" className="text-sm font-semibold text-fg">
-          Tamaño de hoja
-        </label>
-        <Select
-          id="pdf-paper"
-          value={paper}
-          onChange={(event) => setPaper(event.target.value as PdfPaperSize)}
-        >
-          {PDF_PAPER_SIZES.map((size) => (
-            <option key={size} value={size}>
-              {PAPER_LABELS[size]}
-            </option>
-          ))}
-        </Select>
-      </div>
+      {/* Ya enviada: el PDF es el archivo congelado y el tamaño de hoja ya no se puede elegir. */}
+      {sent ? null : (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="pdf-paper" className="text-sm font-semibold text-fg">
+            Tamaño de hoja
+          </label>
+          <Select
+            id="pdf-paper"
+            value={paper}
+            onChange={(event) => setPaper(event.target.value as PdfPaperSize)}
+          >
+            {PDF_PAPER_SIZES.map((size) => (
+              <option key={size} value={size}>
+                {PAPER_LABELS[size]}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2">
         <a
           href={base}

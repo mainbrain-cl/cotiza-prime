@@ -6,10 +6,10 @@ import { encryptPii } from "@/lib/crypto/pii";
 import { searchHash } from "@/lib/crypto/search-hash";
 import { getCustomer } from "@/lib/customers/queries";
 import { BASIC_FORMAT_ERROR_MESSAGES, parseBasicFormat } from "@/lib/email/basic-format";
-import { buildQuoteEmail } from "@/lib/email/quote-email";
+import { buildQuoteEmail, MAX_PDF_BYTES } from "@/lib/email/quote-email";
 import { EmailConfigError, getEmailTransport } from "@/lib/email/transport";
 import { loadEmailConfig } from "@/lib/email/config";
-import type { EmailMessage, EmailSendResult, EmailTransport } from "@/lib/email/types";
+import type { EmailMessage, EmailTransport } from "@/lib/email/types";
 import { serverLog } from "@/lib/log/server-log";
 import { getAppOrigin } from "@/lib/http/request-context";
 import { normalizeEmail } from "@/lib/normalize/email";
@@ -17,11 +17,18 @@ import { quotePdfFileName } from "@/lib/pdf/file-name";
 import { loadQuoteDocumentData } from "@/lib/pdf/quote-document-data";
 import { renderQuotePdf } from "@/lib/pdf/render";
 import { getQuote } from "@/lib/quotes/queries";
+import {
+  consumePdfQuota,
+  consumeSendQuota,
+  PDF_LOCK_SECONDS,
+  SEND_LOCK_SECONDS as SEND_QUOTA_LOCK_SECONDS,
+} from "@/lib/security/login-rate-limit";
 import { hashShareToken, newShareToken } from "@/lib/share/token";
 import { requireActiveTenant, type ActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { resendQuoteInputSchema, sendQuoteInputSchema } from "./content";
 import { loadSendContext } from "./context";
+import { retryTransientDb, sendDeadline, sendWithRetry } from "./dispatch";
 import {
   packageLogoPath,
   packagePdfPath,
@@ -49,7 +56,7 @@ export type SendQuoteResult =
 
 const WRITER_ROLES: readonly string[] = ["owner", "admin", "sales"];
 const RESEND_ROLES: readonly string[] = ["owner", "admin", "sales"];
-const SEND_TIMEOUT_MS = 15_000;
+const SECONDS_PER_MINUTE = 60;
 
 const SQLSTATE_FORBIDDEN = "42501";
 const SQLSTATE_NOT_FOUND = "CP404";
@@ -72,10 +79,39 @@ const MSG_ANONYMIZED = "Este cliente ya no está disponible. Elige otro en la co
 const MSG_VALIDITY_PAST = "La vigencia de la cotización ya pasó. Cambia la fecha y guarda.";
 const MSG_CHANGED = "La cotización cambió mientras la enviabas. Recarga la página y revísala.";
 const MSG_IN_PROGRESS_OTHER = "Esta cotización ya se está enviando. Espera unos segundos.";
-const MSG_FAILED =
-  "No pudimos enviar el correo. La cotización sigue como borrador: revisa el correo del cliente e inténtalo de nuevo.";
-const MSG_FAILED_RESEND =
-  "No pudimos reenviar el correo. La cotización no cambió: inténtalo de nuevo en unos minutos.";
+// El correo no salió. Se distingue "la dirección no sirve" (se arregla en la ficha del cliente) de
+// "problema nuestro" (se arregla esperando), para no mandar a nadie a revisar lo que no falla.
+const MSG_FAILED_ADDRESS =
+  "El servicio de correo rechazó la dirección del cliente. La cotización sigue como borrador: revisa que el correo esté bien escrito en su ficha e inténtalo de nuevo.";
+const MSG_FAILED_OURS =
+  "Tuvimos un problema de nuestro lado y no pudimos confirmar el envío. La cotización sigue como borrador: inténtalo de nuevo en unos minutos.";
+const MSG_FAILED_RESEND_ADDRESS =
+  "El servicio de correo rechazó la dirección del cliente. La cotización no cambió: revisa que el correo esté bien escrito en su ficha e inténtalo de nuevo.";
+const MSG_FAILED_RESEND_OURS =
+  "Tuvimos un problema de nuestro lado y no pudimos confirmar el reenvío. La cotización no cambió: inténtalo de nuevo en unos minutos.";
+/** Códigos de fallo que significan "esta dirección o este mensaje no sirven" (no se arregla esperando). */
+const ADDRESS_FAILURE_CODES: ReadonlySet<string> = new Set([
+  "recipient_not_allowed",
+  "provider_rejected",
+  "invalid_message",
+  "invalid_recipient",
+]);
+type FailedMessages = { address: string; ours: string };
+const SEND_FAILED_MESSAGES: FailedMessages = {
+  address: MSG_FAILED_ADDRESS,
+  ours: MSG_FAILED_OURS,
+};
+const RESEND_FAILED_MESSAGES: FailedMessages = {
+  address: MSG_FAILED_RESEND_ADDRESS,
+  ours: MSG_FAILED_RESEND_OURS,
+};
+const messageForFailure = (code: string, messages: FailedMessages): string =>
+  ADDRESS_FAILURE_CODES.has(code) ? messages.address : messages.ours;
+const MSG_PDF_TOO_BIG = `El PDF pesa más de ${MAX_PDF_BYTES / (1024 * 1024)} MB y no cabe como adjunto del correo. No se envió nada: reduce el tamaño del logo o la cantidad de líneas e inténtalo de nuevo.`;
+const MSG_SEND_QUOTA = `Hiciste muchos envíos en poco tiempo. Espera ${SEND_QUOTA_LOCK_SECONDS / SECONDS_PER_MINUTE} minutos e inténtalo de nuevo.`;
+const MSG_PDF_QUOTA = `Pediste muchos PDF en poco tiempo. No se envió nada: espera ${PDF_LOCK_SECONDS / SECONDS_PER_MINUTE} minuto e inténtalo de nuevo.`;
+const MSG_RESEND_PREVIOUS_FAILED =
+  "El intento anterior de este reenvío no salió. No se envió nada: presiona «Reenviar al cliente» otra vez.";
 const MSG_UNEXPECTED = "No pudimos enviar la cotización. Intenta de nuevo en unos minutos.";
 const MSG_EMAIL_NOT_CONFIGURED =
   "El envío de correos no está configurado todavía. Avisa al equipo de Cotiza Prime.";
@@ -100,23 +136,6 @@ const failure = (message: string, fieldErrors?: Record<string, string>): SendQuo
 function revalidateQuote(tenantId: string, quoteId: string) {
   revalidatePath(tenantPath(tenantId, "cotizaciones"));
   revalidatePath(tenantPath(tenantId, `cotizaciones/${quoteId}`));
-}
-
-async function withTimeout(transport: EmailTransport, message: EmailMessage) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<EmailSendResult>((resolve) => {
-    timer = setTimeout(
-      () => resolve({ ok: false, retryable: true, code: "timeout" }),
-      SEND_TIMEOUT_MS,
-    );
-  });
-  try {
-    return await Promise.race([transport.send(message), timeout]);
-  } catch {
-    return { ok: false, retryable: true, code: "network_error" } satisfies EmailSendResult;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 function prepareErrorMessage(error: SupabaseError): string {
@@ -147,11 +166,13 @@ async function failDispatch(
   tokenSha256: string,
   code: string,
 ): Promise<void> {
-  const { error } = await active.supabase.rpc("fail_email_dispatch", {
-    p_email_message_id: emailMessageId,
-    p_error_code: code,
-    p_token_sha256: tokenSha256,
-  });
+  const { error } = await retryTransientDb(() =>
+    active.supabase.rpc("fail_email_dispatch", {
+      p_email_message_id: emailMessageId,
+      p_error_code: code,
+      p_token_sha256: tokenSha256,
+    }),
+  );
   if (error) await serverLog("error", "quote_send_fail_record_failed", { code: error.code });
 }
 
@@ -163,10 +184,16 @@ async function dispatchAndConfirm(params: {
   message: EmailMessage;
   emailMessageId: string;
   tokenSha256: string;
-  failedMessage: string;
+  failedMessages: FailedMessages;
+  /** Cuándo empezó la acción: de ahí sale el tiempo que queda para reintentar el envío. */
+  startedAtMs: number;
 }): Promise<SendQuoteResult> {
   const { active, transport, emailMessageId, tokenSha256 } = params;
-  const sent = await withTimeout(transport, params.message);
+  // Ante un fallo repetible se reintenta con la MISMA clave anti-duplicado (`idempotencyKey` del
+  // mensaje): si el correo sí había salido, el proveedor no lo manda dos veces.
+  const sent = await sendWithRetry(transport, params.message, {
+    deadlineMs: sendDeadline(params.startedAtMs),
+  });
   if (!sent.ok) {
     await serverLog("warn", "quote_send_provider_failed", {
       provider: transport.provider,
@@ -174,17 +201,22 @@ async function dispatchAndConfirm(params: {
     });
     await failDispatch(active, emailMessageId, tokenSha256, sent.code);
     revalidateQuote(active.tenantId, params.quoteId);
-    return failure(params.failedMessage);
+    return failure(messageForFailure(sent.code, params.failedMessages));
   }
-  const { error } = await active.supabase.rpc("confirm_email_dispatch", {
-    p_email_message_id: emailMessageId,
-    p_provider: transport.provider,
-    p_provider_message_id: sent.providerMessageId,
-    p_token_sha256: tokenSha256,
-  });
+  // Registrar que salió también se reintenta ante un fallo pasajero: repetirlo es seguro
+  // (`confirm_email_dispatch` devuelve `already_confirmed`).
+  const { error } = await retryTransientDb(() =>
+    active.supabase.rpc("confirm_email_dispatch", {
+      p_email_message_id: emailMessageId,
+      p_provider: transport.provider,
+      p_provider_message_id: sent.providerMessageId,
+      p_token_sha256: tokenSha256,
+    }),
+  );
   if (error) {
     // El proveedor aceptó el correo pero la base no lo pudo registrar: no se marca como fallido.
-    // TODO(reconciliación): la tarea que revisa paquetes en `ready` lo resolverá (plan §4).
+    // Pendiente (historia de reconciliación, antes del piloto; plan §4 y §11): la tarea que revisa
+    // paquetes en `ready` y correos aceptados sin confirmar lo resolverá.
     await serverLog("error", "quote_send_confirm_failed", { code: error.code });
     revalidateQuote(active.tenantId, params.quoteId);
     return failure(MSG_CONFIRM_FAILED);
@@ -213,6 +245,7 @@ export async function sendQuoteAction(
   quoteId: string,
   input: unknown,
 ): Promise<SendQuoteResult> {
+  const startedAtMs = Date.now();
   const active = await requireActiveTenant(tenantId);
   if (!isUuid(quoteId)) return failure(MSG_NOT_FOUND);
   if (!WRITER_ROLES.includes(active.role)) return failure(MSG_ROLE);
@@ -245,6 +278,10 @@ export async function sendQuoteAction(
     await serverLog("error", "quote_send_email_not_configured");
     return failure(MSG_EMAIL_NOT_CONFIGURED);
   }
+
+  // Tope de envíos por persona: cada intento cuenta, antes de tocar la base o armar nada. Repetir con
+  // la misma clave de envío también cuenta, pero es seguro y el tope deja margen de sobra.
+  if (!(await consumeSendQuota(active.userId, active.tenantId))) return failure(MSG_SEND_QUOTA);
 
   // 3. La cotización y el correo del cliente.
   const detail = await getQuote(active, quoteId);
@@ -322,10 +359,15 @@ export async function sendQuoteAction(
   }
 
   // 6. El PDF, con la fecha de emisión y la vigencia congeladas.
-  const loaded = await loadQuoteDocumentData(active, quoteId, "letter", {
-    issueDate: result.issue_date,
-    validUntil: result.valid_until,
-  });
+  // El cliente ya leído se pasa al armado: así el PDF y la copia congelada del paquete salen del
+  // MISMO dato, aunque alguien edite la ficha del cliente a mitad del envío.
+  const loaded = await loadQuoteDocumentData(
+    active,
+    quoteId,
+    "letter",
+    { issueDate: result.issue_date, validUntil: result.valid_until },
+    customer,
+  );
   if (!loaded.ok) {
     await failDispatch(active, emailMessageId, tokenSha256, "document_unavailable");
     return failure(MSG_PDF_FAILED);
@@ -333,6 +375,11 @@ export async function sendQuoteAction(
   if (loaded.revision !== expectedRevision) {
     await failDispatch(active, emailMessageId, tokenSha256, "quote_changed");
     return failure(MSG_CHANGED);
+  }
+  // Armar un PDF es costoso: también pasa por el tope de PDF por persona y por organización.
+  if (!(await consumePdfQuota(active.userId, active.tenantId))) {
+    await failDispatch(active, emailMessageId, tokenSha256, "pdf_quota");
+    return failure(MSG_PDF_QUOTA);
   }
   let pdf: Uint8Array;
   try {
@@ -342,6 +389,12 @@ export async function sendQuoteAction(
     await failDispatch(active, emailMessageId, tokenSha256, "pdf_render_failed");
     return failure(MSG_PDF_FAILED);
   }
+  // Un PDF que el correo no puede llevar se avisa antes de subir nada, con un mensaje propio.
+  if (pdf.byteLength > MAX_PDF_BYTES) {
+    await serverLog("warn", "quote_send_pdf_too_big", { bytes: pdf.byteLength });
+    await failDispatch(active, emailMessageId, tokenSha256, "pdf_too_large");
+    return failure(MSG_PDF_TOO_BIG);
+  }
   const pdfSha256 = sha256Hex(pdf);
 
   // 7. Subir el PDF (y el logo) al almacenamiento privado, sin reemplazar nada.
@@ -349,8 +402,10 @@ export async function sendQuoteAction(
   const logo = loaded.data.organization.logo;
   const logoPath = logo ? packageLogoPath(active.tenantId, quoteId, packageId, logo.format) : null;
   const uploaded =
-    (await uploadPackagePdf(pdfPath, pdf)) &&
-    (logo && logoPath ? await uploadPackageLogo(logoPath, logo.data, logo.format) : true);
+    (await uploadPackagePdf(active.tenantId, pdfPath, pdf)) &&
+    (logo && logoPath
+      ? await uploadPackageLogo(active.tenantId, logoPath, logo.data, logo.format)
+      : true);
   if (!uploaded) {
     await serverLog("error", "quote_send_upload_failed");
     await failDispatch(active, emailMessageId, tokenSha256, "upload_failed");
@@ -400,7 +455,7 @@ export async function sendQuoteAction(
   if (!email.ok) {
     await serverLog("warn", "quote_send_email_build_failed", { code: email.code });
     await failDispatch(active, emailMessageId, tokenSha256, email.code);
-    return failure(MSG_FAILED);
+    return failure(messageForFailure(email.code, SEND_FAILED_MESSAGES));
   }
 
   // 10. Aceptado por el proveedor → confirmar; si no, fallido y la cotización sigue en borrador.
@@ -411,7 +466,8 @@ export async function sendQuoteAction(
     message: email.message,
     emailMessageId,
     tokenSha256,
-    failedMessage: MSG_FAILED,
+    failedMessages: SEND_FAILED_MESSAGES,
+    startedAtMs,
   });
 }
 
@@ -438,11 +494,35 @@ function resendErrorMessage(error: SupabaseError): string {
   }
 }
 
+/** Estado real de un reenvío que ya se había preparado con la misma clave. */
+async function previousResendOutcome(
+  active: ActiveTenant,
+  emailMessageId: string,
+): Promise<"sent" | "failed" | "pending"> {
+  const { data } = await active.supabase
+    .from("email_messages")
+    .select("status")
+    .eq("tenant_id", active.tenantId)
+    .eq("id", emailMessageId)
+    .maybeSingle();
+  const status = (data as { status: string } | null)?.status;
+  if (
+    status === "sent" ||
+    status === "delivered" ||
+    status === "bounced" ||
+    status === "complained"
+  ) {
+    return "sent";
+  }
+  return status === "failed" ? "failed" : "pending";
+}
+
 export async function resendQuoteAction(
   tenantId: string,
   quoteId: string,
   input: unknown,
 ): Promise<SendQuoteResult> {
+  const startedAtMs = Date.now();
   const active = await requireActiveTenant(tenantId);
   if (!isUuid(quoteId)) return failure(MSG_NOT_FOUND);
   if (!RESEND_ROLES.includes(active.role)) return failure(MSG_ROLE);
@@ -454,6 +534,8 @@ export async function resendQuoteAction(
     await serverLog("error", "quote_send_email_not_configured");
     return failure(MSG_EMAIL_NOT_CONFIGURED);
   }
+  // Tope de envíos por persona (el mismo que el primer envío), antes de tocar la base.
+  if (!(await consumeSendQuota(active.userId, active.tenantId))) return failure(MSG_SEND_QUOTA);
   const detail = await getQuote(active, quoteId);
   if (detail === null) return failure(MSG_NOT_FOUND);
   if (detail.quote.status === "draft") return failure(MSG_NOT_SENT_YET);
@@ -504,10 +586,22 @@ export async function resendQuoteAction(
     email_subject: string;
     email_body_md: string;
   };
-  if (info.status === "replayed") return { status: "in_progress" };
+  if (info.status === "replayed") {
+    // Este mismo reenvío ya se había preparado: se responde con lo que realmente pasó con ese correo.
+    const outcome = await previousResendOutcome(active, emailMessageId);
+    if (outcome === "sent") {
+      revalidateQuote(active.tenantId, quoteId);
+      return { status: "sent" };
+    }
+    if (outcome === "failed") return failure(MSG_RESEND_PREVIOUS_FAILED);
+    return { status: "in_progress" };
+  }
 
   // Lo que se reenvía es exactamente el archivo congelado: si no coincide su sello, no se envía.
-  const pdf = await readPackagePdf(info.pdf_path, info.pdf_sha256);
+  // Una ruta guardada que no es de esta organización se trata como archivo faltante.
+  const pdf = await readPackagePdf(active.tenantId, info.pdf_path, info.pdf_sha256).catch(
+    () => null,
+  );
   if (pdf === null) {
     await serverLog("error", "quote_resend_file_unavailable");
     await failDispatch(active, emailMessageId, tokenSha256, "file_unavailable");
@@ -533,7 +627,7 @@ export async function resendQuoteAction(
   if (!email.ok) {
     await serverLog("warn", "quote_send_email_build_failed", { code: email.code });
     await failDispatch(active, emailMessageId, tokenSha256, email.code);
-    return failure(MSG_FAILED_RESEND);
+    return failure(messageForFailure(email.code, RESEND_FAILED_MESSAGES));
   }
   return dispatchAndConfirm({
     active,
@@ -542,6 +636,7 @@ export async function resendQuoteAction(
     message: email.message,
     emailMessageId,
     tokenSha256,
-    failedMessage: MSG_FAILED_RESEND,
+    failedMessages: RESEND_FAILED_MESSAGES,
+    startedAtMs,
   });
 }

@@ -1,10 +1,12 @@
 import { serverLog } from "@/lib/log/server-log";
 import { BOUNCE_SIMULATION_DOMAIN } from "../config";
 import { simulatedBounce, type DeliveryEvent } from "../delivery-events";
-import type { EmailErrorCode, EmailProviderName, EmailSendResult } from "../types";
-
-/** Tope de espera por cada envío (plan del sprint 3, §4). */
-export const SEND_TIMEOUT_MS = 15_000;
+import {
+  SEND_TIMEOUT_MS,
+  type EmailErrorCode,
+  type EmailProviderName,
+  type EmailSendResult,
+} from "../types";
 
 export function failure(code: EmailErrorCode, retryable: boolean): EmailSendResult {
   return { ok: false, retryable, code };

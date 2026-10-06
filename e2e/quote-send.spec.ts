@@ -142,6 +142,11 @@ test("enviar la cotización: correo con PDF y botón, estado Enviada, un doble c
   await expect(page).toHaveURL(new RegExp(`/cotizaciones/${quoteId}/enviar$`));
   await expect(page.getByTestId("send-subject")).toBeVisible();
   await expectNoHorizontalScroll(page);
+  // En teléfono no se incrusta el PDF: queda el botón de abrirlo aparte, de al menos 44 px.
+  await expect(page.getByTestId("pdf-frame")).toHaveCount(0);
+  const openPdf = page.getByRole("link", { name: "Abrir en otra pestaña" });
+  await expect(openPdf).toBeVisible();
+  expect((await openPdf.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await page.setViewportSize(DESKTOP);
 
   // Texto de partida en español de Chile, asunto con el número y vista previa lado a lado.
@@ -232,6 +237,8 @@ test("enviar la cotización: correo con PDF y botón, estado Enviada, un doble c
   expect(linkOf(mails[1])).not.toBe(linkOf(mails[0]));
   await expect(page.getByTestId("quote-timeline")).toContainText("Reenviada al cliente");
   await expect(page.getByTestId("pdf-hint")).toContainText("tal como se envió");
+  // Ya enviada: el PDF es el archivo congelado, no hay tamaño de hoja que elegir (M9).
+  await expect(page.getByLabel("Tamaño de hoja")).toHaveCount(0);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -252,7 +259,10 @@ test("si el correo no sale, se avisa en pantalla y la cotización sigue en borra
 
   await page.getByTestId("go-send").click();
   await page.getByTestId("send-submit").click();
-  await expect(page.getByText("No pudimos enviar el correo.")).toBeVisible({ timeout: 120_000 });
+  // La dirección no sirve (no es "problema nuestro"): el mensaje manda a revisar la ficha del cliente.
+  await expect(page.getByText("rechazó la dirección del cliente")).toBeVisible({
+    timeout: 120_000,
+  });
   await expect(page.getByText("sigue como borrador")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/cotizaciones/${quoteId}/enviar$`));
 

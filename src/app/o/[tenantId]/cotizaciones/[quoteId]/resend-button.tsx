@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
 import { resendQuoteAction } from "@/lib/quotes/send/actions";
 
+// La respuesta no llegó: el reenvío pudo haber salido. El historial de la cotización lo dice.
 const OFFLINE_MESSAGE =
-  "No pudimos conectarnos. No se envió nada: revisa tu internet e inténtalo de nuevo.";
+  "No sabemos si el reenvío alcanzó a salir. Revisa el historial de la cotización antes de volver a reenviar.";
 const RESENT_MESSAGE = "Cotización reenviada con un enlace nuevo.";
 const IN_PROGRESS_MESSAGE = "Este reenvío ya está en curso. Espera unos segundos.";
 
@@ -38,6 +39,8 @@ export function ResendButton({ tenantId, quoteId }: { tenantId: string; quoteId:
       if (result.status !== "in_progress") resendKey.current = crypto.randomUUID();
     } catch {
       setError(OFFLINE_MESSAGE);
+      // Un intento sin respuesta no deja la clave "gastada": el próximo clic parte con una nueva.
+      resendKey.current = crypto.randomUUID();
     } finally {
       busy.current = false;
       setPending(false);

@@ -40,13 +40,15 @@ export async function loadQuoteDocumentData(
   quoteId: string,
   paper: PdfPaperSize,
   frozen?: FrozenDocumentDates,
+  /** Cliente ya leído por quien llama (el envío): el PDF y la copia congelada usan el mismo dato. */
+  preloadedCustomer?: CustomerView,
 ): Promise<QuoteDocumentResult> {
   const detail = await getQuote(active, quoteId);
   if (detail === null) return { ok: false, reason: "not_found" };
   const { quote, items, authorName } = detail;
 
   const [customer, brand, tenantRow] = await Promise.all([
-    getCustomer(active, quote.customer_id),
+    preloadedCustomer ?? getCustomer(active, quote.customer_id),
     loadBrand(active),
     active.supabase
       .from("tenants")

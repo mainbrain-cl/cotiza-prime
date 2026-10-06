@@ -17,7 +17,9 @@ import { cn } from "@/lib/utils";
 import { SendQuoteForm } from "./send-quote-form";
 
 export const metadata: Metadata = { title: "Enviar cotización · Cotiza Prime" };
-// Enviar arma el PDF en el servidor (hasta decenas de segundos con muchas líneas).
+// Enviar arma el PDF en el servidor (hasta decenas de segundos con muchas líneas). Next solo lee este
+// valor escrito a mano: `src/lib/quotes/send/dispatch.test.ts` exige que coincida con
+// SEND_PAGE_MAX_DURATION_SECONDS y que, más un margen, quede bajo el candado de envío de la base.
 export const maxDuration = 60;
 
 const WRITER_ROLES = ["owner", "admin", "sales"];

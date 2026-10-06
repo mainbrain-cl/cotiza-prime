@@ -58,7 +58,10 @@ async function frozenPdfFor(
     .maybeSingle();
   const stored = pkg as { pdf_path: string | null; pdf_sha256: string | null } | null;
   if (!stored?.pdf_path || !stored.pdf_sha256) return "missing";
-  const bytes = await readPackagePdf(stored.pdf_path, stored.pdf_sha256);
+  // Una ruta guardada que no es de esta organización se trata como archivo faltante, nunca se lee.
+  const bytes = await readPackagePdf(active.tenantId, stored.pdf_path, stored.pdf_sha256).catch(
+    () => null,
+  );
   if (bytes === null) return "missing";
   return { bytes, fileName: quotePdfFileName(row.number_display, row.version) };
 }

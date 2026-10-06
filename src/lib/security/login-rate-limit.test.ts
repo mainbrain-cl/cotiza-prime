@@ -9,7 +9,9 @@ vi.mock("@/lib/crypto/search-hash", () => ({
 }));
 
 import {
+  SEND_MAX_PER_USER_PER_WINDOW,
   TENANT_DENIED_MAX_LOGGED_PER_WINDOW,
+  consumeSendQuota,
   ipLimitKey,
   recordResetRequest,
   recordSignupAttempt,
@@ -95,5 +97,34 @@ describe("shouldLogTenantDenied", () => {
   it("si el contador falla, se registra igual", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
     expect(await shouldLogTenantDenied("u1")).toBe(true);
+  });
+});
+
+describe("consumeSendQuota (H-029)", () => {
+  it("deja pasar hasta el tope y bloquea el siguiente", async () => {
+    let calls = 0;
+    rpc.mockImplementation(async () => {
+      calls += 1;
+      return {
+        data: calls > SEND_MAX_PER_USER_PER_WINDOW ? "2026-10-01T00:00:00Z" : null,
+        error: null,
+      };
+    });
+    const results: boolean[] = [];
+    for (let i = 0; i < SEND_MAX_PER_USER_PER_WINDOW + 2; i += 1) {
+      results.push(await consumeSendQuota("u1", "t1"));
+    }
+    expect(results.filter(Boolean)).toHaveLength(SEND_MAX_PER_USER_PER_WINDOW);
+    expect(results.at(-1)).toBe(false);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_scope: "quote_send_user",
+      p_key_hash: "quote_send_user|u1",
+      p_max_failures: SEND_MAX_PER_USER_PER_WINDOW + 1,
+    });
+  });
+
+  it("si el contador falla, se deja pasar", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    expect(await consumeSendQuota("u1", "t1")).toBe(true);
   });
 });

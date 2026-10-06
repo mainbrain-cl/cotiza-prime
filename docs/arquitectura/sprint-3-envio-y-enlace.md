@@ -376,7 +376,34 @@ migración 26 (`20261006150000_sprint3_review_fixes.sql`).
   doble clic no crea otro. Usa el correo ACTUAL de la ficha del cliente.
 - **Historial** de la cotización (solo lectura) en su pantalla, con los eventos `sent`, `send_failed`
   y `resent` que ya registran las funciones de la base.
-- **Pendiente:** tope de intentos `quote_send_user` (el valor existe en la base, sin uso aún); la
-  tarea de reconciliación (paquetes en `ready` y correos aceptados por el proveedor pero no
-  confirmados en la base: hoy se registra en el log y se avisa en pantalla); los avisos simulados de
-  rebote (`simulatedEvents`) no se aplican hasta H-033.
+- **Pendiente:** la tarea de reconciliación (paquetes en `ready` y correos aceptados por el
+  proveedor pero no confirmados en la base: hoy se registra en el log y se avisa en pantalla; ver
+  §11); los avisos simulados de rebote (`simulatedEvents`) no se aplican hasta H-033.
+- **Corregido tras la revisión de Opus (2026-10-06):** el tope `quote_send_user` ya se usa (15
+  envíos o reenvíos por persona cada 10 minutos, antes de tocar la base; el armado del PDF del
+  envío además pasa por `consumePdfQuota`); ver §11.
+
+## 11. Correcciones de la revisión de H-029 y trabajo que queda anotado
+
+**Hecho en el código**
+
+- **Envíos que sí salieron (I1).** Ante un fallo repetible del proveedor (15 s sin respuesta, red,
+  proveedor caído, aceptado sin id) se reintenta hasta 3 veces con la MISMA clave anti-duplicado,
+  mientras quede tiempo dentro de `maxDuration` (`src/lib/quotes/send/dispatch.ts`). Registrar que
+  el correo salió (`confirm_email_dispatch`) y que falló (`fail_email_dispatch`) también se reintenta
+  ante un fallo pasajero. El mensaje de «sin conexión» del primer envío ahora dice «No sabemos si
+  alcanzó a salir. Presiona Enviar de nuevo…» (repetir con la misma clave es seguro). «Dirección
+  rechazada» y «problema nuestro» tienen mensajes distintos.
+- **Tope por persona (I2),** archivos congelados con la ruta verificada (I3, `package-paths.ts`) y
+  tiempos con prueba de consistencia contra el candado de la base (I4). `maxDuration` se queda en 60 s:
+  60 + 20 de margen < 120 s del candado.
+
+**Historia pendiente — Reconciliación de envíos (antes del piloto privado; fecha propuesta
+2026-11-13, a ratificar con Aarón).** Una tarea periódica (`src/server/jobs/reconcile-sends.ts`)
+que: (a) marca `abandoned` los paquetes en `ready` con más de 10 minutos y avisa a Sentry; (b)
+resuelve los correos que el proveedor aceptó pero la base no alcanzó a confirmar (hoy el usuario ve
+«El correo salió, pero no pudimos registrarlo» y el caso queda solo en el log), consultando el estado
+del mensaje en el proveedor; (c) limpia los **archivos huérfanos (M5)** del bucket `quote-documents`:
+PDF y logo subidos por un envío que falló después de subir (`upload` ok, `attach` o envío fallidos)
+y que ningún paquete `sent` referencia. Mientras no exista, esos archivos solo ocupan espacio y no
+son visibles para nadie fuera de la organización.

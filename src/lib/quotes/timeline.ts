@@ -27,19 +27,23 @@ export async function listQuoteTimeline(
     .select("id, occurred_at, type, actor_user_id")
     .eq("tenant_id", active.tenantId)
     .eq("quote_id", quoteId)
-    .order("occurred_at", { ascending: true })
-    .order("id", { ascending: true })
+    // Los MÁS NUEVOS primero y se corta: con más de 100 eventos se pierden los viejos, nunca lo último.
+    .order("occurred_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(TIMELINE_LIMIT);
   if (error || !data) {
     await serverLog("error", "quote_timeline_failed", { code: error?.code });
     return null;
   }
-  const rows = data as {
-    id: number;
-    occurred_at: string;
-    type: string;
-    actor_user_id: string | null;
-  }[];
+  // Se muestran en orden cronológico: se da vuelta lo ya cortado.
+  const rows = (
+    data as {
+      id: number;
+      occurred_at: string;
+      type: string;
+      actor_user_id: string | null;
+    }[]
+  ).toReversed();
   const userIds = [...new Set(rows.map((row) => row.actor_user_id).filter((id) => id !== null))];
   const names = new Map<string, string>();
   if (userIds.length > 0) {

@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin-client";
+import { assertPackagePath, type LogoFormat } from "./package-paths";
 
 /**
  * Archivos congelados de un envío (H-029): el PDF y el logo que recibió el cliente.
@@ -8,35 +9,28 @@ import { createAdminClient } from "@/lib/supabase/admin-client";
  * Es el ÚNICO lugar del módulo de cotizaciones que usa la llave maestra, y solo sobre el bucket
  * privado `quote-documents`: nadie con sesión puede subir, cambiar ni borrar ahí (migración 20). Quien
  * llama ya resolvió la organización con `requireActiveTenant` y ya tiene el paquete creado con
- * `prepare_quote_send`; las rutas se arman aquí solo con el `tenant_id` de la organización activa, y
- * `attach_quote_package_document` vuelve a verificar en la base que el archivo exista en esa carpeta.
- * Se sube con `upsert: false`: un archivo congelado nunca se reemplaza.
+ * `prepare_quote_send`. Como la llave maestra se salta los permisos del almacenamiento, TODA función
+ * de este archivo recibe el `tenantId` y rechaza cualquier ruta que no sea de esa organización o no
+ * tenga la forma `{uuid}/{uuid}/{uuid}.pdf` (o `-logo.{png|jpg|svg}`): una ruta ajena o manipulada no
+ * llega nunca al almacenamiento. Se sube con `upsert: false`: un archivo congelado nunca se reemplaza.
  */
 export const QUOTE_DOCUMENTS_BUCKET = "quote-documents";
 export const PDF_CONTENT_TYPE = "application/pdf";
 
-export type LogoFormat = "png" | "jpg";
+export { assertPackagePath, packageLogoPath, packagePdfPath } from "./package-paths";
+export type { LogoFormat } from "./package-paths";
+
 const LOGO_CONTENT_TYPES: Record<LogoFormat, string> = { png: "image/png", jpg: "image/jpeg" };
 
 export const sha256Hex = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-/** Ruta del PDF: `{tenant_id}/{quote_id}/{package_id}.pdf`. */
-export function packagePdfPath(tenantId: string, quoteId: string, packageId: string): string {
-  return `${tenantId}/${quoteId}/${packageId}.pdf`;
-}
-
-/** Ruta del logo congelado: `{tenant_id}/{quote_id}/{package_id}-logo.{png|jpg}`. */
-export function packageLogoPath(
+export async function uploadPackagePdf(
   tenantId: string,
-  quoteId: string,
-  packageId: string,
-  format: LogoFormat,
-): string {
-  return `${tenantId}/${quoteId}/${packageId}-logo.${format}`;
-}
-
-export async function uploadPackagePdf(path: string, bytes: Uint8Array): Promise<boolean> {
+  path: string,
+  bytes: Uint8Array,
+): Promise<boolean> {
+  assertPackagePath(tenantId, path, "pdf");
   const { error } = await createAdminClient()
     .storage.from(QUOTE_DOCUMENTS_BUCKET)
     .upload(path, bytes, { contentType: PDF_CONTENT_TYPE, upsert: false });
@@ -44,10 +38,12 @@ export async function uploadPackagePdf(path: string, bytes: Uint8Array): Promise
 }
 
 export async function uploadPackageLogo(
+  tenantId: string,
   path: string,
   bytes: Uint8Array,
   format: LogoFormat,
 ): Promise<boolean> {
+  assertPackagePath(tenantId, path, "logo");
   const { error } = await createAdminClient()
     .storage.from(QUOTE_DOCUMENTS_BUCKET)
     .upload(path, bytes, { contentType: LOGO_CONTENT_TYPES[format], upsert: false });
@@ -56,12 +52,14 @@ export async function uploadPackageLogo(
 
 /**
  * Lee el PDF congelado. Si se da `expectedSha256`, devuelve `null` cuando el archivo no coincide:
- * lo enviado tiene que ser exactamente lo guardado.
+ * lo enviado tiene que ser exactamente lo guardado. Una ruta que no es de esta organización lanza.
  */
 export async function readPackagePdf(
+  tenantId: string,
   path: string,
   expectedSha256?: string,
 ): Promise<Uint8Array | null> {
+  assertPackagePath(tenantId, path, "pdf");
   const { data, error } = await createAdminClient()
     .storage.from(QUOTE_DOCUMENTS_BUCKET)
     .download(path);

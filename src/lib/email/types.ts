@@ -4,6 +4,9 @@
  */
 import type { DeliveryEvent } from "./delivery-events";
 
+/** Tope de espera por cada envío al proveedor (plan del sprint 3, §4). Único lugar donde vive. */
+export const SEND_TIMEOUT_MS = 15_000;
+
 export const EMAIL_PROVIDERS = ["mailpit", "memory", "resend", "smtp"] as const;
 export type EmailProviderName = (typeof EMAIL_PROVIDERS)[number];
 

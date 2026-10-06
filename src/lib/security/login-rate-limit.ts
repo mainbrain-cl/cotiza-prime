@@ -58,6 +58,14 @@ export const PDF_MAX_PER_TENANT_PER_WINDOW = 30;
 export const PDF_WINDOW_SECONDS = SECONDS_PER_MINUTE;
 export const PDF_LOCK_SECONDS = SECONDS_PER_MINUTE;
 
+/**
+ * Envíos y reenvíos de cotizaciones por correo (H-029): cada intento cuenta por persona, también los
+ * que repiten la misma clave de envío. Pasado el tope, el siguiente queda bloqueado un rato.
+ */
+export const SEND_MAX_PER_USER_PER_WINDOW = 15;
+export const SEND_WINDOW_SECONDS = 10 * SECONDS_PER_MINUTE;
+export const SEND_LOCK_SECONDS = 10 * SECONDS_PER_MINUTE;
+
 export type RateLimitScope =
   | "login_email"
   | "login_ip"
@@ -66,7 +74,8 @@ export type RateLimitScope =
   | "reset_email"
   | "reset_ip"
   | "pdf_user"
-  | "pdf_tenant";
+  | "pdf_tenant"
+  | "quote_send_user";
 
 /**
  * La tabla `auth_rate_limits` solo admite ciertos valores en su columna `scope`. Los pedidos de
@@ -83,6 +92,7 @@ const STORAGE_SCOPE: Record<RateLimitScope, string> = {
   reset_ip: "signup_ip",
   pdf_user: "pdf_user",
   pdf_tenant: "pdf_tenant",
+  quote_send_user: "quote_send_user",
 };
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
@@ -130,6 +140,11 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: PDF_MAX_PER_TENANT_PER_WINDOW + 1,
     windowSeconds: PDF_WINDOW_SECONDS,
     lockSeconds: PDF_LOCK_SECONDS,
+  },
+  quote_send_user: {
+    maxFailures: SEND_MAX_PER_USER_PER_WINDOW + 1,
+    windowSeconds: SEND_WINDOW_SECONDS,
+    lockSeconds: SEND_LOCK_SECONDS,
   },
 };
 
@@ -290,6 +305,18 @@ export async function shouldLogTenantDenied(userId: string): Promise<boolean> {
   };
   const overTheCap = await failOpen("tenant_denied_count", false, () => recordAll([target]));
   return !overTheCap;
+}
+
+/**
+ * ¿Esta persona puede enviar o reenviar otra cotización ahora? Cuenta el intento y responde `false`
+ * si ya llegó al tope (H-029). Si el contador falla, se deja pasar y se avisa en el log.
+ */
+export async function consumeSendQuota(userId: string, tenantId: string): Promise<boolean> {
+  const target: Target = {
+    scope: "quote_send_user",
+    keyHash: searchHash("quote_send_user", tenantId, userId),
+  };
+  return !(await failOpen("quote_send_quota", false, () => recordAll([target])));
 }
 
 /** ¿Esta cuenta o esta IP ya pidió demasiados restablecimientos? */

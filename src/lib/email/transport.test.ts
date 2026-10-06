@@ -2,10 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMailpitTransport } from "./adapters/mailpit";
 import { getMemoryOutbox, resetMemoryOutbox } from "./adapters/memory";
 import { createResendTransport } from "./adapters/resend";
-import { SEND_TIMEOUT_MS } from "./adapters/shared";
 import { EmailConfigError, loadEmailConfig } from "./config";
 import { getEmailTransport } from "./transport";
-import type { EmailMessage } from "./types";
+import { SEND_TIMEOUT_MS, type EmailMessage } from "./types";
 
 const message = (over: Partial<EmailMessage> = {}): EmailMessage => ({
   from: { name: "Negocio Demo", address: "cotizaciones@ejemplo.test" },

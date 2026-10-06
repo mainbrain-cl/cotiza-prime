@@ -1,10 +1,19 @@
-// Sprint 3 · M22 · Funciones para enviar la cotización: preparar, adjuntar el PDF, confirmar o
-// fallar el envío, reenviar y revocar enlaces. Cada prueba corre en una transacción que se deshace.
+﻿// Sprint 3 Â· M22 Â· Funciones para enviar la cotizaciÃ³n: preparar, adjuntar el PDF, confirmar o
+// fallar el envÃ­o, reenviar y revocar enlaces. Cada prueba corre en una transacciÃ³n que se deshace.
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { actAs, actAsPostgres, connect, expectSqlError, withTx, type TestUser } from "./helpers";
-import { asUser, buildWorld, createQuote, newToken, sha256Hex, type World } from "./send-helpers";
+import {
+  asUser,
+  buildWorld,
+  createQuote,
+  newToken,
+  sha256Hex,
+  tokenOfEmail,
+  tokenOfPackage,
+  type World,
+} from "./send-helpers";
 
 const FORBIDDEN = "42501";
 const NOT_FOUND = "CP404";
@@ -55,8 +64,8 @@ function prepareArgs(
     ids.emailId,
     ids.linkId,
     ids.sha,
-    "Su cotización",
-    "Hola, **adjunto** la cotización.",
+    "Su cotizaciÃ³n",
+    "Hola, **adjunto** la cotizaciÃ³n.",
     "v1.to.to",
     sha256Hex("cliente@ejemplo.test"),
     "v1.snap.snap",
@@ -74,7 +83,7 @@ async function revisionOf(quoteId: string): Promise<number> {
   return rows[0].revision;
 }
 
-/** Cotización de la vendedora `sales` lista para enviar (con una línea). */
+/** CotizaciÃ³n de la vendedora `sales` lista para enviar (con una lÃ­nea). */
 async function readyQuote(
   author: TestUser = w.sales,
 ): Promise<{ quoteId: string; revision: number }> {
@@ -118,7 +127,8 @@ async function putObject(path: string, size = 1234) {
   );
 }
 
-const attachSql = "select public.attach_quote_package_document($1, $2, $3, $4, $5, $6::jsonb, $7)";
+const attachSql =
+  "select public.attach_quote_package_document($1, $2, $3, $4, $5, $6::jsonb, $7, $8)";
 function attachArgs(quoteId: string, ids: Ids, over: Record<number, unknown> = {}) {
   const args: unknown[] = [
     ids.packageId,
@@ -128,6 +138,7 @@ function attachArgs(quoteId: string, ids: Ids, over: Record<number, unknown> = {
     null,
     JSON.stringify({ ok: true }),
     sha256Hex("contenido"),
+    ids.sha,
   ];
   for (const [index, value] of Object.entries(over)) args[Number(index) - 1] = value;
   return args;
@@ -165,10 +176,11 @@ async function confirm(
   provider = "memory",
   tenant = w.tenantA,
 ) {
+  const sha = await tokenOfEmail(db, emailId);
   await asUser(db, user, tenant);
   const { rows } = await db.query<{ r: { status: string } }>(
-    "select public.confirm_email_dispatch($1, $2, $3) as r",
-    [emailId, provider, providerId],
+    "select public.confirm_email_dispatch($1, $2, $3, $4) as r",
+    [emailId, provider, providerId, sha],
   );
   await actAsPostgres(db);
   return rows[0].r;
@@ -180,17 +192,19 @@ async function confirmError(
   provider = "memory",
   tenant = w.tenantA,
 ) {
+  const sha = await tokenOfEmail(db, emailId);
   await asUser(db, user, tenant);
-  const err = await expectSqlError(db, "select public.confirm_email_dispatch($1, $2, $3)", [
+  const err = await expectSqlError(db, "select public.confirm_email_dispatch($1, $2, $3, $4)", [
     emailId,
     provider,
     providerId,
+    sha,
   ]);
   await actAsPostgres(db);
   return err;
 }
 
-/** Envía de punta a punta: prepara, sube el PDF, lo adjunta y confirma. */
+/** EnvÃ­a de punta a punta: prepara, sube el PDF, lo adjunta y confirma. */
 async function sendQuote(author: TestUser = w.sales) {
   const { quoteId, revision } = await readyQuote(author);
   const { ids } = await prepare(author, quoteId, revision);
@@ -220,7 +234,7 @@ describe("prepare_quote_send", () => {
       expect(pkg).toMatchObject({
         state: "preparing",
         send_key: ids.sendKey,
-        email_subject: "Su cotización",
+        email_subject: "Su cotizaciÃ³n",
       });
       const dates = await one<{ issue: string; valid: string; today: string; def: number }>(
         `select p.issue_date::text as issue, p.valid_until::text as valid, app.current_business_date()::text as today,
@@ -260,7 +274,7 @@ describe("prepare_quote_send", () => {
     });
   });
 
-  it("la vigencia: en días cuenta desde hoy, con fecha se respeta, y una fecha pasada se rechaza", async () => {
+  it("la vigencia: en dÃ­as cuenta desde hoy, con fecha se respeta, y una fecha pasada se rechaza", async () => {
     await withTx(db, async () => {
       const a = await readyQuote();
       await db.query(
@@ -295,13 +309,13 @@ describe("prepare_quote_send", () => {
     });
   });
 
-  it("solo el autor, con rol de ventas, envía: otro vendedor, Administrador, Dueño, Aprobador y Observador no", async () => {
+  it("solo el autor, con rol de ventas, envÃ­a: otro vendedor, Administrador, DueÃ±o, Aprobador y Observador no", async () => {
     await withTx(db, async () => {
       const { quoteId, revision } = await readyQuote();
       for (const user of [w.sales2, w.admin, w.owner, w.approver, w.viewer]) {
         expect((await prepareError(user, quoteId, revision)).code, user.email).toBe(FORBIDDEN);
       }
-      // sin organización activa
+      // sin organizaciÃ³n activa
       await actAsPostgres(db);
       await actAs(db, w.sales, {});
       expect(
@@ -310,7 +324,7 @@ describe("prepare_quote_send", () => {
     });
   });
 
-  it("una cotización de otra organización no se encuentra (CP404) y la de B queda intacta", async () => {
+  it("una cotizaciÃ³n de otra organizaciÃ³n no se encuentra (CP404) y la de B queda intacta", async () => {
     await withTx(db, async () => {
       const quoteB = await createQuote(db, w.ownerB, w.tenantB, w.customerB);
       const revision = await revisionOf(quoteB);
@@ -329,7 +343,7 @@ describe("prepare_quote_send", () => {
     });
   });
 
-  it("rechaza lo inválido: sin líneas, revisión distinta, cliente anonimizado, ya enviada, textos y sellos mal formados", async () => {
+  it("rechaza lo invÃ¡lido: sin lÃ­neas, revisiÃ³n distinta, cliente anonimizado, ya enviada, textos y sellos mal formados", async () => {
     await withTx(db, async () => {
       const empty = await createQuote(db, w.sales, w.tenantA, w.customerA, false);
       expect((await prepareError(w.sales, empty, await revisionOf(empty))).code).toBe(INVALID);
@@ -337,7 +351,7 @@ describe("prepare_quote_send", () => {
       const { quoteId, revision } = await readyQuote();
       expect((await prepareError(w.sales, quoteId, revision + 1)).code).toBe(CONFLICT);
       expect(
-        (await prepareError(w.sales, quoteId, revision, newIds(), { 8: "dos\nlíneas" })).code,
+        (await prepareError(w.sales, quoteId, revision, newIds(), { 8: "dos\nlÃ­neas" })).code,
       ).toBe(INVALID);
       expect(
         (await prepareError(w.sales, quoteId, revision, newIds(), { 8: "x".repeat(151) })).code,
@@ -378,7 +392,7 @@ describe("prepare_quote_send", () => {
     });
   });
 
-  it("el mismo clic repetido recibe 'en curso'; otro envío con otra clave choca (CP409)", async () => {
+  it("el mismo clic repetido recibe 'en curso'; otro envÃ­o con otra clave choca (CP409)", async () => {
     await withTx(db, async () => {
       const { quoteId, revision } = await readyQuote();
       const first = await prepare(w.sales, quoteId, revision);
@@ -402,7 +416,7 @@ describe("prepare_quote_send", () => {
     });
   });
 
-  it("si el envío anterior murió a medias (candado vencido), se abandona y se parte de nuevo", async () => {
+  it("si el envÃ­o anterior muriÃ³ a medias (candado vencido), se abandona y se parte de nuevo", async () => {
     await withTx(db, async () => {
       const { quoteId, revision } = await readyQuote();
       const first = await prepare(w.sales, quoteId, revision);
@@ -482,7 +496,7 @@ describe("attach_quote_package_document", () => {
     });
   });
 
-  it("ataque: una ruta de otra organización, de otra cotización o inventada se rechaza", async () => {
+  it("ataque: una ruta de otra organizaciÃ³n, de otra cotizaciÃ³n o inventada se rechaza", async () => {
     await withTx(db, async () => {
       const { quoteId, revision } = await readyQuote();
       const { ids } = await prepare(w.sales, quoteId, revision);
@@ -497,7 +511,7 @@ describe("attach_quote_package_document", () => {
       );
       // la ruta correcta pero sin archivo subido
       expect((await attachError(w.sales, quoteId, ids)).code).toBe(INVALID);
-      // tamaño distinto al del archivo
+      // tamaÃ±o distinto al del archivo
       await putObject(`${w.tenantA}/${quoteId}/${ids.packageId}.pdf`, 999);
       expect((await attachError(w.sales, quoteId, ids)).code).toBe(INVALID);
       expect(
@@ -508,7 +522,7 @@ describe("attach_quote_package_document", () => {
     });
   });
 
-  it("valida sellos, tamaño, copia del documento y logo", async () => {
+  it("valida sellos, tamaÃ±o, copia del documento y logo", async () => {
     await withTx(db, async () => {
       const { quoteId, revision } = await readyQuote();
       const { ids } = await prepare(w.sales, quoteId, revision);
@@ -536,7 +550,7 @@ describe("attach_quote_package_document", () => {
           })
         ).code,
       ).toBe(INVALID);
-      // con logo subido sí
+      // con logo subido sÃ­
       await putObject(`${w.tenantA}/${quoteId}/${ids.packageId}-logo.png`);
       await asUser(db, w.sales, w.tenantA);
       await db.query(
@@ -546,7 +560,7 @@ describe("attach_quote_package_document", () => {
     });
   });
 
-  it("solo el autor, de su organización, y solo mientras el paquete se prepara", async () => {
+  it("solo el autor, de su organizaciÃ³n, y solo mientras el paquete se prepara", async () => {
     await withTx(db, async () => {
       const { quoteId, revision } = await readyQuote();
       const { ids } = await prepare(w.sales, quoteId, revision);
@@ -556,13 +570,13 @@ describe("attach_quote_package_document", () => {
       }
       expect((await attachError(w.ownerB, quoteId, ids, {}, w.tenantB)).code).toBe(NOT_FOUND);
       await attach(w.sales, quoteId, ids, {}, false);
-      expect((await attachError(w.sales, quoteId, ids)).code).toBe(LOCKED); // ya está listo
+      expect((await attachError(w.sales, quoteId, ids)).code).toBe(LOCKED); // ya estÃ¡ listo
       expect(
         await one("select state from public.quote_packages where id = $1", [ids.packageId]),
       ).toMatchObject({ state: "ready" });
     });
     await withTx(db, async () => {
-      // abandonado: ya no es el envío vigente
+      // abandonado: ya no es el envÃ­o vigente
       const { quoteId, revision } = await readyQuote();
       const first = await prepare(w.sales, quoteId, revision);
       await db.query(
@@ -576,7 +590,7 @@ describe("attach_quote_package_document", () => {
 });
 
 describe("confirm_email_dispatch", () => {
-  it("el primer envío: correo enviado, enlace activo, paquete enviado y cotización 'Enviada' con su vigencia", async () => {
+  it("el primer envÃ­o: correo enviado, enlace activo, paquete enviado y cotizaciÃ³n 'Enviada' con su vigencia", async () => {
     await withTx(db, async () => {
       const { quoteId, ids } = await sendQuote();
       expect(
@@ -603,7 +617,7 @@ describe("confirm_email_dispatch", () => {
       });
       expect(q.sent_at).not.toBeNull();
       expect(q.valid_until).not.toBeNull();
-      // línea de tiempo y auditoría, sin datos personales
+      // lÃ­nea de tiempo y auditorÃ­a, sin datos personales
       const ev = await one<{ type: string; data: Record<string, unknown> }>(
         "select type, data from public.quote_events where quote_id = $1 and type = 'sent'",
         [quoteId],
@@ -618,7 +632,7 @@ describe("confirm_email_dispatch", () => {
     });
   });
 
-  it("repetir la confirmación es inocuo; con otro identificador, no", async () => {
+  it("repetir la confirmaciÃ³n es inocuo; con otro identificador, no", async () => {
     await withTx(db, async () => {
       const { ids } = await sendQuote();
       expect(await confirm(w.sales, ids.emailId)).toEqual({ status: "already_confirmed" });
@@ -626,7 +640,7 @@ describe("confirm_email_dispatch", () => {
     });
   });
 
-  it("no se confirma antes de adjuntar el PDF, ni por otra persona, ni de otra organización, ni con proveedor 'pending'", async () => {
+  it("no se confirma antes de adjuntar el PDF, ni por otra persona, ni de otra organizaciÃ³n, ni con proveedor 'pending'", async () => {
     await withTx(db, async () => {
       const { quoteId, revision } = await readyQuote();
       const { ids } = await prepare(w.sales, quoteId, revision);
@@ -652,8 +666,9 @@ describe("fail_email_dispatch", () => {
     code = "smtp_timeout",
     tenant = w.tenantA,
   ) => {
+    const sha = await tokenOfEmail(db, emailId);
     await asUser(db, user, tenant);
-    await db.query("select public.fail_email_dispatch($1, $2)", [emailId, code]);
+    await db.query("select public.fail_email_dispatch($1, $2, $3)", [emailId, code, sha]);
     await actAsPostgres(db);
   };
   const failError = async (
@@ -662,16 +677,18 @@ describe("fail_email_dispatch", () => {
     code = "smtp_timeout",
     tenant = w.tenantA,
   ) => {
+    const sha = await tokenOfEmail(db, emailId);
     await asUser(db, user, tenant);
-    const err = await expectSqlError(db, "select public.fail_email_dispatch($1, $2)", [
+    const err = await expectSqlError(db, "select public.fail_email_dispatch($1, $2, $3)", [
       emailId,
       code,
+      sha,
     ]);
     await actAsPostgres(db);
     return err;
   };
 
-  it("el correo y el paquete fallan, el enlace se revoca, se suelta el candado y la cotización sigue Borrador", async () => {
+  it("el correo y el paquete fallan, el enlace se revoca, se suelta el candado y la cotizaciÃ³n sigue Borrador", async () => {
     await withTx(db, async () => {
       const { quoteId, revision } = await readyQuote();
       const { ids } = await prepare(w.sales, quoteId, revision);
@@ -714,7 +731,7 @@ describe("fail_email_dispatch", () => {
     });
   });
 
-  it("no falla un correo ya enviado; el código no admite datos personales; solo el autor", async () => {
+  it("no falla un correo ya enviado; el cÃ³digo no admite datos personales; solo el autor", async () => {
     await withTx(db, async () => {
       const { ids } = await sendQuote();
       expect((await failError(w.sales, ids.emailId)).code).toBe(LOCKED);
@@ -773,7 +790,7 @@ describe("prepare_quote_resend", () => {
     });
   });
 
-  it("reenvía el mismo paquete y el mismo PDF con enlace nuevo; el enlace anterior sigue como estaba", async () => {
+  it("reenvÃ­a el mismo paquete y el mismo PDF con enlace nuevo; el enlace anterior sigue como estaba", async () => {
     await withTx(db, async () => {
       const { quoteId, ids } = await sendQuote();
       const r = await resend(w.sales, quoteId);
@@ -821,7 +838,7 @@ describe("prepare_quote_resend", () => {
     });
   });
 
-  it("reenvían el autor, el Dueño y el Administrador; no otro vendedor, Aprobador ni Observador; B no ve la cotización", async () => {
+  it("reenvÃ­an el autor, el DueÃ±o y el Administrador; no otro vendedor, Aprobador ni Observador; B no ve la cotizaciÃ³n", async () => {
     await withTx(db, async () => {
       const { quoteId } = await sendQuote();
       for (const user of [w.sales, w.owner, w.admin]) {
@@ -834,7 +851,7 @@ describe("prepare_quote_resend", () => {
     });
   });
 
-  it("tiene tope por día y no reenvía una cotización cuya fecha ya pasó", async () => {
+  it("tiene tope por dÃ­a y no reenvÃ­a una cotizaciÃ³n cuya fecha ya pasÃ³", async () => {
     await withTx(db, async () => {
       const { quoteId } = await sendQuote();
       for (let i = 0; i < 5; i++) await resend(w.sales, quoteId);
@@ -867,7 +884,7 @@ describe("revoke_quote_links", () => {
     return err;
   };
 
-  it("el autor revoca los enlaces activos; queda en la línea de tiempo y en la auditoría; repetir da cero", async () => {
+  it("el autor revoca los enlaces activos; queda en la lÃ­nea de tiempo y en la auditorÃ­a; repetir da cero", async () => {
     await withTx(db, async () => {
       const { quoteId, ids } = await sendQuote();
       expect(await revoke(w.sales, quoteId)).toBe(1);
@@ -892,7 +909,7 @@ describe("revoke_quote_links", () => {
     });
   });
 
-  it("revocan el autor, el Dueño y el Administrador; no otro vendedor, Aprobador ni Observador", async () => {
+  it("revocan el autor, el DueÃ±o y el Administrador; no otro vendedor, Aprobador ni Observador", async () => {
     for (const user of [w.owner, w.admin]) {
       await withTx(db, async () => {
         const { quoteId } = await sendQuote();
@@ -916,7 +933,7 @@ describe("revoke_quote_links", () => {
     });
   });
 
-  it("no toca los enlaces que aún no se activaron (un envío en curso)", async () => {
+  it("no toca los enlaces que aÃºn no se activaron (un envÃ­o en curso)", async () => {
     await withTx(db, async () => {
       const { quoteId, revision } = await readyQuote();
       const { ids } = await prepare(w.sales, quoteId, revision);
@@ -933,8 +950,180 @@ describe("revoke_quote_links", () => {
   });
 });
 
+describe("migraciÃ³n 26 Â· lo enviado es lo guardado (B1)", () => {
+  const ZERO_TOTALS = {
+    subtotalTaxableClp: 0,
+    subtotalExemptClp: 0,
+    subtotalClp: 0,
+    lineDiscountsClp: 0,
+    globalDiscountClp: 0,
+    globalDiscountTaxableClp: 0,
+    globalDiscountExemptClp: 0,
+    netTaxableClp: 0,
+    netExemptClp: 0,
+    taxClp: 0,
+    totalClp: 0,
+    lines: [],
+  };
+  async function saveDraft(user: TestUser, quoteId: string, revision: number) {
+    await asUser(db, user, w.tenantA);
+    await db.query(
+      "select public.save_quote_draft($1, $2, gen_random_uuid(), $3::jsonb, '[]'::jsonb, $4::jsonb)",
+      [
+        quoteId,
+        revision,
+        JSON.stringify({ customer_id: w.customerA, global_discount: { kind: "none", value: 0 } }),
+        JSON.stringify(ZERO_TOTALS),
+      ],
+    );
+    await actAsPostgres(db);
+  }
+  const expireLock = (quoteId: string) =>
+    db.query(
+      "update public.quotes set send_lock_until = now() - interval '1 second' where id = $1",
+      [quoteId],
+    );
+
+  it("el paquete recuerda la revisiÃ³n de la cotizaciÃ³n con que se armÃ³", async () => {
+    await withTx(db, async () => {
+      const { quoteId, revision } = await readyQuote();
+      const { ids } = await prepare(w.sales, quoteId, revision);
+      expect(
+        await one("select quote_revision from public.quote_packages where id = $1", [
+          ids.packageId,
+        ]),
+      ).toEqual({ quote_revision: revision });
+    });
+  });
+
+  it("candado vencido y borrador guardado: el candado se suelta y adjuntar se rechaza (CP409)", async () => {
+    await withTx(db, async () => {
+      const { quoteId, revision } = await readyQuote();
+      const { ids } = await prepare(w.sales, quoteId, revision);
+      await expireLock(quoteId);
+      await saveDraft(w.sales, quoteId, revision);
+      expect(await quoteRow(quoteId)).toMatchObject({ send_lock_key: null, send_lock_until: null });
+      await putObject(`${w.tenantA}/${quoteId}/${ids.packageId}.pdf`);
+      expect((await attachError(w.sales, quoteId, ids)).code).toBe(CONFLICT);
+      expect(
+        await one("select state from public.quote_packages where id = $1", [ids.packageId]),
+      ).toMatchObject({ state: "preparing" });
+    });
+  });
+
+  it("candado vencido y borrador guardado despuÃ©s de adjuntar: confirmar se rechaza (CP409) y no sale nada", async () => {
+    await withTx(db, async () => {
+      const { quoteId, revision } = await readyQuote();
+      const { ids } = await prepare(w.sales, quoteId, revision);
+      await attach(w.sales, quoteId, ids);
+      await expireLock(quoteId);
+      await saveDraft(w.sales, quoteId, revision);
+      expect((await confirmError(w.sales, ids.emailId)).code).toBe(CONFLICT);
+      expect(await quoteRow(quoteId)).toMatchObject({ status: "draft" });
+      expect(
+        await one("select status from public.email_messages where id = $1", [ids.emailId]),
+      ).toMatchObject({ status: "pending" });
+    });
+  });
+
+  it("aunque el candado siguiera puesto, un cambio de revisiÃ³n se rechaza igual (defensa en profundidad)", async () => {
+    await withTx(db, async () => {
+      const { quoteId, revision } = await readyQuote();
+      const { ids } = await prepare(w.sales, quoteId, revision);
+      await attach(w.sales, quoteId, ids);
+      // cambio directo de la revisiÃ³n por quien tiene todos los permisos (como un error futuro)
+      await db.query(
+        "update public.quotes set send_lock_until = null, send_lock_key = null where id = $1",
+        [quoteId],
+      );
+      await db.query("update public.quotes set revision = revision + 1 where id = $1", [quoteId]);
+      await db.query(
+        "update public.quotes set send_lock_key = $2, send_lock_until = now() + interval '1 minute' where id = $1",
+        [quoteId, ids.sendKey],
+      );
+      expect((await confirmError(w.sales, ids.emailId)).code).toBe(CONFLICT);
+    });
+  });
+
+  it("con el candado vigente sigue sin guardarse (CP423) y el candado vigente no se suelta", async () => {
+    await withTx(db, async () => {
+      const { quoteId, revision } = await readyQuote();
+      const { ids } = await prepare(w.sales, quoteId, revision);
+      await asUser(db, w.sales, w.tenantA);
+      const err = await expectSqlError(
+        db,
+        "select public.save_quote_draft($1, $2, gen_random_uuid(), $3::jsonb, '[]'::jsonb, $4::jsonb)",
+        [
+          quoteId,
+          revision,
+          JSON.stringify({ customer_id: w.customerA, global_discount: { kind: "none", value: 0 } }),
+          JSON.stringify(ZERO_TOTALS),
+        ],
+      );
+      expect(err.code).toBe(LOCKED);
+      await actAsPostgres(db);
+      expect(await quoteRow(quoteId)).toMatchObject({ send_lock_key: ids.sendKey });
+    });
+  });
+});
+
+describe("migraciÃ³n 26 Â· solo quien armÃ³ el envÃ­o lo completa (I2)", () => {
+  const WRONG = sha256Hex("otro token");
+
+  it("adjuntar, confirmar y fallar con un token que no es el del envÃ­o se rechazan", async () => {
+    await withTx(db, async () => {
+      const { quoteId, revision } = await readyQuote();
+      const { ids } = await prepare(w.sales, quoteId, revision);
+      await putObject(`${w.tenantA}/${quoteId}/${ids.packageId}.pdf`);
+      expect((await attachError(w.sales, quoteId, ids, { 8: WRONG })).code).toBe(FORBIDDEN);
+      expect((await attachError(w.sales, quoteId, ids, { 8: "x" })).code).toBe(INVALID);
+      await attach(w.sales, quoteId, ids, {}, false);
+
+      await asUser(db, w.sales, w.tenantA);
+      const confirmed = await expectSqlError(
+        db,
+        "select public.confirm_email_dispatch($1, 'memory', 'prov-x', $2)",
+        [ids.emailId, WRONG],
+      );
+      expect(confirmed.code).toBe(FORBIDDEN);
+      const failed = await expectSqlError(
+        db,
+        "select public.fail_email_dispatch($1, 'smtp_timeout', $2)",
+        [ids.emailId, WRONG],
+      );
+      expect(failed.code).toBe(FORBIDDEN);
+      const nulls = await expectSqlError(
+        db,
+        "select public.confirm_email_dispatch($1, 'memory', 'prov-x', null)",
+        [ids.emailId],
+      );
+      expect(nulls.code).toBe(INVALID);
+      await actAsPostgres(db);
+      // nada cambiÃ³: sigue pendiente, y con el token correcto sale
+      expect(
+        await one("select status from public.email_messages where id = $1", [ids.emailId]),
+      ).toMatchObject({ status: "pending" });
+      expect(await confirm(w.sales, ids.emailId)).toEqual({ status: "confirmed" });
+    });
+  });
+
+  it("el token de un envÃ­o no sirve para el paquete de otro (ni el de otra cotizaciÃ³n)", async () => {
+    await withTx(db, async () => {
+      const a = await readyQuote();
+      const b = await readyQuote();
+      const first = await prepare(w.sales, a.quoteId, a.revision);
+      const second = await prepare(w.sales, b.quoteId, b.revision);
+      await putObject(`${w.tenantA}/${b.quoteId}/${second.ids.packageId}.pdf`);
+      expect((await attachError(w.sales, b.quoteId, second.ids, { 8: first.ids.sha })).code).toBe(
+        FORBIDDEN,
+      );
+      expect(await tokenOfPackage(db, second.ids.packageId)).toBe(second.ids.sha);
+    });
+  });
+});
+
 describe("permisos de las funciones", () => {
-  it("anon no ejecuta ninguna; las auxiliares de app no están al alcance de nadie con pase", async () => {
+  it("anon no ejecuta ninguna; las auxiliares de app no estÃ¡n al alcance de nadie con pase", async () => {
     await withTx(db, async () => {
       const { rows } = await db.query<{ name: string; anon: boolean; auth: boolean }>(
         `select p.proname as name, has_function_privilege('anon', p.oid, 'EXECUTE') as anon,

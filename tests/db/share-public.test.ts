@@ -335,8 +335,9 @@ describe("share_link_record_view", () => {
         t.sha,
         sha256Hex("x"),
       ]);
-      await db.query("select public.confirm_email_dispatch($1, 'memory', 'prov-resend')", [
+      await db.query("select public.confirm_email_dispatch($1, 'memory', 'prov-resend', $2)", [
         emailId,
+        t.sha,
       ]);
       await actAsPostgres(db);
       expect(await view(t.sha)).toMatchObject({ recorded: true });

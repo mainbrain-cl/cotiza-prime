@@ -30,6 +30,53 @@ const down = (file) => client.query(read(downOf(file)));
 
 for (const file of ups) read(downOf(file)); // falla si falta algún deshacer
 
+// Los deshacer de las migraciones 21 a 26 se niegan a correr si hay registros legales (envíos,
+// respuestas del cliente, cotizaciones enviadas). Las pruebas anteriores dejan datos ficticios, así que
+// aquí se vacían todas las tablas de `public` de la base LOCAL. `replica` apaga las reglas de solo
+// agregar (disparadores) solo en esta conexión; nunca se usa fuera de este script de pruebas.
+async function wipeLocalData() {
+  const { rows } = await client.query(
+    `select format('%I.%I', n.nspname, c.relname) as t
+       from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind in ('r', 'p')`,
+  );
+  if (rows.length === 0) return;
+  await client.query("set session_replication_role = replica");
+  try {
+    await client.query(`truncate ${rows.map((r) => r.t).join(", ")}`);
+  } finally {
+    await client.query("set session_replication_role = origin");
+  }
+}
+console.log("Vaciar los datos ficticios de la base local");
+await wipeLocalData();
+
+// Prueba de la protección: con un registro legal, el deshacer de la 26 se niega y no cambia nada.
+async function checkRefusal() {
+  const { rows } = await client.query("select count(*)::int as n from public.quote_packages");
+  if (rows[0].n !== 0) throw new Error("la base debía quedar vacía");
+  await client.query("set session_replication_role = replica");
+  try {
+    await client.query(`insert into public.quote_packages
+      (id, tenant_id, quote_id, send_key, issue_date, valid_until, email_subject, email_body_md,
+       customer_snapshot_enc, created_by, quote_revision)
+      values (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), current_date,
+              current_date, 's', 'b', 'v1.x.y', gen_random_uuid(), 1)`);
+  } finally {
+    await client.query("set session_replication_role = origin");
+  }
+  let refused = false;
+  try {
+    await down("20261006150000_sprint3_review_fixes.sql");
+  } catch (error) {
+    refused = /registro legal/.test(String(error.message));
+  }
+  if (!refused) throw new Error("el deshacer de la 26 debía negarse con datos");
+  await wipeLocalData();
+}
+console.log("Comprobar que el deshacer se niega si hay registros legales");
+await checkRefusal();
+
 console.log(`Deshacer y reaplicar la última: ${ups.at(-1)}`);
 await down(ups.at(-1));
 await up(ups.at(-1));

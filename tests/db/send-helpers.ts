@@ -255,25 +255,52 @@ export async function sendQuoteAs(
     [pdfPath, JSON.stringify({ size: 1234 })],
   );
   await asUser(db, author, tenantId);
-  await db.query("select public.attach_quote_package_document($1, $2, $3, $4, $5, $6::jsonb, $7)", [
-    packageId,
-    pdfPath,
-    sha256Hex("pdf"),
-    1234,
-    null,
-    JSON.stringify({
-      organization: {
-        name: "Negocio Ficticio",
-        detailLines: ["RUT 76.086.428-5", "contacto@ejemplo.test"],
-      },
-      quote: { number: "COT-0001" },
-    }),
-    contentSha,
-  ]);
-  await db.query("select public.confirm_email_dispatch($1, 'memory', $2)", [
+  await db.query(
+    "select public.attach_quote_package_document($1, $2, $3, $4, $5, $6::jsonb, $7, $8)",
+    [
+      packageId,
+      pdfPath,
+      sha256Hex("pdf"),
+      1234,
+      null,
+      JSON.stringify({
+        organization: {
+          name: "Negocio Ficticio",
+          detailLines: ["RUT 76.086.428-5", "contacto@ejemplo.test"],
+        },
+        quote: { number: "COT-0001" },
+      }),
+      contentSha,
+      sha,
+    ],
+  );
+  await db.query("select public.confirm_email_dispatch($1, 'memory', $2, $3)", [
     emailId,
     `prov-${emailId}`,
+    sha,
   ]);
   await actAsPostgres(db);
   return { quoteId, packageId, emailId, linkId, token, sha, contentSha };
+}
+
+const NO_TOKEN = "0".repeat(64);
+
+/** Sello del token del enlace de un correo (lo lee como postgres: los miembros no pueden leerlo). */
+export async function tokenOfEmail(db: Client, emailId: string): Promise<string> {
+  await actAsPostgres(db);
+  const { rows } = await db.query<{ t: string }>(
+    "select l.token_sha256 as t from public.share_links l where l.email_message_id = $1",
+    [emailId],
+  );
+  return rows[0]?.t ?? NO_TOKEN;
+}
+
+/** Sello del token del enlace de un paquete (el primer envío; lo lee como postgres). */
+export async function tokenOfPackage(db: Client, packageId: string): Promise<string> {
+  await actAsPostgres(db);
+  const { rows } = await db.query<{ t: string }>(
+    "select l.token_sha256 as t from public.share_links l where l.package_id = $1 order by l.created_at limit 1",
+    [packageId],
+  );
+  return rows[0]?.t ?? NO_TOKEN;
 }

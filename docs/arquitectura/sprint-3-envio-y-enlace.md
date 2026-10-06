@@ -307,3 +307,60 @@ Al aprobarse la decisión 017 hay que actualizar `modelo-datos.md` §4.6, §7 y 
 6. Quién envía y revoca: envía solo el autor (decisión 009); revocan autor, Dueño y Administrador.
 7. Al aceptar: solo el nombre más una casilla de conformidad con texto versionado (sin RUT).
 8. Avisos al autor: por correo y con el estado visible en la aplicación en este sprint.
+
+## 9. Desviaciones declaradas por el implementador
+
+Lo que las migraciones 20 a 24 hicieron distinto del plan de arriba, con su razón. Las revisó Opus; las
+que dicen «a ratificar» necesitan el visto bueno de Aarón. Las correcciones de la revisión están en la
+migración 26 (`20261006150000_sprint3_review_fixes.sql`).
+
+1. **`send_key` con unicidad parcial.** `unique (tenant_id, quote_id, send_key)` solo vale para
+   paquetes vivos (`preparing`, `ready`, `sent`), y se suma el índice `quote_packages_one_live`
+   (a lo más un paquete vivo por cotización). Con un único total, un paquete que quedó a medias y se
+   abandona impediría crear el siguiente con la misma clave.
+2. **El proveedor `pending` se fija una vez.** El proveedor de correo no se conoce al preparar el
+   envío: el correo nace con proveedor `pending` y `confirm_email_dispatch` lo fija (la migración 22
+   lo permite una sola vez; después es inmutable).
+3. **Vigencia por defecto de la organización.** Una cotización sin vigencia elegida toma
+   `tenants.default_validity_days`; al confirmar el envío queda guardada como `days`.
+4. **Reenvío por autor, Dueño o Administrador.** El primer envío es solo del autor (decisión 009);
+   reenviar y revocar los pueden hacer también el Dueño y el Administrador.
+5. **Topes de reenvío: 5 por día y 20 en total por cotización** (a ratificar). Son constantes con
+   nombre en la base (`app.resend_max_per_day`, `app.resend_max_total`).
+6. **Texto de «otro» cifrado, con largo acotado de 46 a 1.200 caracteres.** La base no puede contar los
+   caracteres de un texto cifrado, así que acota el cifrado (equivale a 3–200 caracteres reales). La
+   aplicación valida los 3–200 antes de cifrar.
+7. **La IP de una apertura se sella con el id del enlace**, no con el de la apertura (un número que la
+   aplicación no conoce antes de insertar): `share_link_views.ip|tenant|share_link_id`.
+8. **El aviso «más viejo» se compara con el último aviso del proveedor** ya aplicado (entrega o rebote),
+   no con `status_at`: el correo se confirma después de que el proveedor responde, y una entrega muy
+   rápida llegaría «antes».
+9. **Un aviso del proveedor antes de confirmar el envío devuelve `unknown`** (el correo aún no tiene su
+   identificador). La ruta de avisos debe responder un error recuperable para que el proveedor
+   reintente, no un éxito.
+10. **`org_contact` sale del paquete congelado:** `document_snapshot.organization.name` y
+    `document_snapshot.organization.detailLines`; si falta el nombre, el de la organización.
+11. **Atajo en el deshacer de la migración 23:** borraba los enlaces y las aperturas para poder volver a
+    aplicarla. Queda **reemplazado** por la protección de la revisión (migración 26, hallazgo I4): los
+    deshacer de las migraciones 21 a 26 abortan con un error claro si ya hay registros legales
+    (paquetes, correos, enlaces, aperturas, respuestas o cotizaciones enviadas).
+12. **Dos ajustes a `tests/db/quotes.test.ts`** por la lista cerrada de cambios de estado de la
+    migración 21: la prueba que pasa una cotización de «Enviada» a «Cambios solicitados» apaga el
+    guardián `quotes_status_transition_guard` dentro de su transacción (ese cambio no está permitido
+    todavía), y el estado inventado ahora falla con `42501` (el guardián actúa antes que la lista de
+    estados), no con la violación de restricción.
+
+### Correcciones de la revisión (migración 26)
+
+- **B1 · lo enviado es lo guardado.** `quote_packages.quote_revision` (lo llena un disparador al
+  crear el paquete, dentro de la misma transacción de `prepare_quote_send`): adjuntar el PDF y
+  confirmar el envío exigen que la cotización siga en esa revisión (`CP409`). Si el candado ya venció y
+  se guarda el borrador, el candado se suelta.
+- **I1.** Responder y registrar una apertura vuelven a leer el enlace después de bloquear la cotización.
+- **I2.** Adjuntar, confirmar y fallar un envío reciben `p_token_sha256`; sin el sello correcto,
+  `42501`. Solo quien armó el envío (el servidor) lo conoce.
+- **I4.** Los deshacer de las migraciones 21 a 26 abortan si hay registros legales.
+- **I5.** Orden de bloqueo único: cotización, luego correo, luego paquete.
+- **Menores.** Responder fija `first_viewed_at`; las funciones del enlace rechazan con la organización
+  archivada; un enlace anulado no se activa; `expire_due_quotes` vacía el lote y limpia
+  `cron.job_run_details` de más de 7 días.

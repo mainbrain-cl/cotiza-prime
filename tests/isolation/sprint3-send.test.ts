@@ -140,6 +140,7 @@ describe("Ataque 1 · Ana, desde A, llama las funciones de envío sobre datos de
           p_logo_path: null,
           p_document_snapshot: { ataque: true },
           p_content_sha256: "b".repeat(64),
+          p_token_sha256: "c".repeat(64),
         },
       ],
       [
@@ -148,11 +149,16 @@ describe("Ataque 1 · Ana, desde A, llama las funciones de envío sobre datos de
           p_email_message_id: b.share!.emailMessageId,
           p_provider: "memory",
           p_provider_message_id: "ataque",
+          p_token_sha256: "c".repeat(64),
         },
       ],
       [
         "fail_email_dispatch",
-        { p_email_message_id: b.share!.emailMessageId, p_error_code: "ataque" },
+        {
+          p_email_message_id: b.share!.emailMessageId,
+          p_error_code: "ataque",
+          p_token_sha256: "c".repeat(64),
+        },
       ],
     ];
     for (const [name, args] of calls) {
@@ -210,6 +216,7 @@ describe("Ataque 2 · adjuntar un documento con la ruta de otra organización", 
           p_logo_path: null,
           p_document_snapshot: { ataque: true },
           p_content_sha256: "b".repeat(64),
+          p_token_sha256: "c".repeat(64),
         },
         headers,
       );
@@ -234,7 +241,7 @@ describe("Ataque 2 · adjuntar un documento con la ruta de otra organización", 
     const failed = await rpc(
       token,
       "fail_email_dispatch",
-      { p_email_message_id: emailId, p_error_code: "test_cleanup" },
+      { p_email_message_id: emailId, p_error_code: "test_cleanup", p_token_sha256: "c".repeat(64) },
       headers,
     );
     expect(failed.status, failed.text).toBeLessThan(300);

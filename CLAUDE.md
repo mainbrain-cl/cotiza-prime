@@ -77,6 +77,9 @@ La copia `agent-a7b9e1375a7b27ce4` es vieja (de antes de hoy): preguntar si se b
 aceptar/rechazar le llega al autor aunque ya no sea miembro (fuga de datos). Corregir ANTES de cerrar el sprint 3:
 la base debe entregar el destinatario solo si el autor sigue activo (si no, al Dueño y Administradores activos) y
 quitar `auth.admin.getUserById` del portero; más los 5 importantes y los menores de §13.
+**Al cerrar el día hay DOS agentes con copia aparte** (ver `git worktree list`): H-033/034/035 y la corrección
+del bloqueante + importantes de H-031 (esta trae una migración 27: integrarla ANTES que cualquier otra migración).
+Si no llegaron a terminar, revisar cada rama, correr todas las pruebas, integrar y subir.
 **Falta del sprint 3:** H-033/034/035, **H-076** (esperando que Aarón apruebe el diseño de las plantillas 2 y 3:
 `docs/diseno/plantillas-2-y-3-pdf-vista-previa.html`), y el lote de correcciones menores de la revisión de H-030
 (`docs/arquitectura/sprint-3-envio-y-enlace.md` §12) más lo que salga de la revisión de H-031.

@@ -450,6 +450,7 @@ export const RPC_CASES: Record<string, RpcCase> = {
       p_logo_path: null,
       p_document_snapshot: {},
       p_content_sha256: "b".repeat(64),
+      p_token_sha256: "c".repeat(64),
     },
     writesActiveTenant: true,
   },
@@ -458,11 +459,16 @@ export const RPC_CASES: Record<string, RpcCase> = {
       p_email_message_id: randomUUID(),
       p_provider: "memory",
       p_provider_message_id: "ataque",
+      p_token_sha256: "c".repeat(64),
     },
     writesActiveTenant: true,
   },
   fail_email_dispatch: {
-    args: { p_email_message_id: randomUUID(), p_error_code: "ataque" },
+    args: {
+      p_email_message_id: randomUUID(),
+      p_error_code: "ataque",
+      p_token_sha256: "c".repeat(64),
+    },
     writesActiveTenant: true,
   },
   prepare_quote_resend: {

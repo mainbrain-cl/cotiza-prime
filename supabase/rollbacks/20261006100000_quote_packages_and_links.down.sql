@@ -1,4 +1,17 @@
 -- Deshace 20261006100000_quote_packages_and_links.sql
+-- Protección del registro legal: no se deshace si ya hay envíos o cotizaciones enviadas. Borrarlos
+-- dejaría cotizaciones «Enviada», «Vista» o «Aceptada» sin su paquete ni su enlace.
+do $$
+begin
+  if exists (select 1 from public.quote_packages)
+     or exists (select 1 from public.share_links)
+     or exists (select 1 from public.share_link_views)
+     or exists (select 1 from public.quotes
+                 where status in ('sent', 'viewed', 'accepted', 'rejected_by_customer', 'expired')) then
+    raise exception 'no se puede deshacer: hay registros de envio o respuestas del cliente (registro legal)';
+  end if;
+end $$;
+
 -- Quita los alcances nuevos del límite de intentos (y sus filas, para que la restricción vuelva a valer).
 delete from public.auth_rate_limits
   where scope in ('share_ip', 'share_token', 'share_respond_ip', 'quote_send_user');

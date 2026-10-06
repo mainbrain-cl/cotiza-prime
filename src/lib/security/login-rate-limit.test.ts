@@ -10,6 +10,8 @@ vi.mock("@/lib/crypto/search-hash", () => ({
 
 import {
   SEND_MAX_PER_USER_PER_WINDOW,
+  SHARE_RESPOND_MAX_PER_IP_PER_WINDOW,
+  consumeShareRespondQuota,
   SHARE_MAX_READS_PER_IP_PER_WINDOW,
   SHARE_MAX_READS_PER_LINK_PER_WINDOW,
   TENANT_DENIED_MAX_LOGGED_PER_WINDOW,
@@ -129,6 +131,26 @@ describe("consumeSendQuota (H-029)", () => {
   it("si el contador falla, se deja pasar", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
     expect(await consumeSendQuota("u1", "t1")).toBe(true);
+  });
+});
+
+describe("consumeShareRespondQuota (H-031)", () => {
+  it("cuenta la IP con una huella y bloquea al pasar el tope", async () => {
+    expect(await consumeShareRespondQuota("203.0.113.7")).toBe(true);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_scope: "share_respond_ip",
+      p_key_hash: "share_respond_ip|203.0.113.7",
+      p_max_failures: SHARE_RESPOND_MAX_PER_IP_PER_WINDOW + 1,
+    });
+    rpc.mockResolvedValue({ data: "2026-10-01T00:00:00Z", error: null });
+    expect(await consumeShareRespondQuota("203.0.113.7")).toBe(false);
+  });
+
+  it("sin IP conocida no cuenta, y si el contador falla se deja pasar", async () => {
+    expect(await consumeShareRespondQuota(null)).toBe(true);
+    expect(rpc).not.toHaveBeenCalled();
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    expect(await consumeShareRespondQuota("203.0.113.7")).toBe(true);
   });
 });
 

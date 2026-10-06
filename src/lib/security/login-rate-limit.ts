@@ -75,6 +75,14 @@ export const SHARE_MAX_READS_PER_LINK_PER_WINDOW = 30;
 export const SHARE_WINDOW_SECONDS = SECONDS_PER_MINUTE;
 export const SHARE_LOCK_SECONDS = SECONDS_PER_MINUTE;
 
+/**
+ * Respuestas del cliente a una cotización (H-031): aceptar o rechazar es poco frecuente, así que el
+ * tope por IP es bajo. El intento número N+1 es el que bloquea.
+ */
+export const SHARE_RESPOND_MAX_PER_IP_PER_WINDOW = 10;
+export const SHARE_RESPOND_WINDOW_SECONDS = 60 * SECONDS_PER_MINUTE;
+export const SHARE_RESPOND_LOCK_SECONDS = 60 * SECONDS_PER_MINUTE;
+
 export type RateLimitScope =
   | "login_email"
   | "login_ip"
@@ -86,7 +94,8 @@ export type RateLimitScope =
   | "pdf_tenant"
   | "quote_send_user"
   | "share_ip"
-  | "share_token";
+  | "share_token"
+  | "share_respond_ip";
 
 /**
  * La tabla `auth_rate_limits` solo admite ciertos valores en su columna `scope`. Los pedidos de
@@ -106,6 +115,7 @@ const STORAGE_SCOPE: Record<RateLimitScope, string> = {
   quote_send_user: "quote_send_user",
   share_ip: "share_ip",
   share_token: "share_token",
+  share_respond_ip: "share_respond_ip",
 };
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
@@ -168,6 +178,11 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: SHARE_MAX_READS_PER_LINK_PER_WINDOW + 1,
     windowSeconds: SHARE_WINDOW_SECONDS,
     lockSeconds: SHARE_LOCK_SECONDS,
+  },
+  share_respond_ip: {
+    maxFailures: SHARE_RESPOND_MAX_PER_IP_PER_WINDOW + 1,
+    windowSeconds: SHARE_RESPOND_WINDOW_SECONDS,
+    lockSeconds: SHARE_RESPOND_LOCK_SECONDS,
   },
 };
 
@@ -390,4 +405,19 @@ export async function consumeShareQuota(ip: string | null, tokenSha256: string):
     keyHash: searchHash("share_token", PLATFORM_TENANT_ID, tokenSha256),
   };
   return !(await failOpen("share_quota_link", false, () => recordAll([byLink])));
+}
+
+/**
+ * ¿Esta IP puede responder otra cotización ahora (H-031)? Cuenta el intento y responde `false` si ya
+ * llegó al tope por hora. La clave es una huella de la IP agrupada, nunca la IP en claro. Sin IP
+ * conocida no hay a quién contar (los límites de lectura del enlace siguen valiendo). Si el contador
+ * falla, se deja pasar y se avisa en el log.
+ */
+export async function consumeShareRespondQuota(ip: string | null): Promise<boolean> {
+  if (!ip) return true;
+  const target: Target = {
+    scope: "share_respond_ip",
+    keyHash: searchHash("share_respond_ip", PLATFORM_TENANT_ID, ipLimitKey(ip)),
+  };
+  return !(await failOpen("share_respond_quota_ip", false, () => recordAll([target])));
 }

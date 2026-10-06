@@ -24,7 +24,7 @@ export async function listQuoteTimeline(
 ): Promise<TimelineEntry[] | null> {
   const { data, error } = await active.supabase
     .from("quote_events")
-    .select("id, occurred_at, type, actor_user_id")
+    .select("id, occurred_at, type, actor_user_id, data")
     .eq("tenant_id", active.tenantId)
     .eq("quote_id", quoteId)
     // Los MÁS NUEVOS primero y se corta: con más de 100 eventos se pierden los viejos, nunca lo último.
@@ -42,6 +42,7 @@ export async function listQuoteTimeline(
       occurred_at: string;
       type: string;
       actor_user_id: string | null;
+      data: unknown;
     }[]
   ).toReversed();
   const userIds = [...new Set(rows.map((row) => row.actor_user_id).filter((id) => id !== null))];
@@ -58,7 +59,7 @@ export async function listQuoteTimeline(
   return rows.map((row) => ({
     id: row.id,
     occurredAt: row.occurred_at,
-    text: describeQuoteEvent(row.type),
+    text: describeQuoteEvent(row.type, row.data),
     actorName: row.actor_user_id ? (names.get(row.actor_user_id) ?? null) : null,
   }));
 }

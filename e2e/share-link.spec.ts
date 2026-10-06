@@ -204,8 +204,9 @@ test("el cliente abre su cotización desde el correo, sin cuenta: se ve con la m
     await expectNoHorizontalScroll(client);
     await expect(client.getByTestId("share-lines-cards")).toBeVisible();
     await expect(client.getByTestId("share-download-pdf")).toBeVisible();
-    // Los botones de aceptar y rechazar llegan en H-031: aquí no hay ninguno.
-    await expect(client.getByRole("button", { name: /aceptar|rechazar/i })).toHaveCount(0);
+    // Los botones de aceptar y rechazar (H-031) están, y mirar la cotización no responde nada.
+    await expect(client.getByTestId("response-accept-open")).toBeVisible();
+    await expect(client.getByTestId("response-reject-open")).toBeVisible();
 
     // Las cifras son las del PDF (la misma copia congelada).
     const frozen = await withDb(async (db) => {

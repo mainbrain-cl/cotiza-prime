@@ -565,6 +565,8 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/c/[token]", kind: "page", scope: "token" },
   { path: "/api/v1/public/quote-links/[token]/pdf", kind: "api", scope: "token" },
   { path: "/api/v1/public/quote-links/[token]/view", kind: "api", scope: "token" },
+  { path: "/api/v1/public/quote-links/[token]/accept", kind: "api", scope: "token" },
+  { path: "/api/v1/public/quote-links/[token]/reject", kind: "api", scope: "token" },
   { path: "/o/[tenantId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo/[itemId]", kind: "page", scope: "tenant" },

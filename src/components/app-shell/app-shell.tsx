@@ -2,8 +2,7 @@ import { LogOut } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { LegalFooter } from "@/components/legal/legal-footer";
-import { LegalLinks } from "@/components/legal/legal-page";
-import { Button } from "@/components/ui/button";
+import { Dock, DockItem } from "@/components/react-bits/dock";
 import { signOutAction } from "@/lib/auth/actions";
 import { logoUrl } from "@/lib/brand/logo";
 import { APP_ENV, isTestEnv } from "@/lib/env/app-env";
@@ -24,8 +23,8 @@ export const ROLE_LABELS: Record<MemberRole, string> = {
 
 /**
  * Estructura de la aplicación (docs/DISENO.md, "Disposición"):
- * - Escritorio desde 1.280 px: barra lateral flotante de vidrio de 232 px.
- * - Tableta: la misma barra, contraída a íconos.
+ * - Tableta y escritorio (desde 768 px): menú flotante vertical de vidrio pegado a la izquierda,
+ *   de solo íconos con su nombre al lado al pasar el ratón o tabular (decisión 018: Dock de React Bits).
  * - Teléfono: selector arriba y barra inferior flotante.
  */
 export function AppShell({
@@ -60,32 +59,26 @@ export function AppShell({
         </div>
       </header>
 
-      {/* Tableta y escritorio: barra lateral flotante */}
+      {/* Tableta y escritorio: menú flotante vertical pegado a la izquierda (React Bits, decisión 018) */}
       <aside
-        aria-label="Barra lateral"
-        className="sticky top-[calc(var(--env-banner-height)+1rem)] hidden h-[calc(100dvh-var(--env-banner-height)-2rem)] w-[72px] shrink-0 flex-col gap-4 rounded-lg p-2.5 glass md:flex xl:w-[232px] xl:p-3"
+        aria-label="Menú lateral"
+        className="sticky top-[calc(var(--env-banner-height)+1rem)] z-30 hidden h-[calc(100dvh-var(--env-banner-height)-2rem)] w-[72px] shrink-0 md:flex"
       >
-        <BrandMark className="max-xl:justify-center" labelClassName="max-xl:sr-only" />
-        <TenantSwitcher activeTenantId={activeTenantId} tenants={switcherTenants} collapsed />
-        <SidebarNav basePath={basePath} />
-        <div className="mt-auto flex flex-col gap-2 border-t border-border pt-3">
-          <p className="truncate px-1 text-xs text-fg-muted max-xl:sr-only" title={userName}>
-            {userName}
-          </p>
-          <LegalLinks className="max-xl:hidden" />
-          <form action={signOutAction}>
-            <Button
-              type="submit"
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start max-xl:justify-center"
-              title="Cerrar sesión"
-            >
-              <LogOut aria-hidden strokeWidth={1.75} />
-              <span className="max-xl:sr-only">Cerrar sesión</span>
-            </Button>
-          </form>
-        </div>
+        <Dock className="flex size-full flex-col items-center gap-4 rounded-xl p-2 glass">
+          <BrandMark compact />
+          <TenantSwitcher activeTenantId={activeTenantId} tenants={switcherTenants} collapsed />
+          <SidebarNav basePath={basePath} />
+          <div className="mt-auto flex flex-col items-center gap-2 border-t border-border pt-3">
+            <form action={signOutAction}>
+              <DockItem
+                type="submit"
+                label="Cerrar sesión"
+                hint={userName}
+                icon={<LogOut aria-hidden strokeWidth={1.75} className="size-5" />}
+              />
+            </form>
+          </div>
+        </Dock>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -95,8 +88,7 @@ export function AppShell({
         >
           <PageTransition>{children}</PageTransition>
         </main>
-        {/* En escritorio los enlaces legales van en la barra lateral */}
-        <LegalFooter className="pb-[calc(env(safe-area-inset-bottom)+5.5rem)] md:pb-3 xl:hidden" />
+        <LegalFooter className="pb-[calc(env(safe-area-inset-bottom)+5.5rem)] md:pb-3" />
       </div>
 
       <MobileNav basePath={basePath} />

@@ -75,7 +75,7 @@ export function TenantSwitcher({
 }: {
   activeTenantId: string;
   tenants: SwitcherTenant[];
-  /** En tableta la barra lateral muestra solo íconos. */
+  /** En el menú flotante vertical solo cabe el logo; el nombre queda en el nombre accesible. */
   collapsed?: boolean;
   className?: string;
 }) {
@@ -91,11 +91,12 @@ export function TenantSwitcher({
         className={cn(
           "border-glass-border flex min-h-11 w-full items-center gap-3 rounded-md border bg-surface/60 p-2 text-left transition-colors duration-(--dur-fast) ease-ios outline-none hover:bg-surface focus-visible:ring-3 focus-visible:ring-ring/40",
           pending && "opacity-60",
+          collapsed && "justify-center p-1.5",
           className,
         )}
       >
         <TenantAvatar name={activeName} logoUrl={active?.logoUrl ?? null} className="size-9" />
-        <span className={cn("min-w-0 flex-1", collapsed && "max-xl:hidden")}>
+        <span className={cn("min-w-0 flex-1", collapsed && "hidden")}>
           <span className="block truncate text-sm font-semibold text-fg">{activeName}</span>
           {active ? (
             <span className="block truncate text-xs text-fg-muted">{active.roleLabel}</span>
@@ -104,11 +105,16 @@ export function TenantSwitcher({
         <ChevronsUpDown
           aria-hidden
           strokeWidth={1.75}
-          className={cn("size-[18px] shrink-0 text-fg-subtle", collapsed && "max-xl:hidden")}
+          className={cn("size-[18px] shrink-0 text-fg-subtle", collapsed && "hidden")}
         />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner sideOffset={8} align="start" className="z-50">
+        <Menu.Positioner
+          side={collapsed ? "right" : "bottom"}
+          sideOffset={collapsed ? 16 : 8}
+          align="start"
+          className="z-50"
+        >
           <Menu.Popup className="min-w-64 menu-popup rounded-md p-1.5 glass outline-none">
             <Menu.Group>
               <Menu.GroupLabel className="px-3 py-2 text-xs font-medium text-fg-muted">

@@ -11,12 +11,17 @@ import {
 
 /** Esqueletos con la forma de cada pantalla de una organización (se usan desde cada `loading.tsx`). */
 
-/** Inicio y pantallas sin forma propia: título y un panel. */
+/** Inicio y pantallas sin forma propia: título, las cuatro tarjetas del resumen y un panel. */
 export function PanelScreenSkeleton() {
   return (
     <SkeletonRegion>
       <HeaderSkeleton />
-      <Skeleton className="h-56 w-full rounded-lg md:h-72" />
+      <div className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
+        {Array.from({ length: 4 }, (_, index) => (
+          <Skeleton key={index} className="h-32 w-full rounded-lg" />
+        ))}
+      </div>
+      <Skeleton className="h-40 w-full rounded-lg md:h-56" />
     </SkeletonRegion>
   );
 }

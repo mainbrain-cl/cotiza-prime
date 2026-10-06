@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { LegalFooter } from "@/components/legal/legal-footer";
-import { AuroraBackground } from "@/components/ui/aurora-background";
+import { AnimatedBackdrop } from "@/components/ui/animated-backdrop";
 
 /** Pantalla de ingreso, registro y onboarding: fondo animado y una tarjeta sólida al centro. */
 export function AuthCard({
@@ -18,7 +18,7 @@ export function AuthCard({
   return (
     <>
       <main className="relative flex flex-1 items-center justify-center overflow-hidden px-4 py-10 md:py-16">
-        <AuroraBackground />
+        <AnimatedBackdrop />
         <div className="relative flex w-full max-w-md animate-enter flex-col gap-6">
           <BrandMark className="justify-center" />
           <section

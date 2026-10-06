@@ -160,6 +160,18 @@ export async function respondShareLink(
   return result as { result: string; [key: string]: unknown };
 }
 
+/**
+ * Correo de quien creó la cotización, para el aviso interno de H-031. El id sale de la respuesta de
+ * `share_link_respond` (la base), nunca de la petición. Usa la API de cuentas del servidor (no toca
+ * ninguna tabla). Si no se encuentra, devuelve `null`.
+ */
+export async function readAuthorEmail(authorId: string | null | undefined): Promise<string | null> {
+  if (!authorId || !UUID_PATTERN.test(authorId)) return null;
+  const { data, error } = await createAdminClient().auth.admin.getUserById(authorId);
+  if (error || !data.user?.email) return null;
+  return data.user.email;
+}
+
 /** Ruta que le corresponde al PDF congelado de este enlace: `{tenant}/{quote}/{package}.pdf`. */
 export function expectedPdfPath(link: Pick<ShareAvailable, "tenantId" | "quoteId" | "packageId">) {
   return `${link.tenantId}/${link.quoteId}/${link.packageId}.pdf`;

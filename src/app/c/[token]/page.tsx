@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ResponsePanel } from "@/components/share/response-panel";
 import { QuoteView } from "@/components/share/quote-view";
 import { ShareBusy, ShareNotFound, ShareUnavailable } from "@/components/share/unavailable";
 import { ViewBeacon } from "@/components/share/view-beacon";
@@ -25,20 +26,26 @@ export const metadata: Metadata = {
 const API_PREFIX = "/api/v1/public/quote-links";
 const DECISION_TEXT = { accepted: "aceptada", rejected: "rechazada" } as const;
 
+/** Estados de la cotización en los que el cliente todavía puede responder. */
+const RESPONDABLE_STATUSES: ReadonlySet<string> = new Set(["sent", "viewed"]);
+
+function responseDate(respondedAt: string): string | null {
+  const date = new Date(respondedAt);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString("es-CL", {
+    timeZone: "America/Santiago",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 function responseNotice(
   response: { decision: "accepted" | "rejected"; respondedAt: string } | null,
 ): string | null {
   if (!response) return null;
-  const date = new Date(response.respondedAt);
-  const when = Number.isNaN(date.getTime())
-    ? ""
-    : ` el ${date.toLocaleDateString("es-CL", {
-        timeZone: "America/Santiago",
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-      })}`;
-  return `Esta cotización ya fue ${DECISION_TEXT[response.decision]}${when}.`;
+  const date = responseDate(response.respondedAt);
+  return `Esta cotización ya fue ${DECISION_TEXT[response.decision]}${date ? ` el ${date}` : ""}.`;
 }
 
 export default async function SharedQuotePage({ params }: PageProps<"/c/[token]">) {
@@ -67,6 +74,21 @@ export default async function SharedQuotePage({ params }: PageProps<"/c/[token]"
         logoDataUrl={logoDataUrl}
         pdfHref={`${API_PREFIX}/${token}/pdf`}
         responseNotice={responseNotice(link.response)}
+        responseSlot={
+          <ResponsePanel
+            apiBase={`${API_PREFIX}/${token}`}
+            organizationName={link.document.organization.name}
+            initialResponse={
+              link.response
+                ? {
+                    decision: link.response.decision,
+                    dateText: responseDate(link.response.respondedAt),
+                  }
+                : null
+            }
+            canRespond={link.state === "ok" && RESPONDABLE_STATUSES.has(link.quoteStatus)}
+          />
+        }
       />
       <ViewBeacon viewUrl={`${API_PREFIX}/${token}/view`} />
     </>

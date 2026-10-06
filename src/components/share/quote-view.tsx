@@ -1,5 +1,5 @@
 import { Download } from "lucide-react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { ShareDocument } from "@/lib/share/read-model";
 import { brandStyle } from "@/lib/share/brand-vars";
 import { cn } from "@/lib/utils";
@@ -8,8 +8,7 @@ import { cn } from "@/lib/utils";
  * La cotización tal como la ve el cliente final (H-030). Dibuja la copia congelada del paquete, con
  * los mismos textos y cifras que el PDF (ya vienen formateados), y manda la marca de la organización:
  * su logo y sus colores. No lleva datos bancarios (llegan recién al aceptar) ni el diseño de
- * Cotiza Prime. Los botones de aceptar y rechazar no están en esta historia (H-031): se deja el
- * espacio previsto (`response-slot`).
+ * Cotiza Prime. Los botones de aceptar y rechazar (H-031) se ponen en el espacio `response-slot`.
  */
 
 export type QuoteViewProps = {
@@ -19,6 +18,8 @@ export type QuoteViewProps = {
   pdfHref: string;
   /** Si el cliente ya respondió, qué respondió y cuándo (texto ya listo para mostrar). */
   responseNotice: string | null;
+  /** Los botones de respuesta (H-031) o la confirmación, en el espacio previsto. */
+  responseSlot?: ReactNode;
 };
 
 const BRAND_BG = "bg-[var(--brand)] text-[var(--on-brand)]";
@@ -62,6 +63,7 @@ export function QuoteView({
   logoDataUrl,
   pdfHref,
   responseNotice,
+  responseSlot,
 }: QuoteViewProps) {
   const { quote, organization, totals } = doc;
   const notes = [
@@ -243,8 +245,8 @@ export function QuoteView({
               </dl>
             </div>
 
-            {/* Espacio previsto para «Aceptar» y «Rechazar» (H-031). En esta historia no hay botones. */}
-            <div data-testid="response-slot" />
+            {/* «Aceptar» y «Rechazar» (H-031), o la confirmación si ya respondió. */}
+            <div data-testid="response-slot">{responseSlot}</div>
 
             <div className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
               <a

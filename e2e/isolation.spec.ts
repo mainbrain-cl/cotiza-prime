@@ -2,6 +2,7 @@
 // Personas reales con sesión iniciada por pantalla (ver isolation.setup.ts). Todo ficticio.
 // Sin reintentos: si una de estas falla, es una falla.
 import "../tests/support/stub-server-only"; // debe ir primero
+import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { PLATFORM_TENANT_ID, TENANT_HEADER } from "../src/lib/tenant/constants";
 import { connect } from "../tests/db/helpers";
@@ -316,6 +317,30 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
     // un POST sin el origen de la aplicación se rechaza
     const noOrigin = await page.request.post(`/api/v1/public/quote-links/${B.share!.token}/view`);
     expect(noOrigin.status()).toBe(403);
+
+    // H-031: Ana responde con el token de B. Su sesión no le da nada: B ya tiene una respuesta, así que
+    // la decisión que quedó no cambia, y A no cambia en nada.
+    const afterViewsA = await fingerprintOf(A.tenantId);
+    const beforeResponseB = await fingerprintOf(B.tenantId);
+    const respond = (kind: "accept" | "reject", data: object) =>
+      page.request.post(`/api/v1/public/quote-links/${B.share!.token}/${kind}`, {
+        headers: { origin },
+        data: { responseKey: randomUUID(), ...data },
+      });
+    const accept = await respond("accept", { name: "Ana Atacante", confirmed: true });
+    expect(accept.status()).toBe(200);
+    expect(await accept.json()).toEqual({ status: "already_responded", decision: "accepted" });
+    const reject = await respond("reject", { reasonCode: "price_too_high" });
+    expect(reject.status()).toBe(200);
+    expect(await reject.json()).toEqual({ status: "already_responded", decision: "accepted" });
+    expect(await fingerprintOf(B.tenantId)).toEqual(beforeResponseB);
+    expect(await fingerprintOf(A.tenantId)).toEqual(afterViewsA);
+    // sin el origen de la aplicación, tampoco
+    const noOriginRespond = await page.request.post(
+      `/api/v1/public/quote-links/${B.share!.token}/accept`,
+      { data: { responseKey: randomUUID(), name: "Ana Atacante", confirmed: true } },
+    );
+    expect(noOriginRespond.status()).toBe(403);
   });
 
   test("P23 · un RUT que solo existe en B no se reconoce como duplicado en A", async ({ page }) => {

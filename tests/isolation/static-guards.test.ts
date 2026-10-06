@@ -157,10 +157,25 @@ describe("guardias estáticas del aislamiento", () => {
   });
 
   it("8c. los POST públicos comprueban el Origin", () => {
-    const view = read(
-      path.join(SRC, "app", "api", "v1", "public", "quote-links", "[token]", "view", "route.ts"),
+    for (const name of ["view", "accept", "reject"]) {
+      const route = read(
+        path.join(SRC, "app", "api", "v1", "public", "quote-links", "[token]", name, "route.ts"),
+      );
+      expect(route, name).toContain("isSameOriginPost(");
+      // el origen se comprueba antes que nada
+      expect(route.indexOf("isSameOriginPost("), name).toBeLessThan(
+        route.indexOf("passTokenGate("),
+      );
+    }
+  });
+
+  it("8d. las rutas de respuesta del cliente solo hablan con la base por el portero", () => {
+    const text = stripComments(read(path.join(SRC, "lib", "share", "respond-service.ts"))).replace(
+      /\s+/g,
+      " ",
     );
-    expect(view).toContain("isSameOriginPost(");
+    expect(/admin-client|createClient|\.rpc\(|\.from\(/.test(text)).toBe(false);
+    expect(text).toContain("respondShareLink(");
   });
 
   it("9. el token no se escribe en los registros del servidor", () => {

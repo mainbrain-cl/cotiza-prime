@@ -31,7 +31,7 @@ de la base exige una decisión registrada en `docs/decisiones/`.
 
 ## Estado
 
-**Fase 4 — Desarrollo.** Plan (v1.0), historias (v1.1) y sprint 1 aprobados (Compuerta 3 cruzada el
+**Fase 4 — Desarrollo.** Plan, historias y sprint 1 aprobados (Compuerta 3 cruzada el
 2026-10-01). Forma de trabajo: decisión 013. Las decisiones están en `docs/decisiones/`.
 
 ## Para retomar (actualizado 2026-10-01)
@@ -54,45 +54,63 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Estado al 2026-10-05 — empezar por aquí
+### Estado al 2026-10-06 (noche) — empezar por aquí
 
-**Sprint 2 (~97%):** las 9 historias construidas, integradas en `main` y revisadas por Opus, con todos los
-hallazgos corregidos. **Falta solo que Aarón lo pruebe en pantalla** y apruebe la plantilla 1 del PDF;
-luego, cierre del sprint 2 (comparar planificado vs. real) y partir el sprint 3 (`docs/sprints/001-base-segura.md`,
-tabla de los 11 sprints: enviar por correo, enlace del cliente y aceptar). El sprint 3 necesita el
-**dominio de correo** verificado (SPF, DKIM, DMARC).
+**Recorrido de punta a punta ya funciona en local:** enviar la cotización por correo (Mailpit) → el cliente
+la abre sin cuenta en `/c/[token]` → acepta o rechaza (motivo obligatorio) → el autor recibe un aviso.
+Todo en `main`, CI en verde hasta H-030; la corrida de H-031 estaba en curso al escribir esto.
 
-**Pruebas al último integrar:** 531 unitarias, 339 de base de datos, 656 de aislamiento, 45 de punta a
-punta, todo en verde. 22 migraciones.
+**Cambios de alcance de hoy (todos en `docs/PROYECTO.md` §6.0 y `docs/HISTORIAS.md`):** recorrido completo
+como mapa del producto; formulario público **sin precios**, con vista previa en vivo, enlace **e incrustable**
+en la v1 (nueva H-093, H-088 reescrita); motivo de rechazo obligatorio; **formulario público adelantado al
+sprint 4** (12 sprints, 92 historias; tabla en `docs/sprints/001-base-segura.md`); **H-076** (3 plantillas de
+PDF + selector) adelantada al sprint 3. Decisiones nuevas: 016 (proveedor de correo, propuesta Resend,
+**pendiente de Aarón**), 017 (enlace del cliente con portero en el servidor), 018 (React Bits gratuito).
 
-**Decisiones esperando a Aarón:** aprobar la plantilla 1 del PDF (vista previa
-https://claude.ai/artifact/Ckd62T8HreUpARrfXWLYdg, copia en `docs/diseno/plantilla-1-pdf-vista-previa.html`);
-ratificar la decisión 015; GitHub Pro o regla del proceso. Preguntas del plan de cotizaciones (§10):
-se aplicaron los supuestos por defecto.
+**Sprint 3 (~85 %):** hechas H-029, H-030, H-031, H-032, H-014 (más la capa de correo, las migraciones 21–26 y el
+menú/tarjetas/contadores/fondos de React Bits). Revisadas por Opus: migraciones, H-029, H-030 (sin bloqueantes).
+**En curso al cerrar el día:** (1) revisión de Opus de H-031; (2) un agente Sonnet con **H-033, H-034, H-035**
+(rama `worktree-agent-afae94126bb586f12`, copia en `.claude/worktrees/`). Si no terminaron: mirar
+`git worktree list`, revisar la rama, integrar con las pruebas y subir; si la copia quedó a medias, rehacer.
+La copia `agent-a7b9e1375a7b27ce4` es vieja (de antes de hoy): preguntar si se borra.
+**Falta del sprint 3:** H-033/034/035, **H-076** (esperando que Aarón apruebe el diseño de las plantillas 2 y 3:
+`docs/diseno/plantillas-2-y-3-pdf-vista-previa.html`), y el lote de correcciones menores de la revisión de H-030
+(`docs/arquitectura/sprint-3-envio-y-enlace.md` §12) más lo que salga de la revisión de H-031.
 
-**Ojo con el consumo:** el 2026-10-01 se alcanzó el límite semanal de uso con 5–6 agentes en paralelo.
-Trabajar con 2 a la vez como máximo.
+**Orden siguiente:** cerrar sprint 3 → **primera revisión grande de Aarón** (avisarle con: qué está listo, el
+link `http://localhost:3000` y los accesos) → sprint 4 (formulario público) → 5 equipo y permisos → 6 aprobación
+y datos de pago → 7 cobro → piloto privado.
 
-**Cómo se integra el trabajo de los subagentes:** cada uno trabaja en una copia aislada y hace commit
-en su rama; la sesión principal cierra servidores abiertos, une la rama, corre todas las pruebas,
-sube a `main` y borra la copia. Los cambios de base de datos, de a uno. Las 🔒, solas.
+**Aarón pidió (2026-10-06):** que avance solo y subiendo a `main`; él revisa **de corrido, en un bloque grande**,
+no historia por historia. Cuando haya un lote importante: decirle «tenemos esto listo (…), revisa en este link,
+estos son los accesos». Mirar siempre GitHub Actions tras cada subida.
 
-**Repositorio:** `github.com/avronygg/cotiza-prime`, privado, rama `main` (creado el 2026-10-01).
-Docker Desktop ya está abierto.
+**Cómo se prueba en pantalla:** `npm run dev` → http://localhost:3000. Accesos: `ana`, `beto`, `mixta`, `ex`
+`@ejemplo.test`, contraseña `Prueba-Cotiza-2026` (Negocio Demo 1 y 2). Correos de prueba: http://127.0.0.1:56324.
+Docker Desktop debe estar abierto y `npx supabase start` corrido. Si `supabase start` dice que faltan servicios
+(Kong), un contenedor quedó atado a una copia de trabajo borrada: `npx supabase stop` y `start`. `test:db:rollbacks`
+y `db reset` vacían la base local: volver a correr `npm run db:seed`. Playwright no corre con el servidor de
+desarrollo abierto en la misma carpeta: cerrarlo antes (puerto 3000).
 
-**Pendientes de Aarón:** aprobar la vista previa de la plantilla 1 del PDF (antes de H-028); dominio de correo (antes del sprint 3); GitHub Pro o regla del proceso para bloquear integraciones en rojo; datos de Main Brain para los términos (29 marcadores `[POR COMPLETAR]`); crear el correo de la agencia y la cuenta de
-Supabase (pruebas y producción); Vercel cuando haya que publicar; decisiones pendientes de
-`PROYECTO.md` §16.2 (dominio, quién diseña las plantillas, estudio logístico); **custodia de las
-claves de cifrado** (gestor de contraseñas y dos personas, antes del piloto; `modelo-datos.md` §12
-pregunta 5).
+**Decisiones y pendientes de Aarón:** aprobar la plantilla 1 (https://claude.ai/artifact/Ckd62T8HreUpARrfXWLYdg)
+y el diseño de las 2 y 3; **regla de enlaces ya respondidos** (rechazada: tras la vigencia solo aviso;
+aceptada: activo hasta pagada + plazo), anotada en el plan §12; decisión 016 (proveedor y dominio de correo,
+bloquea cerrar con clientes reales); si se puede revocar el enlace de una cotización ya aceptada; ratificar
+decisión 015, el tope de 15 envíos/10 min y los topes de reenvío (5/día, 20 total); fecha propuesta
+2026-11-13 para la reconciliación de envíos a medias; datos de Main Brain para los términos (29 marcadores);
+abogado; custodia de claves de cifrado; quién responde un incidente; cuentas de Supabase y Vercel; GitHub Pro.
 
-**Trampa de Windows:** `npm install` en este equipo puede borrar de `package-lock.json` las
-entradas `node_modules/@emnapi/core` y `node_modules/@emnapi/runtime`, y entonces `npm ci` falla en
-GitHub Actions. Antes de subir, confirmar que siguen ahí. Los subagentes dejan servidores de prueba
-abiertos que bloquean archivos: cerrarlos al integrar.
+**Pruebas al último integrar:** 718 unitarias, 451 de base de datos, 869 de aislamiento, unas 55 de punta a punta;
+26 migraciones. **Ojo con el consumo:** hoy hubo hasta 4 agentes a la vez; la regla sigue siendo 2 salvo que Aarón
+pida más.
 
-**Notas:** OneDrive no está sincronizando esta carpeta (verificado el 2026-10-01); no activarlo. La
-carpeta `base-tecnica/` de la raíz es la copia original de la base; preguntar si se elimina.
+**Trampas de Windows:** `npm install` puede borrar de `package-lock.json` las entradas `node_modules/@emnapi/core`
+y `@emnapi/runtime` (revisar antes de subir; `npm run lint` lo comprueba). Nunca enlazar `node_modules` de una
+copia con un acceso directo a la carpeta principal: borrar la copia podría arrastrar los archivos reales
+(si ocurre, quitar el enlace con `[System.IO.Directory]::Delete(ruta, $false)` antes de borrar). Los subagentes
+dejan servidores abiertos que bloquean archivos: cerrarlos al integrar.
+
+**Repositorio:** `github.com/avronygg/cotiza-prime`, privado, rama `main`.
 
 ## Cómo se trabaja cada historia
 

@@ -398,6 +398,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/clientes/[customerId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/clientes/[customerId]/editar", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/configuracion/actividad", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/empresa", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/marca", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/numeracion", kind: "page", scope: "tenant" },

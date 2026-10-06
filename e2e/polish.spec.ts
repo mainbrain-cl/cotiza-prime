@@ -6,8 +6,10 @@ import { createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
 /** Cierra los avisos abiertos para que ninguno quede encima de lo que se va a tocar. */
 async function dismissToasts(page: Page) {
   const closeButtons = page.locator("[data-sonner-toast] [data-close-button]");
-  for (const button of await closeButtons.all()) await button.click({ force: true });
-  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+  // Un aviso que ya se está yendo deja su botón fuera de pantalla: ese clic se puede perder sin problema.
+  for (const button of await closeButtons.all())
+    await button.click({ force: true, timeout: 1_000 }).catch(() => undefined);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
 }
 
 async function addService(page: Page, name: string) {

@@ -23,9 +23,10 @@ async function addService(
   await page.getByRole("button", { name: "Agregar al catálogo" }).click();
   await expect(page.getByText(`Agregaste "${service.name}" al catálogo.`)).toBeVisible();
   // Cierra el aviso para que no quede encima del formulario en el paso siguiente.
+  // Un aviso que ya se está yendo deja su botón fuera de pantalla: ese clic se puede perder sin problema.
   for (const button of await page.locator("[data-sonner-toast] [data-close-button]").all())
-    await button.click({ force: true });
-  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+    await button.click({ force: true, timeout: 1_000 }).catch(() => undefined);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
 }
 
 test("cargar servicios en el catálogo y verlos con el precio bien formateado", async ({ page }) => {

@@ -50,6 +50,16 @@ const nextConfig: NextConfig = {
         source,
         headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }],
       })),
+      // El enlace del cliente (H-030) lo abre cualquiera con el token: nada se guarda en cachés ni en
+      // buscadores, y al salir de la página no se manda la dirección (lleva el token) a ningún sitio.
+      ...["/c/:path*", "/api/v1/public/:path*"].map((source) => ({
+        source,
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      })),
       // La vista previa de enviar muestra el PDF dentro de la propia aplicación (iframe del mismo
       // origen): solo este archivo puede enmarcarse, y solo desde nuestras pantallas.
       {

@@ -495,7 +495,53 @@ async function buildShareData(
       pdfPath,
       createHash("sha256").update(FIXTURE_PDF).digest("hex"),
       FIXTURE_PDF.length,
-      JSON.stringify({ canary: data.canary, runId }),
+      // Una copia del documento con la forma real (la pantalla del cliente la valida entera) más las
+      // marcas de la prueba. La organización lleva el canario para reconocer de quién es lo que se ve.
+      JSON.stringify({
+        canary: data.canary,
+        runId,
+        paper: "letter",
+        brand: {
+          primary: "#2b54e0",
+          secondary: "#0f1729",
+          primaryText: "#2b54e0",
+          onPrimary: "#ffffff",
+          primaryTint: "#eaeefc",
+        },
+        organization: { name: `Empresa ${data.canary}`, detailLines: ["contacto@ejemplo.test"] },
+        quote: {
+          number: "COT-2026-0001",
+          versionLabel: null,
+          issueDate: "01-10-2026",
+          validUntil: "31-12-2026",
+          validityNote: null,
+        },
+        preparedBy: { name: "Vendedora Ficticia", detailLines: [] },
+        lines: [
+          {
+            name: `Servicio ${data.canary}`,
+            description: null,
+            exempt: false,
+            quantity: "1",
+            unit: "servicio",
+            unitPrice: "$10.000",
+            discount: "—",
+            total: "$10.000",
+          },
+        ],
+        totals: {
+          subtotal: "$10.000",
+          globalDiscount: null,
+          netTaxable: "$10.000",
+          exempt: null,
+          taxLabel: "IVA 19%",
+          tax: "$1.900",
+          total: "$11.900",
+        },
+        observations: null,
+        conditions: null,
+        paymentTerms: null,
+      }),
       createHash("sha256").update(`content-${packageId}`).digest("hex"),
       data.tenantId,
       packageId,
@@ -566,7 +612,8 @@ async function buildShareData(
   );
   // El cliente aceptó: la respuesta queda en el registro de conformidad.
   await db.query(
-    `update public.quotes set status = 'accepted', responded_at = now() where tenant_id = $1 and id = $2`,
+    `update public.quotes set status = 'accepted', responded_at = now(),
+       first_viewed_at = coalesce(first_viewed_at, now()) where tenant_id = $1 and id = $2`,
     [data.tenantId, quoteId],
   );
   await db.query(

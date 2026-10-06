@@ -50,7 +50,7 @@ const eslintConfig = defineConfig([
             {
               group: ["**/admin-client", "**/admin-client.ts"],
               message:
-                "El cliente con la llave maestra solo puede importarse desde src/lib/audit/, src/lib/security/, src/lib/brand/logo-storage.ts, src/lib/quotes/send/document-storage.ts, src/server/jobs/, scripts/ y tests/.",
+                "El cliente con la llave maestra solo puede importarse desde src/lib/audit/, src/lib/security/, src/lib/brand/logo-storage.ts, src/lib/quotes/send/document-storage.ts, src/lib/share/gateway.ts, src/server/jobs/, scripts/ y tests/.",
             },
           ],
         },
@@ -65,6 +65,8 @@ const eslintConfig = defineConfig([
       "src/lib/brand/logo-storage.ts",
       // PDF y logo congelados de cada envío (H-029): único uso de la llave maestra en cotizaciones.
       "src/lib/quotes/send/document-storage.ts",
+      // El portero del enlace del cliente (H-030, decisión 017): tres funciones y el PDF congelado.
+      "src/lib/share/gateway.ts",
       "src/server/jobs/**",
       "scripts/**",
       "tests/**",

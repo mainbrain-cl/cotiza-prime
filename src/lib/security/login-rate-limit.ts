@@ -58,6 +58,15 @@ export const PDF_MAX_PER_TENANT_PER_WINDOW = 30;
 export const PDF_WINDOW_SECONDS = SECONDS_PER_MINUTE;
 export const PDF_LOCK_SECONDS = SECONDS_PER_MINUTE;
 
+/**
+ * Enlace del cliente (H-030): lecturas permitidas por minuto desde una misma IP y sobre un mismo
+ * enlace. El pedido número N+1 es el que bloquea. Siempre con huellas: nunca la IP ni el token.
+ */
+export const SHARE_MAX_READS_PER_IP_PER_WINDOW = 60;
+export const SHARE_MAX_READS_PER_LINK_PER_WINDOW = 30;
+export const SHARE_WINDOW_SECONDS = SECONDS_PER_MINUTE;
+export const SHARE_LOCK_SECONDS = SECONDS_PER_MINUTE;
+
 export type RateLimitScope =
   | "login_email"
   | "login_ip"
@@ -66,7 +75,9 @@ export type RateLimitScope =
   | "reset_email"
   | "reset_ip"
   | "pdf_user"
-  | "pdf_tenant";
+  | "pdf_tenant"
+  | "share_ip"
+  | "share_token";
 
 /**
  * La tabla `auth_rate_limits` solo admite ciertos valores en su columna `scope`. Los pedidos de
@@ -83,6 +94,8 @@ const STORAGE_SCOPE: Record<RateLimitScope, string> = {
   reset_ip: "signup_ip",
   pdf_user: "pdf_user",
   pdf_tenant: "pdf_tenant",
+  share_ip: "share_ip",
+  share_token: "share_token",
 };
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
@@ -130,6 +143,16 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: PDF_MAX_PER_TENANT_PER_WINDOW + 1,
     windowSeconds: PDF_WINDOW_SECONDS,
     lockSeconds: PDF_LOCK_SECONDS,
+  },
+  share_ip: {
+    maxFailures: SHARE_MAX_READS_PER_IP_PER_WINDOW + 1,
+    windowSeconds: SHARE_WINDOW_SECONDS,
+    lockSeconds: SHARE_LOCK_SECONDS,
+  },
+  share_token: {
+    maxFailures: SHARE_MAX_READS_PER_LINK_PER_WINDOW + 1,
+    windowSeconds: SHARE_WINDOW_SECONDS,
+    lockSeconds: SHARE_LOCK_SECONDS,
   },
 };
 
@@ -319,4 +342,25 @@ export async function consumePdfQuota(userId: string, tenantId: string): Promise
   // Primero la persona: quien ya está bloqueado no gasta el cupo de la organización.
   if (await failOpen("pdf_quota_user", false, () => recordAll([user]))) return false;
   return !(await failOpen("pdf_quota_tenant", false, () => recordAll([tenant])));
+}
+
+/**
+ * ¿Puede esta lectura del enlace del cliente seguir (H-030)? Cuenta el pedido contra dos límites:
+ * la IP (si se conoce) y el enlace, y responde `false` si alguno ya está bloqueado. Las claves son
+ * huellas: de la IP agrupada y del sello (sha256) del enlace, nunca el token ni la IP en claro. Si el
+ * contador falla, se deja pasar y se avisa en el log (igual que el resto del limitador).
+ */
+export async function consumeShareQuota(ip: string | null, tokenSha256: string): Promise<boolean> {
+  if (ip) {
+    const byIp: Target = {
+      scope: "share_ip",
+      keyHash: searchHash("share_ip", PLATFORM_TENANT_ID, ipLimitKey(ip)),
+    };
+    if (await failOpen("share_quota_ip", false, () => recordAll([byIp]))) return false;
+  }
+  const byLink: Target = {
+    scope: "share_token",
+    keyHash: searchHash("share_token", PLATFORM_TENANT_ID, tokenSha256),
+  };
+  return !(await failOpen("share_quota_link", false, () => recordAll([byLink])));
 }

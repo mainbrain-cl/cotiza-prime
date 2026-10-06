@@ -430,6 +430,9 @@ describe("save_quote_draft · guardado", () => {
       const q = await createQuote();
       await db.query("update public.quotes set status = 'sent' where id = $1", [q.id]);
       expect((await saveError(sales, q.id, 1, [item()])).code).toBe("CP423");
+      // 'sent' -> 'changes_requested' no es un cambio permitido hoy (migración 21): se apaga la regla
+      // dentro de esta transacción, que se deshace, solo para probar que ese estado sí se edita.
+      await db.query("alter table public.quotes disable trigger quotes_status_transition_guard");
       await db.query("update public.quotes set status = 'changes_requested' where id = $1", [q.id]);
       expect((await save(sales, q.id, 1, [item()])).revision).toBe(2);
     });
@@ -699,7 +702,8 @@ describe("restricciones y permisos de las tablas", () => {
       expect(await bad("global_discount_kind = 'amount', global_discount_value = 1")).toBe(
         CHECK_VIOLATION,
       );
-      expect(await bad("status = 'inventado'")).toBe(CHECK_VIOLATION);
+      // Desde la migración 21 la regla de cambios de estado actúa antes que la lista de estados.
+      expect(await bad("status = 'inventado'")).toBe(INSUFFICIENT_PRIVILEGE);
       expect(await bad("tenant_id = gen_random_uuid()")).toBe(INSUFFICIENT_PRIVILEGE);
     });
   });

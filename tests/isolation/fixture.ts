@@ -7,7 +7,7 @@
 // NUNCA se usan para atacar.
 //
 // No se borra nada al terminar (la auditoría es de solo agregar): cada ejecución usa su `runId`.
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { buildCustomerInsertRow } from "@/lib/customers/record";
 import { calculateQuote } from "@/lib/quotes/calc";
@@ -59,6 +59,11 @@ export const FIXTURE_LOGO_PNG = Uint8Array.from(
   (c) => c.charCodeAt(0),
 );
 export const LOGO_BUCKET = "tenant-logos";
+export const QUOTE_DOCUMENTS_BUCKET = "quote-documents";
+/** PDF mínimo (no hace falta que se abra): es el "documento congelado" de la fixture. */
+export const FIXTURE_PDF = new TextEncoder().encode(
+  "%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
+);
 
 export interface OrgData {
   tenantId: string;
@@ -71,6 +76,19 @@ export interface OrgData {
   catalogIds: string[];
   /** Cotizaciones de la organización (con líneas cuyo nombre lleva el canario). A y B tienen una. */
   quoteIds: string[];
+  /** Cotización enviada con paquete y enlace (A y B; C no tiene). */
+  share: ShareData | null;
+}
+
+/** Una cotización ya enviada, con su paquete congelado y su enlace (solo A y B). */
+export interface ShareData {
+  quoteId: string;
+  packageId: string;
+  shareLinkId: string;
+  /** El token en claro (en producción solo viaja en el correo): sirve para atacar "como cliente". */
+  token: string;
+  tokenSha256: string;
+  pdfPath: string;
 }
 
 export interface IsolationFixture {
@@ -186,6 +204,7 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       customerIds: [],
       catalogIds: [],
       quoteIds: [],
+      share: null,
     };
   }
 
@@ -360,6 +379,11 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     );
     orgs[key].quoteIds.push(quoteId);
   }
+  // Una cotización enviada (paquete congelado, enlace y aperturas) en A y en B. Se monta con `pg`:
+  // las funciones de envío necesitan al servidor de la aplicación, y esto solo prepara los datos.
+  for (const key of ["A", "B"] as const) {
+    orgs[key].share = await buildShareData(db, key, orgs[key], personas[owners[key]], runId);
+  }
   // C: un cliente, y luego se archiva
   {
     const id = randomUUID();
@@ -401,6 +425,91 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     platformAuditId: Number(audit.rows[0].id),
     rateLimitKeyHash,
   };
+}
+
+async function buildShareData(
+  db: Client,
+  key: "A" | "B",
+  data: OrgData,
+  owner: Persona,
+  runId: string,
+): Promise<ShareData> {
+  const headers = org(data.tenantId);
+  const created = await mustOk<{ quote_id: string }[]>(
+    rpc(
+      owner.session.accessToken,
+      "create_quote",
+      { p_customer_id: data.customerIds[0], p_creation_key: randomUUID() },
+      headers,
+    ),
+    `create_quote (enviada) ${key}`,
+  );
+  const quoteId = created[0].quote_id;
+  const packageId = randomUUID();
+  const shareLinkId = randomUUID();
+  const token = randomBytes(32).toString("base64url");
+  const tokenSha256 = createHash("sha256").update(token).digest("hex");
+  const pdfPath = `${data.tenantId}/${quoteId}/${packageId}.pdf`;
+  const { secretKey } = localEnv();
+  await mustOk(
+    storage(secretKey, "POST", `object/${QUOTE_DOCUMENTS_BUCKET}/${pdfPath}`, {
+      headers: { apikey: secretKey },
+      body: FIXTURE_PDF,
+      contentType: "application/pdf",
+    }),
+    `pdf congelado ${key}`,
+  );
+  await db.query(
+    `insert into public.quote_packages
+       (id, tenant_id, quote_id, send_key, issue_date, valid_until, email_subject, email_body_md,
+        customer_snapshot_enc, created_by)
+     values ($1, $2, $3, $4, app.current_business_date(), app.current_business_date() + 15, $5, $6, 'v1.fixture.fixture', $7)`,
+    [
+      packageId,
+      data.tenantId,
+      quoteId,
+      randomUUID(),
+      `Cotización ${data.canary}`,
+      `Texto del correo ${data.canary}`,
+      owner.userId,
+    ],
+  );
+  await db.query(
+    `update public.quote_packages set pdf_path = $1, pdf_sha256 = $2, pdf_bytes = $3,
+       document_snapshot = $4::jsonb, content_sha256 = $5, state = 'ready'
+     where tenant_id = $6 and id = $7`,
+    [
+      pdfPath,
+      createHash("sha256").update(FIXTURE_PDF).digest("hex"),
+      FIXTURE_PDF.length,
+      JSON.stringify({ canary: data.canary, runId }),
+      createHash("sha256").update(`content-${packageId}`).digest("hex"),
+      data.tenantId,
+      packageId,
+    ],
+  );
+  await db.query(
+    `update public.quote_packages set state = 'sent' where tenant_id = $1 and id = $2`,
+    [data.tenantId, packageId],
+  );
+  await db.query(
+    `insert into public.share_links
+       (id, tenant_id, quote_id, package_id, email_message_id, token_sha256, activated_at,
+        first_viewed_at, last_viewed_at, view_count)
+     values ($1, $2, $3, $4, $5, $6, now(), now(), now(), 1)`,
+    [shareLinkId, data.tenantId, quoteId, packageId, randomUUID(), tokenSha256],
+  );
+  await db.query(
+    `insert into public.share_link_views (tenant_id, share_link_id, ip_enc, user_agent_short)
+     values ($1, $2, 'v1.fixture.fixture', $3)`,
+    [data.tenantId, shareLinkId, `Agente ${data.canary}`],
+  );
+  await db.query(
+    `update public.quotes set status = 'sent', sent_at = now(), valid_until = app.current_business_date() + 15,
+       current_package_id = $1 where tenant_id = $2 and id = $3`,
+    [packageId, data.tenantId, quoteId],
+  );
+  return { quoteId, packageId, shareLinkId, token, tokenSha256, pdfPath };
 }
 
 /** Quita a "ex" de la organización A (el camino real todavía no existe: llega en el sprint 4). */

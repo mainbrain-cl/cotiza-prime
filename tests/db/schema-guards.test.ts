@@ -44,6 +44,9 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
         "catalog_items",
         "customers",
         "auth_rate_limits",
+        "quote_packages",
+        "share_links",
+        "share_link_views",
       ]),
     );
   });

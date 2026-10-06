@@ -485,6 +485,10 @@ export const SERVER_ONLY_FUNCTIONS = [
   "auth_limit_locked_until",
   "auth_limit_record_failure",
   "auth_limit_clear",
+  // Sprint 3: el portero del enlace del cliente (decisión 017)
+  "share_link_read",
+  "share_link_record_view",
+  "share_link_respond",
 ];
 
 /**

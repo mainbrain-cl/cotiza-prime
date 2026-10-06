@@ -1,5 +1,6 @@
 // H-012 · Funciones expuestas por la API (RPC), el esquema interno y los servicios de Auth.
 // Ataques A13, A13b, A14, A15, A16 y X6. Siempre con pases reales y `fetch` directo.
+import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { localEnv, rest, rpc } from "../support/local-supabase";
@@ -109,6 +110,25 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
         p_lock_seconds: 1,
       },
       auth_limit_clear: { p_scope: "login_ip", p_key_hash: "0".repeat(64) },
+      share_link_read: { p_token_sha256: "0".repeat(64) },
+      share_link_record_view: {
+        p_token_sha256: "0".repeat(64),
+        p_ip_enc: null,
+        p_user_agent: null,
+      },
+      share_link_respond: {
+        p_token_sha256: "0".repeat(64),
+        p_response_id: randomUUID(),
+        p_response_key: randomUUID(),
+        p_decision: "accepted",
+        p_acceptor_name_enc: "x",
+        p_reason_code: null,
+        p_reason_text_enc: null,
+        p_ip_enc: null,
+        p_origin_ip: null,
+        p_user_agent: null,
+        p_acceptance_text_version: "v1",
+      },
     };
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {

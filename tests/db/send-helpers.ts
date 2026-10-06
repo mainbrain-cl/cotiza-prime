@@ -189,3 +189,91 @@ export async function readyPackage(
     ],
   );
 }
+
+/** Pasa a actuar como el servidor de la aplicación (llave maestra): `service_role`, sin sesión de persona. */
+export async function actAsService(client: Client): Promise<void> {
+  await client.query("reset role");
+  await client.query(`select set_config('request.jwt.claims', '', true)`);
+  await client.query(`select set_config('request.jwt.claim.sub', '', true)`);
+  await client.query(`select set_config('request.headers', '{}', true)`);
+  await client.query("set local role service_role");
+}
+
+export interface SentQuote {
+  quoteId: string;
+  packageId: string;
+  emailId: string;
+  linkId: string;
+  token: string;
+  sha: string;
+  /** Sello del contenido congelado del paquete. */
+  contentSha: string;
+}
+
+/**
+ * Envía una cotización de punta a punta por las funciones reales (preparar, subir el PDF, adjuntar,
+ * confirmar) y devuelve su enlace ya activo. Se espera dentro de una transacción.
+ */
+export async function sendQuoteAs(
+  db: Client,
+  author: TestUser,
+  tenantId: string,
+  customerId: string,
+): Promise<SentQuote> {
+  const quoteId = await createQuote(db, author, tenantId, customerId);
+  const { rows: rev } = await db.query<{ revision: number }>(
+    "select revision from public.quotes where id = $1",
+    [quoteId],
+  );
+  const packageId = randomUUID();
+  const emailId = randomUUID();
+  const linkId = randomUUID();
+  const { token, sha } = newToken();
+  const contentSha = sha256Hex(`contenido-${packageId}`);
+  await asUser(db, author, tenantId);
+  await db.query(
+    "select public.prepare_quote_send($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    [
+      quoteId,
+      rev[0].revision,
+      randomUUID(),
+      packageId,
+      emailId,
+      linkId,
+      sha,
+      "Su cotización",
+      "Hola",
+      "v1.to.to",
+      sha256Hex("cliente@ejemplo.test"),
+      "v1.snap.snap",
+    ],
+  );
+  await actAsPostgres(db);
+  const pdfPath = `${tenantId}/${quoteId}/${packageId}.pdf`;
+  await db.query(
+    "insert into storage.objects (bucket_id, name, metadata) values ('quote-documents', $1, $2::jsonb)",
+    [pdfPath, JSON.stringify({ size: 1234 })],
+  );
+  await asUser(db, author, tenantId);
+  await db.query("select public.attach_quote_package_document($1, $2, $3, $4, $5, $6::jsonb, $7)", [
+    packageId,
+    pdfPath,
+    sha256Hex("pdf"),
+    1234,
+    null,
+    JSON.stringify({
+      organization: {
+        name: "Negocio Ficticio",
+        detailLines: ["RUT 76.086.428-5", "contacto@ejemplo.test"],
+      },
+      quote: { number: "COT-0001" },
+    }),
+    contentSha,
+  ]);
+  await db.query("select public.confirm_email_dispatch($1, 'memory', $2)", [
+    emailId,
+    `prov-${emailId}`,
+  ]);
+  await actAsPostgres(db);
+  return { quoteId, packageId, emailId, linkId, token, sha, contentSha };
+}

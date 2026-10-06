@@ -1,7 +1,8 @@
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Send } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { buttonVariants } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { maskEmail } from "@/lib/customers/mask";
@@ -16,16 +17,21 @@ import {
   toBadgeStatus,
 } from "@/lib/quotes/format";
 import { getQuote } from "@/lib/quotes/queries";
+import { listQuoteTimeline } from "@/lib/quotes/timeline";
 import { editorValidity } from "@/lib/quotes/editor-model";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
+import { cn } from "@/lib/utils";
 import { QuoteEditor } from "./quote-editor";
 import { QuoteReadOnly } from "./quote-read-only";
+import { QuoteTimeline } from "./quote-timeline";
+import { ResendButton } from "./resend-button";
 
 export const metadata: Metadata = { title: "Cotización · Cotiza Prime" };
 
 const DEFAULT_VALIDITY_DAYS_FALLBACK = 15;
 const WRITER_ROLES = ["owner", "admin", "sales"];
+const RESENDABLE_STATUSES = ["sent", "viewed"];
 
 export default async function QuotePage({
   params,
@@ -48,6 +54,12 @@ export default async function QuotePage({
   const statusAllowsEdit = EDITABLE_STATUSES.includes(quote.status);
   const editable = WRITER_ROLES.includes(active.role) && isAuthor && statusAllowsEdit;
   const listPath = tenantPath(active.tenantId, "cotizaciones");
+  const sendPath = tenantPath(active.tenantId, `cotizaciones/${quote.id}/enviar`);
+  // Reenvía el autor, el Dueño o un Administrador (la base lo vuelve a verificar).
+  const canResend =
+    RESENDABLE_STATUSES.includes(quote.status) &&
+    ((WRITER_ROLES.includes(active.role) && isAuthor) || ["owner", "admin"].includes(active.role));
+  const timeline = await listQuoteTimeline(active, quote.id);
 
   let readOnlyReason: string | null = null;
   if (!editable) {
@@ -102,6 +114,21 @@ export default async function QuotePage({
             {formatQuoteNumber(quote.number_display, quote.version)}
           </h1>
           <StatusBadge status={toBadgeStatus(quote.status)} />
+          {editable && quote.status === "draft" ? (
+            <Link
+              href={sendPath}
+              data-testid="go-send"
+              className={cn(buttonVariants({ variant: "primary" }), "md:ml-auto")}
+            >
+              <Send aria-hidden />
+              Enviar al cliente
+            </Link>
+          ) : null}
+          {canResend ? (
+            <div className="md:ml-auto">
+              <ResendButton tenantId={active.tenantId} quoteId={quote.id} />
+            </div>
+          ) : null}
         </div>
         <p className="text-fg-muted">
           Para <strong className="text-fg">{customerName}</strong>
@@ -130,6 +157,8 @@ export default async function QuotePage({
           inactiveCatalogIds={inactiveCatalogIds}
         />
       )}
+
+      <QuoteTimeline entries={timeline} />
     </div>
   );
 }

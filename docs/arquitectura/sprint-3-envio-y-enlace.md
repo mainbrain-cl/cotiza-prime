@@ -364,3 +364,19 @@ migración 26 (`20261006150000_sprint3_review_fixes.sql`).
 - **Menores.** Responder fija `first_viewed_at`; las funciones del enlace rechazan con la organización
   archivada; un enlace anulado no se activa; `expire_due_quotes` vacía el lote y limpia
   `cron.job_run_details` de más de 7 días.
+
+## 10. H-029 construida (2026-10-06): lo que se hizo distinto o quedó pendiente
+
+- **Pantalla propia de enviar** (`/o/{id}/cotizaciones/{id}/enviar`), con el correo y el PDF lado a
+  lado. El PDF se enmarca con el mismo endpoint interno; solo ese archivo lleva
+  `X-Frame-Options: SAMEORIGIN` y `frame-ancestors 'self'` (el resto de la aplicación sigue en `DENY`).
+- **«Responder a»** se sumó al contrato de correo (`replyTo`, en los adaptadores mailpit y resend):
+  contacto de la organización o, si no tiene, el correo de quien envía.
+- **Reenvío:** la clave del reenvío es el id del correo (`p_email_message_id = resendKey`), así un
+  doble clic no crea otro. Usa el correo ACTUAL de la ficha del cliente.
+- **Historial** de la cotización (solo lectura) en su pantalla, con los eventos `sent`, `send_failed`
+  y `resent` que ya registran las funciones de la base.
+- **Pendiente:** tope de intentos `quote_send_user` (el valor existe en la base, sin uso aún); la
+  tarea de reconciliación (paquetes en `ready` y correos aceptados por el proveedor pero no
+  confirmados en la base: hoy se registra en el log y se avisa en pantalla); los avisos simulados de
+  rebote (`simulatedEvents`) no se aplican hasta H-033.

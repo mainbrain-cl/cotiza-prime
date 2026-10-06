@@ -34,6 +34,8 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["@react-pdf/renderer"],
   outputFileTracingIncludes: {
     "/api/v1/tenants/[tenantId]/quotes/[quoteId]/pdf": ["./src/lib/pdf/fonts/**/*"],
+    // El envío (H-029) arma el PDF dentro de una acción de la pantalla de enviar.
+    "/o/[tenantId]/cotizaciones/[quoteId]/enviar": ["./src/lib/pdf/fonts/**/*"],
   },
   experimental: {
     // El logo (hasta 1 MB, LOGO_MAX_BYTES) viaja en el formulario de Marca; el límite por defecto es 1 MB.
@@ -48,6 +50,16 @@ const nextConfig: NextConfig = {
         source,
         headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }],
       })),
+      // La vista previa de enviar muestra el PDF dentro de la propia aplicación (iframe del mismo
+      // origen): solo este archivo puede enmarcarse, y solo desde nuestras pantallas.
+      {
+        source: "/api/v1/tenants/:tenantId/quotes/:quoteId/pdf",
+        headers: [
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          // Un PDF no ejecuta nada: basta con limitar quién puede enmarcarlo.
+          { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+        ],
+      },
       // El logo es un archivo de una organización: política propia y estricta, más fuerte que la general.
       {
         source: "/api/v1/tenants/:tenantId/logo",

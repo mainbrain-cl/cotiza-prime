@@ -1,0 +1,123 @@
+import { ChevronLeft } from "lucide-react";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound, redirect } from "next/navigation";
+import { buttonVariants } from "@/components/ui/button";
+import { FormAlert } from "@/components/ui/form-controls";
+import { maskEmail } from "@/lib/customers/mask";
+import { getCustomer } from "@/lib/customers/queries";
+import { resolvePdfBrand } from "@/lib/pdf/brand-colors";
+import { formatQuoteNumber } from "@/lib/quotes/format";
+import { getQuote } from "@/lib/quotes/queries";
+import { defaultEmailBody, defaultEmailSubject } from "@/lib/quotes/send/content";
+import { loadSendContext } from "@/lib/quotes/send/context";
+import { requireActiveTenant } from "@/lib/tenant/active-tenant";
+import { tenantPath } from "@/lib/tenant/constants";
+import { cn } from "@/lib/utils";
+import { SendQuoteForm } from "./send-quote-form";
+
+export const metadata: Metadata = { title: "Enviar cotización · Cotiza Prime" };
+// Enviar arma el PDF en el servidor (hasta decenas de segundos con muchas líneas).
+export const maxDuration = 60;
+
+const WRITER_ROLES = ["owner", "admin", "sales"];
+
+export default async function SendQuotePage({
+  params,
+}: PageProps<"/o/[tenantId]/cotizaciones/[quoteId]/enviar">) {
+  const { tenantId, quoteId } = await params;
+  const active = await requireActiveTenant(tenantId);
+  const detail = await getQuote(active, quoteId);
+  if (detail === null) notFound();
+  const { quote, items, authorName } = detail;
+  const quotePath = tenantPath(active.tenantId, `cotizaciones/${quote.id}`);
+
+  // Ya enviada (o en otro estado): no hay nada que redactar; se vuelve a la cotización.
+  if (quote.status !== "draft") redirect(quotePath);
+
+  const customer = await getCustomer(active, quote.customer_id);
+  const context = await loadSendContext(active);
+  const customerName =
+    customer === null || customer === "unreadable" ? "Cliente" : customer.displayName;
+  const customerEmail =
+    customer !== null && customer !== "unreadable" ? (customer.email ?? null) : null;
+
+  // Lo que impide enviar, dicho con claridad (la acción de enviar lo vuelve a verificar).
+  let blocker: string | null = null;
+  if (!WRITER_ROLES.includes(active.role)) blocker = "Tu rol no permite enviar cotizaciones.";
+  else if (quote.created_by !== active.userId) {
+    blocker = `Solo ${authorName} puede enviar este borrador. Tú puedes verlo.`;
+  } else if (items.length === 0) {
+    blocker = "Agrega al menos una línea a la cotización antes de enviarla.";
+  } else if (customer === "unreadable") {
+    blocker = "No pudimos leer los datos del cliente. Revisa su ficha.";
+  } else if (!customerEmail) {
+    blocker =
+      "Este cliente no tiene correo. Agrégalo en su ficha para poder enviarle la cotización.";
+  } else if (context === null) {
+    blocker = "No pudimos cargar los datos de tu organización. Intenta de nuevo en unos minutos.";
+  }
+
+  const brand = context ? resolvePdfBrand(context.brandPrimary, context.brandSecondary) : null;
+  const number = formatQuoteNumber(quote.number_display, quote.version);
+  return (
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-col gap-3">
+        <Link
+          href={quotePath}
+          className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
+        >
+          <ChevronLeft aria-hidden className="size-4" />
+          Volver a la cotización
+        </Link>
+        <h1 className="text-xl md:text-2xl">
+          Enviar <span className="font-mono">{number}</span>
+        </h1>
+        <p className="text-fg-muted">
+          Se envía lo que tienes guardado en la cotización. Revisa el correo y el PDF antes de
+          enviar.
+        </p>
+      </header>
+
+      {blocker ? (
+        <div className="flex flex-col gap-3" data-testid="send-blocker">
+          <FormAlert tone="warning">{blocker}</FormAlert>
+          <div className="flex flex-wrap gap-2">
+            <Link href={quotePath} className={cn(buttonVariants({ variant: "secondary" }))}>
+              Volver a la cotización
+            </Link>
+            {customer !== null && customer !== "unreadable" && !customerEmail ? (
+              <Link
+                href={tenantPath(active.tenantId, `clientes/${quote.customer_id}/editar`)}
+                className={cn(buttonVariants({ variant: "secondary" }))}
+              >
+                Agregar el correo del cliente
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      ) : context && brand && customerEmail ? (
+        <SendQuoteForm
+          tenantId={active.tenantId}
+          quoteId={quote.id}
+          expectedRevision={quote.revision}
+          quotePath={quotePath}
+          initialSubject={defaultEmailSubject(quote.number_display, context.organizationName)}
+          initialBody={defaultEmailBody({
+            customerName,
+            authorName,
+            organizationName: context.organizationName,
+          })}
+          organizationName={context.organizationName}
+          brandPrimary={brand.primary}
+          brandOnPrimary={brand.onPrimary}
+          brandText={brand.primaryText}
+          customerName={customerName}
+          maskedRecipient={maskEmail(customerEmail)}
+          replyTo={context.contactEmail ?? (active.user.email || null)}
+          pdfSrc={`/api/v1/tenants/${active.tenantId}/quotes/${quote.id}/pdf?size=letter`}
+        />
+      ) : null}
+    </div>
+  );
+}

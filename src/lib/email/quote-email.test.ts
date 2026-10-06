@@ -43,6 +43,15 @@ describe("buildQuoteEmail", () => {
     expect(message.idempotencyKey).toBe("id-1");
   });
 
+  it("lleva «Responder a» cuando se da, y rechaza uno inválido", () => {
+    expect(built({ replyTo: "contacto@ejemplo.test" }).replyTo).toBe("contacto@ejemplo.test");
+    expect(built().replyTo).toBeUndefined();
+    expect(buildQuoteEmail(input({ replyTo: "no-es-correo" }))).toEqual({
+      ok: false,
+      code: "invalid_recipient",
+    });
+  });
+
   it("no incluye datos bancarios", () => {
     const { html, text } = built();
     for (const word of [/banco/i, /cuenta/i, /transferencia/i, /titular/i]) {

@@ -25,6 +25,10 @@ function isValidMessage(message: EmailMessage): boolean {
   if (message.from.name.length === 0 || /[<>"]/.test(message.from.name)) return false;
   if (!emailSchema.safeParse(message.from.address).success) return false;
   if (!emailSchema.safeParse(message.to).success) return false;
+  if (message.replyTo !== undefined) {
+    if (CONTROL_CHARACTERS.test(message.replyTo)) return false;
+    if (!emailSchema.safeParse(message.replyTo).success) return false;
+  }
   if (message.html.length > MAX_HTML_LENGTH) return false;
   const attachments = message.attachments ?? [];
   if (attachments.length > MAX_ATTACHMENTS) return false;

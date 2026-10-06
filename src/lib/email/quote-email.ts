@@ -38,6 +38,8 @@ export type QuoteEmailInput = {
   brandPrimary: string | null;
   brandSecondary: string | null;
   recipientAddress: string;
+  /** «Responder a»: contacto de la organización o, si no tiene, el correo del autor. Opcional. */
+  replyTo?: string;
   /** Si no viene, se usa `Cotización {número} de {organización}`. */
   subject?: string;
   quoteNumber: string;
@@ -96,6 +98,9 @@ export function buildQuoteEmail(input: QuoteEmailInput): QuoteEmailResult {
   }
   if (!emailSchema.safeParse(input.fromAddress).success)
     return { ok: false, code: "invalid_sender" };
+  if (input.replyTo !== undefined && !emailSchema.safeParse(input.replyTo).success) {
+    return { ok: false, code: "invalid_recipient" };
+  }
 
   const senderName = cleanSenderName(input.organizationName);
   const quoteNumber = input.quoteNumber.replace(CONTROL_CHARACTERS_GLOBAL, " ").trim();
@@ -143,6 +148,7 @@ export function buildQuoteEmail(input: QuoteEmailInput): QuoteEmailResult {
     message: {
       from: { name: senderName, address: input.fromAddress },
       to: input.recipientAddress,
+      replyTo: input.replyTo,
       subject,
       html,
       text,

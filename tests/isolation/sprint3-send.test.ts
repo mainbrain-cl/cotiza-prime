@@ -1,6 +1,6 @@
 // Sprint 3 · Ataques 1 y 2: las funciones de envío no actúan sobre datos de otra organización.
 // Siempre con pases reales y `fetch` directo; `pg` solo sirve para verificar que B no cambió.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { calculateQuote } from "@/lib/quotes/calc";
@@ -178,6 +178,8 @@ describe("Ataque 2 · adjuntar un documento con la ruta de otra organización", 
     const fx = fixture();
     const token = await tokenOf("ana");
     const headers = tenantHeader(fx.orgs.A.tenantId);
+    // Sello al azar: el sello del enlace es único en toda la base y la prueba puede repetirse.
+    const attackToken = createHash("sha256").update(randomUUID()).digest("hex");
     const { quoteId, revision } = await anasFreshQuote();
     const packageId = randomUUID();
     const emailId = randomUUID();
@@ -191,7 +193,7 @@ describe("Ataque 2 · adjuntar un documento con la ruta de otra organización", 
         p_package_id: packageId,
         p_email_message_id: emailId,
         p_share_link_id: randomUUID(),
-        p_token_sha256: "c".repeat(64),
+        p_token_sha256: attackToken,
         p_email_subject: "Mi cotización",
         p_email_body_md: "Hola",
         p_to_email_enc: "v1.x.y",
@@ -216,7 +218,7 @@ describe("Ataque 2 · adjuntar un documento con la ruta de otra organización", 
           p_logo_path: null,
           p_document_snapshot: { ataque: true },
           p_content_sha256: "b".repeat(64),
-          p_token_sha256: "c".repeat(64),
+          p_token_sha256: attackToken,
         },
         headers,
       );
@@ -241,7 +243,7 @@ describe("Ataque 2 · adjuntar un documento con la ruta de otra organización", 
     const failed = await rpc(
       token,
       "fail_email_dispatch",
-      { p_email_message_id: emailId, p_error_code: "test_cleanup", p_token_sha256: "c".repeat(64) },
+      { p_email_message_id: emailId, p_error_code: "test_cleanup", p_token_sha256: attackToken },
       headers,
     );
     expect(failed.status, failed.text).toBeLessThan(300);

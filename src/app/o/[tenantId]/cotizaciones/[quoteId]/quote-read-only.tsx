@@ -110,7 +110,7 @@ export function QuoteReadOnly({
             taxRateBp: quote.tax_rate_bp,
           }}
         />
-        <PdfActions tenantId={tenantId} quoteId={quote.id} />
+        <PdfActions tenantId={tenantId} quoteId={quote.id} sent={quote.status !== "draft"} />
       </aside>
     </div>
   );

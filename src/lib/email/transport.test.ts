@@ -139,6 +139,8 @@ describe("reglas comunes de envío", () => {
       { from: { name: 'Nombre"', address: "a@ejemplo.test" } },
       { from: { name: "Nombre", address: "a@ejemplo.test\r\n" } },
       { to: "no-es-correo" },
+      { replyTo: "no-es-correo" },
+      { replyTo: "a@ejemplo.test\r\nBcc: x@y.cl" },
       {
         attachments: [
           { filename: "../a.pdf", contentType: "application/pdf", content: new Uint8Array(1) },
@@ -194,7 +196,19 @@ describe("adaptador mailpit", () => {
     const body = JSON.parse(String(init?.body));
     expect(body.From).toEqual({ Email: "cotizaciones@ejemplo.test", Name: "Negocio Demo" });
     expect(body.Attachments[0]).toMatchObject({ Filename: "a.pdf", Content: "AQID" });
+    expect(body.ReplyTo).toBeUndefined();
     expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("manda «Responder a» cuando el mensaje lo trae", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ID: "abc" }), { status: 200 }));
+    await createMailpitTransport("http://127.0.0.1:56324").send(
+      message({ replyTo: "contacto@ejemplo.test" }),
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.ReplyTo).toEqual([{ Email: "contacto@ejemplo.test" }]);
   });
 
   it("clasifica fallos: 5xx reintentable, 4xx no, red y tiempo agotado", async () => {

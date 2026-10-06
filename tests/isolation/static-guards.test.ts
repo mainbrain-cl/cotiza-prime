@@ -41,6 +41,7 @@ describe("guardias estáticas del aislamiento", () => {
       "src/lib/audit/",
       "src/lib/security/",
       "src/lib/brand/logo-storage.ts",
+      "src/lib/quotes/send/document-storage.ts",
       "src/server/jobs/",
     ];
     const offenders = sourceFiles

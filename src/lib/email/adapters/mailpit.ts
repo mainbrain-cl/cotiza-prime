@@ -11,6 +11,7 @@ export function createMailpitTransport(apiUrl: string): EmailTransport {
       const body = {
         From: { Email: message.from.address, Name: message.from.name },
         To: [{ Email: message.to }],
+        ...(message.replyTo ? { ReplyTo: [{ Email: message.replyTo }] } : {}),
         Subject: message.subject,
         HTML: message.html,
         Text: message.text,

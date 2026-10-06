@@ -55,6 +55,9 @@ export default defineConfig({
       CP_SEARCH_KEY_V1: process.env.CP_SEARCH_KEY_V1!,
       NEXT_PUBLIC_APP_ENV: "test",
       APP_ORIGIN: `http://localhost:${PORT}`,
+      // Los correos de las pruebas salen a Mailpit (http://127.0.0.1:56324), nunca a un proveedor real.
+      EMAIL_PROVIDER: "mailpit",
+      MAILPIT_API_URL: process.env.MAILPIT_URL ?? "http://127.0.0.1:56324",
     },
     reuseExistingServer: false,
     timeout: WEB_SERVER_STARTUP_TIMEOUT_MS,

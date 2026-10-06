@@ -45,11 +45,14 @@ describe(
 
       const lib = await messagesFor(code, "src/lib/customers/otro.ts");
       expect(lib.some((m) => m.ruleId === "no-restricted-imports")).toBe(true);
+      const sendSibling = await messagesFor(code, "src/lib/quotes/send/actions.ts");
+      expect(sendSibling.some((m) => m.ruleId === "no-restricted-imports")).toBe(true);
 
       for (const allowed of [
         "src/lib/audit/otro.ts",
         "src/lib/security/otro.ts",
         "src/lib/brand/logo-storage.ts",
+        "src/lib/quotes/send/document-storage.ts",
         "src/server/jobs/tarea.ts",
         "scripts/semilla.mjs",
         "tests/db/x.ts",

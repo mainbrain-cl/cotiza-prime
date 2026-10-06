@@ -23,6 +23,8 @@ export type EmailMessage = {
   from: EmailAddress;
   /** Un solo destinatario por mensaje: cada correo queda registrado y se sigue por separado. */
   to: string;
+  /** Dirección a la que llegan las respuestas del cliente (contacto de la organización o del autor). */
+  replyTo?: string;
   subject: string;
   html: string;
   text: string;

@@ -18,10 +18,13 @@ export function PdfActions({
   tenantId,
   quoteId,
   unsaved = false,
+  sent = false,
 }: {
   tenantId: string;
   quoteId: string;
   unsaved?: boolean;
+  /** Ya se envió: el PDF es el archivo congelado que recibió el cliente. */
+  sent?: boolean;
 }) {
   const [paper, setPaper] = useState<PdfPaperSize>("letter");
   const base = `/api/v1/tenants/${tenantId}/quotes/${quoteId}/pdf?size=${paper}`;
@@ -74,9 +77,11 @@ export function PdfActions({
         </a>
       </div>
       <p className="text-sm text-fg-muted" data-testid="pdf-hint">
-        {unsaved
-          ? "Guarda la cotización para ver su PDF: se arma con lo guardado."
-          : "Así lo recibirá tu cliente. La fecha del documento será la del día en que lo envíes."}
+        {sent
+          ? "Este es el PDF que recibió tu cliente, tal como se envió."
+          : unsaved
+            ? "Guarda la cotización para ver su PDF: se arma con lo guardado."
+            : "Así lo recibirá tu cliente. La fecha del documento será la del día en que lo envíes."}
       </p>
     </section>
   );

@@ -2,6 +2,7 @@ import "server-only";
 import { LOGO_BUCKET, loadBrand } from "@/lib/brand/service";
 import { mimeForLogoPath } from "@/lib/brand/logo";
 import { getCustomer } from "@/lib/customers/queries";
+import type { CustomerView } from "@/lib/customers/record";
 import { getQuote } from "@/lib/quotes/queries";
 import { todayInChile } from "@/lib/quotes/validity";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
@@ -10,18 +11,35 @@ import { buildQuoteDocumentData } from "./quote-document-model";
 import type { PdfLogo, PdfPaperSize, QuoteDocumentData } from "./types";
 
 export type QuoteDocumentResult =
-  | { ok: true; data: QuoteDocumentData; numberDisplay: string; version: number; revision: number }
+  | {
+      ok: true;
+      data: QuoteDocumentData;
+      numberDisplay: string;
+      version: number;
+      revision: number;
+      /** Quién lo recibe, descifrado en el servidor (para el correo y la copia congelada del envío). */
+      customer: CustomerView;
+      organizationName: string;
+      organizationContactEmail: string | null;
+    }
   | { ok: false; reason: "not_found" | "failed" };
+
+/** Fechas que se congelan al enviar: la de emisión y la vigencia ya calculada por la base de datos. */
+export type FrozenDocumentDates = { issueDate: string; validUntil: string };
 
 /**
  * ÚNICO lugar que junta lo guardado de una cotización para el PDF: la cotización y sus líneas (con la
  * organización activa: lo ajeno no existe), la marca y el logo de la organización, y el cliente
  * descifrado en el servidor. Los datos personales no salen de aquí hacia ningún otro lado.
+ *
+ * En la vista previa la fecha de emisión es hoy. Al enviar (H-029) se pasa `frozen`: la fecha de
+ * emisión y la vigencia que la base de datos congeló con el paquete.
  */
 export async function loadQuoteDocumentData(
   active: ActiveTenant,
   quoteId: string,
   paper: PdfPaperSize,
+  frozen?: FrozenDocumentDates,
 ): Promise<QuoteDocumentResult> {
   const detail = await getQuote(active, quoteId);
   if (detail === null) return { ok: false, reason: "not_found" };
@@ -57,10 +75,13 @@ export async function loadQuoteDocumentData(
     numberDisplay: quote.number_display,
     version: quote.version,
     revision: quote.revision,
+    customer,
+    organizationName: brand.name,
+    organizationContactEmail: row.contact_email,
     data: buildQuoteDocumentData({
       paper,
-      today: todayInChile(),
-      quote,
+      today: frozen?.issueDate ?? todayInChile(),
+      quote: frozen ? { ...quote, validity_mode: "date", valid_until: frozen.validUntil } : quote,
       items,
       authorName,
       organization: {

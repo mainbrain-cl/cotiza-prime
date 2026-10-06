@@ -32,6 +32,7 @@ export function createResendTransport(
       const body = {
         from: `${message.from.name} <${message.from.address}>`,
         to: [message.to],
+        ...(message.replyTo ? { reply_to: message.replyTo } : {}),
         subject: message.subject,
         html: message.html,
         text: message.text,

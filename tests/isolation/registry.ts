@@ -533,8 +533,11 @@ export function visibilityDeclarationErrors(
  * - `tenant`: vive dentro de una organización (`/o/[tenantId]/...`) y exige `requireActiveTenant`.
  * - `none`: no hay organización que aislar (ingreso, registro, términos, `/api/v1/ping`, etc.).
  *   Cada una se declara a mano: una ruta nueva sin declarar rompe la guardia G5.
+ * - `token`: la abre el cliente final SIN cuenta con el token de su enlace (`/c/[token]` y
+ *   `/api/v1/public/quote-links/[token]/...`). La organización sale de la fila del enlace, nunca de la
+ *   dirección; pasan por el portero (`src/lib/share/gateway.ts`) con el token y los límites validados.
  */
-export type RouteScope = "tenant" | "none";
+export type RouteScope = "tenant" | "none" | "token";
 
 export interface AppRoute {
   /** Como la escribe Next.js, p. ej. `/o/[tenantId]/clientes/[customerId]`. Sin grupos `(x)`. */
@@ -559,6 +562,9 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/api/v1/ping", kind: "api", scope: "none" },
   { path: "/api/v1/tenants/[tenantId]/logo", kind: "api", scope: "tenant" },
   { path: "/api/v1/tenants/[tenantId]/quotes/[quoteId]/pdf", kind: "api", scope: "tenant" },
+  { path: "/c/[token]", kind: "page", scope: "token" },
+  { path: "/api/v1/public/quote-links/[token]/pdf", kind: "api", scope: "token" },
+  { path: "/api/v1/public/quote-links/[token]/view", kind: "api", scope: "token" },
   { path: "/o/[tenantId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo/[itemId]", kind: "page", scope: "tenant" },

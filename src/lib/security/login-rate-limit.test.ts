@@ -10,8 +10,11 @@ vi.mock("@/lib/crypto/search-hash", () => ({
 
 import {
   SEND_MAX_PER_USER_PER_WINDOW,
+  SHARE_MAX_READS_PER_IP_PER_WINDOW,
+  SHARE_MAX_READS_PER_LINK_PER_WINDOW,
   TENANT_DENIED_MAX_LOGGED_PER_WINDOW,
   consumeSendQuota,
+  consumeShareQuota,
   ipLimitKey,
   recordResetRequest,
   recordSignupAttempt,
@@ -126,5 +129,43 @@ describe("consumeSendQuota (H-029)", () => {
   it("si el contador falla, se deja pasar", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
     expect(await consumeSendQuota("u1", "t1")).toBe(true);
+  });
+});
+
+describe("consumeShareQuota (enlace del cliente, H-030)", () => {
+  const SHA = "a".repeat(64);
+
+  it("cuenta la IP y el enlace con huellas, nunca la IP ni el token en claro", async () => {
+    expect(await consumeShareQuota("203.0.113.7", SHA)).toBe(true);
+    const calls = rpc.mock.calls.map(([, args]) => args);
+    expect(calls.map((c) => c.p_scope)).toEqual(["share_ip", "share_token"]);
+    expect(calls[0]).toMatchObject({ p_max_failures: SHARE_MAX_READS_PER_IP_PER_WINDOW + 1 });
+    expect(calls[1]).toMatchObject({ p_max_failures: SHARE_MAX_READS_PER_LINK_PER_WINDOW + 1 });
+    expect(calls[0].p_key_hash).toBe("share_ip|203.0.113.7");
+    expect(calls[1].p_key_hash).toBe(`share_token|${SHA}`);
+  });
+
+  it("sin IP conocida solo limita por enlace", async () => {
+    await consumeShareQuota(null, SHA);
+    expect(rpc.mock.calls.map(([, args]) => args.p_scope)).toEqual(["share_token"]);
+  });
+
+  it("bloquea al pasar el tope por IP sin gastar el cupo del enlace", async () => {
+    rpc.mockResolvedValue({ data: "2026-10-01T00:00:00Z", error: null });
+    expect(await consumeShareQuota("203.0.113.7", SHA)).toBe(false);
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("bloquea al pasar el tope por enlace", async () => {
+    // Primero se cuenta la IP (pasa) y después el enlace (ya bloqueado).
+    rpc
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({ data: "2026-10-01T00:00:00Z", error: null });
+    expect(await consumeShareQuota("203.0.113.7", SHA)).toBe(false);
+  });
+
+  it("si el contador falla, se deja pasar", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    expect(await consumeShareQuota("203.0.113.7", SHA)).toBe(true);
   });
 });

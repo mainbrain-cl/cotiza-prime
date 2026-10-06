@@ -15,6 +15,8 @@ import { expect, test, type Page } from "./fixtures";
 import { countRows, loadFixture, stateFile } from "./isolation-support";
 
 const NOT_FOUND_HEADING = "No encontrado";
+/** Un token con la forma correcta (43 caracteres base64url) que no existe en ninguna parte. */
+const INVENTED_SHARE_TOKEN = "A".repeat(43);
 
 async function withDb<T>(fn: (db: Client) => Promise<T>): Promise<T> {
   const db = await connect();
@@ -220,7 +222,14 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
 
     // rutas de la API: las públicas no devuelven datos de nadie; las que no, dan 404 con una organización ajena
     for (const route of APP_ROUTES.filter((r) => r.kind === "api")) {
-      if (route.scope === "none") {
+      if (route.scope === "token") {
+        // Con un token inventado, la API pública no entrega nada de nadie (404, o 405 si solo acepta POST).
+        const res = await page.request.get(route.path.replace("[token]", INVENTED_SHARE_TOKEN), {
+          headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
+        });
+        expect([404, 405], route.path).toContain(res.status());
+        expect(await res.text()).not.toContain(fx.orgs.B.canary);
+      } else if (route.scope === "none") {
         const res = await page.request.get(route.path, {
           headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
         });
@@ -236,6 +245,77 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         expect(await res.text()).not.toContain(fx.orgs.B.canary);
       }
     }
+  });
+
+  test("P27 · el token de B abierto con la sesión de Ana: se ve como cliente, sin rastro en A; el de A no cuenta", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const fx = loadFixture();
+    const A = fx.orgs.A;
+    const B = fx.orgs.B;
+    const tables = [
+      "quotes",
+      "quote_events",
+      "quote_responses",
+      "share_links",
+      "share_link_views",
+      "email_messages",
+      "audit_log",
+    ];
+    const fingerprintOf = (tenantId: string) =>
+      withDb(async (db) => {
+        const out: Record<string, string> = {};
+        for (const table of tables) {
+          const { rows } = await db.query<{ h: string }>(
+            `select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
+               from public.${table} t where tenant_id = $1`,
+            [tenantId],
+          );
+          out[table] = rows[0].h;
+        }
+        return out;
+      });
+    const viewsOf = (shareLinkId: string) =>
+      withDb((db) =>
+        countRows(db, "select 1 from public.share_link_views where share_link_id = $1", [
+          shareLinkId,
+        ]),
+      );
+
+    // Ana abre el enlace de B: lo ve como lo vería cualquier cliente (no es miembro de B).
+    // La propia página avisa de la apertura (como cliente): se espera ese aviso antes de contar.
+    const pageBeacon = page.waitForResponse(
+      (r) => r.url().endsWith("/view") && r.request().method() === "POST",
+    );
+    const opened = await page.goto(`/c/${B.share!.token}`);
+    expect(opened?.status()).toBe(200);
+    await expect(page.getByTestId("share-quote")).toContainText(B.canary);
+    expect((await pageBeacon).status()).toBe(200);
+    const origin = new URL(page.url()).origin;
+    const post = (token: string) =>
+      page.request.post(`/api/v1/public/quote-links/${token}/view`, { headers: { origin } });
+
+    const beforeA = await fingerprintOf(A.tenantId);
+    const beforeViewsB = await viewsOf(B.share!.shareLinkId);
+    const asClient = await post(B.share!.token);
+    expect(asClient.status()).toBe(200);
+    expect(await asClient.json()).toEqual({ recorded: true });
+    // la apertura quedó en B (como cliente) y A no cambió en nada
+    expect(await viewsOf(B.share!.shareLinkId)).toBe(beforeViewsB + 1);
+    expect(await fingerprintOf(A.tenantId)).toEqual(beforeA);
+
+    // Ana abre el enlace de SU organización: es miembro, así que no cuenta
+    const beforeViewsA = await viewsOf(A.share!.shareLinkId);
+    const asMember = await post(A.share!.token);
+    expect(asMember.status()).toBe(200);
+    expect(await asMember.json()).toEqual({ recorded: false, reason: "member" });
+    expect(await viewsOf(A.share!.shareLinkId)).toBe(beforeViewsA);
+    expect(await fingerprintOf(A.tenantId)).toEqual(beforeA);
+
+    // un POST sin el origen de la aplicación se rechaza
+    const noOrigin = await page.request.post(`/api/v1/public/quote-links/${B.share!.token}/view`);
+    expect(noOrigin.status()).toBe(403);
   });
 
   test("P23 · un RUT que solo existe en B no se reconoce como duplicado en A", async ({ page }) => {

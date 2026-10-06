@@ -106,10 +106,17 @@ describe("guardia del registro de aislamiento", () => {
       // en la dirección (/api/v1/tenants/[tenantId]/...).
       const isPage = route.path === "/o/[tenantId]" || route.path.startsWith("/o/[tenantId]/");
       const isApi = route.path.startsWith("/api/v1/tenants/[tenantId]/");
+      // El enlace del cliente (sin cuenta): la pantalla `/c/[token]` y la API pública por token.
+      const isTokenPage = route.path === "/c/[token]";
+      const isTokenApi = route.path.startsWith("/api/v1/public/quote-links/[token]/");
       expect(route.scope === "tenant", `${route.path}: alcance ${route.scope}`).toBe(
         isPage || isApi,
       );
+      expect(route.scope === "token", `${route.path}: alcance ${route.scope}`).toBe(
+        isTokenPage || isTokenApi,
+      );
       if (route.scope === "tenant") expect(route.kind).toBe(isPage ? "page" : "api");
+      if (route.scope === "token") expect(route.kind).toBe(isTokenPage ? "page" : "api");
     }
   });
 

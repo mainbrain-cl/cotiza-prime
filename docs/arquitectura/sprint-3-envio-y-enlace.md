@@ -437,3 +437,34 @@ Veredicto: se puede construir H-031 encima. Pendientes que salieron de la revisi
 8. `.customer-light` copia a mano los valores claros de los tokens: referirse a una sola fuente.
 9. La pantalla pública registra IP y navegador sin aviso ni enlace a la política de privacidad: pendiente
    legal antes del piloto.
+
+## 13. Revisión de Opus de H-031 (2026-10-06): 1 bloqueante
+
+Veredicto: **no lista hasta corregir B-1.** La base de datos (carreras, estados, revalidación) es sólida.
+
+**Bloqueante B-1 — el aviso le llega al autor aunque ya no pertenezca a la organización.** La base devuelve
+siempre `q.created_by` (migración 26, ~línea 585); `gateway.readAuthorEmail` busca su correo sin comprobar que
+siga activo y `after-response.ts` lo envía. Un comercial que salió del equipo recibiría en su correo el motivo
+del rechazo o el nombre de quien aceptó. Corrección: que la base entregue el destinatario solo si el autor sigue
+`members.status = 'active'` en esa organización y, si no, el aviso vaya al Dueño y a los Administradores
+activos; lo más limpio es que `share_link_respond` (o una función angosta nueva, solo servidor) devuelva ya los
+correos de destino filtrados, y eliminar `auth.admin.getUserById` del portero. Con prueba de un autor quitado.
+
+**Importantes:** I-1 la guardia 8 no vigila `.auth` (agregar `expect(/\.auth\b/.test(gateway)).toBe(false)`;
+se resuelve con B-1); I-2 la guardia del `Origin` debe recorrer todas las rutas `scope: "token"` con `POST`
+(`discoverAppRoutes` + `stripComments`), no una lista fija; I-3 el nombre de quien acepta y el detalle del
+rechazo solo existen en un correo: mostrarlos a los miembros en el detalle de la cotización (descifrados en el
+servidor) y dejar el correo solo con número, decisión, motivo de la lista y botón; I-4 el aviso interno no crea
+fila en `email_messages` (función solo servidor, `package_id` sin `share_link_id`) o escribir la desviación con
+fecha; I-5 anotar el código de error en `respond-request.ts:89-92`.
+
+**Menores:** foco y `aria-describedby` en el panel; errores no visibles y respaldo de `crypto.randomUUID`;
+recarga muda con `not_allowed`; respuestas sin IP y redes móviles que comparten IP (10/hora es poco a escala);
+leer el cuerpo por partes con tope de 4 KB; prueba que amarre el texto de conformidad a su versión;
+normalizar nombres con caracteres invisibles; lista única de motivos (`respond.ts` y `timeline-text.ts`); aviso
+legal al cliente final; pruebas de «reemplazada» por la ruta, de `respond-request` y de un nombre con
+`<script>`; `text-[16px]` a token.
+
+**Regla de enlaces ya respondidos (pendiente de Aarón):** H-031 no la contradice ni la aplica. Cuando se
+decida, agregar un estado en `share_link_read` y cambiar el texto «Puedes seguir descargando el PDF»
+(`response-panel.tsx:100-101`). Conviene decidirla antes de H-053.

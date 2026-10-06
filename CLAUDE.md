@@ -73,6 +73,10 @@ menú/tarjetas/contadores/fondos de React Bits). Revisadas por Opus: migraciones
 (rama `worktree-agent-afae94126bb586f12`, copia en `.claude/worktrees/`). Si no terminaron: mirar
 `git worktree list`, revisar la rama, integrar con las pruebas y subir; si la copia quedó a medias, rehacer.
 La copia `agent-a7b9e1375a7b27ce4` es vieja (de antes de hoy): preguntar si se borra.
+**⚠️ BLOQUEANTE ABIERTO (revisión de Opus de H-031, `docs/arquitectura/sprint-3-envio-y-enlace.md` §13):** el aviso de
+aceptar/rechazar le llega al autor aunque ya no sea miembro (fuga de datos). Corregir ANTES de cerrar el sprint 3:
+la base debe entregar el destinatario solo si el autor sigue activo (si no, al Dueño y Administradores activos) y
+quitar `auth.admin.getUserById` del portero; más los 5 importantes y los menores de §13.
 **Falta del sprint 3:** H-033/034/035, **H-076** (esperando que Aarón apruebe el diseño de las plantillas 2 y 3:
 `docs/diseno/plantillas-2-y-3-pdf-vista-previa.html`), y el lote de correcciones menores de la revisión de H-030
 (`docs/arquitectura/sprint-3-envio-y-enlace.md` §12) más lo que salga de la revisión de H-031.

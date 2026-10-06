@@ -407,3 +407,33 @@ del mensaje en el proveedor; (c) limpia los **archivos huérfanos (M5)** del buc
 PDF y logo subidos por un envío que falló después de subir (`upload` ok, `attach` o envío fallidos)
 y que ningún paquete `sent` referencia. Mientras no exista, esos archivos solo ocupan espacio y no
 son visibles para nadie fuera de la organización.
+
+## 12. Revisión de Opus de H-030 (2026-10-06): sin bloqueantes
+
+Veredicto: se puede construir H-031 encima. Pendientes que salieron de la revisión:
+
+**Importantes**
+1. **Un enlace ya respondido nunca caduca** (migración 26, `share_link_read`: «ya respondió» se revisa antes
+   que «vencida»). Tras un rechazo, quien tenga el enlace sigue viendo la cotización completa con los datos
+   del cliente y el PDF para siempre. **Regla propuesta (decisión de Aarón, pendiente):** *rechazada* →
+   pasada la vigencia, solo el aviso «fue rechazada» con el contacto de la organización, sin documento ni
+   PDF; *aceptada* → enlace activo hasta que esté pagada más un plazo (H-053 lo necesita para los datos de
+   cobro). Hasta que se decida, se aplica esa regla en el diseño de las pantallas, pero no se cambia la base.
+2. **La guardia del `Origin` solo mira `/view`** (`tests/isolation/static-guards.test.ts:159`): debe recorrer
+   todas las rutas de tipo token con `POST` y exigir `isSameOriginPost(` antes de `passTokenGate(`.
+   Corregir al integrar H-031 (agrega `/accept` y `/reject`) junto con el límite `share_respond_ip`.
+
+**Menores (para un lote de correcciones tras H-031)**
+1. `/c/[token]` responde 200 para token inexistente y para límite excedido (la API sí 404 y 429); decidir
+   `notFound()` o dejarlo escrito como desviación.
+2. Sin IP conocida no hay límite por IP en `consumeShareQuota`: en producción agrupar lo sin IP en «desconocida».
+3. Una fila de apertura por cada visita (hasta ~43.200 al día): agrupar por IP y hora; H-108 (borrado a los
+   12 meses) debe estar antes del piloto.
+4. «Vista» puede marcarse sin que el cliente la vea (antivirus que ejecutan la página): enviar el aviso solo con
+   la pestaña visible, tras ~2 s y sin `navigator.webdriver`.
+5. Corregir textos: un GET sí puede vencer la cotización (comentario de `page.tsx:12` y decisión 017 punto 5).
+6. Accesibilidad de `quote-view.tsx`: falta `h1`, hay un `<p>` dentro de una `<dl>` y `key={line}` repetibles.
+7. Pruebas: `no-store` exacto en la página, estado «reemplazada» y aviso «ya respondida».
+8. `.customer-light` copia a mano los valores claros de los tokens: referirse a una sola fuente.
+9. La pantalla pública registra IP y navegador sin aviso ni enlace a la política de privacidad: pendiente
+   legal antes del piloto.

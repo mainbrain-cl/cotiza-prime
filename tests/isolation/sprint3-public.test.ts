@@ -43,6 +43,16 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
       ["share_link_read", { p_token_sha256: sha }],
       ["share_link_record_view", { p_token_sha256: sha, p_ip_enc: "x", p_user_agent: "x" }],
       ["share_link_respond", respondArgs(sha)],
+      [
+        "record_email_event",
+        {
+          p_provider: "memory",
+          p_provider_message_id: `fixture-${fx.orgs.B.share!.packageId}`,
+          p_event: "bounced",
+          p_occurred_at: null,
+          p_bounce_type: "hard",
+        },
+      ],
     ];
     const specs = ISOLATION_TABLES.filter((t) =>
       [
@@ -52,6 +62,7 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
         "share_links",
         "share_link_views",
         "audit_log",
+        "email_messages",
       ].includes(t.name),
     );
     const before = new Map<string, string>();
@@ -79,6 +90,15 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
     expect((res.json as { state: string }).state).toBe("responded");
     const unknown = await asServer("share_link_read", { p_token_sha256: "0".repeat(64) });
     expect(unknown.json).toEqual({ state: "not_found" });
+    const event = await asServer("record_email_event", {
+      p_provider: "memory",
+      p_provider_message_id: "no-existe",
+      p_event: "delivered",
+      p_occurred_at: null,
+      p_bounce_type: null,
+    });
+    expect(event.status, event.text).toBe(200);
+    expect(event.json).toEqual({ result: "unknown" });
   });
 });
 

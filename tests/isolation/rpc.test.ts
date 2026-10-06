@@ -110,6 +110,13 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
         p_lock_seconds: 1,
       },
       auth_limit_clear: { p_scope: "login_ip", p_key_hash: "0".repeat(64) },
+      record_email_event: {
+        p_provider: "memory",
+        p_provider_message_id: "no-existe",
+        p_event: "delivered",
+        p_occurred_at: null,
+        p_bounce_type: null,
+      },
       share_link_read: { p_token_sha256: "0".repeat(64) },
       share_link_record_view: {
         p_token_sha256: "0".repeat(64),

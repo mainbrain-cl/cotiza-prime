@@ -489,6 +489,8 @@ export const SERVER_ONLY_FUNCTIONS = [
   "share_link_read",
   "share_link_record_view",
   "share_link_respond",
+  // Sprint 3: los avisos del proveedor de correo (la ruta verifica la firma antes de llamarla)
+  "record_email_event",
 ];
 
 /**

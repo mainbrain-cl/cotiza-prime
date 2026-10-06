@@ -1,6 +1,7 @@
-import { Building2, ChevronRight, Hash, Palette, type LucideIcon } from "lucide-react";
+import { Building2, ChevronRight, Hash, Palette, ScrollText, type LucideIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { canViewAuditLog } from "@/lib/audit/queries";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 
@@ -27,10 +28,18 @@ const SECTIONS: { path: string; title: string; description: string; icon: Lucide
   },
 ];
 
+const ACTIVITY_SECTION = {
+  path: "configuracion/actividad",
+  title: "Registro de actividad",
+  description: "Quién hizo cada acción sensible y cuándo. Solo lo ve el Dueño.",
+  icon: ScrollText,
+};
+
 const UPCOMING = ["Tu equipo", "Cómo te pagan", "Tus reglas de aprobación"];
 
 export default async function SettingsPage({ params }: PageProps<"/o/[tenantId]/configuracion">) {
   const active = await requireActiveTenant((await params).tenantId);
+  const sections = canViewAuditLog(active.role) ? [...SECTIONS, ACTIVITY_SECTION] : SECTIONS;
   return (
     <div className="flex max-w-2xl flex-col gap-6">
       <div className="flex flex-col gap-2">
@@ -39,7 +48,7 @@ export default async function SettingsPage({ params }: PageProps<"/o/[tenantId]/
       </div>
 
       <ul className="flex flex-col gap-3">
-        {SECTIONS.map(({ path, title, description, icon: Icon }) => (
+        {sections.map(({ path, title, description, icon: Icon }) => (
           <li key={path}>
             <Link
               href={tenantPath(active.tenantId, path)}

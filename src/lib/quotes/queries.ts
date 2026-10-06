@@ -2,6 +2,7 @@ import "server-only";
 import { serverLog } from "@/lib/log/server-log";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid } from "@/lib/tenant/constants";
+import type { QuoteListScope } from "./list-scope";
 
 /** Cotizaciones por página de la lista mínima de H-025 (filtros y paginación llegan con H-032). */
 export const QUOTES_LIST_LIMIT = 50;
@@ -93,12 +94,20 @@ async function authorNames(active: ActiveTenant, userIds: string[]): Promise<Map
   return names;
 }
 
-/** Las últimas cotizaciones de la organización activa (todos los roles ven todas, decisión 009). */
-export async function listRecentQuotes(active: ActiveTenant): Promise<QuoteListItem[] | null> {
-  const { data, error } = await active.supabase
+/**
+ * Las últimas cotizaciones de la organización activa (todos los roles ven todas, decisión 009).
+ * Con `scope: "mine"` solo las que armó la propia persona.
+ */
+export async function listRecentQuotes(
+  active: ActiveTenant,
+  scope: QuoteListScope = "all",
+): Promise<QuoteListItem[] | null> {
+  let query = active.supabase
     .from("quotes")
     .select("id, number_display, version, status, customer_id, created_by, total_clp, created_at")
-    .eq("tenant_id", active.tenantId)
+    .eq("tenant_id", active.tenantId);
+  if (scope === "mine") query = query.eq("created_by", active.userId);
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(QUOTES_LIST_LIMIT);
   if (error || !data) {

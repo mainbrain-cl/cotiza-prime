@@ -74,6 +74,10 @@ const PAGE_ROUTES = TENANT_PAGES;
 
 test.describe("Ana (Dueña de A) frente a la organización B", () => {
   test.use({ storageState: stateFile("ana") });
+  // Las direcciones ajenas que se dejan registradas por persona tienen tope (20 por ventana, ver
+  // login-rate-limit.ts). P22 necesita que se registre una por cada pantalla, así que corre primero
+  // y sola: en paralelo con P22b sus intentos se comparten el tope y las pantallas nuevas lo pasan.
+  test.describe.configure({ mode: "serial" });
 
   test("P22 · toda dirección de B da 'No encontrado', sin datos de B, y deja constancia en la plataforma", async ({
     page,

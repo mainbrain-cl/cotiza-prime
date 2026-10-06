@@ -108,6 +108,21 @@ export function QuotesListSkeleton() {
   );
 }
 
+/** Registro de actividad: volver, título, filtros y tabla (tarjetas en teléfono). */
+export function AuditLogSkeleton() {
+  return (
+    <SkeletonRegion>
+      <BackHeaderSkeleton />
+      <div className="flex flex-wrap gap-3">
+        <Skeleton className="h-11 w-full md:h-10 md:w-56" />
+        <Skeleton className="h-11 w-full md:h-10 md:w-72" />
+        <Skeleton className="h-11 w-24 md:h-9" />
+      </div>
+      <ListSkeleton rows={8} columns={5} />
+    </SkeletonRegion>
+  );
+}
+
 /** Nueva cotización: volver, título y el selector de cliente (búsqueda y lista corta). */
 export function NewQuoteSkeleton() {
   return (

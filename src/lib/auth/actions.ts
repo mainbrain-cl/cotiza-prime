@@ -154,6 +154,22 @@ export async function signInAction(_previous: FormState, formData: FormData): Pr
 
   await clearLoginFailures(parsed.data.email);
   await logAuditEvent({ action: "session.login", result: "success", actorUserId: data.user.id });
+  // Además, un ingreso por cada organización de la persona: así cada Dueño ve cuándo entra su equipo.
+  const { data: memberships } = await supabase
+    .from("members")
+    .select("tenant_id, tenants!inner(status, kind)")
+    .eq("user_id", data.user.id)
+    .eq("status", "active")
+    .eq("tenants.status", "active")
+    .eq("tenants.kind", "organization");
+  for (const membership of (memberships ?? []) as { tenant_id: string }[]) {
+    await logAuditEvent({
+      action: "session.login",
+      result: "success",
+      actorUserId: data.user.id,
+      tenantId: membership.tenant_id,
+    });
+  }
   redirect(HOME_PATH);
 }
 

@@ -105,7 +105,7 @@ Licencia y última versión revisadas en npm y en el repositorio de cada una.
 | **pdfjs-dist** | Leer el texto de un PDF en las pruebas (solo desarrollo; no se despliega) | Apache-2.0 | 6.4.299 | — | ✅ Verificada el 2026-10-05 |
 | **Transiciones de vista** (`ViewTransition` de React, incluido en Next 16) | Transición corta entre pantallas | — (parte de React/Next, sin paquete nuevo) | — | 0 kB | ✅ En uso desde H-115 (2026-10-05); se apaga con "reducir movimiento" |
 | **Vaul** | Hojas que suben desde abajo en el teléfono | MIT | 1.1.2 | ~5 kB | ⚠️ Sin actualizaciones desde dic-2024. Usar la hoja (`Sheet`) de shadcn; Vaul solo si hace falta arrastrar |
-| **React Bits** | Fondos y efectos animados | **MIT + Commons Clause** | — | Por componente | ⚠️ Se puede usar dentro de Cotiza Prime (también comercialmente), pero **no revender ni redistribuir los componentes sueltos**. **Decidido (2026-10-01):** fondos animados propios en CSS (más livianos, sin esta condición); React Bits solo para un efecto puntual y con aprobación previa de Aarón |
+| **React Bits** | Fondos y efectos animados | **MIT + Commons Clause** | — | Por componente | ⚠️ Se puede usar dentro de Cotiza Prime (también comercialmente), pero **no revender ni redistribuir los componentes sueltos**. **Decisión 018 (2026-10-06, Aarón):** se usan sus componentes gratuitos para menú flotante, tarjetas, contadores y fondos; cada dependencia nueva se verifica antes de adoptarla |
 
 ---
 

@@ -204,8 +204,8 @@ test("un correo que rebota se ve en la cotización y en la lista; se corrige el 
   await expect(page).toHaveURL(/\/clientes\/[0-9a-f-]{36}\/editar$/);
   const fixedEmail = uniqueEmail("corregido");
   await page.getByLabel("Correo (opcional)").fill(fixedEmail);
-  await page.getByRole("button", { name: "Guardar cliente" }).click();
-  await expect(page.getByText("Cliente guardado.")).toBeVisible();
+  await page.getByRole("button", { name: "Guardar cambios" }).click();
+  await expect(page.getByText("Cambios guardados.")).toBeVisible();
 
   await page.goto(detailPath);
   await page.getByTestId("resend-quote").click();
@@ -391,7 +391,9 @@ test("revocar el enlace: pide confirmación, el cliente ya no puede abrirlo, que
     expect(audit[0]).toMatchObject({ actor_type: "user" });
     expect(audit[0].actor_user_id).not.toBeNull();
     await page.goto(`/o/${tenantId}/configuracion/actividad`);
-    await expect(page.getByText("Se revocó el enlace de una cotización").first()).toBeVisible();
+    await expect(
+      page.getByTestId("audit-row").filter({ hasText: "Se revocó el enlace de una cotización" }),
+    ).toHaveCount(1);
 
     // El cliente (sin sesión, con el enlace del correo) ya no puede verla ni bajar el PDF.
     await client.goto(oldPath);

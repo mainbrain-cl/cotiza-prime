@@ -1,5 +1,6 @@
 // Sprint 3 · M24 · Vencimiento programado (app.expire_due_quotes + pg_cron) y avisos del proveedor de
 // correo (record_email_event). Cada prueba corre en una transacción que se deshace.
+import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { actAsAnon, actAsPostgres, connect, expectSqlError, withTx } from "./helpers";
@@ -324,6 +325,64 @@ describe("record_email_event", () => {
       expect((await eventError(["memory", "", "delivered", null, null])).code).toBe(INVALID);
       expect((await eventError(["memory", null, "delivered", null, null])).code).toBe(INVALID);
       expect(await mailRow(q)).toMatchObject({ status: "sent" });
+    });
+  });
+
+  it("el rebote de un aviso interno queda solo en email_messages; el de un reenvío sí entra en la historia", async () => {
+    await withTx(db, async () => {
+      const q = await send();
+      const insertMail = async (kind: string, providerId: string) => {
+        const id = randomUUID();
+        await actAsPostgres(db);
+        await db.query(
+          `insert into public.email_messages
+             (id, tenant_id, quote_id, package_id, kind, to_email_enc, to_email_hash, provider,
+              provider_message_id, status)
+           select $1, tenant_id, id, current_package_id, $2, 'v1.correo.cifrado', repeat('a', 64),
+                  'memory', $3, 'sent'
+             from public.quotes where id = $4`,
+          [id, kind, providerId, q.quoteId],
+        );
+        return id;
+      };
+      const bounce = async (providerId: string) => {
+        await actAsService(db);
+        const { rows } = await db.query<{ r: Json }>(SQL, [
+          "memory",
+          providerId,
+          "bounced",
+          null,
+          "hard",
+        ]);
+        await actAsPostgres(db);
+        return rows[0].r;
+      };
+      const events = () =>
+        count(
+          "select count(*)::text as n from public.quote_events where quote_id = $1 and type = 'email_bounced'",
+          [q.quoteId],
+        );
+
+      const noticeId = await insertMail("internal_notice", `notice-${randomUUID()}`);
+      const notice = await one<{ provider_message_id: string }>(
+        "select provider_message_id from public.email_messages where id = $1",
+        [noticeId],
+      );
+      expect(await bounce(notice.provider_message_id)).toMatchObject({
+        result: "applied",
+        status: "bounced",
+      });
+      expect(
+        await one<Json>("select status, bounce_type from public.email_messages where id = $1", [
+          noticeId,
+        ]),
+      ).toEqual({ status: "bounced", bounce_type: "hard" });
+      expect(await events()).toBe(0);
+
+      const resendProviderId = `resend-${randomUUID()}`;
+      await insertMail("quote_resend", resendProviderId);
+      await bounce(resendProviderId);
+      expect(await events()).toBe(1);
     });
   });
 

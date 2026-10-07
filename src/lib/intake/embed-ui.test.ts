@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EmbedError,
   buildResizeMessage,
+  buildScrollMessage,
   embedFrameAncestors,
   embedOriginProblem,
   isValidEmbedOrigin,
@@ -32,7 +33,23 @@ describe("buildResizeMessage", () => {
   });
 });
 
+describe("buildScrollMessage", () => {
+  it("lleva solo source y type: ningún dato", () => {
+    expect(buildScrollMessage()).toEqual({ source: "cotiza-prime", type: "scroll" });
+    expect(Object.keys(buildScrollMessage()).sort()).toEqual(["source", "type"]);
+  });
+});
+
 describe("embedOriginProblem", () => {
+  it("los dominios con ñ o tildes explican la forma xn-- y la versión con y sin www", () => {
+    for (const value of ["https://diseño.cl", "https://www.café.cl", "https://ÑANDÚ.cl"]) {
+      const problem = embedOriginProblem(value);
+      expect(problem, value).toMatch(/xn--/);
+      expect(problem, value).toMatch(/con y sin www/);
+    }
+    expect(embedOriginProblem("https://xn--diseo-0qa.cl")).toBeNull();
+  });
+
   it("explica cada rechazo y acepta lo válido", () => {
     expect(embedOriginProblem("https://www.sitio.cl")).toBeNull();
     expect(embedOriginProblem("")).toMatch(/Escribe/);

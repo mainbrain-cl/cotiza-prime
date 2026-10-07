@@ -19,12 +19,27 @@ export const EMBED_ROUTE_EXCLUSION = `/:path((?!f/[^/]+/${EMBED_PATH_SEGMENT}$).
 /** `matcher` del `proxy` para esa ruta (se suma al general, que excluye `f/`). */
 export const EMBED_PROXY_MATCHER = `/f/:publicId/${EMBED_PATH_SEGMENT}`;
 
+/** Segundo `matcher` del `proxy`: la misma ruta con cualquier combinación de mayúsculas (ver `isEmbedPathLookalike`). */
+export const EMBED_PROXY_CASE_MATCHER = `/f/:publicId/:segment(${[...EMBED_PATH_SEGMENT]
+  .map((letter) => `[${letter.toLowerCase()}${letter.toUpperCase()}]`)
+  .join("")})`;
+
 const EMBED_PATH = new RegExp(`^/f/([^/]+)/${EMBED_PATH_SEGMENT}$`);
+const EMBED_PATH_INSENSITIVE = new RegExp(`^/f/[^/]+/${EMBED_PATH_SEGMENT}$`, "i");
 
 /** Si la ruta es la del formulario incrustable devuelve el identificador tal como vino; si no, `null`. */
 export function parseEmbedPath(pathname: string): { publicId: string } | null {
   const match = EMBED_PATH.exec(pathname);
   return match ? { publicId: match[1] } : null;
+}
+
+/**
+ * Next compara las rutas SIN distinguir mayúsculas (la exclusión de `next.config.ts` deja sin `X-Frame-Options`
+ * también `/F/<id>/INCRUSTAR`), pero `parseEmbedPath` sí distingue. Esas variantes no son el formulario
+ * incrustable: el proxy las responde con `DENY` y la política base (`frame-ancestors 'none'`).
+ */
+export function isEmbedPathLookalike(pathname: string): boolean {
+  return parseEmbedPath(pathname) === null && EMBED_PATH_INSENSITIVE.test(pathname);
 }
 
 /**
@@ -64,4 +79,9 @@ export function buildEmbedResponseHeaders(
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
   };
+}
+
+/** Cabeceras de las variantes con otras mayúsculas de la ruta incrustable: no se pueden enmarcar en ningún sitio. */
+export function buildEmbedLookalikeHeaders(env: EmbedHeaderEnv): Record<string, string> {
+  return { ...buildEmbedResponseHeaders([], env), "X-Frame-Options": "DENY" };
 }

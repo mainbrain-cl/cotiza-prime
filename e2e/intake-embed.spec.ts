@@ -30,6 +30,8 @@ const ctx = {} as {
   ownerB: Person;
   a: Org;
   b: Org;
+  /** Organización que nunca se leyó antes del marco en pausa (la lectura de sitios se recuerda 60 s). */
+  c: Org;
   appOrigin: string;
   serviceName: string;
 };
@@ -59,15 +61,26 @@ async function saveOrigins(org: Org, origins: string[]) {
 }
 
 /** Un sitio falso en `origin` que pega el código de `org` y anota cada mensaje que le llega. */
-async function serveSite(page: Page, origin: string, org: Org, extraBody = "") {
-  const snippet = buildEmbedSnippet(ctx.appOrigin, org.publicId);
+async function serveSite(
+  page: Page,
+  origin: string,
+  org: Org,
+  extraBody = "",
+  options: { pre?: string; scattered?: boolean } = {},
+) {
+  let snippet = buildEmbedSnippet(ctx.appOrigin, org.publicId);
+  if (options.scattered) {
+    // Como lo deja un editor tipo WordPress: el marco envuelto en un <p> y el script en otro lugar de la página.
+    const at = snippet.indexOf("<script>");
+    snippet = `<p>${snippet.slice(0, at)}</p><div>otro bloque</div><footer>${snippet.slice(at)}</footer>`;
+  }
   await page.route(`${origin}/**`, (route) =>
     route.fulfill({
       contentType: "text/html",
       body: `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sitio de prueba</title></head>
 <body style="margin:0;background:#fde68a"><h1>Mi sitio</h1>
 <script>window.__msgs=[];addEventListener("message",function(e){window.__msgs.push({origin:e.origin,data:e.data})})</script>
-${snippet}${extraBody}</body></html>`,
+${options.pre ?? ""}${snippet}${extraBody}</body></html>`,
     }),
   );
 }
@@ -107,6 +120,10 @@ test.beforeAll(async ({ browser }) => {
   ctx.b = await newOrg(ctx.ownerB, `Incrustada B ${suffix}`, [
     { name: "Traslado B", unit: "service", catalogItemId: null, quantityMode: "none" },
   ]);
+  await ctx.ownerB.page.goto("/organizaciones/nueva");
+  ctx.c = await newOrg(ctx.ownerB, `Incrustada C ${suffix}`, [
+    { name: "Traslado C", unit: "service", catalogItemId: null, quantityMode: "none" },
+  ]);
 });
 
 test.afterAll(async () => {
@@ -129,6 +146,10 @@ test("el Dueño agrega sitios con avisos claros, guarda, queda en auditoría y e
   expect(snippetText).toContain(`${ctx.appOrigin}/f/${ctx.a.publicId}/incrustar`);
   expect(snippetText).toContain("<iframe");
   expect(snippetText).toContain("event.origin");
+  expect(snippetText).toContain(`<iframe data-cotiza-prime="${ctx.a.publicId}"`);
+  await expect(page.getByTestId("embed-delay-note")).toContainText("hasta un minuto");
+  // El cuadro del código usa letra de 16 px (el iPhone no hace zoom al tocarlo).
+  expect(await snippet.evaluate((el) => getComputedStyle(el).fontSize)).toBe("16px");
   await expect(page.getByTestId("public-link")).toContainText(`/f/${ctx.a.publicId}`);
   await expect(page.getByTestId("embed-copy")).toBeVisible();
 
@@ -143,6 +164,7 @@ test("el Dueño agrega sitios con avisos claros, guarda, queda en auditoría y e
     ["HTTPS://SITIO.CL", /https:\/\//],
     ["https://SITIO.cl", /minúsculas/],
     ["sitio.cl", /https:\/\//],
+    ["https://diseño.cl", /xn--[\s\S]*con y sin www/],
   ];
   for (const [value, message] of rejected) {
     await input.fill(value);
@@ -365,6 +387,11 @@ test("el resto sigue sin poder enmarcarse: /f/<id>, /o/*, /c/*, la API y el PDF"
   const denied: [string, string][] = [
     [`/f/${ctx.a.publicId}/otra`, "ruta inexistente bajo /f"],
     [`/f/${invented}`, "formulario inventado"],
+    // Next no distingue mayúsculas: estas variantes no son el formulario incrustable y no se pueden enmarcar.
+    [`/F/${ctx.a.publicId}/incrustar`, "mayúscula en /F"],
+    [`/F/${ctx.a.publicId}/INCRUSTAR`, "mayúsculas en todo"],
+    [`/f/${ctx.a.publicId}/INCRUSTAR`, "INCRUSTAR"],
+    [`/f/${ctx.a.publicId}/Incrustar`, "Incrustar"],
     [`/c/${invented}${invented}`, "enlace del cliente"],
     [`/ingresar`, "ingreso"],
     [`/api/v1/ping`, "API"],
@@ -425,6 +452,123 @@ test("formulario en pausa o inexistente: el marco muestra «no está disponible�
     { p_form_id: ctx.b.formId, p_status: "published" },
     header(ctx.b),
   );
+});
+
+test("DENTRO del sitio autorizado, el formulario en pausa muestra el aviso con el contacto; en otro sitio no carga", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  // La organización C nunca se leyó antes: la lista de sitios no está recordada.
+  expect((await saveOrigins(ctx.c, [SITE_OK])).status).toBeLessThan(300);
+  const paused = await rpc(
+    ctx.c.token,
+    "set_intake_form_status",
+    { p_form_id: ctx.c.formId, p_status: "paused" },
+    header(ctx.c),
+  );
+  expect(paused.status).toBeLessThan(300);
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await serveSite(page, SITE_OK, ctx.c);
+  const framed = page.waitForResponse((r) => r.url().includes(`/f/${ctx.c.publicId}/incrustar`));
+  await page.goto(`${SITE_OK}/contacto`);
+  const response = await framed;
+  expect(csp(response.headers())).toContain(`frame-ancestors ${SITE_OK};`);
+  expect(response.headers()["x-frame-options"]).toBeUndefined();
+  const frame = page.frameLocator("iframe");
+  await expect(frame.getByTestId("intake-state-title")).toHaveText(
+    "Este formulario no está disponible",
+  );
+  await expect(frame.getByTestId("intake-contact")).toContainText("@ejemplo.test");
+  await expect(frame.getByTestId("form-view")).toHaveCount(0);
+  // Y el marco mide lo que mide el aviso (no queda un recuadro bloqueado ni un hueco de 640 px).
+  await expect
+    .poll(async () => (await page.locator("iframe").boundingBox())!.height)
+    .not.toBe(INITIAL_HEIGHT_PX);
+
+  // En un sitio no autorizado sigue sin cargar: ni aviso ni contacto.
+  await page.unroute(`${SITE_OK}/**`);
+  await serveSite(page, SITE_OTHER, ctx.c);
+  await page.goto(`${SITE_OTHER}/contacto`);
+  await page.waitForTimeout(1_500);
+  await expect(page.frameLocator("iframe").getByTestId("intake-state-title")).toHaveCount(0);
+  await expect(page.frameLocator("iframe").getByTestId("intake-contact")).toHaveCount(0);
+
+  // Se reanuda para no dejar el formulario en pausa.
+  await rpc(
+    ctx.c.token,
+    "set_intake_form_status",
+    { p_form_id: ctx.c.formId, p_status: "published" },
+    header(ctx.c),
+  );
+});
+
+test("a 375 px, al enviar dentro del marco el éxito queda a la vista; el aviso de scroll no lleva datos y funciona aunque el código esté repartido", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize(MOBILE);
+  // Mucho contenido arriba (el marco queda lejos de la parte alta de la página) y el código repartido como lo
+  // deja un editor: marco dentro de un <p> y script en el pie.
+  await serveSite(page, SITE_OK, ctx.a, "", {
+    pre: '<div style="height:1500px">Contenido de la empresa</div>',
+    scattered: true,
+  });
+  await page.goto(`${SITE_OK}/contacto`);
+  const frame = page.frameLocator("iframe");
+  await page.locator("iframe").scrollIntoViewIfNeeded();
+  await expect(frame.getByTestId("form-view")).toBeVisible();
+
+  const ids = await formItemIds(ctx.a);
+  await frame.locator("#pf-name").fill("Visitante Móvil");
+  await frame.locator("#pf-email").fill(`movil-${randomUUID().slice(0, 8)}@ejemplo.test`);
+  await frame.locator(`#pf-item-${ids.get(ctx.serviceName)}`).check();
+  await frame.locator("#pf-consent").check();
+  await frame.getByTestId("antibot-memory-pass").click();
+  // Se baja al final del formulario antes de enviar: sin el aviso, el éxito quedaría fuera de la pantalla.
+  await frame.getByTestId("submit-request").scrollIntoViewIfNeeded();
+  await page.evaluate(() => window.scrollBy(0, 400));
+  await frame.getByTestId("submit-request").click();
+  await expect(frame.getByTestId("intake-success")).toBeVisible({ timeout: 30_000 });
+
+  // El mensaje de scroll llegó, sin ningún dato.
+  await expect
+    .poll(async () =>
+      (await messagesOf(page)).filter((m) => (m.data as { type?: string })?.type === "scroll"),
+    )
+    .toHaveLength(1);
+  const scrollMessage = (await messagesOf(page)).find(
+    (m) => (m.data as { type?: string })?.type === "scroll",
+  )!;
+  expect(scrollMessage.origin).toBe(ctx.appOrigin);
+  expect(scrollMessage.data).toEqual({ source: "cotiza-prime", type: "scroll" });
+
+  // El éxito queda a la vista de la página de la empresa (el marco subió a la parte alta de la pantalla).
+  await expect
+    .poll(async () => {
+      const box = await frame.getByTestId("intake-success").boundingBox();
+      return !!box && box.y >= -1 && box.y < MOBILE.height;
+    })
+    .toBe(true);
+  // El foco está en el título de la confirmación.
+  await expect(frame.getByTestId("intake-success-title")).toBeFocused();
+  // Un mensaje de scroll falso desde otro origen no mueve nada.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.evaluate(() => window.postMessage({ source: "cotiza-prime", type: "scroll" }, "*"));
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test("el envío legítimo funciona en el marco y un Origin «null» o ajeno se rechaza", async ({
+  page,
+}) => {
+  const url = `/api/v1/public/forms/${ctx.a.publicId}/requests`;
+  for (const origin of ["null", "https://malo.test", SITE_OK]) {
+    const res = await page.request.post(url, { headers: { origin }, data: {} });
+    expect(res.status(), origin).toBe(403);
+  }
+  const noOrigin = await page.request.post(url, { data: {} });
+  expect(noOrigin.status()).toBe(403);
 });
 
 test("la base rechaza sitios peligrosos, y ni la Comercial ni otra organización pueden cambiar la lista", async () => {

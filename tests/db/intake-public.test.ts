@@ -250,9 +250,9 @@ describe("intake_form_read", () => {
     });
   });
 
-  it("en pausa solo entrega el contacto y la marca: ni servicios ni campos", async () => {
+  it("en pausa entrega el contacto, la marca y los sitios autorizados (para el marco), pero ni servicios ni campos", async () => {
     await withTx(setup, async () => {
-      const fx = await publishedForm();
+      const fx = await publishedForm({ form: { embed_origins: ["https://mi-sitio.cl"] } });
       await callAs(
         setup,
         w.owner,
@@ -263,7 +263,8 @@ describe("intake_form_read", () => {
       const result = await read(fx.form.publicId);
       expect(result.state).toBe("paused");
       expect(result).toHaveProperty("org");
-      for (const key of ["items", "fields", "intro", "embed_origins", "revision"])
+      expect(result.embed_origins).toEqual(["https://mi-sitio.cl"]);
+      for (const key of ["items", "fields", "intro", "revision"])
         expect(result).not.toHaveProperty(key);
       for (const key of allKeys(result)) expect(key).not.toMatch(FORBIDDEN_KEY);
     });

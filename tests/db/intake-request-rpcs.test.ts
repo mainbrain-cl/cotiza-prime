@@ -727,3 +727,37 @@ describe("anonymize_intake_request (derecho de supresión)", () => {
     }, withData);
   });
 });
+
+describe("una solicitud anonimizada ya no se asigna ni se convierte (CP423)", () => {
+  const ANONYMIZE = "select public.anonymize_intake_request($1, $2) as r";
+  const quoteTotal = async () => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query("select count(*)::int as n from public.quotes where tenant_id = $1", [
+        w.tenantA,
+      ])
+    ).rows[0].n as number;
+  };
+
+  it("nueva o asignada: asignar y convertir se rechazan, sin cambiar nada ni gastar un número", async () => {
+    await withRequest(async (id) => {
+      await callAs(setup, w.owner, w.tenantA, ASSIGN, [id, w.sales.id]);
+      await callAs(setup, w.owner, w.tenantA, ANONYMIZE, [id, "other"]);
+      const before = await rowOf(id);
+      expect(before.anonymized_at).not.toBeNull();
+      const quotes = await quoteTotal();
+
+      await asUser(setup, w.owner, w.tenantA);
+      const assign = await expectSqlError(setup, ASSIGN, [id, w.sales2.id]);
+      expect(assign.code).toBe("CP423");
+      expect(assign.message).toContain("anonymized");
+      await asUser(setup, w.owner, w.tenantA);
+      const convert = await expectSqlError(setup, CONVERT, [id, w.customerA, randomUUID()]);
+      expect(convert.code).toBe("CP423");
+      expect(convert.message).toContain("anonymized");
+
+      expect(await rowOf(id)).toEqual(before);
+      expect(await quoteTotal()).toBe(quotes);
+    });
+  });
+});

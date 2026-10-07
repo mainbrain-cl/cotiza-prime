@@ -433,3 +433,49 @@ describe("Ataque 3 · convertir con un cliente de otra organización", () => {
     expect(await quotes(fx.orgs.A.tenantId)).toBe(beforeA + 1);
   });
 });
+
+describe("Una solicitud anonimizada ya no se asigna ni se convierte", () => {
+  it("el Dueño anonimiza la suya: asignar y convertir dan CP423, sin cotización y sin cambios", async () => {
+    const fx = fixture();
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+    const token = await tokenOf("ana");
+    const requestId = await freshRequestOfA();
+    const anonymized = await rpc(
+      token,
+      "anonymize_intake_request",
+      { p_request_id: requestId, p_reason: "data_subject_request" },
+      headers,
+    );
+    expect(anonymized.status, anonymized.text).toBe(200);
+    const quotes = async () =>
+      (
+        await db.query<{ n: number }>(
+          "select count(*)::int as n from public.quotes where tenant_id = $1",
+          [fx.orgs.A.tenantId],
+        )
+      ).rows[0].n;
+    const before = await quotes();
+    const convert = await rpc(
+      token,
+      "convert_intake_request",
+      {
+        p_request_id: requestId,
+        p_customer_id: fx.orgs.A.customerIds[0],
+        p_creation_key: randomUUID(),
+      },
+      headers,
+    );
+    expect(convert.status).toBeGreaterThanOrEqual(400);
+    expect(codeOf(convert), convert.text).toBe("CP423");
+    const assign = await rpc(
+      token,
+      "assign_intake_request",
+      { p_request_id: requestId, p_assignee_user_id: fx.personas.ana.userId },
+      headers,
+    );
+    expect(assign.status).toBeGreaterThanOrEqual(400);
+    expect(codeOf(assign), assign.text).toBe("CP423");
+    expect(await quotes()).toBe(before);
+    expect(await statusOf(requestId)).toMatchObject({ status: "new", quote_id: null });
+  });
+});

@@ -112,7 +112,7 @@ describe("buildEmbedCsp", () => {
 describe("buildEmbedSnippet", () => {
   it("trae un iframe con la dirección exacta y carga diferida", () => {
     const snippet = buildEmbedSnippet(APP, ID);
-    expect(snippet).toContain(`<iframe src="${APP}/f/${ID}/incrustar"`);
+    expect(snippet).toContain(`<iframe data-cotiza-prime="${ID}" src="${APP}/f/${ID}/incrustar"`);
     expect(snippet).toContain('title="Solicitar una cotización"');
     expect(snippet).toContain('loading="lazy"');
     expect(snippet.match(/<iframe/g)).toHaveLength(1);
@@ -128,7 +128,11 @@ describe("buildEmbedSnippet", () => {
 
   it("el script es corto", () => {
     const script = /<script>([\s\S]*)<\/script>/.exec(buildEmbedSnippet(APP, ID))?.[1] ?? "";
-    expect(script.trim().split("\n").length).toBeLessThanOrEqual(14);
+    expect(script.trim().split("\n").length).toBeLessThanOrEqual(22);
+    // ya no depende de dónde quede el script respecto al marco (WordPress puede envolverlo en <p>)
+    expect(script).not.toContain("currentScript");
+    expect(script).not.toContain("previousElementSibling");
+    expect(script).toContain(`querySelectorAll("iframe[data-cotiza-prime=\\"${ID}\\"]")`);
   });
 
   it("acepta localhost por http solo para desarrollo", () => {
@@ -196,17 +200,71 @@ describe("buildEmbedSnippet", () => {
       const snippet = buildEmbedSnippet(appOrigin, ID);
       const body = /<script>([\s\S]*)<\/script>/.exec(snippet)?.[1] ?? "";
       let listener: Listener | null = null;
-      const frame = { style: { height: "" }, contentWindow: { id: "marco" } };
+      let scrolls = 0;
+      const frame = {
+        style: { height: "" },
+        contentWindow: { id: "marco" },
+        scrollIntoView: (options: unknown) => {
+          expect(options).toEqual({ block: "start" });
+          scrolls += 1;
+        },
+      };
+      const other = {
+        style: { height: "" },
+        contentWindow: { id: "otro" },
+        scrollIntoView: () => {},
+      };
+      const queries: string[] = [];
       const fakeWindow = {
         addEventListener: (type: string, fn: Listener) => {
           if (type === "message") listener = fn;
         },
       };
-      const fakeDocument = { currentScript: { previousElementSibling: frame } };
+      // Sin `currentScript`: el marco se busca por su atributo, esté donde esté el script.
+      const fakeDocument = {
+        querySelectorAll: (selector: string) => {
+          queries.push(selector);
+          return selector === `iframe[data-cotiza-prime="${ID}"]` ? [other, frame] : [];
+        },
+      };
       new Function("window", "document", body)(fakeWindow, fakeDocument);
       const send = (event: { origin: string; source: unknown; data: unknown }) => listener?.(event);
-      return { frame, send, hasListener: () => listener !== null };
+      return {
+        frame,
+        other,
+        send,
+        queries,
+        scrolls: () => scrolls,
+        hasListener: () => listener !== null,
+      };
     }
+
+    it("encuentra el marco por su atributo y ajusta el correcto entre varios", () => {
+      const env = run(APP);
+      env.send({
+        origin: APP,
+        source: env.frame.contentWindow,
+        data: { source: "cotiza-prime", type: "resize", height: 700 },
+      });
+      expect(env.queries).toEqual([`iframe[data-cotiza-prime="${ID}"]`]);
+      expect(env.frame.style.height).toBe("700px");
+      expect(env.other.style.height).toBe("");
+    });
+
+    it("el mensaje de scroll lleva el marco a la vista solo si viene del origen y del marco", () => {
+      const env = run(APP);
+      const data = { source: "cotiza-prime", type: "scroll" };
+      env.send({ origin: "https://malo.test", source: env.frame.contentWindow, data });
+      env.send({ origin: APP, source: { id: "otro-marco" }, data });
+      env.send({
+        origin: APP,
+        source: env.frame.contentWindow,
+        data: { source: "x", type: "scroll" },
+      });
+      expect(env.scrolls()).toBe(0);
+      env.send({ origin: APP, source: env.frame.contentWindow, data });
+      expect(env.scrolls()).toBe(1);
+    });
 
     const good = (height: unknown) => ({
       origin: APP,

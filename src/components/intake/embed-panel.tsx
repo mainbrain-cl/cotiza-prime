@@ -186,6 +186,9 @@ export function EmbedPanel({
             <p className="text-xs text-fg-subtle">
               {origins.length} de {MAX_EMBED_ORIGINS} sitios.
             </p>
+            <p className="text-sm text-fg-muted" data-testid="embed-delay-note">
+              Agregar o quitar un sitio puede tardar hasta un minuto en aplicarse.
+            </p>
             {banner ? (
               <p
                 role="alert"
@@ -226,7 +229,7 @@ export function EmbedPanel({
               rows={8}
               value={snippet}
               spellCheck={false}
-              className="w-full resize-y rounded-sm border border-border-strong bg-surface-2 p-3 font-mono text-xs text-fg"
+              className="w-full resize-y rounded-sm border border-border-strong bg-surface-2 p-3 font-mono text-[16px] text-fg"
               onFocus={(event) => event.currentTarget.select()}
             />
             <div className="flex flex-wrap gap-2">

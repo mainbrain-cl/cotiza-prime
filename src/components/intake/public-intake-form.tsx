@@ -18,6 +18,7 @@ import { MSG_ERROR, type SubmitResponse } from "@/lib/intake/submit-response";
 import { buildSubmitSchema, fieldErrors, HONEYPOT_FIELD } from "@/lib/intake/submit-schema";
 import type { PublicFormContent, PublicFormView } from "@/lib/intake/public-view";
 import { AntibotWidget } from "./antibot-widget";
+import { requestParentScroll } from "./embed-resizer";
 import { FormView, type TextFieldKey } from "./form-view";
 import { RequestSummary } from "./request-summary";
 import { SummarySheet } from "./summary-sheet";
@@ -70,6 +71,8 @@ export type PublicIntakeFormProps = {
   /** Encabezado de la marca, ya dibujado en el servidor (logo reducido incluido). */
   header: ReactNode;
   antibot: { provider: "turnstile" | "memory"; siteKey: string | null };
+  /** Dentro del sitio de otra empresa (H-093): al enviar se pide al sitio que lleve el marco a la vista. */
+  embedded?: boolean;
 };
 
 const subscribeNothing = () => () => undefined;
@@ -120,6 +123,12 @@ function Success({
   message: string;
 }) {
   const contact = [view.organization.contactEmail, view.organization.contactPhone].filter(Boolean);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  // El foco pasa al título del éxito (lectores de pantalla y teclado); sin mover la página, de eso se
+  // encarga el desplazamiento (o el aviso al sitio de afuera dentro de un marco).
+  useEffect(() => {
+    titleRef.current?.focus({ preventScroll: true });
+  }, []);
   return (
     <div
       className="customer-light overflow-hidden rounded-lg border border-border shadow-2"
@@ -134,7 +143,14 @@ function Success({
         <div className="flex size-14 items-center justify-center rounded-lg bg-success-soft text-success">
           <CheckCircle2 aria-hidden strokeWidth={1.75} className="size-7" />
         </div>
-        <h1 className="text-xl font-semibold">Recibimos tu solicitud</h1>
+        <h1
+          ref={titleRef}
+          tabIndex={-1}
+          className="text-xl font-semibold outline-none"
+          data-testid="intake-success-title"
+        >
+          Recibimos tu solicitud
+        </h1>
         <p
           className="break-words whitespace-pre-line text-fg-muted"
           data-testid="intake-success-message"
@@ -156,6 +172,7 @@ export function PublicIntakeForm({
   submitKey,
   header,
   antibot,
+  embedded = false,
 }: PublicIntakeFormProps) {
   const ready = useHydrated();
   const [content, setContent] = useState<PublicFormContent>(view);
@@ -286,7 +303,9 @@ export function PublicIntakeForm({
     switch (response.status) {
       case "ok":
         setDone(response.message);
-        window.scrollTo({ top: 0 });
+        // Dentro de un marco `scrollTo` solo mueve el interior: se le pide al sitio de afuera (sin ningún dato).
+        if (embedded) requestParentScroll();
+        else window.scrollTo({ top: 0 });
         return;
       case "invalid": {
         const mapped = mapErrors(response.fieldErrors, pickedIds);

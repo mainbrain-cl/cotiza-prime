@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import nextConfig from "../../../next.config";
 import {
+  EMBED_PROXY_CASE_MATCHER,
   EMBED_PROXY_MATCHER,
   EMBED_ROUTE_EXCLUSION,
+  buildEmbedLookalikeHeaders,
   buildEmbedResponseHeaders,
+  isEmbedPathLookalike,
   parseEmbedPath,
   safeFrameAncestors,
 } from "./embed-headers";
@@ -28,6 +31,29 @@ describe("parseEmbedPath", () => {
     ]) {
       expect(parseEmbedPath(path), path).toBeNull();
     }
+  });
+});
+
+const LOOKALIKES = [
+  `/F/${ID}/incrustar`,
+  `/F/${ID}/INCRUSTAR`,
+  `/f/${ID}/INCRUSTAR`,
+  `/f/${ID}/Incrustar`,
+];
+
+describe("isEmbedPathLookalike y sus cabeceras", () => {
+  it("detecta solo las variantes con otras mayúsculas, no la ruta exacta ni otras", () => {
+    expect(isEmbedPathLookalike(`/f/${ID}/incrustar`)).toBe(false);
+    for (const path of [`/f/${ID}`, `/f/${ID}/incrustar/`, `/f/${ID}/otra`, "/ingresar", "/F/x"]) {
+      expect(isEmbedPathLookalike(path), path).toBe(false);
+    }
+  });
+
+  it("responden con DENY y frame-ancestors 'none', sin dejar enmarcar a nadie", () => {
+    const headers = buildEmbedLookalikeHeaders(ENV);
+    expect(headers["X-Frame-Options"]).toBe("DENY");
+    expect(headers["Content-Security-Policy"]).toContain("frame-ancestors 'none'");
+    expect(headers["Content-Security-Policy"]).toContain("default-src 'self'");
   });
 });
 
@@ -79,7 +105,8 @@ describe("buildEmbedResponseHeaders", () => {
 function sourceToRegExp(source: string): RegExp {
   const match = /^\/:path\((.*)\)$/.exec(source);
   expect(match, source).not.toBeNull();
-  return new RegExp(`^/${match![1]}$`);
+  // Next compara las rutas sin distinguir mayúsculas: la prueba también.
+  return new RegExp(`^/${match![1]}$`, "i");
 }
 
 describe("next.config: solo /f/:publicId/incrustar queda fuera de la regla DENY", () => {
@@ -102,6 +129,12 @@ describe("next.config: solo /f/:publicId/incrustar queda fuera de la regla DENY"
   it("la expresión deja fuera esa única ruta y protege todo lo demás", () => {
     const regexp = sourceToRegExp(EMBED_ROUTE_EXCLUSION);
     expect(regexp.test(`/f/${ID}/incrustar`)).toBe(false);
+    // Next no distingue mayúsculas: estas variantes también quedan fuera de DENY y las cubre el proxy
+    // (`isEmbedPathLookalike`). Si esta prueba cambia, cambia la protección.
+    for (const path of LOOKALIKES) {
+      expect(regexp.test(path), path).toBe(false);
+      expect(isEmbedPathLookalike(path), path).toBe(true);
+    }
     for (const path of [
       "/",
       "/ingresar",
@@ -129,5 +162,14 @@ describe("el matcher del proxy", () => {
     const text = fs.readFileSync(path.join(process.cwd(), "src", "proxy.ts"), "utf8");
     expect(text).toContain(`"${EMBED_PROXY_MATCHER}"`);
     expect(EMBED_PROXY_MATCHER).toBe("/f/:publicId/incrustar");
+    // y el de las variantes con otras mayúsculas, que también tiene que pasar por el proxy
+    expect(text).toContain(`"${EMBED_PROXY_CASE_MATCHER}"`);
+    const segment = /:segment\((.*)\)$/.exec(EMBED_PROXY_CASE_MATCHER)![1];
+    const casing = new RegExp(`^${segment}$`);
+    for (const variant of ["incrustar", "INCRUSTAR", "Incrustar", "iNcRuStAr"]) {
+      expect(casing.test(variant), variant).toBe(true);
+    }
+    expect(casing.test("incrustar2")).toBe(false);
+    expect(casing.test("otra")).toBe(false);
   });
 });

@@ -92,6 +92,7 @@ export async function PublicIntakeScreen({
       view={buildPublicView(form, consent)}
       renderToken={createRenderToken(publicId, submitKey)}
       submitKey={submitKey}
+      embedded={embedded}
       header={<BrandHeader organizationName={form.organization.name} logoSrc={logoSrc} />}
       antibot={{
         provider: antibot.provider,

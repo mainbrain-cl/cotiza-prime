@@ -43,7 +43,8 @@ const baseSchema = {
   logo_path: z.string().max(300).nullable(),
   /**
    * Sitios autorizados para incrustar (H-093). Solo lo lee `readFrameAncestors`; nunca llega al navegador.
-   * Hoy la base lo entrega solo con el formulario publicado (opcional aquí a propósito).
+   * La base lo entrega con el formulario publicado y también en pausa (migración 35), para que el marco muestre
+   * el aviso. Opcional aquí a propósito: sin la lista, ningún sitio puede enmarcarlo.
    */
   embed_origins: z.array(z.string()).max(50).optional(),
 };

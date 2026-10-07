@@ -17,6 +17,9 @@ export const EMBED_INITIAL_HEIGHT_PX = 640;
 export const EMBED_PATH_SEGMENT = "incrustar";
 export const EMBED_MESSAGE_SOURCE = "cotiza-prime";
 export const EMBED_MESSAGE_TYPE = "resize";
+export const EMBED_SCROLL_MESSAGE_TYPE = "scroll";
+/** Atributo del marco que pone el código para pegar y con el que su script lo encuentra. */
+export const EMBED_FRAME_ATTRIBUTE = "data-cotiza-prime";
 export const DEFAULT_EMBED_TITLE = "Solicitar una cotización";
 export const MAX_EMBED_TITLE_LENGTH = 100;
 const MAX_PORT = 65_535;
@@ -99,6 +102,20 @@ export type EmbedResizeMessage = {
   height: number;
 };
 
+/**
+ * Segundo (y último) mensaje permitido: «sube hasta el formulario». Se emite al enviar con éxito, para que el
+ * sitio de afuera lleve el marco a la vista (dentro del marco, `scrollTo` no mueve la página de la empresa).
+ * No lleva NINGÚN dato: solo `source` y `type`.
+ */
+export type EmbedScrollMessage = {
+  source: typeof EMBED_MESSAGE_SOURCE;
+  type: typeof EMBED_SCROLL_MESSAGE_TYPE;
+};
+
+export function buildScrollMessage(): EmbedScrollMessage {
+  return { source: EMBED_MESSAGE_SOURCE, type: EMBED_SCROLL_MESSAGE_TYPE };
+}
+
 export function buildResizeMessage(height: number): EmbedResizeMessage | null {
   if (!Number.isFinite(height) || height < 0) return null;
   return {
@@ -130,6 +147,9 @@ export function embedOriginProblem(value: string): string | null {
   if (/^https:\/\/[^/?#]*@/.test(value)) return "No puede llevar usuario ni contraseña.";
   if (/^https:\/\/[^/?#]+[/?#]/.test(value)) {
     return "Escribe solo el sitio, sin ruta ni barra final (https://www.tuempresa.cl).";
+  }
+  if (/[^ -~]/.test(value)) {
+    return "Los dominios con ñ o tildes se escriben en su forma «xn--…» (por ejemplo https://xn--diseo-0qa.cl para diseño.cl). Agrega también la versión con y sin www, porque son sitios distintos.";
   }
   if (value !== value.toLowerCase()) return "Escríbela en minúsculas.";
   return "No es una dirección válida. Escribe solo el sitio, por ejemplo https://www.tuempresa.cl.";
@@ -183,19 +203,25 @@ export function buildEmbedSnippet(
   const src = escapeHtml(`${appOrigin}/f/${publicId}/incrustar`);
   const title = safeTitle(options.title);
   const origin = jsString(appOrigin);
+  const selector = jsString(`iframe[${EMBED_FRAME_ATTRIBUTE}="${publicId}"]`);
 
   return [
-    `<iframe src="${src}" title="${title}" loading="lazy" style="width:100%;height:${EMBED_INITIAL_HEIGHT_PX}px;border:0;"></iframe>`,
+    `<iframe ${EMBED_FRAME_ATTRIBUTE}="${publicId}" src="${src}" title="${title}" loading="lazy" style="width:100%;height:${EMBED_INITIAL_HEIGHT_PX}px;border:0;"></iframe>`,
     "<script>",
     "(function () {",
-    "  var frame = document.currentScript.previousElementSibling;",
     `  var origin = ${origin};`,
     '  window.addEventListener("message", function (event) {',
     "    var data = event.data;",
-    "    if (event.origin !== origin || !frame || event.source !== frame.contentWindow) return;",
-    `    if (!data || data.source !== "${EMBED_MESSAGE_SOURCE}" || data.type !== "${EMBED_MESSAGE_TYPE}") return;`,
-    '    if (typeof data.height !== "number" || !isFinite(data.height)) return;',
-    `    frame.style.height = Math.min(${EMBED_MAX_HEIGHT_PX}, Math.max(${EMBED_MIN_HEIGHT_PX}, Math.round(data.height))) + "px";`,
+    `    if (event.origin !== origin || !data || data.source !== "${EMBED_MESSAGE_SOURCE}") return;`,
+    `    var frames = document.querySelectorAll(${selector});`,
+    "    for (var i = 0; i < frames.length; i++) {",
+    "      var frame = frames[i];",
+    "      if (event.source !== frame.contentWindow) continue;",
+    `      if (data.type === "${EMBED_SCROLL_MESSAGE_TYPE}") frame.scrollIntoView({ block: "start" });`,
+    `      else if (data.type === "${EMBED_MESSAGE_TYPE}" && typeof data.height === "number" && isFinite(data.height)) {`,
+    `        frame.style.height = Math.min(${EMBED_MAX_HEIGHT_PX}, Math.max(${EMBED_MIN_HEIGHT_PX}, Math.round(data.height))) + "px";`,
+    "      }",
+    "    }",
     "  });",
     "})();",
     "</script>",

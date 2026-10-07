@@ -398,11 +398,21 @@ describe("guardias estáticas del aislamiento", () => {
     const framing = sourceFiles
       .filter((f) => /x-frame-options/i.test(stripComments(read(f))))
       .map(rel);
-    expect(framing).toEqual([]);
+    // Salvo `embed-headers.ts`, que solo lo pone en DENY para las variantes con otras mayúsculas de la ruta.
+    expect(framing).toEqual(["src/lib/intake/embed-headers.ts"]);
+    const embedHeaders = stripComments(read(path.join(SRC, "lib", "intake", "embed-headers.ts")));
+    expect(embedHeaders.match(/x-frame-options/gi)).toHaveLength(1);
+    expect(embedHeaders).toMatch(/"X-Frame-Options":\s*"DENY"/);
     // El proxy solo arma su política para esa ruta, con los sitios que valida el portero.
     const proxy = stripComments(read(path.join(SRC, "proxy.ts")));
     expect(proxy).toContain("parseEmbedPath(");
     expect(proxy).toContain("readFrameAncestors(");
+    // Variantes con otras mayúsculas (Next no las distingue): DENY desde el proxy; y un límite por IP propio
+    // ANTES de leer la base.
+    expect(proxy).toContain("isEmbedPathLookalike(");
+    expect(proxy).toContain("buildEmbedLookalikeHeaders(");
+    expect(proxy.indexOf("allowEmbedRead(")).toBeGreaterThan(-1);
+    expect(proxy.indexOf("allowEmbedRead(")).toBeLessThan(proxy.indexOf("readFrameAncestors("));
     expect(proxy).toContain('"/f/:publicId/incrustar"');
     expect(proxy).not.toMatch(/x-frame-options/i);
     // La ruta incrustable usa la MISMA pantalla que la normal (no se duplica la lógica pública).
@@ -417,8 +427,10 @@ describe("guardias estáticas del aislamiento", () => {
       read(path.join(SRC, "components", "intake", "embed-resizer.tsx")),
     );
     expect(resizer).not.toMatch(/addEventListener\(\s*["']message["']/);
-    expect(resizer.match(/postMessage\(/g)?.length).toBe(1);
+    // dos mensajes y nada más: la altura y el aviso «sube hasta el formulario» (sin datos)
+    expect(resizer.match(/postMessage\(/g)?.length).toBe(2);
     expect(resizer).toContain("buildResizeMessage(");
+    expect(resizer).toContain("buildScrollMessage(");
   });
 
   it("10f. la guardia 10e detecta de verdad una violación", () => {

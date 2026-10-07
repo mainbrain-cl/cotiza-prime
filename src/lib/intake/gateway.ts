@@ -134,7 +134,7 @@ export function clearFrameAncestorsCache(): void {
  * Sitios autorizados para mostrar el formulario incrustado (H-093): lo único que usa `src/proxy.ts` para armar
  * `frame-ancestors`. Usa la MISMA función de la base que la página (`intake_form_read`) y toma SOLO ese campo.
  * Se recuerda 60 s en memoria (también «no existe»), con un máximo de entradas. Identificador mal formado,
- * formulario inexistente, en pausa (hoy la base no entrega la lista) o falla de la base: lista vacía, es decir,
+ * formulario inexistente o falla de la base (en pausa la base SÍ entrega la lista, para que el marco muestre el aviso): lista vacía, es decir,
  * que no se pueda incrustar en ningún sitio. Un fallo no se recuerda.
  */
 export async function readFrameAncestors(publicId: string, now = Date.now()): Promise<string[]> {

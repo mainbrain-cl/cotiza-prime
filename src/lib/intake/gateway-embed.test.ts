@@ -10,7 +10,7 @@ vi.mock("@/lib/http/request-context", () => ({
 vi.mock("@/lib/crypto/pii", () => ({ encryptPii: () => "x" }));
 vi.mock("@/lib/crypto/search-hash", () => ({ searchHash: () => "x" }));
 
-import { clearFrameAncestorsCache, readFrameAncestors } from "./gateway";
+import { clearFrameAncestorsCache, readFrameAncestors, readIntakeForm } from "./gateway";
 
 const PUBLIC_ID = "A".repeat(22);
 const baseRead = {
@@ -64,7 +64,7 @@ describe("el portero: sitios autorizados para incrustar (H-093)", () => {
     expect(rpc).toHaveBeenCalledWith("intake_form_read", { p_public_id: PUBLIC_ID });
   });
 
-  it("lista con algo inválido, demasiado larga, formulario inexistente o en pausa: vacía", async () => {
+  it("lista con algo inválido, demasiado larga, o formulario inexistente: vacía", async () => {
     rpc.mockResolvedValue(okRead(["https://ok.cl", "*"]));
     expect(await readFrameAncestors(PUBLIC_ID)).toEqual([]);
     clearFrameAncestorsCache();
@@ -73,9 +73,30 @@ describe("el portero: sitios autorizados para incrustar (H-093)", () => {
     clearFrameAncestorsCache();
     rpc.mockResolvedValue({ data: { state: "not_found" }, error: null });
     expect(await readFrameAncestors(PUBLIC_ID)).toEqual([]);
+  });
+
+  it("en pausa también entrega los sitios (el marco debe poder mostrar el aviso); sin la lista, vacía", async () => {
+    rpc.mockResolvedValue({
+      data: { ...baseRead, state: "paused", embed_origins: ["https://sitio-permitido.test"] },
+      error: null,
+    });
+    expect(await readFrameAncestors(PUBLIC_ID)).toEqual(["https://sitio-permitido.test"]);
     clearFrameAncestorsCache();
     rpc.mockResolvedValue({ data: { ...baseRead, state: "paused" }, error: null });
     expect(await readFrameAncestors(PUBLIC_ID)).toEqual([]);
+  });
+
+  it("lo que va al navegador (readIntakeForm) nunca lleva la lista de sitios, ni en pausa", async () => {
+    rpc.mockResolvedValue(okRead(["https://sitio-permitido.test"]));
+    expect(JSON.stringify(await readIntakeForm(PUBLIC_ID))).not.toContain("sitio-permitido");
+    rpc.mockResolvedValue({
+      data: { ...baseRead, state: "paused", embed_origins: ["https://sitio-permitido.test"] },
+      error: null,
+    });
+    const paused = await readIntakeForm(PUBLIC_ID);
+    expect(paused.state).toBe("paused");
+    expect(JSON.stringify(paused)).not.toContain("sitio-permitido");
+    expect(JSON.stringify(paused)).not.toContain("embed");
   });
 
   it("si la lectura falla devuelve vacía y no recuerda el fallo", async () => {

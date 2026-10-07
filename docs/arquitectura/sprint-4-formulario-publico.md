@@ -166,7 +166,7 @@ con `frame-ancestors 'none'` y `X-Frame-Options: DENY`. `refreshSession` del `pr
 `/api/v1/public/*`. Sin CORS: la API solo acepta envíos de nuestro origen.
 
 **Incrustable (H-093):** un `iframe`, no un script nuestro dentro del sitio del cliente. El código para pegar
-trae `<iframe src="{APP_ORIGIN}/f/{id}/incrustar" title=… loading="lazy">` y un script de ~10 líneas escrito
+trae `<iframe data-cotiza-prime="{id}" src="{APP_ORIGIN}/f/{id}/incrustar" title=… loading="lazy">` y un script de ~20 líneas escrito
 **como texto** que ajusta la altura solo si el mensaje viene de `APP_ORIGIN` y de ese marco, acotada a
 200–4.000 px. La página incrustada solo informa `{source:'cotiza-prime', type:'resize', height}`, nunca datos, y
 no escucha mensajes de afuera. **Solo en sitios autorizados:** `X-Frame-Options` no admite lista, así que
@@ -545,3 +545,72 @@ corrigió, al final.
   transcribirlos desde el informe de Opus.
 - Sin JavaScript el visitante solo ve el esqueleto de carga y el aviso de «activa JavaScript»: con el diseño actual de
   Next no hay forma de mostrar el formulario sin scripts.
+
+## 14. Correcciones de la revisión de H-093
+
+Migración nueva: `20261007160000_intake_embed_paused_and_fixes.sql` (la 35; con su deshacer en `supabase/rollbacks/`, que
+solo restaura funciones y no toca datos). Se aplicó con `npx supabase migration up`, sin reiniciar la base.
+
+### Bloqueante
+
+- **B1 · el marco con el formulario en pausa.** `intake_form_read` entregaba `embed_origins` solo con el formulario
+  publicado; en pausa el proxy recibía lista vacía, respondía `frame-ancestors 'none'` y el visitante, dentro del
+  sitio autorizado, veía un recuadro bloqueado en vez de «Este formulario no está disponible». Ahora `embed_origins`
+  va en la base común (`v_base`), así que sale con `ok` y con `paused`. Mismos permisos (solo `service_role`) y sigue
+  solo leyendo. **No llega al navegador:** `readIntakeForm` arma la vista con una lista cerrada de campos y no copia
+  `embed_origins` (prueba unitaria que lo vigila también en pausa). Borrador, archivado u organización archivada siguen
+  dando `not_found`. Pruebas: base (`intake-public`), aislamiento (en pausa entrega la lista, ni servicios ni
+  campos, y un usuario con pase no puede ejecutarla), unitaria del portero y e2e: el formulario **pausado cargado
+  dentro de `https://sitio-permitido.test`** muestra el aviso con el contacto y el marco se ajusta; en un sitio no
+  autorizado sigue sin cargar.
+- **Laguna de H-090 (misma migración).** `convert_intake_request` y `assign_intake_request` rechazan una solicitud
+  anonimizada (`anonymized_at is not null`) con `CP423` y el mensaje `anonymized`: ya no existen sus datos de contacto.
+  Convertir una ya convertida sigue devolviendo la misma cotización. Pruebas de base y de aislamiento (sin cotización
+  nueva, sin cambios en la fila).
+
+### Importantes
+
+- **I1 · mayúsculas en `/incrustar`.** Next compara rutas sin distinguir mayúsculas, así que la exclusión de
+  `X-Frame-Options` de `next.config.ts` dejaba `/F/<id>/INCRUSTAR`, `/f/<id>/INCRUSTAR` y `/f/<id>/Incrustar` sin
+  `DENY` ni CSP. El proxy ahora detecta esas variantes (`isEmbedPathLookalike`) y responde con
+  `X-Frame-Options: DENY` y la política base (`frame-ancestors 'none'`). Además, el `matcher` distingue mayúsculas, así
+  que se sumó un segundo `matcher` con clases de letras (`EMBED_PROXY_CASE_MATCHER`) para que esas rutas pasen por el
+  proxy (la e2e lo descubrió: `/f/<id>/INCRUSTAR` no llegaba). `sourceToRegExp` de `embed-headers.test.ts` ya no
+  distingue mayúsculas, igual que Next, y la prueba unitaria detecta la brecha; la e2e de rutas que deben dar `DENY`
+  incluye las cuatro variantes.
+- **I2 · límite antes de leer la base.** `src/lib/intake/embed-rate-limit.ts`: ventana fija de 60 s, 300 lecturas por
+  IP, memoria acotada a 5.000 claves, contador **aparte** de `intake_read_ip` (no gasta el cupo de la página). El
+  proxy lo aplica antes de `readFrameAncestors`; pasado el tope responde `'none'` sin consultar. `auth_rate_limits`
+  no sirve sin migración (su columna `scope` es una lista cerrada de ingreso y registro), así que se eligió memoria.
+  **Limitación declarada:** en un despliegue sin servidor el tope es por instancia, no global, y se reinicia con cada
+  arranque en frío; la lectura además se recuerda 60 s por formulario. Un límite global exigiría una tabla o un
+  almacén externo (mejora si el uso lo pide). Las peticiones sin IP válida comparten una sola clave.
+- **I3 · desplazamiento dentro del marco.** `scrollTo` no mueve la página de la empresa. En modo incrustado, al enviar
+  con éxito se emite un segundo (y último) mensaje permitido, `{source:'cotiza-prime', type:'scroll'}`, sin ningún dato
+  (`buildScrollMessage`). El código para pegar lo atiende con `frame.scrollIntoView({block:'start'})`, validando el
+  origen y el marco igual que el de altura. El foco pasa al título «Recibimos tu solicitud» (`tabIndex=-1`). E2E a 375
+  px con mucho contenido arriba del marco: el éxito queda a la vista, el mensaje no lleva datos y uno falso desde otro
+  origen no mueve nada.
+
+### Menores
+
+- **1 · demora.** El panel avisa «Agregar o quitar un sitio puede tardar hasta un minuto en aplicarse» (la lectura de
+  sitios se recuerda 60 s).
+- **2 · el marco se busca por atributo.** El código para pegar marca el `iframe` con `data-cotiza-prime="<id>"` y el
+  script lo busca con `querySelectorAll` en vez de `document.currentScript.previousElementSibling`: funciona si
+  WordPress envuelve el marco en un `<p>` o el script queda en otro lugar (prueba unitaria y e2e con el código
+  repartido). Si hay dos marcos del mismo formulario, el script atiende el que envió el mensaje. **Los códigos ya
+  pegados antes de este cambio siguen funcionando** (sin la función de desplazamiento).
+- **3 · dominios con ñ o tildes.** El mensaje explica escribirlos en forma `xn--…` (con un ejemplo) y sugiere agregar
+  también la versión con y sin `www`.
+- **5 · cuadro del código** con letra de 16 px (la regla global de campos la pisaba `text-xs`).
+- **4 · otros navegadores.** WebKit (instalado) corrió la página pública y la incrustada con un envío real: el `Origin`
+  enviado es el de la aplicación (`http://localhost:3450`), nunca `null`, aunque la página lleve
+  `Referrer-Policy: no-referrer`, y el servidor sigue rechazando con 403 un `Origin: null`, uno ajeno o ninguno
+  (prueba e2e). **Firefox: pendiente**, no se pudo descargar (`playwright install firefox` falló sin red); hay que
+  correrlo cuando haya red. La simulación del sitio ajeno (página `https` falsa que enmarca `http://localhost`) solo
+  funciona en Chromium con las banderas de la prueba; en WebKit queda sin cubrir la carga dentro de un sitio ajeno
+  (se cubre con la página `/incrustar` directa). Hallazgo aparte: en WebKit, escribir en el campo «Nombre» antes de
+  que la página termine de cargar pierde el texto al hidratarse (el envío vacío da «Escribe al menos 2 caracteres»).
+  No es de H-093 (pasa también en la página normal); anotado como posible mejora de H-087.
+- **6 · anotado** aquí; no se cambió nada más.

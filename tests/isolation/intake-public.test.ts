@@ -296,5 +296,25 @@ describe("Ataque 8 · un identificador público regenerado deja de funcionar", (
     expect(await countRequests(formId)).toBe(1);
     // y el formulario de A no se enteró
     expect(await stateOf(fx.orgs.A.intake!.publicId)).toBe("ok");
+
+    // En pausa: la lectura (solo del servidor) entrega la lista de sitios del marco, pero ni servicios ni campos
+    // ni nada de otra organización; sin la llave del servidor nadie la ejecuta.
+    const paused = await rpc(
+      token,
+      "set_intake_form_status",
+      { p_form_id: formId, p_status: "paused" },
+      headers,
+    );
+    expect(paused.status, paused.text).toBe(200);
+    const pausedRead = await asServer("intake_form_read", { p_public_id: next });
+    const pausedBody = pausedRead.json as Record<string, unknown>;
+    expect(pausedBody.state).toBe("paused");
+    expect(Array.isArray(pausedBody.embed_origins)).toBe(true);
+    for (const key of ["items", "fields", "intro", "revision"])
+      expect(pausedBody).not.toHaveProperty(key);
+    expect(pausedRead.text).not.toContain(fx.orgs.A.canary);
+    const direct = await rpc(token, "intake_form_read", { p_public_id: next }, headers);
+    expect(direct.status).toBeGreaterThanOrEqual(400);
+    expect(direct.text).not.toContain("embed_origins");
   });
 });

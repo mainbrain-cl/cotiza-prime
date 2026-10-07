@@ -1,7 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { createTenantSchema } from "@/lib/tenant/schemas";
 import { customerSchema } from "@/lib/customers/schemas";
-import { isPlausiblePhone } from "./phone";
+import { isPlausiblePhone, isValidPhone, normalizePhone } from "./phone";
+
+describe("normalizePhone e isValidPhone", () => {
+  it("normaliza espacios sin tocar dígitos", () => {
+    expect(normalizePhone("  +56   9 1111\t2222 ")).toBe("+56 9 1111 2222");
+  });
+
+  it("acepta teléfonos chilenos comunes", () => {
+    for (const value of ["+56 9 1111 2222", "912345678", "(2) 2345-6789", "+56912345678"]) {
+      expect(isValidPhone(normalizePhone(value))).toBe(true);
+    }
+  });
+
+  it("rechaza más de 15 dígitos y formas raras", () => {
+    expect(isValidPhone("1".repeat(16))).toBe(false);
+    expect(isValidPhone("1".repeat(15))).toBe(true);
+    expect(isValidPhone("+56 9 1111 2222 ext 3")).toBe(false);
+  });
+});
 
 describe("isPlausiblePhone", () => {
   it.each(["+56 9 1111 2222", "223456789", "(2) 2345-6789", "123456"])("acepta %s", (value) => {

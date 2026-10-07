@@ -7,3 +7,16 @@ export function isPlausiblePhone(value: string): boolean {
   if (!PHONE_PATTERN.test(value)) return false;
   return value.replace(/\D/g, "").length >= PHONE_MIN_DIGITS;
 }
+
+/** Máximo de dígitos de un número internacional (E.164). */
+export const PHONE_MAX_DIGITS = 15;
+
+/** Recorta, pasa a NFC y deja un solo espacio donde había varios. No cambia dígitos ni signos. */
+export function normalizePhone(input: string): string {
+  return input.normalize("NFC").trim().replace(/\s+/g, " ");
+}
+
+/** Forma razonable (`isPlausiblePhone`) y no más de 15 dígitos. */
+export function isValidPhone(value: string): boolean {
+  return isPlausiblePhone(value) && value.replace(/\D/g, "").length <= PHONE_MAX_DIGITS;
+}

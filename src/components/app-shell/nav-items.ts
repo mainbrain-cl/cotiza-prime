@@ -1,4 +1,12 @@
-import { FileText, House, Settings, Tags, Users, type LucideIcon } from "lucide-react";
+import {
+  ClipboardList,
+  FileText,
+  House,
+  Settings,
+  Tags,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 
 export type NavItem = {
   /** Parte de la dirección después de `/o/{tenantId}`; vacío es el inicio. */
@@ -12,6 +20,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { segment: "cotizaciones", label: "Cotizaciones", icon: FileText },
   { segment: "clientes", label: "Clientes", icon: Users },
   { segment: "catalogo", label: "Catálogo", icon: Tags },
+  // Todos los roles pueden ver los formularios; solo el Dueño y los Administradores los cambian.
+  { segment: "formularios", label: "Formularios", icon: ClipboardList },
   { segment: "configuracion", label: "Configuración", icon: Settings },
 ] as const;
 

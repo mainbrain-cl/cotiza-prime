@@ -107,6 +107,29 @@ describe("Ataque 1 · actuar sobre un formulario de B con el pase de A", () => {
   });
 });
 
+describe("H-086 · las lecturas del editor de formularios no cruzan organizaciones", () => {
+  it("Ana pide el formulario de B (y sus servicios) con la cabecera de A: no hay filas", async () => {
+    const fx = fixture();
+    const b = fx.orgs.B.intake!;
+    const token = await tokenOf("ana");
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+    const form = await rest(token, `intake_forms?select=id,title,fields&id=eq.${b.formId}`, {
+      headers,
+    });
+    expect(form.json).toEqual([]);
+    const items = await rest(
+      token,
+      `intake_form_items?select=id,public_name&form_id=eq.${b.formId}`,
+      { headers },
+    );
+    expect(items.json).toEqual([]);
+    const own = await rest(token, `intake_forms?select=id&id=eq.${fx.orgs.A.intake!.formId}`, {
+      headers,
+    });
+    expect((own.json as unknown[]).length).toBe(1);
+  });
+});
+
 describe("Ataque 3 · un servicio del catálogo de B dentro de un formulario de A", () => {
   it("Ana guarda su formulario con el `catalog_item_id` de B: se rechaza y el formulario de A no cambia", async () => {
     const fx = fixture();

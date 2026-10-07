@@ -97,6 +97,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         B.customerIds[0],
         B.catalogIds[0],
         B.quoteIds[0],
+        B.intake!.formId,
       );
       await expectNotFound(page, path);
       const html = await page.content();
@@ -190,6 +191,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         fx.orgs.A.customerIds[0],
         fx.orgs.A.catalogIds[0],
         fx.orgs.A.quoteIds[0],
+        fx.orgs.A.intake!.formId,
       );
       const response = await page.goto(path);
       expect(response?.status(), path).toBe(200);
@@ -356,6 +358,65 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
       { data: { responseKey: randomUUID(), name: "Ana Atacante", confirmed: true } },
     );
     expect(noOriginRespond.status()).toBe(403);
+  });
+
+  test("P28 · el formulario de B no se abre ni se guarda desde A (H-086)", async ({ page }) => {
+    test.setTimeout(180_000);
+    const fx = loadFixture();
+    const A = fx.orgs.A;
+    const B = fx.orgs.B;
+    const bFormState = () =>
+      withDb(async (db) => {
+        const { rows } = await db.query<{ h: string }>(
+          `select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
+             from (select * from public.intake_forms where tenant_id = $1) t`,
+          [B.tenantId],
+        );
+        const items = await db.query<{ h: string }>(
+          `select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
+             from (select * from public.intake_form_items where tenant_id = $1) t`,
+          [B.tenantId],
+        );
+        return `${rows[0].h}/${items.rows[0].h}`;
+      });
+    const before = await bFormState();
+
+    // Abrir el formulario de B con el identificador de A en la dirección: igual que uno que no existe.
+    await page.goto(`/o/${A.tenantId}/formularios/${crypto.randomUUID()}`);
+    await expect(page.getByRole("heading", { name: NOT_FOUND_HEADING })).toBeVisible();
+    const missingText = await mainText(page);
+    await page.goto(`/o/${A.tenantId}/formularios/${B.intake!.formId}`);
+    await expect(page.getByRole("heading", { name: NOT_FOUND_HEADING })).toBeVisible();
+    expect(await mainText(page)).toBe(missingText);
+    expect(await page.content()).not.toContain(B.canary);
+
+    // Guardar: el pedido del editor de A se cambia para llevar el formulario de B.
+    await page.goto(`/o/${A.tenantId}/formularios/${A.intake!.formId}`);
+    let tampered = 0;
+    await page.route(`**/o/${A.tenantId}/formularios/${A.intake!.formId}`, async (route) => {
+      const request = route.request();
+      const body = request.postData();
+      if (request.method() !== "POST" || body === null) return route.continue();
+      const replaced = body.split(A.intake!.formId).join(B.intake!.formId);
+      if (replaced !== body) tampered++;
+      await route.continue({ postData: replaced });
+    });
+    await page.getByLabel("Título del formulario").fill(`ATAQUE-P28-${fx.runId}`);
+    await page.getByTestId("save-form").click();
+    await expect
+      .poll(() => tampered, { message: "el pedido debía llevar el formulario de A" })
+      .toBeGreaterThan(0);
+    await expect(
+      page.getByRole("alert").filter({ hasText: "No encontramos este formulario" }),
+    ).toBeVisible();
+    expect(await bFormState()).toBe(before);
+    await withDb(async (db) => {
+      expect(
+        await countRows(db, `select 1 from public.intake_forms where title like $1`, [
+          `ATAQUE-P28-%`,
+        ]),
+      ).toBe(0);
+    });
   });
 
   test("P23 · un RUT que solo existe en B no se reconoce como duplicado en A", async ({ page }) => {

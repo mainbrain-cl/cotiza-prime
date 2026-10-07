@@ -13,8 +13,11 @@
 /* Modo oscuro: por preferencia del sistema o por la clase .dark (la clase .light fuerza claro). */
 @custom-variant dark (&:is(.dark *));
 
-/* ───────────── Tokens crudos (claro) ───────────── */
-:root {
+/* ───────────── Tokens claros: UNA sola fuente ─────────────
+   Los usan la aplicación en modo claro (:root) y la pantalla del cliente final (.customer-light),
+   que siempre es clara. Para cambiar un valor claro se cambia aquí y nada más. */
+:root,
+.customer-light {
   /* Color */
   --bg: #f4f6fa;
   --surface: #ffffff;
@@ -35,6 +38,13 @@
   --danger: #c2312b;
   --danger-soft: #fdeceb;
 
+  /* Sombras (apoyado y flotante) */
+  --shadow-1: 0 1px 2px rgb(15 23 41 / 0.06), 0 1px 1px rgb(15 23 41 / 0.04);
+  --shadow-2: 0 8px 24px rgb(15 23 41 / 0.1), 0 2px 6px rgb(15 23 41 / 0.06);
+}
+
+/* ───────────── Tokens crudos (claro) ───────────── */
+:root {
   /* Vidrio */
   --glass: rgb(255 255 255 / 0.62);
   --glass-strong: rgb(255 255 255 / 0.82);
@@ -43,9 +53,7 @@
   --glass-blur: 22px;
   --glass-saturate: 180%;
 
-  /* Sombras */
-  --shadow-1: 0 1px 2px rgb(15 23 41 / 0.06), 0 1px 1px rgb(15 23 41 / 0.04);
-  --shadow-2: 0 8px 24px rgb(15 23 41 / 0.1), 0 2px 6px rgb(15 23 41 / 0.06);
+  /* Sombra (encima de todo) */
   --shadow-3: 0 24px 56px rgb(15 23 41 / 0.18), 0 6px 16px rgb(15 23 41 / 0.1);
 
   /* Radios */
@@ -183,27 +191,7 @@
 /* Pantalla del cliente final (enlace de la cotización): siempre en claro, como el papel del PDF, sin
    importar el modo del sistema. Manda la marca de la organización, no el tema de Cotiza Prime. */
 .customer-light {
-  --bg: #f4f6fa;
-  --surface: #ffffff;
-  --surface-2: #eef1f6;
-  --border: #e2e6ee;
-  --border-strong: #cdd3df;
-  --fg: #0f1729;
-  --fg-muted: #4b5468;
-  --fg-subtle: #6b7489;
-  --accent: #2b54e0;
-  --accent-hover: #2245c2;
-  --accent-soft: #e8eeff;
-  --on-accent: #ffffff;
-  --success: #16794a;
-  --success-soft: #e4f4ea;
-  --warning: #8f5400;
-  --warning-soft: #fff1d6;
-  --danger: #c2312b;
-  --danger-soft: #fdeceb;
-  --shadow-1: 0 1px 2px rgb(15 23 41 / 0.06), 0 1px 1px rgb(15 23 41 / 0.04);
-  --shadow-2: 0 8px 24px rgb(15 23 41 / 0.1), 0 2px 6px rgb(15 23 41 / 0.06);
-
+  /* Colores y sombras: vienen de la regla compartida «:root, .customer-light» de arriba. */
   color-scheme: light;
   background: var(--bg);
   color: var(--fg);

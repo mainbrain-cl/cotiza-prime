@@ -34,8 +34,8 @@ function Party({ title, name, lines }: { title: string; name: string; lines: str
     <section className="min-w-0 flex-1">
       <SectionLabel>{title}</SectionLabel>
       <p className="mt-1 text-md break-words">{name}</p>
-      {lines.map((line) => (
-        <p key={line} className="text-sm break-words text-fg-muted">
+      {lines.map((line, index) => (
+        <p key={`${index}:${line}`} className="text-sm break-words text-fg-muted">
           {line}
         </p>
       ))}
@@ -92,7 +92,7 @@ export function QuoteView({
                   className="max-h-12 max-w-32 rounded-xs bg-surface object-contain p-1"
                 />
               ) : null}
-              <p className="min-w-0 text-lg font-semibold break-words">{organization.name}</p>
+              <h1 className="min-w-0 text-lg font-semibold break-words">{organization.name}</h1>
             </div>
             <div className="text-right">
               <p className="text-xs tracking-[0.08em] uppercase opacity-90">Cotización</p>
@@ -142,7 +142,7 @@ export function QuoteView({
               {/* Teléfono: una tarjeta por línea. Desde 640 px: la tabla de siempre. */}
               <ul className="flex flex-col gap-3 sm:hidden" data-testid="share-lines-cards">
                 {doc.lines.map((line, index) => (
-                  <li key={index} className="rounded-md border border-border p-3">
+                  <li key={`${index}:${line.name}`} className="rounded-md border border-border p-3">
                     <p className="font-medium break-words">
                       {line.name}
                       {line.exempt ? (
@@ -191,7 +191,7 @@ export function QuoteView({
                   </thead>
                   <tbody>
                     {doc.lines.map((line, index) => (
-                      <tr key={index} className="align-top">
+                      <tr key={`${index}:${line.name}`} className="align-top">
                         <td className="border-b border-border py-2 pr-2 break-words">
                           <span className="font-medium">{line.name}</span>
                           {line.exempt ? (
@@ -232,17 +232,19 @@ export function QuoteView({
                   </section>
                 ))}
               </div>
-              <dl className="w-full text-base sm:w-72" data-testid="share-totals">
-                <TotalRow label="Subtotal" value={totals.subtotal} />
-                {totals.globalDiscount ? (
-                  <TotalRow label="Descuento global" value={totals.globalDiscount} />
-                ) : null}
-                <TotalRow label="Neto afecto" value={totals.netTaxable} />
-                {totals.exempt ? <TotalRow label="Exento" value={totals.exempt} /> : null}
-                <TotalRow label={totals.taxLabel} value={totals.tax} />
-                <TotalRow label="Total" value={totals.total} strong />
+              <div className="w-full sm:w-72">
+                <dl className="text-base" data-testid="share-totals">
+                  <TotalRow label="Subtotal" value={totals.subtotal} />
+                  {totals.globalDiscount ? (
+                    <TotalRow label="Descuento global" value={totals.globalDiscount} />
+                  ) : null}
+                  <TotalRow label="Neto afecto" value={totals.netTaxable} />
+                  {totals.exempt ? <TotalRow label="Exento" value={totals.exempt} /> : null}
+                  <TotalRow label={totals.taxLabel} value={totals.tax} />
+                  <TotalRow label="Total" value={totals.total} strong />
+                </dl>
                 <p className="mt-2 text-right text-xs text-fg-subtle">Valores en pesos chilenos.</p>
-              </dl>
+              </div>
             </div>
 
             {/* «Aceptar» y «Rechazar» (H-031), o la confirmación si ya respondió. */}
@@ -267,8 +269,8 @@ export function QuoteView({
 
         <footer className="mt-6 px-1 text-center text-sm text-fg-muted">
           <p className="font-medium text-fg">{organization.name}</p>
-          {organization.detailLines.map((line) => (
-            <p key={line} className="break-words">
+          {organization.detailLines.map((line, index) => (
+            <p key={`${index}:${line}`} className="break-words">
               {line}
             </p>
           ))}

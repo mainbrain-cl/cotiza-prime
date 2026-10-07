@@ -342,18 +342,60 @@ test("un enlace vencido muestra el contacto de la empresa y no la cotización", 
   }
 });
 
+test("una cotización reemplazada por otra versión avisa al cliente, con el contacto y sin la cotización", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(300_000);
+  const { tenantId, orgName } = await setup(page, "reempl");
+  const sent = await sendQuote(page, tenantId, "reemplazada");
+  const path = new URL(sent.link).pathname;
+  // La pantalla de versiones llega en un sprint posterior: el estado se deja como lo dejaría esa
+  // acción (sin los disparadores de la lista cerrada de cambios, solo en esta sesión de prueba).
+  await withDb(async (db) => {
+    await db.query("set session_replication_role = replica");
+    await db.query("update public.quotes set status = 'superseded' where id = $1", [sent.quoteId]);
+  });
+
+  const client = await browser.newContext({
+    baseURL: test.info().project.use.baseURL!,
+    viewport: MOBILE,
+    extraHTTPHeaders: { "x-forwarded-for": randomTestIp() },
+  });
+  try {
+    const clientPage = await client.newPage();
+    await clientPage.goto(path);
+    await expect(clientPage.getByTestId("share-unavailable-title")).toHaveText(
+      "Hay una versión más nueva de esta cotización",
+    );
+    await expect(clientPage.getByTestId("share-contact")).toContainText(orgName);
+    await expect(clientPage.locator("body")).not.toContainText(sent.quoteNumber);
+    await expect(clientPage.getByTestId("share-quote")).toHaveCount(0);
+    await expect(clientPage.getByTestId("response-accept-open")).toHaveCount(0);
+    await expectNoHorizontalScroll(clientPage);
+    expect((await client.request.get(`${API_PREFIX}/${sent.token}/pdf`)).status()).toBe(404);
+  } finally {
+    await client.close();
+  }
+});
+
 test("un enlace inventado o mal escrito da un mensaje genérico, sin revelar nada", async ({
   page,
   request,
 }) => {
   const invented = randomBytes(32).toString("base64url");
-  await page.goto(`/c/${invented}`);
+  const inventedResponse = await page.goto(`/c/${invented}`);
   await expect(page.getByTestId("share-not-found")).toBeVisible();
   await expect(page.getByRole("heading", { name: NOT_FOUND_TEXT })).toBeVisible();
   const inventedText = await page.locator("body").innerText();
 
-  await page.goto("/c/corto");
+  const shortResponse = await page.goto("/c/corto");
   await expect(page.getByRole("heading", { name: NOT_FOUND_TEXT })).toBeVisible();
+  // Desviación declarada: la pantalla responde 200 (`loading.tsx` ya envió el esqueleto, así que
+  // `notFound()` no cambia el código); la API sí responde 404 (más abajo). No se indexa.
+  expect(inventedResponse?.status()).toBe(200);
+  expect(shortResponse?.status()).toBe(200);
+  expect(await page.locator('meta[name="robots"]').getAttribute("content")).toContain("noindex");
   expect(await page.locator("body").innerText()).toBe(inventedText);
 
   // La API pública responde igual de seca, y un POST sin el origen de la aplicación se rechaza.

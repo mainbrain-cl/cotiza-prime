@@ -24,8 +24,11 @@ sesión, algo que hoy ninguna prueba permite.
 3. La IP y el navegador salen del servidor, nunca del navegador del cliente.
 4. El token es aleatorio de 43 caracteres; en la base se guarda solo su sello (`sha256`). Cada correo
    lleva su enlace propio; revocar anula todos los de una cotización.
-5. Una petición GET nunca cambia el estado (los antivirus abren los enlaces solos); la apertura se
-   registra con un aviso aparte desde la página.
+5. Una petición GET nunca registra una apertura ni una respuesta (los antivirus abren los enlaces
+   solos): la apertura se registra con un aviso aparte desde la página. Lo único que un GET sí puede
+   hacer es dejar vencida la cotización cuando ya pasó su vigencia (la lectura del enlace la vence),
+   porque no depende de quién la mire. Corregido el 2026-10-07: antes decía que un GET nunca cambia
+   el estado.
 
 ## Consecuencias
 

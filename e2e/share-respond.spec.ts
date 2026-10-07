@@ -254,6 +254,10 @@ test("el cliente acepta desde su teléfono: queda registrado, no se puede repeti
       "Ya respondiste esta cotización",
     );
     await expect(client.getByTestId("response-confirmation")).toContainText("La aceptaste");
+    // Y el aviso de la parte de arriba dice que ya fue aceptada, con la fecha.
+    await expect(client.getByTestId("share-response-notice")).toContainText(
+      /Esta cotización ya fue aceptada el \d{2}[-/]\d{2}[-/]\d{4}/,
+    );
     await expect(client.getByRole("button", { name: /^(aceptar|rechazar)$/i })).toHaveCount(0);
     await expect(client.getByTestId("share-download-pdf")).toBeVisible();
     const pdf = await clientContext.request.get(`${API_PREFIX}/${sent.token}/pdf`);

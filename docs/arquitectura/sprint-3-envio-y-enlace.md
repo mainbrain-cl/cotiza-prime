@@ -484,3 +484,31 @@ menores 1, 2, 3, 5, 6, 7, 8, 10 y 11. La organización no es parámetro de las f
 - Desviación: `record_email_event` (migración 25) escribe el evento «El correo rebotó: no llegó al cliente» también
   para un aviso interno rebotado. Corregir en la historia de rebotes (H-033/H-034): escribir el evento solo si
   `kind in ('quote', 'quote_resend')`. Fecha propuesta: al integrar H-033.
+
+### Correcciones de los menores de la revisión de H-030 (2026-10-07, sin migración)
+
+Hecho: menor 2 (sin IP, en producción `consumeShareQuota` y `consumeShareRespondQuota` cuentan en el grupo
+«desconocida»; en desarrollo y pruebas no se limita por IP), 4 (el aviso de apertura sale solo con la pestaña
+visible, tras 2 s y sin `navigator.webdriver`; en `NEXT_PUBLIC_APP_ENV=test` se permite el navegador
+automatizado porque las e2e usan Playwright), 5 (comentario de `page.tsx` y punto 5 de la decisión 017: un GET
+sí puede vencer la cotización), 6 (`h1` con el nombre de la organización, sin `<p>` dentro de `<dl>`, claves
+estables), 7 (`Cache-Control` exacto `private, no-store, max-age=0` en la regla de `/c/:path*`; pruebas de
+«reemplazada» por la ruta, de la pantalla `ShareUnavailable` y del aviso «ya fue aceptada»), 8 (`.customer-light`
+comparte con `:root` una sola regla de colores y sombras claras en `globals.css`).
+
+**Desviación (menor 1):** `/c/[token]` sigue respondiendo 200 para token inexistente y para límite excedido. Se
+probó `notFound()` con un `not-found.tsx` y el código seguía en 200, porque `loading.tsx` ya envió el esqueleto
+antes de que la página decida; y una página no puede fijar un 429. La API pública sí responde 404 y 429.
+Para tener 404 y 429 reales en la pantalla habría que decidirlos en `src/proxy.ts` antes de renderizar, o
+quitar `loading.tsx` de esta ruta; queda como opción si Aarón lo pide.
+
+**Anotado sin hacer:**
+
+- Menor 3 (agrupar aperturas por IP y hora; hoy una fila por visita): **requiere migración**. Propuesta: en
+  `share_link_record_view`, no insertar otra fila en `share_link_views` si ya hay una del mismo enlace y la
+  misma huella de IP dentro de la hora (guardar la huella en una columna indexada junto a `ip_enc`, que es
+  cifrada y no sirve para comparar), y sumar solo `view_count`. H-108 (borrado a los 12 meses) debe estar antes
+  del piloto.
+- Menor 9 (aviso de privacidad al cliente final en la pantalla pública, con enlace a la política): pendiente
+  legal con Aarón antes del piloto.
+- Regla de enlaces ya respondidos: sigue pendiente de Aarón; no se tocó.

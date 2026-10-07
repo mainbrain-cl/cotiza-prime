@@ -66,8 +66,8 @@ export function ShareUnavailable({
       >
         <p className="text-xs tracking-[0.08em] text-fg-subtle uppercase">Contacta a</p>
         <p className="mt-1 font-semibold break-words">{contact.name}</p>
-        {contact.detailLines.map((line) => (
-          <p key={line} className="text-sm break-words text-fg-muted">
+        {contact.detailLines.map((line, index) => (
+          <p key={`${index}:${line}`} className="text-sm break-words text-fg-muted">
             {line}
           </p>
         ))}

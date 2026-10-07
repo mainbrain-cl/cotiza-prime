@@ -406,7 +406,7 @@ test.describe("H-089 · recibir y asignar solicitudes", () => {
     const contact = page.getByTestId("request-contact");
     await expect(contact).toContainText(ctx.visitorEmail);
     await expect(contact).toContainText("+56 9 1234 5678");
-    const message = page.getByTestId("request-message");
+    const message = page.getByTestId("request-summary-message");
     await expect(message).toContainText("<script>alert(1)</script>");
     await expect(message).toContainText('& "comillas"');
     expect(await message.locator("script, img").count()).toBe(0);

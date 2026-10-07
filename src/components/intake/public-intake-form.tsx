@@ -3,6 +3,7 @@
 import { CheckCircle2 } from "lucide-react";
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -10,12 +11,16 @@ import {
   type ReactNode,
 } from "react";
 import { brandStyle } from "@/lib/share/brand-vars";
+import { itemUnitShort } from "@/lib/intake/builder-model";
+import { buildRequestSummary } from "@/lib/intake/summary-model";
 import { consentFingerprint } from "@/lib/intake/consent-fingerprint";
 import { MSG_ERROR, type SubmitResponse } from "@/lib/intake/submit-response";
 import { buildSubmitSchema, fieldErrors, HONEYPOT_FIELD } from "@/lib/intake/submit-schema";
 import type { PublicFormContent, PublicFormView } from "@/lib/intake/public-view";
 import { AntibotWidget } from "./antibot-widget";
 import { FormView, type TextFieldKey } from "./form-view";
+import { RequestSummary } from "./request-summary";
+import { SummarySheet } from "./summary-sheet";
 
 /**
  * La página pública del formulario (H-087), del lado del navegador. Maneja lo que la persona escribe y
@@ -171,6 +176,29 @@ export function PublicIntakeForm({
     shownAt.current = Date.now();
   }, []);
 
+  // El resumen se arma SOLO aquí, en el navegador y con lo que hay escrito: nada se consulta al servidor
+  // por tecla y el borrador no se guarda en ningún lado (ni en el almacenamiento del navegador).
+  const summary = useMemo(
+    () =>
+      buildRequestSummary(
+        {
+          fields: content.fields,
+          items: content.items.map((item) => ({
+            id: item.id,
+            publicName: item.name,
+            unit: itemUnitShort(item.unit),
+            quantityMode: item.quantityMode,
+          })),
+        },
+        {
+          ...values,
+          // En el orden en que se eligieron: es el mismo orden en que se envían y en que los ve el equipo.
+          items: Object.entries(picked).map(([formItemId, quantity]) => ({ formItemId, quantity })),
+        },
+      ),
+    [content, values, picked],
+  );
+
   const focusFirstError = () => {
     requestAnimationFrame(() => {
       document
@@ -288,9 +316,15 @@ export function PublicIntakeForm({
     }
   }
 
-  if (done !== null) return <Success view={view} header={header} message={done} />;
+  if (done !== null) {
+    return (
+      <div className="mx-auto w-full max-w-2xl">
+        <Success view={view} header={header} message={done} />
+      </div>
+    );
+  }
 
-  return (
+  const form = (
     <FormView
       brand={view.brand}
       organizationName={view.organization.name}
@@ -377,5 +411,26 @@ export function PublicIntakeForm({
         ),
       }}
     />
+  );
+
+  return (
+    <div className="grid items-start gap-6 pb-20 lg:grid-cols-[minmax(0,42rem)_22rem] lg:justify-center lg:pb-0">
+      {form}
+      {/* Escritorio: el resumen va al lado y se queda a la vista. Teléfono: botón fijo y hoja. */}
+      <aside
+        aria-label="Resumen de tu solicitud"
+        data-testid="summary-aside"
+        className="customer-light hidden rounded-lg border border-border bg-surface p-5 shadow-1 lg:sticky lg:top-6 lg:block"
+        style={brandStyle(view.brand) as CSSProperties}
+      >
+        <div className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold">Resumen de tu solicitud</h2>
+          <RequestSummary summary={summary} announce />
+        </div>
+      </aside>
+      <SummarySheet count={summary.itemCount}>
+        <RequestSummary summary={summary} />
+      </SummarySheet>
+    </div>
   );
 }

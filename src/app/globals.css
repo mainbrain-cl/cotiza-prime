@@ -507,3 +507,15 @@
 @utility animate-enter {
   animation: enter-up var(--dur-enter) var(--ease-ios) both;
 }
+
+/* Hoja del resumen del formulario público en teléfono (H-088): sube desde abajo. */
+@keyframes summary-sheet-in {
+  from {
+    transform: translate3d(0, 24px, 0);
+    opacity: 0;
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}

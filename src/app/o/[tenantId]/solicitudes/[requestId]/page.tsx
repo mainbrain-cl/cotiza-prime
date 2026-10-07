@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ROLE_LABELS } from "@/components/app-shell/app-shell";
+import { RequestSummary } from "@/components/intake/request-summary";
 import { RequestActions } from "@/components/intake/request-actions";
 import { RequestStatusBadge } from "@/components/intake/request-status-badge";
 import { formatDateTime } from "@/lib/format-date";
@@ -11,10 +12,10 @@ import { loadAssignableMembers, loadRequest } from "@/lib/intake/requests-querie
 import {
   DATA_DELETED_LABEL,
   discardReasonLabel,
-  formatRequestQuantity,
   requestPermissions,
   timeSince,
 } from "@/lib/intake/requests-model";
+import { buildStoredRequestSummary } from "@/lib/intake/stored-summary";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 
@@ -97,6 +98,7 @@ export default async function RequestDetailPage({
           label: `${member.name} · ${ROLE_LABELS[member.role]}`,
         }));
   const { contact } = request;
+  const requestSummary = buildStoredRequestSummary(request);
 
   return (
     <div className="flex flex-col gap-6">
@@ -147,32 +149,10 @@ export default async function RequestDetailPage({
           </Panel>
 
           <Panel id="items-title" title="Lo que pidió">
-            {request.items.length === 0 ? (
-              <p className="text-fg-muted">No eligió servicios.</p>
-            ) : (
-              <ul data-testid="request-items" className="flex flex-col gap-2">
-                {request.items.map((item, index) => (
-                  <li
-                    key={`${item.name}-${index}`}
-                    className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 rounded-sm bg-surface-2 px-3 py-2"
-                  >
-                    <span className="font-medium break-words">{item.name}</span>
-                    <span className="text-sm text-fg-muted">{formatRequestQuantity(item)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {!request.anonymized && contact.message ? (
-              <div className="flex flex-col gap-1">
-                <h3 className="text-sm font-semibold text-fg">Mensaje</h3>
-                <p
-                  data-testid="request-message"
-                  className="break-words whitespace-pre-wrap text-fg"
-                >
-                  {contact.message}
-                </p>
-              </div>
-            ) : null}
+            {/* El mismo resumen que vio quien llenó el formulario (H-088). */}
+            <div data-testid="request-items">
+              <RequestSummary summary={requestSummary} />
+            </div>
           </Panel>
         </div>
 

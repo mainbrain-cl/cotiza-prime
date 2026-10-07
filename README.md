@@ -47,6 +47,20 @@ Para apagar la base local: `npx supabase stop`.
 
 La primera vez, `npx playwright install chromium` descarga el navegador de las pruebas.
 
+## Despliegue: anti-robot del formulario público
+
+- `ANTIBOT_PROVIDER` es **obligatorio y no tiene valor por defecto** (`turnstile` o, solo local, `memory`). Con
+  `turnstile` también hacen falta `TURNSTILE_SECRET_KEY` y `NEXT_PUBLIC_TURNSTILE_SITE_KEY`.
+- **Tiene que estar definido también al compilar** (`next build`), no solo al arrancar: la política de seguridad
+  (CSP) de `/f/*` se arma en `next.config.ts` y con `turnstile` abre `script-src` y `frame-src` a
+  `https://challenges.cloudflare.com`. Si se compila sin la variable, el formulario carga pero Cloudflare queda
+  bloqueado y nadie puede enviar. En Vercel: definirla para el entorno de compilación y de ejecución, y
+  recompilar si se cambia.
+- `memory` (acepta un token fijo) **no arranca** con `NODE_ENV=production`, con cualquier `VERCEL_ENV` ni con
+  `NEXT_PUBLIC_APP_ENV=production`. La única excepción es `ANTIBOT_ALLOW_MEMORY=1`, pensada solo para CI y las
+  pruebas de punta a punta con la aplicación compilada (ya va en `playwright.config.ts`); con
+  `NEXT_PUBLIC_APP_ENV=production` se ignora. No se define nunca en un entorno real.
+
 ## Estructura
 
 ```

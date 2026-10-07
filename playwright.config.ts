@@ -58,6 +58,8 @@ export default defineConfig({
       // Formulario público (H-087): secreto del sello de tiempo y verificación anti-robot de pruebas.
       INTAKE_RENDER_SECRET: process.env.INTAKE_RENDER_SECRET!,
       ANTIBOT_PROVIDER: "memory",
+      // La app compilada (E2E_PROD o CI) corre con NODE_ENV=production: `memory` solo se permite con esto.
+      ANTIBOT_ALLOW_MEMORY: "1",
       APP_ORIGIN: `http://localhost:${PORT}`,
       // Los correos de las pruebas salen a Mailpit (http://127.0.0.1:56324), nunca a un proveedor real.
       EMAIL_PROVIDER: "mailpit",

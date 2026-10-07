@@ -36,11 +36,6 @@ const LOGO_BUCKET = "tenant-logos";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Mismo tope del bucket de logos (migración 13): 1 MB. */
 const LOGO_MAX_BYTES = 1_048_576;
-const LOGO_CONTENT_TYPES: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  svg: "image/svg+xml",
-};
 const LOGO_FILE_PATTERN = /^[A-Za-z0-9_-]{1,80}\.(png|jpg|svg)$/;
 /** Código de Postgres para «ya existe una fila con esa clave única». */
 const UNIQUE_VIOLATION = "23505";
@@ -366,14 +361,15 @@ export async function settleIntakeNotice(input: {
 }
 
 /**
- * El logo de la organización como dirección `data:` (la página pública no habla con Storage y no puede
- * exponer la dirección con el identificador de la organización). Solo si la ruta empieza por el
- * `tenant_id` que devolvió la base; cualquier otra cosa devuelve `null`.
+ * El archivo del logo de la organización (la página pública no habla con Storage y no puede exponer la
+ * dirección con el identificador de la organización). Solo si la ruta empieza por el `tenant_id` que
+ * devolvió la base; cualquier otra cosa devuelve `null`. Quien lo usa lo reduce (`logo-thumbnail.ts`)
+ * antes de mostrarlo.
  */
-export async function readOrganizationLogoDataUrl(
+export async function readOrganizationLogoFile(
   tenantId: string,
   logoPath: string | null,
-): Promise<string | null> {
+): Promise<{ bytes: Buffer; kind: "png" | "jpg" | "svg" } | null> {
   if (!logoPath || !UUID_PATTERN.test(tenantId)) return null;
   const prefix = `${tenantId}/`;
   if (!logoPath.startsWith(prefix)) return null;
@@ -382,6 +378,5 @@ export async function readOrganizationLogoDataUrl(
   if (!match) return null;
   const { data, error } = await createAdminClient().storage.from(LOGO_BUCKET).download(logoPath);
   if (error || !data || data.size > LOGO_MAX_BYTES) return null;
-  const bytes = Buffer.from(await data.arrayBuffer());
-  return `data:${LOGO_CONTENT_TYPES[match[1]]};base64,${bytes.toString("base64")}`;
+  return { bytes: Buffer.from(await data.arrayBuffer()), kind: match[1] as "png" | "jpg" | "svg" };
 }

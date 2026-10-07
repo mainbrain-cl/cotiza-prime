@@ -47,8 +47,12 @@ const interaction = (overrides: Partial<FormInteraction> = {}): FormInteraction 
   errors: {},
   submitting: false,
   onSubmit: vi.fn(),
+  ready: true,
+  action: "/api/v1/public/forms/AAAAAAAAAAAAAAAAAAAAAA/requests",
   ...overrides,
 });
+
+const DISABLED_SUBMIT = /<button type="submit"[^>]*\sdisabled=""/;
 
 const render = (overrides: Partial<FormInteraction> = {}) =>
   renderToStaticMarkup(<FormView {...props} interaction={interaction(overrides)} />);
@@ -94,11 +98,64 @@ describe("FormView en modo interactivo (página pública)", () => {
     expect(html).toContain('aria-describedby="pf-email-error"');
   });
 
+  it("el formulario es method=post, ningún campo lleva name y el botón espera a que la página esté lista", () => {
+    const html = render({ ready: false });
+    expect(html).toMatch(/<form[^>]*method="post"/);
+    expect(html).toContain('action="/api/v1/public/forms/AAAAAAAAAAAAAAAAAAAAAA/requests"');
+    // sin `name`, un envío «clásico» del navegador no lleva ningún dato (ni por la dirección ni en el cuerpo)
+    expect(html).not.toMatch(/<(input|textarea|select)[^>]*\sname=/);
+    expect(html).toMatch(DISABLED_SUBMIT);
+    expect(render({ ready: true })).not.toMatch(DISABLED_SUBMIT);
+    // con JavaScript apagado se dice por qué no se puede enviar
+    expect(html).toContain("<noscript>");
+    expect(html).toContain("Para enviar este formulario necesitas activar JavaScript.");
+  });
+
+  it("la cantidad nombra el servicio y el enlace de privacidad queda fuera de la etiqueta de la casilla", () => {
+    const html = renderToStaticMarkup(
+      <FormView
+        {...props}
+        privacyPolicyUrl="https://ejemplo.test/privacidad"
+        interaction={interaction()}
+      />,
+    );
+    expect(html).toMatch(/Cantidad[^<]*<span class="sr-only"> de Traslado<\/span>/);
+    const consentLabel = /<label for="pf-consent"[^>]*>([\s\S]*?)<\/label>/.exec(html)?.[1] ?? "";
+    expect(consentLabel).toContain("Tus datos los recibirá");
+    expect(consentLabel).not.toContain("<a ");
+    expect(html).toContain('href="https://ejemplo.test/privacidad"');
+  });
+
+  it("solo dibuja el enlace de privacidad si es https (segunda defensa)", () => {
+    for (const bad of [
+      "http://ejemplo.test/privacidad",
+      "javascript:alert(1)",
+      "data:text/html,hola",
+      "//ejemplo.test/x",
+      "https://usuario:clave@ejemplo.test/x",
+      "no es una dirección",
+    ]) {
+      const html = renderToStaticMarkup(
+        <FormView {...props} privacyPolicyUrl={bad} interaction={interaction()} />,
+      );
+      expect(html, bad).not.toContain("Leer la política");
+      expect(html, bad).not.toContain("<a ");
+    }
+  });
+
+  it("el error de «ningún servicio» queda atado al grupo y el foco puede ir a él", () => {
+    const html = render({ errors: { items: "Elige al menos un servicio." } });
+    expect(html).toMatch(/<fieldset[^>]*aria-describedby="pf-items-error"/);
+    expect(html).toContain('data-invalid-group="true"');
+    expect(html).toMatch(/<fieldset[^>]*tabindex="-1"/);
+    expect(render()).not.toContain("data-invalid-group");
+  });
+
   it("el botón de enviar es de tipo submit y se bloquea mientras envía", () => {
     expect(render()).toMatch(/<button type="submit"/);
     const sending = render({ submitting: true });
     expect(sending).toContain("Enviando…");
-    expect(sending).toMatch(/<button type="submit"[^>]*disabled/);
+    expect(sending).toMatch(DISABLED_SUBMIT);
   });
 
   it("deja un lugar para la verificación anti-robot y los avisos justo antes del botón", () => {

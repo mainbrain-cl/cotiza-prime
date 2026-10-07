@@ -45,11 +45,13 @@ export type PublicOrganization = {
   contactPhone: string | null;
 };
 
+/**
+ * Lo que recibe el formulario del navegador. NO incluye el logo: el encabezado de la marca lo dibuja el
+ * servidor (con el logo reducido) y se entrega ya armado, así la imagen no viaja también como dato.
+ */
 export type PublicFormView = PublicFormContent & {
   organization: PublicOrganization;
   brand: PdfBrand;
-  /** Logo como dirección `data:` (la página pública no habla con Storage ni expone la organización). */
-  logoDataUrl: string | null;
 };
 
 export function publicOrganization(contact: IntakeOrganizationContact): PublicOrganization {
@@ -87,16 +89,11 @@ export function buildPublicContent(
   };
 }
 
-export function buildPublicView(
-  form: IntakeFormAvailable,
-  consent: ConsentNotice,
-  logoDataUrl: string | null,
-): PublicFormView {
+export function buildPublicView(form: IntakeFormAvailable, consent: ConsentNotice): PublicFormView {
   return {
     ...buildPublicContent(form, consent),
     organization: publicOrganization(form.organization),
     brand: resolvePdfBrand(form.primaryColor, form.secondaryColor),
-    logoDataUrl,
   };
 }
 

@@ -1,12 +1,15 @@
 import "../tests/support/stub-server-only"; // debe ir primero
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
+import sharp from "sharp";
 import { generateRut } from "../src/lib/chile/rut";
 import { decryptPii } from "../src/lib/crypto/pii";
+import { consentFingerprint } from "../src/lib/intake/consent-fingerprint";
 import { createRenderToken } from "../src/lib/intake/render-token";
+import { HONEYPOT_FIELD } from "../src/lib/intake/submit-schema";
 import { TENANT_HEADER } from "../src/lib/tenant/constants";
 import { connect } from "../tests/db/helpers";
-import { localEnv, rest, rpc } from "../tests/support/local-supabase";
+import { localEnv, rest, rpc, storage } from "../tests/support/local-supabase";
 import { TEST_PASSWORD, createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
 import { expect, randomTestIp, test, type Page } from "./fixtures";
 
@@ -21,11 +24,15 @@ const MOBILE = { width: 375, height: 812 };
 const CATALOG_PRICE = 45_000;
 const PRICE_TEXTS = ["45.000", "45000", "unit_price", "unitPrice", "price"];
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
-const RENDER_TOKEN = /v1\.\d{9,12}\.[A-Za-z0-9_-]{43}/;
+/** Sello de tiempo y clave de envío que el servidor entrega juntos (van seguidos en los datos de la página). */
+const STAMP_IN_HTML =
+  /(v1\.\d{9,12}\.[A-Za-z0-9_-]{43})\\*",\\*"submitKey\\*":\\*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/;
 /** El sello de tiempo pide al menos 3 segundos entre mostrar el formulario y enviarlo. */
 const AFTER_MIN_FILL_MS = 3_500;
 const XSS_NAME = "<img src=x onerror=alert(1)>";
 const XSS_MESSAGE = 'Hola\n<script>alert(1)</script>\n& "comillas"';
+
+type Stamp = { token: string; submitKey: string };
 
 type FormInfo = {
   id: string;
@@ -214,15 +221,34 @@ async function fillAndPick(
   await page.locator(`#pf-qty-${form.freeItemId}`).fill(data.km ?? "12,5");
 }
 
+const fingerprints = new Map<string, string>();
+
+/** La huella del aviso de privacidad que ve la persona, igual que la calcula el navegador. */
+async function consentFingerprintOf(page: Page, form: FormInfo): Promise<string> {
+  const known = fingerprints.get(form.publicId);
+  if (known) return known;
+  const reader = await page.context().newPage();
+  try {
+    await reader.goto(`/f/${form.publicId}`);
+    const text = await reader.locator('label[for="pf-consent"]').textContent();
+    expect(text, "el aviso de privacidad está a la vista").toBeTruthy();
+    const fingerprint = consentFingerprint(text!, null);
+    fingerprints.set(form.publicId, fingerprint);
+    return fingerprint;
+  } finally {
+    await reader.close();
+  }
+}
+
 /** Hace como si fuera el navegador: sello de tiempo de la página y envío directo a la API. */
 async function apiSubmit(
   page: Page,
   form: FormInfo,
   overrides: Record<string, unknown> = {},
-  renderToken?: string,
+  stampArg?: Stamp,
 ) {
   const origin = new URL(test.info().project.use.baseURL!).origin;
-  const stamp = renderToken ?? (await renderTokenOf(page, form));
+  const stamp = stampArg ?? (await renderTokenOf(page, form));
   return page.request.post(`/api/v1/public/forms/${form.publicId}/requests`, {
     headers: { origin },
     data: {
@@ -230,23 +256,30 @@ async function apiSubmit(
       email: `visitante-${randomUUID().slice(0, 8)}@ejemplo.test`,
       items: [{ formItemId: form.freeItemId, quantity: "3" }],
       consent: true,
-      submitKey: randomUUID(),
-      requestId: randomUUID(),
+      submitKey: stamp.submitKey,
+      consentFingerprint: overrides.consentFingerprint ?? (await consentFingerprintOf(page, form)),
       formRevision: form.revision,
-      website: "",
-      renderToken: stamp,
+      [HONEYPOT_FIELD]: "",
+      renderToken: stamp.token,
       antibotToken: "test-pass",
       ...overrides,
     },
   });
 }
 
-async function renderTokenOf(page: Page, form: FormInfo): Promise<string> {
+/** El sello y la clave de envío de la página, recién pedidos (sin esperar el mínimo de 3 segundos). */
+async function freshStamp(page: Page, form: FormInfo): Promise<Stamp> {
   const html = await (await page.request.get(`/f/${form.publicId}`)).text();
-  const token = RENDER_TOKEN.exec(html)?.[0];
-  expect(token, "la página trae el sello de tiempo").toBeTruthy();
+  const found = STAMP_IN_HTML.exec(html);
+  expect(found, "la página trae el sello de tiempo y su clave de envío").toBeTruthy();
+  return { token: found![1], submitKey: found![2] };
+}
+
+/** Igual, pero esperando lo que pide el sello para poder enviarse. */
+async function renderTokenOf(page: Page, form: FormInfo): Promise<Stamp> {
+  const stamp = await freshStamp(page, form);
   await page.waitForTimeout(AFTER_MIN_FILL_MS);
-  return token!;
+  return stamp;
 }
 
 test.describe.configure({ mode: "serial" });
@@ -334,6 +367,8 @@ test.describe("H-087 · pedir una cotización por el formulario público", () =>
     await expect(view).toContainText("Flete urbano");
     await expect(view).toContainText("Dentro de la Región Metropolitana");
     await expect(view).toContainText("Traslado por kilómetro");
+    // la cantidad dice de qué servicio es (con lector de pantalla hay varias «Cantidad»)
+    await expect(page.getByLabel("Cantidad de Traslado por kilómetro")).toBeVisible();
     await expect(view).toContainText("Tus datos los recibirá " + ctx.tenantName);
     await expect(page.locator("#pf-phone")).toBeVisible();
     await expect(page.locator("#pf-message")).toBeVisible();
@@ -358,6 +393,10 @@ test.describe("H-087 · pedir una cotización por el formulario público", () =>
     const responses = await Promise.all(bodies);
     expect(responses.length).toBeGreaterThan(0);
     const allowedUuids = new Set([ctx.main.catalogItemId, ctx.main.freeItemId]);
+    // la clave de envío que el servidor entrega con el sello también es un UUID permitido (solo esa)
+    const deliveredKeys = responses.flatMap(({ text }) => STAMP_IN_HTML.exec(text)?.[2] ?? []);
+    expect(deliveredKeys.length, "la página trae su clave de envío").toBeGreaterThan(0);
+    for (const key of deliveredKeys) allowedUuids.add(key);
     for (const { url, text } of responses) {
       for (const secret of [ctx.tenantId, formId, ctx.catalogId, internalName, ...PRICE_TEXTS]) {
         expect(text, `${url} no puede contener «${secret}»`).not.toContain(secret);
@@ -558,9 +597,9 @@ test.describe("H-087 · pedir una cotización por el formulario público", () =>
     page,
   }) => {
     test.setTimeout(180_000);
-    const stamp = await renderTokenOf(page, ctx.cap);
     for (let n = 1; n <= 2; n += 1) {
-      const res = await apiSubmit(page, ctx.cap, {}, stamp);
+      // cada envío con su propio sello: el sello queda atado a una sola clave de envío
+      const res = await apiSubmit(page, ctx.cap);
       expect(res.status(), await res.text()).toBe(200);
     }
     expect(await requestsOf(ctx.cap.id)).toBe(2);
@@ -579,7 +618,7 @@ test.describe("H-087 · pedir una cotización por el formulario público", () =>
     expect(await requestsOf(ctx.cap.id)).toBe(2);
 
     // Una cuarta intenta: la base no vuelve a pedir aviso
-    const fourth = await apiSubmit(page, ctx.cap, {}, stamp);
+    const fourth = await apiSubmit(page, ctx.cap);
     expect(fourth.status()).toBe(409);
     expect(((await fourth.json()) as { status: string }).status).toBe("cap_reached");
     const count = await counters(ctx.cap.id);
@@ -621,39 +660,28 @@ test.describe("H-087 · pedir una cotización por el formulario público", () =>
     await expect(page.getByTestId("antibot-memory-state")).toHaveText("Sin verificar.");
 
     // el campo trampa lleno (un robot que llena todo) y un sello falso también se bloquean y cuentan
-    const origin = new URL(test.info().project.use.baseURL!).origin;
     const stamp = await renderTokenOf(page, ctx.main);
-    const trap = await apiSubmit(page, ctx.main, { website: "http://spam.test" }, stamp);
+    const trap = await apiSubmit(page, ctx.main, { [HONEYPOT_FIELD]: "http://spam.test" }, stamp);
     expect(trap.status()).toBe(403);
     const forged = await apiSubmit(
       page,
       ctx.main,
       {},
-      "v1.1700000000.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      {
+        token: "v1.1700000000.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        submitKey: randomUUID(),
+      },
     );
     expect(forged.status()).toBe(403);
+    // un sello auténtico pero con OTRA clave de envío (está atado a la suya)
+    const otherKey = await apiSubmit(page, ctx.main, { submitKey: randomUUID() }, stamp);
+    expect(otherKey.status()).toBe(403);
     // demasiado rápido: un sello de este mismo instante
-    const html = await (await page.request.get(`/f/${ctx.main.publicId}`)).text();
-    const fresh = RENDER_TOKEN.exec(html)![0];
-    const tooFast = await page.request.post(`/api/v1/public/forms/${ctx.main.publicId}/requests`, {
-      headers: { origin },
-      data: {
-        name: "Veloz",
-        email: "veloz@ejemplo.test",
-        items: [{ formItemId: ctx.main.freeItemId, quantity: "1" }],
-        consent: true,
-        submitKey: randomUUID(),
-        requestId: randomUUID(),
-        formRevision: ctx.main.revision,
-        website: "",
-        renderToken: fresh,
-        antibotToken: "test-pass",
-      },
-    });
+    const tooFast = await apiSubmit(page, ctx.main, {}, await freshStamp(page, ctx.main));
     expect(tooFast.status()).toBe(403);
     expect(await requestsOf(ctx.main.id)).toBe(savedBefore);
     expect((await counters(ctx.main.id)).blocked_captcha).toBeGreaterThanOrEqual(
-      before.blocked_captcha + 4,
+      before.blocked_captcha + 5,
     );
   });
 
@@ -667,10 +695,20 @@ test.describe("H-087 · pedir una cotización por el formulario público", () =>
 
     // y la API tampoco lo recibe, sin contar un bloqueo de pausa como robot
     // (la página en pausa no trae sello: se firma uno con el mismo secreto del servidor de la prueba)
-    const stamp = createRenderToken(ctx.paused.publicId, {
-      nowSeconds: Math.floor(Date.now() / 1000) - 10,
-    });
-    const res = await apiSubmit(page, ctx.paused, {}, stamp);
+    const submitKey = randomUUID();
+    const stamp = {
+      token: createRenderToken(ctx.paused.publicId, submitKey, {
+        nowSeconds: Math.floor(Date.now() / 1000) - 10,
+      }),
+      submitKey,
+    };
+    // (la página en pausa no muestra el aviso de privacidad: se manda una huella cualquiera con su forma)
+    const res = await apiSubmit(
+      page,
+      ctx.paused,
+      { consentFingerprint: "0123456789abcdef" },
+      stamp,
+    );
     expect(res.status()).toBe(409);
     expect(((await res.json()) as { status: string }).status).toBe("paused");
     expect(await requestsOf(ctx.paused.id)).toBe(0);
@@ -708,9 +746,8 @@ test.describe("H-087 · pedir una cotización por el formulario público", () =>
     test.setTimeout(150_000);
     // (1) por la API: la misma clave dos veces
     const stamp = await renderTokenOf(page, ctx.main);
-    const submitKey = randomUUID();
     const before = await requestsOf(ctx.main.id);
-    const body = { submitKey, email: `doble-${randomUUID().slice(0, 6)}@ejemplo.test` };
+    const body = { email: `doble-${randomUUID().slice(0, 6)}@ejemplo.test` };
     const first = await apiSubmit(page, ctx.main, body, stamp);
     const second = await apiSubmit(page, ctx.main, body, stamp);
     expect(first.status(), await first.text()).toBe(200);
@@ -818,5 +855,236 @@ test.describe("H-087 · pedir una cotización por el formulario público", () =>
     expect(await res.text()).toContain("ya no está disponible");
     expect(await requestsOf(ctx.main.id)).toBe(before);
     expect(await requestsOf(ctx.cap.id)).toBe(2);
+  });
+  test("la respuesta «el formulario cambió» de la API tampoco trae precios ni identificadores internos", async ({
+    page,
+  }) => {
+    const { formId, internalName } = await withDb(async (db) => {
+      const { rows } = await db.query<{ id: string; name: string }>(
+        "select id, name from public.intake_forms where public_id = $1",
+        [ctx.main.publicId],
+      );
+      return { formId: rows[0].id, internalName: rows[0].name };
+    });
+    const before = await requestsOf(ctx.main.id);
+    // (a) otra revisión; (b) el aviso de privacidad cambió (huella distinta con la misma revisión)
+    const cases: Record<string, unknown>[] = [
+      { formRevision: ctx.main.revision + 1 },
+      { consentFingerprint: "ffffffffffffffff" },
+    ];
+    for (const overrides of cases) {
+      const res = await apiSubmit(page, ctx.main, overrides);
+      const text = await res.text();
+      expect(res.status(), text).toBe(409);
+      const json = JSON.parse(text) as {
+        status: string;
+        content: { items: { id: string }[] };
+        renderToken: string;
+      };
+      expect(json.status).toBe("form_changed");
+      expect(json.renderToken).toMatch(/^v1\.\d{9,12}\.[A-Za-z0-9_-]{43}$/);
+      for (const secret of [ctx.tenantId, formId, ctx.catalogId, internalName, ...PRICE_TEXTS]) {
+        expect(text, `la respuesta no puede contener «${secret}»`).not.toContain(secret);
+      }
+      expect(text, "ningún monto en pesos").not.toMatch(/\$\s?\d{1,3}(?:[.,]\d{3})+/);
+      const allowed = new Set([ctx.main.catalogItemId, ctx.main.freeItemId]);
+      for (const uuid of text.match(UUID) ?? []) {
+        expect(allowed.has(uuid), `UUID interno ${uuid}`).toBe(true);
+      }
+    }
+    expect(await requestsOf(ctx.main.id)).toBe(before);
+  });
+
+  test("los errores de tipeo se ven sin llamar al servidor y el foco va al primer error", async ({
+    page,
+  }) => {
+    const posts: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST") posts.push(request.url());
+    });
+    await page.setViewportSize(MOBILE);
+    await openForm(page, ctx.main);
+    await page.locator("#pf-name").fill("Ana Prueba");
+    await page.locator("#pf-email").fill("esto-no-es-un-correo");
+    await page.locator("#pf-consent").check();
+    await page.getByTestId("antibot-memory-pass").click();
+
+    // sin servicio elegido y con un correo mal escrito
+    await page.getByTestId("submit-request").click();
+    await expect(page.getByText("Elige al menos un servicio.")).toBeVisible();
+    await expect(page.getByText(/Escribe un correo válido/)).toBeVisible();
+    // el error de «ningún servicio» está atado al grupo y el foco va ahí (es lo primero de la pantalla)
+    const group = page.locator('fieldset[data-invalid-group="true"]');
+    await expect(group).toHaveAttribute("aria-describedby", "pf-items-error");
+    await expect(group).toBeFocused();
+
+    // con el servicio elegido, el primer error es el correo
+    await page.locator(`#pf-item-${ctx.main.freeItemId}`).check();
+    await page.locator(`#pf-qty-${ctx.main.freeItemId}`).fill("3");
+    await page.getByTestId("submit-request").click();
+    await expect(page.locator("#pf-email")).toBeFocused();
+    await expect(page.locator("#pf-email")).toHaveAttribute("aria-invalid", "true");
+
+    // nada salió hacia el servidor, así que tampoco se gastó la prueba anti-robot
+    expect(posts).toEqual([]);
+    await expect(page.getByTestId("antibot-memory-state")).not.toHaveText("Sin verificar.");
+  });
+
+  test("sin JavaScript no se puede enviar: la dirección no cambia y ninguna petición lleva datos", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      baseURL: test.info().project.use.baseURL,
+      javaScriptEnabled: false,
+      extraHTTPHeaders: { "x-forwarded-for": randomTestIp() },
+    });
+    try {
+      const page = await context.newPage();
+      const requests: { method: string; url: string; body: string | null }[] = [];
+      page.on("request", (request) =>
+        requests.push({ method: request.method(), url: request.url(), body: request.postData() }),
+      );
+      await page.goto(`/f/${ctx.main.publicId}`);
+      // Sin JavaScript Next no puede cambiar el esqueleto por el formulario armado: el aviso se ve ahí.
+      await expect(page.getByTestId("intake-noscript")).toBeVisible();
+      await expect(page.getByTestId("intake-noscript")).toHaveText(
+        "Para enviar este formulario necesitas activar JavaScript.",
+      );
+      // El formulario viene en la página, pero con el botón desactivado y sin `name` en los campos
+      const submit = page.getByTestId("submit-request");
+      await expect(submit).toBeDisabled();
+      const urlBefore = page.url();
+
+      // Lo peor que puede pasar: el navegador envía el formulario por su cuenta. Se llena por la pantalla
+      // (sin scripts de la página) y se fuerza el envío.
+      await page.locator("form").evaluate((form, itemId) => {
+        const set = (selector: string, value: string) => {
+          (form.querySelector(selector) as HTMLInputElement).value = value;
+        };
+        set("#pf-name", "Persona Secreta");
+        set("#pf-email", "secreta@cliente.test");
+        (form.querySelector(`#pf-item-${itemId}`) as HTMLInputElement).checked = true;
+        (form.querySelector("#pf-consent") as HTMLInputElement).checked = true;
+      }, ctx.main.freeItemId);
+      const posted = page.waitForRequest((request) => request.method() === "POST");
+      await page.locator("form").evaluate((form) => (form as HTMLFormElement).requestSubmit());
+      const post = await posted;
+      expect(new URL(post.url()).search).toBe("");
+      expect(post.postData() ?? "").not.toMatch(/Persona|Secreta|secreta@|cliente\.test/);
+      // el servidor lo rechaza sin leerlo: la página no manda Referer, así que el navegador envía `Origin: null`
+      // y la puerta del origen responde 403 (si llegara con el origen correcto, 415 por no ser JSON)
+      expect([403, 415]).toContain((await post.response())?.status());
+
+      expect(urlBefore).not.toContain("?");
+      for (const request of requests) {
+        expect(request.url).not.toMatch(/pf-|secret|cliente\.test|Persona/i);
+        if (request.method !== "POST") expect(request.body).toBeNull();
+      }
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("tocar «Enviar» antes de que cargue la página tampoco manda datos por la dirección", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      baseURL: test.info().project.use.baseURL,
+      extraHTTPHeaders: { "x-forwarded-for": randomTestIp() },
+    });
+    // Los scripts de la página se retienen: la página se ve, pero todavía no es interactiva.
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const page = await context.newPage();
+      await page.route("**/_next/static/**/*.js", async (route) => {
+        await gate;
+        await route.continue().catch(() => undefined);
+      });
+      const requests: { method: string; url: string; body: string | null }[] = [];
+      page.on("request", (request) =>
+        requests.push({ method: request.method(), url: request.url(), body: request.postData() }),
+      );
+      await page.goto(`/f/${ctx.main.publicId}`, { waitUntil: "commit" });
+      await expect(page.getByTestId("form-view")).toBeVisible();
+      const submit = page.getByTestId("submit-request");
+      await expect(submit).toBeDisabled();
+
+      await page.locator("#pf-name").fill("Persona Veloz");
+      await page.locator("#pf-email").fill("veloz@cliente.test");
+      await page.locator(`#pf-item-${ctx.main.freeItemId}`).check();
+      await page.locator("#pf-consent").check();
+      const urlBefore = page.url();
+
+      // tocar el botón (desactivado) y apretar Enter en un campo: no pasa nada
+      await submit.click({ force: true });
+      await page.locator("#pf-name").press("Enter");
+      await page.waitForTimeout(500);
+      expect(page.url()).toBe(urlBefore);
+
+      // lo peor que puede hacer el navegador: enviar el formulario por su cuenta. Es POST y los
+      // campos no llevan `name`, así que ni la dirección ni el cuerpo llevan lo escrito.
+      const posted = page.waitForRequest((request) => request.method() === "POST");
+      await page.locator("form").evaluate((form) => (form as HTMLFormElement).requestSubmit());
+      const request = await posted;
+      expect(new URL(request.url()).search).toBe("");
+      expect(new URL(request.url()).pathname).toBe(
+        `/api/v1/public/forms/${ctx.main.publicId}/requests`,
+      );
+      expect(request.postData() ?? "").not.toMatch(/Persona|Veloz|veloz@|cliente\.test/);
+      for (const sent of requests) {
+        expect(sent.url).not.toMatch(/pf-|veloz|cliente\.test|Persona/i);
+      }
+      // el servidor lo rechaza sin leerlo (`Origin: null` por no mandar Referer: 403; con el origen correcto: 415)
+      const response = await request.response();
+      expect([403, 415]).toContain(response?.status());
+    } finally {
+      release();
+      await context.close();
+    }
+  });
+
+  test("el logo se achica en el servidor (256 px) y el encabezado no lo repite como dato", async ({
+    page,
+  }) => {
+    // Un logo grande de verdad: 1.600 x 900 con ruido para que pese
+    const raw = Buffer.alloc(1_600 * 900 * 3);
+    for (let i = 0; i < raw.length; i += 1) raw[i] = (i * 31 + (i >> 7)) % 251;
+    const png = await sharp(raw, { raw: { width: 1_600, height: 900, channels: 3 } })
+      .png()
+      .toBuffer();
+    expect(png.byteLength).toBeLessThan(1_048_576);
+    const path = `${ctx.tenantId}/logo-${randomUUID().replaceAll("-", "").slice(0, 12)}.png`;
+    const { secretKey } = localEnv();
+    const uploaded = await storage(secretKey, "POST", `object/tenant-logos/${path}`, {
+      headers: { apikey: secretKey },
+      body: new Uint8Array(png),
+      contentType: "image/png",
+    });
+    expect(uploaded.status, uploaded.text).toBeLessThan(300);
+    await withDb((db) =>
+      db.query("update public.tenants set logo_path = $1 where tenant_id = $2", [
+        path,
+        ctx.tenantId,
+      ]),
+    );
+
+    const html = await (await page.request.get(`/f/${ctx.main.publicId}`)).text();
+    const logos = html.match(/data:image\/webp;base64,[A-Za-z0-9+/=]+/g) ?? [];
+    expect(logos.length, "el logo reducido está en la página").toBeGreaterThan(0);
+    expect(html, "ya no viaja el original").not.toContain("data:image/png;base64,");
+    const thumb = Buffer.from(logos[0]!.split(",")[1] ?? "", "base64");
+    const meta = await sharp(thumb).metadata();
+    expect(meta.format).toBe("webp");
+    expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBeLessThanOrEqual(256);
+    expect(thumb.byteLength).toBeLessThan(png.byteLength / 4);
+    // El encabezado de la marca lo dibuja el servidor: se ve el logo y el nombre
+    await openForm(page, ctx.main);
+    await expect(page.getByRole("img", { name: `Logo de ${ctx.tenantName}` })).toBeVisible();
+    // el logo viaja UNA sola vez en la respuesta (no se repite como dato del formulario del navegador)
+    const occurrences = html.split(logos[0]!).length - 1;
+    expect(occurrences).toBe(1);
   });
 });

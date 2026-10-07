@@ -5,7 +5,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * enviarlo. Sirve de trampa contra robots que envían al instante o reutilizan un sello viejo.
  *
  * Formato: `v1.<segundos desde 1970>.<firma base64url>`. La firma es HMAC-SHA256 de
- * `render|v1|<formPublicId>|<segundos>`, así un sello de un formulario no vale en otro.
+ * `render|v1|<formPublicId>|<submitKey>|<segundos>`: un sello de un formulario no vale en otro, y queda
+ * atado a la clave de envío (`submitKey`) que el servidor entregó junto con él, así un solo sello no sirve
+ * para mandar muchos envíos distintos.
  */
 export const MIN_FILL_SECONDS = 3;
 export const MAX_RENDER_AGE_SECONDS = 24 * 60 * 60;
@@ -51,23 +53,28 @@ function nowSeconds(options: RenderTokenOptions): number {
   return options.nowSeconds ?? Math.floor(Date.now() / 1000);
 }
 
-function sign(secret: string, formPublicId: string, issuedAt: number): string {
+function sign(secret: string, formPublicId: string, submitKey: string, issuedAt: number): string {
   return createHmac("sha256", secret)
-    .update(`render|${VERSION}|${formPublicId}|${issuedAt}`, "utf8")
+    .update(`render|${VERSION}|${formPublicId}|${submitKey}|${issuedAt}`, "utf8")
     .digest("base64url");
 }
 
-/** Crea el sello para un formulario, con la hora actual. */
-export function createRenderToken(formPublicId: string, options: RenderTokenOptions = {}): string {
+/** Crea el sello para un formulario y una clave de envío, con la hora actual. */
+export function createRenderToken(
+  formPublicId: string,
+  submitKey: string,
+  options: RenderTokenOptions = {},
+): string {
   const secret = resolveSecret(options.secret);
   const issuedAt = nowSeconds(options);
-  return `${VERSION}.${issuedAt}.${sign(secret, formPublicId, issuedAt)}`;
+  return `${VERSION}.${issuedAt}.${sign(secret, formPublicId, submitKey, issuedAt)}`;
 }
 
 /** Comprueba firma, formulario y tiempo transcurrido. La firma se compara en tiempo constante. */
 export function verifyRenderToken(
   token: unknown,
   formPublicId: string,
+  submitKey: string,
   options: RenderTokenOptions = {},
 ): RenderTokenResult {
   const secret = resolveSecret(options.secret);
@@ -79,7 +86,7 @@ export function verifyRenderToken(
   const issuedAt = Number(match[1]);
   if (!Number.isSafeInteger(issuedAt)) return { ok: false, reason: "malformed" };
 
-  const expected = Buffer.from(sign(secret, formPublicId, issuedAt), "utf8");
+  const expected = Buffer.from(sign(secret, formPublicId, submitKey, issuedAt), "utf8");
   const received = Buffer.from(match[2], "utf8");
   if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
     return { ok: false, reason: "bad_signature" };

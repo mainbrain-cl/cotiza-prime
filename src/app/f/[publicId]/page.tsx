@@ -1,10 +1,13 @@
+import { randomUUID } from "node:crypto";
 import type { Metadata } from "next";
+import { BrandHeader } from "@/components/intake/brand-header";
 import { IntakeBusy, IntakeNotFound, IntakeUnavailable } from "@/components/intake/public-states";
 import { PublicIntakeForm } from "@/components/intake/public-intake-form";
 import { loadAntibotConfig } from "@/lib/antibot";
 import { getRequestContext } from "@/lib/http/request-context";
 import { buildConsentNotice, ConsentNoticeError } from "@/lib/intake/consent-notice";
-import { readIntakeForm, readOrganizationLogoDataUrl } from "@/lib/intake/gateway";
+import { readIntakeForm, readOrganizationLogoFile } from "@/lib/intake/gateway";
+import { shrinkLogoToDataUrl } from "@/lib/intake/logo-thumbnail";
 import { buildPublicView, buildUnavailableView } from "@/lib/intake/public-view";
 import { isWellFormedPublicId } from "@/lib/intake/read-model";
 import { createRenderToken } from "@/lib/intake/render-token";
@@ -62,16 +65,23 @@ export default async function PublicIntakePage({ params }: PageProps<"/f/[public
     throw cause;
   }
 
-  const logoDataUrl = await readOrganizationLogoDataUrl(form.tenantId, form.logoPath);
+  // El logo se reduce aquí (256 px como máximo) y la cabecera de la marca se dibuja en el servidor: el
+  // formulario del navegador recibe el encabezado ya armado, no la imagen como dato.
+  const logoFile = await readOrganizationLogoFile(form.tenantId, form.logoPath);
+  const logoSrc = logoFile ? await shrinkLogoToDataUrl(logoFile.bytes, logoFile.kind) : null;
   const antibot = loadAntibotConfig();
+  // La clave de envío la crea el servidor y el sello de tiempo queda atado a ella.
+  const submitKey = randomUUID();
 
   return (
     <div className="customer-light min-h-dvh">
       <main className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6 sm:py-10">
         <PublicIntakeForm
           publicId={publicId}
-          view={buildPublicView(form, consent, logoDataUrl)}
-          renderToken={createRenderToken(publicId)}
+          view={buildPublicView(form, consent)}
+          renderToken={createRenderToken(publicId, submitKey)}
+          submitKey={submitKey}
+          header={<BrandHeader organizationName={form.organization.name} logoSrc={logoSrc} />}
           antibot={{
             provider: antibot.provider,
             siteKey: antibot.provider === "turnstile" ? antibot.turnstileSiteKey : null,

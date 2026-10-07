@@ -4,6 +4,7 @@ import {
   chileToday,
   addOneYear,
   fieldErrors,
+  HONEYPOT_FIELD,
   type IntakeFormConfig,
 } from "./submit-schema";
 
@@ -38,9 +39,9 @@ function valid(overrides: Record<string, unknown> = {}) {
     items: [{ formItemId: ITEM_A, quantity: "2,5" }],
     consent: true,
     submitKey: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    consentFingerprint: "0123456789abcdef",
     formRevision: 3,
-    website: "",
+    [HONEYPOT_FIELD]: "",
     renderToken: "v1.1.x",
     antibotToken: "test-pass",
     ...overrides,
@@ -352,9 +353,20 @@ describe("consentimiento, claves y trampas", () => {
     expect(errorsOf(valid({ consent })).consent).toMatch(/aviso de privacidad/);
   });
 
-  it("submitKey y requestId deben ser uuid", () => {
+  it("submitKey debe ser uuid, y requestId ya no existe (es una clave desconocida)", () => {
     expect(errorsOf(valid({ submitKey: "abc" })).submitKey).toBeDefined();
-    expect(errorsOf(valid({ requestId: 5 })).requestId).toBeDefined();
+    expect(
+      errorsOf(valid({ requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" })).form,
+    ).toBeDefined();
+  });
+
+  it("la huella del aviso de privacidad es obligatoria y tiene su forma", () => {
+    expect(errorsOf(valid({ consentFingerprint: "" })).consentFingerprint).toBeDefined();
+    expect(errorsOf(valid({ consentFingerprint: "xyz" })).consentFingerprint).toBeDefined();
+    expect(errorsOf(valid({ consentFingerprint: 5 })).consentFingerprint).toBeDefined();
+    const without: Record<string, unknown> = valid();
+    delete without.consentFingerprint;
+    expect(errorsOf(without).consentFingerprint).toBeDefined();
   });
 
   it.each([1.5, -1, "3", 2_147_483_648, Number.NaN])(
@@ -365,11 +377,17 @@ describe("consentimiento, claves y trampas", () => {
   );
 
   it("el campo trampa debe ir vacío o ausente", () => {
-    expect(schema.safeParse(valid({ website: "" })).success).toBe(true);
+    expect(schema.safeParse(valid({ [HONEYPOT_FIELD]: "" })).success).toBe(true);
     const without: Record<string, unknown> = valid();
-    delete without.website;
+    delete without[HONEYPOT_FIELD];
     expect(schema.safeParse(without).success).toBe(true);
-    expect(errorsOf(valid({ website: "http://spam.example" })).website).toBeDefined();
+    expect(
+      errorsOf(valid({ [HONEYPOT_FIELD]: "http://spam.example" }))[HONEYPOT_FIELD],
+    ).toBeDefined();
+  });
+
+  it("el campo trampa no se llama como algo que un gestor de contraseñas reconozca", () => {
+    expect(HONEYPOT_FIELD).not.toMatch(/website|url|email|mail|phone|name|address|user|pass/i);
   });
 
   it("faltan tokens", () => {

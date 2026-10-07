@@ -15,4 +15,6 @@ export function ensureTestCryptoEnv(): void {
   // Formulario público (H-087): sello de tiempo (mínimo 32 caracteres) y anti-robot de pruebas.
   process.env.INTAKE_RENDER_SECRET ??= randomKey();
   process.env.ANTIBOT_PROVIDER ??= "memory";
+  // `memory` solo corre con esto fuera de un computador local (CI y pruebas con la app compilada).
+  process.env.ANTIBOT_ALLOW_MEMORY ??= "1";
 }

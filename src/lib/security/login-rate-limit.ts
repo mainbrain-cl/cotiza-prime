@@ -485,23 +485,42 @@ export async function consumeIntakeReadQuota(ip: string | null): Promise<boolean
   return !(await failOpen("intake_read_quota_ip", false, () => recordAll([target])));
 }
 
+/** Resultado del límite de envíos: pasa, queda bloqueada AHORA, o ya estaba bloqueada de antes. */
+export type IntakeSubmitQuota = "allowed" | "blocked_now" | "blocked_repeat";
+
 /**
  * ¿Puede esta IP enviar otra solicitud por un formulario público (H-087)? Cada intento cuenta (también
- * los que fallan), primero contra el tope de 10 minutos y, si pasa, contra el del día. Responde `false`
- * si alguno ya está bloqueado. Huellas de la IP agrupada, nunca la IP en claro. Si el contador falla,
- * se deja pasar y se avisa en el log: el tope diario de solicitudes vive dentro de la base, no aquí.
+ * los que fallan), primero contra el tope de 10 minutos y, si pasa, contra el del día. Distingue la IP que
+ * RECIÉN queda bloqueada (`blocked_now`, la que se anota como bloqueo del formulario) de la que ya estaba
+ * bloqueada (`blocked_repeat`, que no suma ni gasta más cupo): así quien insiste no infla los contadores
+ * del formulario. Huellas de la IP agrupada, nunca la IP en claro. Si el contador falla, se deja pasar y se
+ * avisa en el log: el tope diario de solicitudes vive dentro de la base, no aquí.
  */
-export async function consumeIntakeSubmitQuota(ip: string | null): Promise<boolean> {
+export async function consumeIntakeSubmitQuota(ip: string | null): Promise<IntakeSubmitQuota> {
   const ipKey = shareIpKey(ip);
-  if (!ipKey) return true;
-  const window: Target = {
-    scope: "intake_submit_ip",
-    keyHash: searchHash("intake_submit_ip", PLATFORM_TENANT_ID, ipKey),
-  };
-  if (await failOpen("intake_submit_quota_window", false, () => recordAll([window]))) return false;
-  const day: Target = {
-    scope: "intake_submit_ip_day",
-    keyHash: searchHash("intake_submit_ip_day", PLATFORM_TENANT_ID, ipKey),
-  };
-  return !(await failOpen("intake_submit_quota_day", false, () => recordAll([day])));
+  if (!ipKey) return "allowed";
+  const targets: { target: Target; operation: string }[] = [
+    {
+      target: {
+        scope: "intake_submit_ip",
+        keyHash: searchHash("intake_submit_ip", PLATFORM_TENANT_ID, ipKey),
+      },
+      operation: "intake_submit_quota_window",
+    },
+    {
+      target: {
+        scope: "intake_submit_ip_day",
+        keyHash: searchHash("intake_submit_ip_day", PLATFORM_TENANT_ID, ipKey),
+      },
+      operation: "intake_submit_quota_day",
+    },
+  ];
+  for (const { target, operation } of targets) {
+    // Si ya estaba bloqueada, no se vuelve a contar: no es un bloqueo nuevo.
+    if (await failOpen(`${operation}_check`, false, () => anyLocked([target]))) {
+      return "blocked_repeat";
+    }
+    if (await failOpen(operation, false, () => recordAll([target]))) return "blocked_now";
+  }
+  return "allowed";
 }

@@ -470,3 +470,78 @@ probado, salvo lo que se dice que no. Sin migraciones nuevas.
   garantizan el editor y la base, pero el componente debe rechazarla por sí mismo si llega otra cosa).
 - Al construir la página pública, pasar `PUBLIC_FORM_ROUTE_AVAILABLE` a `true` (la nota «todavía no está
   disponible» del constructor desaparece).
+
+## 13. Correcciones de la revisión de H-087
+
+Opus revisó H-087 y encontró 2 bloqueantes, 5 importantes y varios menores. Lo corregido va primero; lo que no se
+corrigió, al final.
+
+### Bloqueantes
+
+- **B1 · datos personales en la dirección (corregido).** Sin JavaScript, o antes de que la página cargara, el botón
+  hacía un `GET /f/<id>?pf-name=…&pf-email=…` y lo escrito quedaba en la dirección, en los registros del servidor y en
+  el historial. Ahora: (1) el formulario público es `method="post"` y apunta a la API; (2) **los campos no llevan
+  `name`** (React no lo necesita), así que ni un envío del navegador por su cuenta lleva datos (esto reemplaza el
+  recordatorio antiguo de «dar `name` a cada campo»); (3) el botón de enviar está **desactivado hasta que la página
+  esté lista** (`useSyncExternalStore`, falso en el servidor y antes de cargar); (4) aviso «Para enviar este
+  formulario necesitas activar JavaScript» en `loading.tsx` (sin JavaScript Next nunca cambia el esqueleto por el
+  formulario armado, así que el aviso tiene que estar ahí) y también dentro del formulario; (5) la API rechaza un
+  envío clásico (`application/x-www-form-urlencoded` o `multipart/form-data`) con **415 sin leer el cuerpo**. En un
+  navegador real la página no manda `Referer` (`no-referrer`), por lo que el navegador manda `Origin: null` y la
+  puerta del origen lo corta antes, con 403; ambos caminos están probados. Pruebas de punta a punta: sin
+  JavaScript (contexto aparte) y con los scripts retenidos (tocar «Enviar» antes de cargar), forzando el envío
+  del formulario: la dirección no cambia, ninguna petición lleva datos y el servidor lo rechaza.
+- **B2 · CI detenido (no se corrigió: no es de código).** GitHub Actions está detenido por la facturación de la
+  cuenta. Todo se corrió en local (resultados en el informe de la rama). Cuando se normalice, hay que volver a
+  mirar la corrida de `main`.
+
+### Importantes
+
+- **I1 · anti-robot `memory` (corregido).** `ANTIBOT_PROVIDER` ya no tiene valor por defecto: se exige siempre.
+  `memory` no arranca con `NODE_ENV=production`, con cualquier `VERCEL_ENV` ni con `NEXT_PUBLIC_APP_ENV=production`,
+  salvo `ANTIBOT_ALLOW_MEMORY=1` (solo CI y pruebas con la app compilada; se ignora si el entorno de la aplicación es
+  `production`). La variable va en `playwright.config.ts`, `tests/support/test-env.ts` y `.env.example` (comentada).
+- **I2 · accesibilidad de `FormView` (corregido).** La cantidad dice «Cantidad de {servicio}» (el nombre, solo para
+  lectores de pantalla); el enlace «Leer la política de privacidad» sale de la etiqueta de la casilla a un párrafo
+  aparte; `FormView` exige `https://` por sí mismo (rechaza `http`, `javascript:`, `data:` y direcciones con usuario
+  y clave).
+- **I3 · validación en el navegador (corregido).** Antes de enviar se valida con `buildSubmitSchema` (el mismo
+  esquema del servidor): los errores de tipeo salen por campo sin llamar al servidor, así que no gastan intentos del
+  límite por IP ni pruebas anti-robot. El servidor sigue validando igual.
+- **I4 · botón del aviso a `/solicitudes` (sin cambios).** La ruta la construye H-089; **al integrarla hay que
+  comprobar que exista** `/o/[tenantId]/solicitudes`.
+- **I5 · logo (corregido).** El servidor lo achica con `sharp` (máximo 256 px de lado, WebP con transparencia; un SVG
+  se rasteriza) y el encabezado de la marca (`brand-header.tsx`) lo dibuja el componente de servidor de la página: el
+  `data:` ya no viaja como dato del formulario del navegador. Medido en la prueba de punta a punta: aparece **una
+  sola vez** en la respuesta y no queda el original.
+
+### Menores
+
+- **M1 (corregido).** El navegador manda la huella del aviso de privacidad que vio (`consent-fingerprint.ts`, cálculo
+  simple y síncrono: no es de seguridad, el servidor guarda siempre el texto que armó él). Si no coincide con el que
+  armaría ahora, responde `form_changed` con lo vigente y no guarda nada; la casilla se desmarca.
+- **M2 (corregido).** El servidor crea la clave de envío al dibujar la página y el sello de tiempo queda **atado** a
+  ella (la firma la incluye): un sello no sirve para muchos envíos distintos. Los reintentos y `form_changed`
+  conservan la misma clave.
+- **M3 (corregido).** `requestId` salió del esquema y del cliente (el servidor genera el suyo).
+- **M4 (corregido).** El límite por IP distingue «bloqueada ahora» de «ya estaba bloqueada»: solo el primero suma a
+  `intake_record_block`. Para un identificador inexistente la base no cuenta nada (`recorded: false`).
+- **M6 (corregido).** El campo trampa se llama `pf_ref_q7x` (nombre sin significado, sin `name` en el HTML), con
+  `autocomplete="off"`, `tabindex=-1`, `aria-hidden` y marcas para los gestores de contraseñas.
+- **M7 (corregido).** Si hay más de 10 destinatarios de un aviso, se avisa a 10 y el corte queda en el log
+  (`intake_notice_recipients_truncated`, solo conteos).
+- **M8 (corregido).** «Elige al menos un servicio» está atado al grupo con `aria-describedby` y el foco va al grupo.
+- **M9 (corregido, era un error real).** `getRequestContext` usaba `cache` de React, que **no memoiza en las rutas
+  de la API**: cada llamada daba un `requestId` distinto y el registro y la auditoría de una misma petición no
+  coincidían. Ahora el contexto se guarda por el objeto de cabeceras de la petición (el mismo en páginas y rutas).
+  Comprobado en una ruta real y con prueba unitaria. Afecta a toda ruta de la API, no solo al formulario público.
+- **M10 (corregido).** La prueba de precios e identificadores incluye la respuesta `form_changed` de la API.
+- **M11 (corregido).** README, «Despliegue: anti-robot del formulario público»: `ANTIBOT_PROVIDER` tiene que estar
+  definido también al compilar, porque la CSP de `/f/*` se arma en `next.config.ts`. No se pasó a tiempo de ejecución.
+
+### Lo que NO se hizo
+
+- **M5 y M12:** el encargo no traía su texto, así que **no se pudieron anotar con fidelidad**. Pendiente de
+  transcribirlos desde el informe de Opus.
+- Sin JavaScript el visitante solo ve el esqueleto de carga y el aviso de «activa JavaScript»: con el diseño actual de
+  Next no hay forma de mostrar el formulario sin scripts.

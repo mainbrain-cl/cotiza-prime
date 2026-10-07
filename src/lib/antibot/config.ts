@@ -4,7 +4,8 @@ import { createMemoryAntibot } from "./memory";
 import { createTurnstileVerifier } from "./turnstile";
 import { ANTIBOT_PROVIDERS, type AntibotProviderName, type AntibotVerifier } from "./types";
 
-export const DEFAULT_TEST_ANTIBOT_PROVIDER: AntibotProviderName = "memory";
+/** Única forma de usar `memory` fuera de un entorno local: solo para CI y pruebas de punta a punta. */
+export const ALLOW_MEMORY_VAR = "ANTIBOT_ALLOW_MEMORY";
 const FORBIDDEN_IN_PRODUCTION: readonly AntibotProviderName[] = ["memory"];
 const MIN_KEY_LENGTH = 8;
 const MAX_KEY_LENGTH = 200;
@@ -35,17 +36,31 @@ const rawSchema = z.object({
   ANTIBOT_PROVIDER: z.preprocess(emptyToUndefined, z.enum(ANTIBOT_PROVIDERS).optional()),
   TURNSTILE_SECRET_KEY: keySchema,
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: keySchema,
+  ANTIBOT_ALLOW_MEMORY: z.preprocess(emptyToUndefined, z.string().optional()),
 });
 
 /**
+ * ¿El despliegue es de verdad (no un computador local)? `production` en el entorno de la aplicación, en
+ * `NODE_ENV` (todo `next build` y `next start`) o cualquier `VERCEL_ENV` (también las vistas previas).
+ */
+function isDeployed(env: Record<string, string | undefined>): boolean {
+  return (
+    resolveAppEnv(env.NEXT_PUBLIC_APP_ENV) === PRODUCTION_ENV ||
+    env.NODE_ENV === "production" ||
+    Boolean(env.VERCEL_ENV)
+  );
+}
+
+/**
  * Lee y valida las variables del anti-robot (único lugar). Los errores nombran la variable, nunca su
- * valor. En producción se niega a aceptar `memory`.
+ * valor. NO hay proveedor por defecto: `ANTIBOT_PROVIDER` se exige siempre, así un despliegue que no
+ * lo define no arranca sin protección. `memory` (acepta un token fijo) solo corre en un computador
+ * local; en cualquier despliegue se niega, salvo con `ANTIBOT_ALLOW_MEMORY=1` (solo CI y pruebas) y
+ * nunca si el entorno de la aplicación es `production`.
  */
 export function loadAntibotConfig(
   env: Record<string, string | undefined> = process.env,
 ): AntibotConfig {
-  const isProduction = resolveAppEnv(env.NEXT_PUBLIC_APP_ENV) === PRODUCTION_ENV;
-
   const parsed = rawSchema.safeParse(env);
   if (!parsed.success) {
     const names = [...new Set(parsed.error.issues.map((issue) => String(issue.path[0])))];
@@ -53,13 +68,16 @@ export function loadAntibotConfig(
   }
   const raw = parsed.data;
 
-  const provider =
-    raw.ANTIBOT_PROVIDER ?? (isProduction ? undefined : DEFAULT_TEST_ANTIBOT_PROVIDER);
-  if (!provider) throw new AntibotConfigError("En producción hay que definir ANTIBOT_PROVIDER.");
-  if (isProduction && FORBIDDEN_IN_PRODUCTION.includes(provider)) {
-    throw new AntibotConfigError(
-      `ANTIBOT_PROVIDER=${provider} no se permite en producción: la aplicación no arranca.`,
-    );
+  const provider = raw.ANTIBOT_PROVIDER;
+  if (!provider) throw new AntibotConfigError("Hay que definir ANTIBOT_PROVIDER.");
+  if (FORBIDDEN_IN_PRODUCTION.includes(provider)) {
+    const appIsProduction = resolveAppEnv(env.NEXT_PUBLIC_APP_ENV) === PRODUCTION_ENV;
+    const explicitlyAllowed = raw.ANTIBOT_ALLOW_MEMORY === "1" && !appIsProduction;
+    if (isDeployed(env) && !explicitlyAllowed) {
+      throw new AntibotConfigError(
+        `ANTIBOT_PROVIDER=${provider} no se permite en un despliegue: la aplicación no arranca.`,
+      );
+    }
   }
 
   if (provider === "turnstile") {

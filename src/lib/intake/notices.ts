@@ -126,6 +126,14 @@ async function notify(target: Target): Promise<void> {
     }
     const config = loadEmailConfig();
     const transport = getEmailTransport(config);
+    if (info.recipients.length > MAX_NOTICE_RECIPIENTS) {
+      // Nadie queda sin enterarse en silencio: el corte queda anotado (solo conteos, sin direcciones).
+      await serverLog("warn", "intake_notice_recipients_truncated", {
+        code: "recipients_over_limit",
+        recipients: info.recipients.length,
+        limit: MAX_NOTICE_RECIPIENTS,
+      });
+    }
     for (const recipient of info.recipients.slice(0, MAX_NOTICE_RECIPIENTS)) {
       await noticeOne(target, info, recipient, transport, config.fromAddress);
     }

@@ -44,8 +44,11 @@ vi.mock("./notices", () => ({
   notifyCapReached: mocks.notifyCapReached,
 }));
 
-import { MIN_FILL_SECONDS, createRenderToken } from "./render-token";
+import { buildConsentNotice } from "./consent-notice";
+import { consentFingerprint } from "./consent-fingerprint";
+import { MIN_FILL_SECONDS, createRenderToken, verifyRenderToken } from "./render-token";
 import { MSG_CAP_REACHED, MSG_EXPIRED, MSG_PAUSED } from "./submit-response";
+import { HONEYPOT_FIELD } from "./submit-schema";
 import { handleIntakeSubmit } from "./submit-service";
 
 process.env.INTAKE_RENDER_SECRET = "s".repeat(40);
@@ -55,6 +58,16 @@ const TENANT = "11111111-1111-4111-8111-111111111111";
 const FORM = "22222222-2222-4222-8222-222222222222";
 const ITEM = "33333333-3333-4333-8333-333333333333";
 const REQUEST = "44444444-4444-4444-8444-444444444444";
+const SUBMIT_KEY = "55555555-5555-4555-8555-555555555555";
+const OTHER_SUBMIT_KEY = "66666666-6666-4666-8666-666666666666";
+const consentFor = (privacyPolicyUrl: string | null = null) => {
+  const notice = buildConsentNotice({
+    organizationName: "Empresa Ficticia",
+    contactEmail: "contacto@ejemplo.test",
+    privacyPolicyUrl,
+  });
+  return consentFingerprint(notice.text, notice.privacyPolicyUrl);
+};
 
 const form = (overrides: Record<string, unknown> = {}) => ({
   state: "ok",
@@ -91,8 +104,10 @@ const form = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const oldToken = (id = PUBLIC_ID) =>
-  createRenderToken(id, { nowSeconds: Math.floor(Date.now() / 1000) - (MIN_FILL_SECONDS + 10) });
+const oldToken = (id = PUBLIC_ID, submitKey = SUBMIT_KEY) =>
+  createRenderToken(id, submitKey, {
+    nowSeconds: Math.floor(Date.now() / 1000) - (MIN_FILL_SECONDS + 10),
+  });
 
 const validBody = (overrides: Record<string, unknown> = {}) => ({
   name: "Ana Prueba",
@@ -101,10 +116,10 @@ const validBody = (overrides: Record<string, unknown> = {}) => ({
   message: "Necesito un flete\ncon <script>alert(1)</script>",
   items: [{ formItemId: ITEM, quantity: "2" }],
   consent: true,
-  submitKey: randomUUID(),
-  requestId: randomUUID(),
+  submitKey: SUBMIT_KEY,
+  consentFingerprint: consentFor(),
   formRevision: 3,
-  website: "",
+  [HONEYPOT_FIELD]: "",
   renderToken: oldToken(),
   antibotToken: "test-pass",
   ...overrides,
@@ -132,7 +147,7 @@ const blocksRecorded = () => mocks.recordIntakeBlock.mock.calls.map(([, reason])
 
 beforeEach(() => {
   for (const mock of Object.values(mocks)) mock.mockReset();
-  mocks.consumeIntakeSubmitQuota.mockResolvedValue(true);
+  mocks.consumeIntakeSubmitQuota.mockResolvedValue("allowed");
   mocks.verify.mockResolvedValue({ ok: true });
   mocks.readIntakeForm.mockResolvedValue(form());
   mocks.recordIntakeBlock.mockResolvedValue({ recorded: true });
@@ -154,8 +169,8 @@ describe("el orden del envío público", () => {
     expect(mocks.recordIntakeBlock).not.toHaveBeenCalled();
   });
 
-  it("el límite por IP corta primero: 429, cuenta el bloqueo y no lee nada más", async () => {
-    mocks.consumeIntakeSubmitQuota.mockResolvedValue(false);
+  it("el límite por IP corta primero: 429, cuenta el bloqueo nuevo y no lee nada más", async () => {
+    mocks.consumeIntakeSubmitQuota.mockResolvedValue("blocked_now");
     const { status, response } = await run(validBody());
     expect(status).toBe(429);
     expect(response.headers.get("retry-after")).toBeTruthy();
@@ -165,10 +180,58 @@ describe("el orden del envío público", () => {
     expect(mocks.consumeIntakeSubmitQuota).toHaveBeenCalledWith("203.0.113.9");
   });
 
+  it("una IP que ya estaba bloqueada recibe 429 pero NO suma otro bloqueo al formulario", async () => {
+    mocks.consumeIntakeSubmitQuota.mockResolvedValue("blocked_repeat");
+    const { status, response } = await run(validBody());
+    expect(status).toBe(429);
+    expect(response.headers.get("retry-after")).toBeTruthy();
+    expect(blocksRecorded()).toEqual([]);
+    expect(mocks.readIntakeForm).not.toHaveBeenCalled();
+  });
+
   it("solo acepta application/json", async () => {
     const { status } = await run(validBody(), PUBLIC_ID, { "content-type": "text/plain" });
     expect(status).toBe(415);
     expect(mocks.verify).not.toHaveBeenCalled();
+  });
+
+  it("un envío clásico del navegador (formulario urlencoded o multipart) da 415 sin leer ni guardar el cuerpo", async () => {
+    for (const type of [
+      "application/x-www-form-urlencoded",
+      "application/x-www-form-urlencoded; charset=UTF-8",
+      "multipart/form-data; boundary=----x",
+    ]) {
+      let pulled = false;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulled = true;
+            controller.enqueue(
+              new TextEncoder().encode("pf-name=Ana+Prueba&pf-email=ana%40cliente.test"),
+            );
+            controller.close();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const request = new Request("https://app.ejemplo.test/api/v1/public/forms/x/requests", {
+        method: "POST",
+        headers: { "content-type": type },
+        body,
+        // @ts-expect-error `duplex` es obligatorio al enviar un flujo y todavía falta en los tipos de DOM
+        duplex: "half",
+      });
+      const response = await handleIntakeSubmit(request, PUBLIC_ID);
+      expect(response.status, type).toBe(415);
+      expect(pulled, `${type}: el cuerpo no se lee`).toBe(false);
+      expect(mocks.verify).not.toHaveBeenCalled();
+      expect(mocks.readIntakeForm).not.toHaveBeenCalled();
+      expect(mocks.submitIntakeRequest).not.toHaveBeenCalled();
+      expect(blocksRecorded()).toEqual([]);
+      const logged = JSON.stringify(mocks.serverLog.mock.calls);
+      expect(logged).not.toContain("Ana");
+      expect(logged).not.toContain("cliente.test");
+    }
   });
 
   it("un cuerpo de más de 16 kB da 413 y se cuenta como inválido", async () => {
@@ -187,7 +250,7 @@ describe("el orden del envío público", () => {
   });
 
   it("el campo trampa lleno bloquea antes del anti-robot y de la base, y cuenta como robot", async () => {
-    const { status, json } = await run(validBody({ website: "http://spam.test" }));
+    const { status, json } = await run(validBody({ [HONEYPOT_FIELD]: "http://spam.test" }));
     expect(status).toBe(403);
     expect(json.status).toBe("blocked");
     expect(blocksRecorded()).toEqual(["captcha"]);
@@ -198,9 +261,11 @@ describe("el orden del envío público", () => {
   it("un sello de tiempo muy rápido, falsificado, de otro formulario o vencido bloquea", async () => {
     const now = Math.floor(Date.now() / 1000);
     const cases = [
-      createRenderToken(PUBLIC_ID, { nowSeconds: now }),
+      createRenderToken(PUBLIC_ID, SUBMIT_KEY, { nowSeconds: now }),
       "v1.123.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
       oldToken("B".repeat(22)),
+      // atado a OTRA clave de envío: un solo sello no sirve para muchos envíos distintos
+      oldToken(PUBLIC_ID, OTHER_SUBMIT_KEY),
       "no-es-un-sello",
     ];
     for (const renderToken of cases) {
@@ -209,7 +274,7 @@ describe("el orden del envío público", () => {
       expect(status, renderToken).toBe(403);
       expect(blocksRecorded()).toEqual(["captcha"]);
     }
-    const expired = createRenderToken(PUBLIC_ID, { nowSeconds: now - 25 * 3600 });
+    const expired = createRenderToken(PUBLIC_ID, SUBMIT_KEY, { nowSeconds: now - 25 * 3600 });
     const result = await run(validBody({ renderToken: expired }));
     expect(result.status).toBe(403);
     expect(result.json.message).toBe(MSG_EXPIRED);
@@ -273,6 +338,47 @@ describe("el orden del envío público", () => {
     expect(status).toBe(422);
     expect(JSON.stringify(json)).toContain("ya no está disponible");
     expect(mocks.submitIntakeRequest).not.toHaveBeenCalled();
+  });
+
+  it("sin requestId: ya no es un dato del envío, y sin huella del aviso de privacidad no se acepta", async () => {
+    const withRequestId = await run(validBody({ requestId: randomUUID() }));
+    expect(withRequestId.status).toBe(422);
+    const { consentFingerprint: _omitted, ...rest } = validBody();
+    void _omitted;
+    const without = await run(rest);
+    expect(without.status).toBe(422);
+    expect(Object.keys(without.json.fieldErrors as object)).toContain("consentFingerprint");
+    expect(mocks.submitIntakeRequest).not.toHaveBeenCalled();
+  });
+
+  it("si el aviso de privacidad cambió (otra huella), entrega el nuevo y NO guarda el consentimiento", async () => {
+    mocks.readIntakeForm.mockResolvedValue(
+      form({ privacyPolicyUrl: "https://ejemplo.test/privacidad" }),
+    );
+    // la persona vio el aviso SIN enlace a la política; ahora la organización la agregó (misma revisión)
+    const { status, json } = await run(validBody({ consentFingerprint: consentFor(null) }));
+    expect(status).toBe(409);
+    expect(json.status).toBe("form_changed");
+    expect((json.content as { privacyPolicyUrl: string }).privacyPolicyUrl).toBe(
+      "https://ejemplo.test/privacidad",
+    );
+    expect(mocks.submitIntakeRequest).not.toHaveBeenCalled();
+    expect(blocksRecorded()).toEqual([]);
+    // el sello nuevo queda atado a la MISMA clave de envío, para poder reintentar con ella
+    const stamp = verifyRenderToken(json.renderToken, PUBLIC_ID, SUBMIT_KEY, {
+      nowSeconds: Math.floor(Date.now() / 1000) + MIN_FILL_SECONDS + 1,
+    });
+    expect(stamp.ok).toBe(true);
+  });
+
+  it("con la huella correcta del aviso (también con enlace a la política) sí se guarda", async () => {
+    mocks.readIntakeForm.mockResolvedValue(
+      form({ privacyPolicyUrl: "https://ejemplo.test/privacidad" }),
+    );
+    const { status } = await run(
+      validBody({ consentFingerprint: consentFor("https://ejemplo.test/privacidad") }),
+    );
+    expect(status).toBe(200);
   });
 
   it("una revisión distinta entrega el formulario vigente y un sello nuevo, sin guardar nada", async () => {
@@ -351,7 +457,7 @@ describe("el envío correcto", () => {
     mocks.readIntakeForm.mockResolvedValue(
       form({ privacyPolicyUrl: "https://ejemplo.test/privacidad" }),
     );
-    await run(validBody());
+    await run(validBody({ consentFingerprint: consentFor("https://ejemplo.test/privacidad") }));
     const input = mocks.submitIntakeRequest.mock.calls[0][0];
     expect(input.consentText.endsWith("\nhttps://ejemplo.test/privacidad")).toBe(true);
   });
@@ -434,10 +540,10 @@ describe("lo que responde la base", () => {
   });
 
   it("los rechazos no escriben datos del visitante ni el identificador en el log", async () => {
-    await run(validBody({ website: "spam" }));
+    await run(validBody({ [HONEYPOT_FIELD]: "spam" }));
     mocks.verify.mockResolvedValue({ ok: false, reason: "invalid_token" });
     await run(validBody());
-    mocks.consumeIntakeSubmitQuota.mockResolvedValue(false);
+    mocks.consumeIntakeSubmitQuota.mockResolvedValue("blocked_now");
     await run(validBody());
     expect(mocks.serverLog).toHaveBeenCalled();
     const logged = JSON.stringify(mocks.serverLog.mock.calls);

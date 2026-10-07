@@ -1,9 +1,18 @@
 "use client";
 
 import { CheckCircle2 } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { brandStyle } from "@/lib/share/brand-vars";
+import { consentFingerprint } from "@/lib/intake/consent-fingerprint";
 import { MSG_ERROR, type SubmitResponse } from "@/lib/intake/submit-response";
+import { buildSubmitSchema, fieldErrors, HONEYPOT_FIELD } from "@/lib/intake/submit-schema";
 import type { PublicFormContent, PublicFormView } from "@/lib/intake/public-view";
 import { AntibotWidget } from "./antibot-widget";
 import { FormView, type TextFieldKey } from "./form-view";
@@ -13,16 +22,23 @@ import { FormView, type TextFieldKey } from "./form-view";
  * habla SOLO con `POST /api/v1/public/forms/[publicId]/requests`; nunca con la base. Todo lo que escribe
  * viaja como texto y se muestra como texto.
  *
- * Doble envío: la clave de envío se crea UNA vez al cargar la página y se reenvía igual si se corta la
- * red o el servidor falla, así un reintento nunca crea dos solicitudes. La prueba anti-robot sirve una
- * sola vez, por eso el widget se vuelve a montar después de cada intento.
+ * Doble envío: la clave de envío la entrega el servidor junto con el sello de tiempo (el sello queda atado
+ * a ella) y se reenvía igual si se corta la red o el servidor falla, así un reintento nunca crea dos
+ * solicitudes. La prueba anti-robot sirve una sola vez, por eso el widget se vuelve a montar después de
+ * cada intento.
+ *
+ * Datos personales fuera de la dirección: el formulario es `method="post"` y sus campos NO llevan `name`,
+ * y el botón de enviar queda desactivado hasta que la página está lista. Así, sin JavaScript o antes de que
+ * cargue, el navegador nunca arma `?nombre=...&correo=...` con lo que la persona escribió.
+ *
+ * Los errores de tipeo se detectan aquí, con el mismo esquema que usa el servidor, sin llamarlo: no gastan
+ * intentos del límite por IP ni pruebas anti-robot.
  */
 
 const API_PREFIX = "/api/v1/public/forms";
 const ANTIBOT_ACTION = "intake_submit";
 /** El servidor rechaza un envío hecho antes de 3 s desde que mostró el formulario: se espera un poco más. */
 const MIN_FILL_MS = 3_300;
-const HONEYPOT_FIELD = "website";
 const EMPTY_VALUES: Record<TextFieldKey, string> = {
   name: "",
   email: "",
@@ -33,8 +49,8 @@ const EMPTY_VALUES: Record<TextFieldKey, string> = {
   desiredDate: "",
   message: "",
 };
-const MSG_PICK_ONE = "Elige al menos un servicio.";
-const MSG_CONSENT = "Para enviar tienes que aceptar el aviso de privacidad.";
+/** Marca de relleno: el esquema pide un token anti-robot, que aquí se revisa aparte. */
+const ANTIBOT_PLACEHOLDER = "pendiente";
 const MSG_ANTIBOT_MISSING = "Confirma que no eres un robot.";
 const MSG_FIX_FIELDS = "Revisa los datos marcados en rojo.";
 const MSG_NETWORK =
@@ -44,18 +60,21 @@ export type PublicIntakeFormProps = {
   publicId: string;
   view: PublicFormView;
   renderToken: string;
+  /** Clave de envío que el servidor creó y a la que quedó atado el sello de tiempo. */
+  submitKey: string;
+  /** Encabezado de la marca, ya dibujado en el servidor (logo reducido incluido). */
+  header: ReactNode;
   antibot: { provider: "turnstile" | "memory"; siteKey: string | null };
 };
 
-function newUuid(): string {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  // Páginas sin contexto seguro (http fuera de localhost) no tienen randomUUID.
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
+const subscribeNothing = () => () => undefined;
+/** `false` al armar la página en el servidor y antes de que cargue; `true` cuando ya funciona en el navegador. */
+const useHydrated = () =>
+  useSyncExternalStore(
+    subscribeNothing,
+    () => true,
+    () => false,
+  );
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -86,7 +105,15 @@ function mapErrors(
   return { errors, general };
 }
 
-function Success({ view, message }: { view: PublicFormView; message: string }) {
+function Success({
+  view,
+  header,
+  message,
+}: {
+  view: PublicFormView;
+  header: ReactNode;
+  message: string;
+}) {
   const contact = [view.organization.contactEmail, view.organization.contactPhone].filter(Boolean);
   return (
     <div
@@ -94,9 +121,7 @@ function Success({ view, message }: { view: PublicFormView; message: string }) {
       style={brandStyle(view.brand) as CSSProperties}
       data-testid="intake-success"
     >
-      <header className="flex min-w-0 items-center gap-3 bg-[var(--brand)] p-4 text-[var(--on-brand)] sm:p-6">
-        <p className="min-w-0 text-lg font-semibold break-words">{view.organization.name}</p>
-      </header>
+      {header}
       <div
         role="status"
         className="flex flex-col items-center gap-4 bg-surface p-6 text-center sm:p-10"
@@ -119,7 +144,15 @@ function Success({ view, message }: { view: PublicFormView; message: string }) {
   );
 }
 
-export function PublicIntakeForm({ publicId, view, renderToken, antibot }: PublicIntakeFormProps) {
+export function PublicIntakeForm({
+  publicId,
+  view,
+  renderToken,
+  submitKey,
+  header,
+  antibot,
+}: PublicIntakeFormProps) {
+  const ready = useHydrated();
   const [content, setContent] = useState<PublicFormContent>(view);
   const [stamp, setStamp] = useState(renderToken);
   const [values, setValues] = useState<Record<TextFieldKey, string>>(EMPTY_VALUES);
@@ -132,8 +165,6 @@ export function PublicIntakeForm({ publicId, view, renderToken, antibot }: Publi
   const [done, setDone] = useState<string | null>(null);
   const [antibotToken, setAntibotToken] = useState<string | null>(null);
   const [antibotEpoch, setAntibotEpoch] = useState(0);
-  // Se crea una vez al cargar la página y se reenvía igual en cada reintento.
-  const [submitKey] = useState(newUuid);
   const shownAt = useRef<number | null>(null);
 
   useEffect(() => {
@@ -142,7 +173,9 @@ export function PublicIntakeForm({ publicId, view, renderToken, antibot }: Publi
 
   const focusFirstError = () => {
     requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+      document
+        .querySelector<HTMLElement>('[aria-invalid="true"], [data-invalid-group="true"]')
+        ?.focus();
     });
   };
 
@@ -150,26 +183,7 @@ export function PublicIntakeForm({ publicId, view, renderToken, antibot }: Publi
     setValues((previous) => ({ ...previous, [key]: value }));
 
   async function submit() {
-    if (submitting) return;
-    const problems: Record<string, string> = {};
-    if (Object.keys(picked).length === 0) problems.items = MSG_PICK_ONE;
-    if (!consent) problems.consent = MSG_CONSENT;
-    if (!antibotToken) problems.antibot = MSG_ANTIBOT_MISSING;
-    if (Object.keys(problems).length > 0) {
-      const { antibot: antibotProblem, ...fieldProblems } = problems;
-      setErrors(fieldProblems);
-      setBanner({ tone: "error", text: antibotProblem ?? MSG_FIX_FIELDS });
-      focusFirstError();
-      return;
-    }
-
-    setErrors({});
-    setBanner(null);
-    setSubmitting(true);
-
-    // El servidor no acepta un envío antes de 3 s desde que mostró el formulario (trampa contra robots).
-    const wait = MIN_FILL_MS - (Date.now() - (shownAt.current ?? 0));
-    if (wait > 0) await sleep(wait);
+    if (submitting || !ready) return;
 
     const pickedIds = Object.keys(picked);
     const asked = (key: keyof PublicFormContent["fields"]) => content.fields[key] !== "off";
@@ -183,14 +197,40 @@ export function PublicIntakeForm({ publicId, view, renderToken, antibot }: Publi
       desiredDate: asked("desiredDate") ? values.desiredDate : undefined,
       message: asked("message") ? values.message : undefined,
       items: pickedIds.map((formItemId) => ({ formItemId, quantity: picked[formItemId] })),
-      consent: true,
+      consent,
+      consentFingerprint: consentFingerprint(content.consentText, content.privacyPolicyUrl),
       submitKey,
-      requestId: newUuid(),
       formRevision: content.revision,
       [HONEYPOT_FIELD]: honeypot,
       renderToken: stamp,
-      antibotToken,
+      antibotToken: antibotToken ?? ANTIBOT_PLACEHOLDER,
     };
+
+    // Mismas reglas que el servidor, sin llamarlo: un error de tipeo no gasta intentos ni pruebas anti-robot.
+    const checked = buildSubmitSchema({
+      fields: content.fields,
+      items: content.items,
+    }).safeParse(payload);
+    if (!checked.success || !antibotToken) {
+      const mapped = checked.success
+        ? { errors: {}, general: null }
+        : mapErrors(fieldErrors(checked.error), pickedIds);
+      setErrors(mapped.errors);
+      setBanner({
+        tone: "error",
+        text: !antibotToken ? MSG_ANTIBOT_MISSING : (mapped.general ?? MSG_FIX_FIELDS),
+      });
+      focusFirstError();
+      return;
+    }
+
+    setErrors({});
+    setBanner(null);
+    setSubmitting(true);
+
+    // El servidor no acepta un envío antes de 3 s desde que mostró el formulario (trampa contra robots).
+    const wait = MIN_FILL_MS - (Date.now() - (shownAt.current ?? 0));
+    if (wait > 0) await sleep(wait);
 
     let response: SubmitResponse | null = null;
     try {
@@ -233,7 +273,10 @@ export function PublicIntakeForm({ publicId, view, renderToken, antibot }: Publi
         setPicked((previous) =>
           Object.fromEntries(Object.entries(previous).filter(([id]) => stillThere.has(id))),
         );
-        if (response.content.consentText !== content.consentText) setConsent(false);
+        const sameNotice =
+          consentFingerprint(response.content.consentText, response.content.privacyPolicyUrl) ===
+          consentFingerprint(content.consentText, content.privacyPolicyUrl);
+        if (!sameNotice) setConsent(false);
         setContent(response.content);
         setStamp(response.renderToken);
         shownAt.current = Date.now();
@@ -245,13 +288,13 @@ export function PublicIntakeForm({ publicId, view, renderToken, antibot }: Publi
     }
   }
 
-  if (done !== null) return <Success view={view} message={done} />;
+  if (done !== null) return <Success view={view} header={header} message={done} />;
 
   return (
     <FormView
       brand={view.brand}
       organizationName={view.organization.name}
-      logoSrc={view.logoDataUrl}
+      header={header}
       title={content.title}
       intro={content.intro}
       fields={content.fields}
@@ -281,6 +324,8 @@ export function PublicIntakeForm({ publicId, view, renderToken, antibot }: Publi
         errors,
         submitting,
         onSubmit: () => void submit(),
+        ready,
+        action: `${API_PREFIX}/${publicId}/requests`,
         beforeSubmit: (
           <div className="flex min-w-0 flex-col gap-3">
             {/* Campo trampa: una persona nunca lo ve ni lo llena; un robot que llena todo, sí. */}
@@ -298,9 +343,11 @@ export function PublicIntakeForm({ publicId, view, renderToken, antibot }: Publi
                 No llenes este campo
                 <input
                   type="text"
-                  name={HONEYPOT_FIELD}
                   tabIndex={-1}
                   autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-form-type="other"
                   value={honeypot}
                   onChange={(event) => setHoneypot(event.target.value)}
                 />

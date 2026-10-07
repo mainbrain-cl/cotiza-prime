@@ -154,6 +154,48 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
         p_provider_message_id: "x",
         p_error_code: null,
       },
+      // Sprint 4 · formulario público
+      intake_form_read: { p_public_id: "A".repeat(22) },
+      intake_request_submit: {
+        p_public_id: "A".repeat(22),
+        p_request_id: randomUUID(),
+        p_submit_key: randomUUID(),
+        p_form_revision: 1,
+        p_contact_name_enc: "x",
+        p_contact_email_enc: "x",
+        p_contact_phone_enc: null,
+        p_company_enc: null,
+        p_comuna_enc: null,
+        p_service_address_enc: null,
+        p_message_enc: null,
+        p_contact_email_hash: "0".repeat(64),
+        p_desired_date: null,
+        p_items: [{ form_item_id: randomUUID(), quantity_milli: null }],
+        p_consent_template_version: "v1",
+        p_consent_text_sha256: "0".repeat(64),
+        p_consent_ip_enc: null,
+      },
+      intake_record_block: { p_public_id: "A".repeat(22), p_reason: "rate" },
+      intake_notice_recipients: {
+        p_request_id: randomUUID(),
+        p_kind: "request_received",
+        p_form_id: null,
+      },
+      intake_notice_register: {
+        p_email_id: randomUUID(),
+        p_request_id: randomUUID(),
+        p_kind: "request_received",
+        p_to_user_id: randomUUID(),
+        p_to_email_enc: "x",
+        p_to_email_hash: "0".repeat(64),
+        p_form_id: null,
+      },
+      intake_notice_settle: {
+        p_email_id: randomUUID(),
+        p_provider: "memory",
+        p_provider_message_id: "x",
+        p_error_code: null,
+      },
     };
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {
@@ -382,5 +424,4 @@ describe("pendientes de sprints futuros (se muestran en el informe, no se saltan
     "Exportación a Excel: solo filas de la organización activa y con auditoría (sprint 7, H-111)",
   );
   it.todo("Enlace del cliente: un token de B no abre una cotización de A (sprint 2, H-040)");
-  it.todo("Formulario público: la solicitud solo cae en la organización del formulario (sprint 6)");
 });

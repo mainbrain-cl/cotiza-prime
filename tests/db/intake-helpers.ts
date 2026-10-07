@@ -22,7 +22,7 @@ export async function buildIntakeWorld(db: Client): Promise<IntakeWorld> {
     const id = randomUUID();
     await db.query(
       `insert into public.catalog_items (id, tenant_id, name, unit, unit_price_clp)
-       values ($1, $2, $3, 'service', 12345)`,
+       values ($1, $2, $3, 'service', 7314829)`,
       [id, tenantId, name],
     );
     return id;
@@ -200,42 +200,62 @@ export async function insertRequest(
 /** Los argumentos de `intake_request_submit`, con valores válidos que cada prueba puede cambiar. */
 export interface SubmitArgs {
   publicId: string;
-  requestId?: string;
-  submitKey?: string;
   revision: number;
   items: { form_item_id: string; quantity_milli: number | null }[];
-  name?: string;
-  email?: string;
+  requestId?: string;
+  submitKey?: string;
+  /** Pisa cualquier otro argumento por su nombre corto (datos cifrados, fecha, consentimiento). */
   over?: Partial<{
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    company: string | null;
+    comuna: string | null;
+    address: string | null;
+    message: string | null;
+    emailHash: string | null;
     desiredDate: string | null;
-    consentVersion: string;
-    consentSha: string;
+    consentVersion: string | null;
+    consentSha: string | null;
     consentIp: string | null;
   }>;
 }
 
-export const SUBMIT_SQL = `select public.intake_request_submit($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) as r`;
+export const SUBMIT_SQL =
+  "select public.intake_request_submit($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16, $17) as r";
 
-/** Parámetros en el orden de SUBMIT_SQL (ver la migración 31). */
+/** Parámetros en el orden de SUBMIT_SQL (la firma de la migración 31). */
 export function submitParams(a: SubmitArgs): unknown[] {
+  const o = a.over ?? {};
+  const pick = <T>(key: keyof typeof o, fallback: T): T | null =>
+    key in o ? ((o[key] as T | null) ?? null) : fallback;
   return [
     a.publicId,
     a.requestId ?? randomUUID(),
     a.submitKey ?? randomUUID(),
     a.revision,
+    pick("name", "v1.nombre.cifrado"),
+    pick("email", "v1.correo.cifrado"),
+    pick("phone", null),
+    pick("company", null),
+    pick("comuna", null),
+    pick("address", null),
+    pick("message", null),
+    pick("emailHash", sha256Hex("visitante@ejemplo.test")),
+    pick("desiredDate", null),
     JSON.stringify(a.items),
-    `v1.nombre.${a.name ?? "cifrado"}`,
-    `v1.correo.${a.email ?? "cifrado"}`,
-    "v1.telefono.cifrado",
-    null,
-    null,
-    null,
-    null,
-    sha256Hex(a.email ?? "correo"),
-    a.over && "desiredDate" in a.over ? a.over.desiredDate : null,
-    a.over?.consentVersion ?? "v1",
-    a.over?.consentSha ?? sha256Hex("texto de consentimiento"),
+    pick("consentVersion", "v1"),
+    pick("consentSha", sha256Hex("texto de consentimiento")),
+    pick("consentIp", null),
   ];
+}
+
+/** Envía una solicitud como el servidor (llave maestra) y devuelve el resultado. */
+export async function submitAsServer(
+  db: Client,
+  a: SubmitArgs,
+): Promise<Json & { result: string }> {
+  return callAsServer<Json & { result: string }>(db, SUBMIT_SQL, submitParams(a));
 }
 
 export { actAsPostgres, asUser, connect };

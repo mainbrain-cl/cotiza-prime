@@ -600,6 +600,13 @@ export const SERVER_ONLY_FUNCTIONS = [
   "internal_notice_settle",
   // Sprint 3: los avisos del proveedor de correo (la ruta verifica la firma antes de llamarla)
   "record_email_event",
+  // Sprint 4: el portero del formulario público (leer, recibir una solicitud, contar bloqueos) y sus avisos
+  "intake_form_read",
+  "intake_request_submit",
+  "intake_record_block",
+  "intake_notice_recipients",
+  "intake_notice_register",
+  "intake_notice_settle",
 ];
 
 /**

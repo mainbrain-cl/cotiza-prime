@@ -183,7 +183,6 @@ export async function readNoticeRecipients(ref: {
   responseId: string;
 }): Promise<{ packageId: string; audience: "author" | "managers"; recipients: NoticeRecipient[] }> {
   const { data, error } = await createAdminClient().rpc("share_notice_recipients", {
-    p_tenant_id: ref.tenantId,
     p_quote_id: ref.quoteId,
     p_response_id: ref.responseId,
   });
@@ -211,7 +210,6 @@ export async function registerInternalNotice(input: {
   const email = normalizeEmail(input.recipient.email);
   const { error } = await createAdminClient().rpc("internal_notice_register", {
     p_email_id: input.emailId,
-    p_tenant_id: input.tenantId,
     p_quote_id: input.quoteId,
     p_response_id: input.responseId,
     p_to_user_id: input.recipient.userId,
@@ -235,7 +233,6 @@ export async function settleInternalNotice(input: {
 }): Promise<void> {
   const { error } = await createAdminClient().rpc("internal_notice_settle", {
     p_email_id: input.emailId,
-    p_tenant_id: input.tenantId,
     p_provider: input.sent?.provider ?? null,
     p_provider_message_id: input.sent?.providerMessageId ?? null,
     p_error_code: input.sent ? null : (input.errorCode ?? "unknown"),

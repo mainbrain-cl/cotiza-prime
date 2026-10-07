@@ -262,7 +262,6 @@ describe("aviso interno de H-031 por el portero", () => {
       responseId: RESPONSE,
     });
     expect(rpc).toHaveBeenCalledWith("share_notice_recipients", {
-      p_tenant_id: TENANT,
       p_quote_id: QUOTE,
       p_response_id: RESPONSE,
     });
@@ -294,7 +293,6 @@ describe("aviso interno de H-031 por el portero", () => {
     });
     expect(rpc).toHaveBeenCalledWith("internal_notice_register", {
       p_email_id: EMAIL,
-      p_tenant_id: TENANT,
       p_quote_id: QUOTE,
       p_response_id: RESPONSE,
       p_to_user_id: USER,
@@ -311,7 +309,6 @@ describe("aviso interno de H-031 por el portero", () => {
     });
     expect(rpc).toHaveBeenLastCalledWith("internal_notice_settle", {
       p_email_id: EMAIL,
-      p_tenant_id: TENANT,
       p_provider: "mailpit",
       p_provider_message_id: "m-1",
       p_error_code: null,
@@ -319,7 +316,6 @@ describe("aviso interno de H-031 por el portero", () => {
     await settleInternalNotice({ emailId: EMAIL, tenantId: TENANT, errorCode: "timeout" });
     expect(rpc).toHaveBeenLastCalledWith("internal_notice_settle", {
       p_email_id: EMAIL,
-      p_tenant_id: TENANT,
       p_provider: null,
       p_provider_message_id: null,
       p_error_code: "timeout",

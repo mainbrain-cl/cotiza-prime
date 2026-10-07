@@ -47,7 +47,6 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
       [
         "share_notice_recipients",
         {
-          p_tenant_id: fx.orgs.B.tenantId,
           p_quote_id: fx.orgs.B.share!.quoteId,
           p_response_id: fx.orgs.B.share!.responseId,
         },
@@ -56,7 +55,6 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
         "internal_notice_register",
         {
           p_email_id: randomUUID(),
-          p_tenant_id: fx.orgs.B.tenantId,
           p_quote_id: fx.orgs.B.share!.quoteId,
           p_response_id: fx.orgs.B.share!.responseId,
           p_to_user_id: fx.personas.ana.userId,
@@ -68,7 +66,6 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
         "internal_notice_settle",
         {
           p_email_id: fx.orgs.B.share!.emailMessageId,
-          p_tenant_id: fx.orgs.B.tenantId,
           p_provider: "memory",
           p_provider_message_id: "ataque",
           p_error_code: null,
@@ -135,7 +132,6 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
   it("los destinatarios del aviso son solo miembros activos de la organización de la respuesta", async () => {
     const fx = fixture();
     const ok = await asServer("share_notice_recipients", {
-      p_tenant_id: fx.orgs.B.tenantId,
       p_quote_id: fx.orgs.B.share!.quoteId,
       p_response_id: fx.orgs.B.share!.responseId,
     });
@@ -151,10 +147,9 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
     // Ana solo es de A: nunca aparece como destinataria de un aviso de B
     expect(ok.text).not.toContain(fx.personas.ana.userId);
 
-    // la respuesta de B pedida con la organización A no existe: no entrega nada
+    // la respuesta de B pedida con una cotización de A no existe: no entrega nada
     const crossed = await asServer("share_notice_recipients", {
-      p_tenant_id: fx.orgs.A.tenantId,
-      p_quote_id: fx.orgs.B.share!.quoteId,
+      p_quote_id: fx.orgs.A.share!.quoteId,
       p_response_id: fx.orgs.B.share!.responseId,
     });
     expect(crossed.status).toBeGreaterThanOrEqual(400);

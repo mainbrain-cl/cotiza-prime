@@ -289,9 +289,13 @@ test("el cliente acepta desde su teléfono: queda registrado, no se puede repeti
   await expect.poll(() => countMails(authorEmail, sent.quoteNumber), { timeout: 30_000 }).toBe(1);
   const notice = (await mailsTo(authorEmail)).find((mail) => mail.Text.includes("aceptó"));
   expect(notice).toBeDefined();
-  expect(notice!.Text).toContain("Carolina Cliente Ficticia");
+  // El correo no lleva el nombre de quien aceptó: eso se ve solo dentro de la aplicación.
+  expect(notice!.Text).not.toContain("Carolina Cliente Ficticia");
   expect(notice!.Text).not.toMatch(/banco/i);
   await page.goto(`/o/${tenantId}/cotizaciones/${sent.quoteId}`);
+  await expect(page.getByTestId("customer-response-headline")).toContainText(
+    "Aceptada por Carolina Cliente Ficticia el",
+  );
   await expect(page.getByText("Aceptada", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("El cliente aceptó la cotización")).toBeVisible();
   await page.goto(`/o/${tenantId}/cotizaciones`);
@@ -389,8 +393,14 @@ test("el cliente rechaza: sin motivo no se registra, y el motivo queda visible p
   const notice = (await mailsTo(authorEmail)).find((mail) => mail.Text.includes("rechazó"));
   expect(notice).toBeDefined();
   expect(notice!.Text).toContain("Otro motivo");
-  expect(notice!.Text).toContain("Lo resolvimos con otro equipo");
+  // El correo solo avisa que hay comentario; el texto libre se ve dentro de la aplicación.
+  expect(notice!.Text).not.toContain("Lo resolvimos con otro equipo");
+  expect(notice!.Text).toContain("El cliente dejó un comentario");
   await page.goto(`/o/${tenantId}/cotizaciones/${sent.quoteId}`);
+  await expect(page.getByTestId("customer-response-reason")).toContainText("Otro motivo");
+  await expect(page.getByTestId("customer-response-detail")).toContainText(
+    "Lo resolvimos con otro equipo",
+  );
   await expect(page.getByText("Rechazada por el cliente", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("El cliente rechazó la cotización: otro motivo")).toBeVisible();
   await page.goto(`/o/${tenantId}/cotizaciones`);

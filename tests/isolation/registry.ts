@@ -702,6 +702,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/api/v1/ping", kind: "api", scope: "none" },
   { path: "/api/v1/tenants/[tenantId]/logo", kind: "api", scope: "tenant" },
   { path: "/api/v1/tenants/[tenantId]/quotes/[quoteId]/pdf", kind: "api", scope: "tenant" },
+  { path: "/api/v1/tenants/[tenantId]/intake-forms/[formId]/qr", kind: "api", scope: "tenant" },
   { path: "/c/[token]", kind: "page", scope: "token" },
   { path: "/api/v1/public/quote-links/[token]/pdf", kind: "api", scope: "token" },
   { path: "/api/v1/public/quote-links/[token]/view", kind: "api", scope: "token" },

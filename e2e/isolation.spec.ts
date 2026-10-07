@@ -282,7 +282,14 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         expect(await res.text()).not.toContain(fx.orgs.B.canary);
       } else {
         // Ana (con sesión, miembro solo de A) pide una dirección de B: 404, con o sin cabecera.
-        const attackPath = concretePath(route, fx.orgs.B.tenantId, "", "", fx.orgs.B.quoteIds[0]);
+        const attackPath = concretePath(
+          route,
+          fx.orgs.B.tenantId,
+          "",
+          "",
+          fx.orgs.B.quoteIds[0],
+          fx.orgs.B.intake!.formId,
+        );
         const res = await page.request.get(attackPath, {
           headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
         });

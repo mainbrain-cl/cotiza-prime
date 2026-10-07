@@ -55,6 +55,9 @@ export default defineConfig({
       CP_PII_KEY_V1: process.env.CP_PII_KEY_V1!,
       CP_SEARCH_KEY_V1: process.env.CP_SEARCH_KEY_V1!,
       NEXT_PUBLIC_APP_ENV: "test",
+      // Formulario público (H-087): secreto del sello de tiempo y verificación anti-robot de pruebas.
+      INTAKE_RENDER_SECRET: process.env.INTAKE_RENDER_SECRET!,
+      ANTIBOT_PROVIDER: "memory",
       APP_ORIGIN: `http://localhost:${PORT}`,
       // Los correos de las pruebas salen a Mailpit (http://127.0.0.1:56324), nunca a un proveedor real.
       EMAIL_PROVIDER: "mailpit",

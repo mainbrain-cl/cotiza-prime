@@ -8,7 +8,8 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Todo menos archivos estáticos, imágenes optimizadas y el ícono
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // Todo menos archivos estáticos, imágenes optimizadas y el ícono, y menos lo público sin cuenta: el
+    // formulario público (`/f/*`) y la API pública (`/api/v1/public/*`) no leen ni renuevan la sesión.
+    "/((?!_next/static|_next/image|favicon.ico|f/|api/v1/public/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

@@ -40,7 +40,6 @@ import {
   FORM_SUCCESS_MAX,
   FORM_TITLE_MAX,
   ITEM_UNITS,
-  PUBLIC_FORM_ROUTE_AVAILABLE,
   QUANTITY_MODE_OPTIONS,
   freeItem,
   itemFromCatalog,
@@ -642,12 +641,6 @@ export function FormEditor({
               <div className="flex flex-wrap gap-2">
                 <CopyLinkButton url={publicUrl} />
               </div>
-              {!PUBLIC_FORM_ROUTE_AVAILABLE ? (
-                <p data-testid="link-not-ready" className="text-sm text-fg-muted">
-                  Esta dirección todavía no está disponible hasta la siguiente historia: ya queda
-                  guardada, pero la página que la abre se construye después.
-                </p>
-              ) : null}
               {status === "paused" ? (
                 <p className="text-sm text-fg-muted">
                   El formulario está en pausa: quien abra el enlace verá que por ahora no recibe

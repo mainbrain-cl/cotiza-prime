@@ -12,4 +12,7 @@ export function ensureTestCryptoEnv(): void {
   process.env.CP_PII_KEY_CURRENT ??= "v1";
   process.env.CP_PII_KEY_V1 ??= randomKey();
   process.env.CP_SEARCH_KEY_V1 ??= randomKey();
+  // Formulario público (H-087): sello de tiempo (mínimo 32 caracteres) y anti-robot de pruebas.
+  process.env.INTAKE_RENDER_SECRET ??= randomKey();
+  process.env.ANTIBOT_PROVIDER ??= "memory";
 }

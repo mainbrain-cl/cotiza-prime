@@ -2,7 +2,7 @@
 // agrega una tabla, una función o una ruta: `registry-guard.test.ts` falla si se olvida.
 //
 // Sin dependencias pesadas, para que también lo lea Playwright.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { IsolationFixture, PersonaKey, Role } from "./fixture";
 
 /**
@@ -317,8 +317,11 @@ export const ISOLATION_TABLES: TableSpec[] = [
       ],
       form_revision: 1,
       submit_key: randomUUID(),
-      consent_template_version: "v1",
-      consent_text_sha256: "b".repeat(64),
+      consent_template_version: "intake-v1",
+      consent_text: "Acepto que la organización use mis datos para responder esta solicitud.",
+      consent_text_sha256: createHash("sha256")
+        .update("Acepto que la organización use mis datos para responder esta solicitud.")
+        .digest("hex"),
     }),
     updateAttack: () => ({ status: "discarded", discard_reason: "spam" }),
     hasFixtureRowsInB: true,
@@ -593,6 +596,11 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: true,
   },
   restore_intake_request: { args: { p_request_id: randomUUID() }, writesActiveTenant: true },
+  // Derecho de supresión de quien llenó el formulario (solo Dueño y Administrador).
+  anonymize_intake_request: {
+    args: { p_request_id: randomUUID(), p_reason: "data_subject_request" },
+    writesActiveTenant: true,
+  },
   convert_intake_request: {
     args: { p_request_id: randomUUID(), p_customer_id: randomUUID(), p_creation_key: randomUUID() },
     writesActiveTenant: true,

@@ -9,6 +9,8 @@ import { actAsAnon, actAsPostgres, connect, expectSqlError, withTx } from "./hel
 import {
   buildIntakeWorld,
   callAs,
+  CONSENT_TEXT,
+  CONSENT_VERSION,
   callAsServer,
   catalogItem,
   expectFails,
@@ -331,7 +333,10 @@ describe("intake_request_submit · el camino feliz", () => {
         tenant_id: w.tenantA,
         status: "new",
         form_revision: fx.form.revision,
-        consent_template_version: "v1",
+        consent_template_version: CONSENT_VERSION,
+        consent_text: CONSENT_TEXT,
+        consent_text_sha256: sha256Hex(CONSENT_TEXT),
+        consent_text_unavailable: false,
         consent_ip_enc: "v1.ip.ip",
         contact_phone_enc: "v1.tel.tel",
         message_enc: "v1.msg.msg",
@@ -640,9 +645,12 @@ describe("intake_request_submit · lo que no se recibe", () => {
           tweak(13, JSON.stringify([{ form_item_id: fx.free.id, quantity_milli: 0 }])),
         ],
         ["sin versión del consentimiento", tweak(14, null)],
-        ["sin huella del consentimiento", tweak(15, null)],
-        ["huella del consentimiento mala", tweak(15, "ABC")],
-        ["versión del consentimiento larga", tweak(14, "v".repeat(41))],
+        ["sin texto del consentimiento", tweak(15, null)],
+        ["texto del consentimiento vacío", tweak(15, "")],
+        ["texto del consentimiento de 3.001", tweak(15, "x".repeat(3001))],
+        ["texto del consentimiento con control invisible", tweak(15, "Acepto‮texto")],
+        ["versión del consentimiento sin formato", tweak(14, "v1")],
+        ["versión del consentimiento larga", tweak(14, "intake-v" + "1".repeat(40))],
         ["nombre cifrado de 2.001", tweak(4, "x".repeat(2001))],
         ["mensaje cifrado de 12.001", tweak(10, "x".repeat(12001))],
         ["IP cifrada de 2.001", tweak(16, "x".repeat(2001))],
@@ -755,24 +763,15 @@ describe("intake_record_block", () => {
           publicId,
           reason,
         ]);
-      for (const reason of [
-        "captcha",
-        "captcha",
-        "rate",
-        "cap",
-        "paused",
-        "invalid",
-        "invalid",
-        "invalid",
-      ]) {
+      for (const reason of ["captcha", "captcha", "rate", "invalid", "invalid", "invalid"]) {
         expect(await block(fx.form.publicId, reason)).toEqual({ recorded: true });
       }
       expect(await countersOf(fx.form.formId)).toMatchObject({
         accepted: 0,
         blocked_captcha: 2,
         blocked_rate: 1,
-        blocked_cap: 1,
-        blocked_paused: 1,
+        blocked_cap: 0,
+        blocked_paused: 0,
         blocked_invalid: 3,
       });
       const before = (
@@ -789,13 +788,18 @@ describe("intake_record_block", () => {
           .n,
       ).toBe(before);
       await actAsService(setup);
-      expect(
-        (
-          await expectSqlError(setup, "select public.intake_record_block($1, 'otro')", [
-            fx.form.publicId,
-          ])
-        ).code,
-      ).toBe("CP422");
+      // el tope y la pausa ya se cuentan dentro del envío: aquí no se aceptan
+      for (const reason of ["otro", "cap", "paused"]) {
+        expect(
+          (
+            await expectSqlError(setup, "select public.intake_record_block($1, $2)", [
+              fx.form.publicId,
+              reason,
+            ])
+          ).code,
+          reason,
+        ).toBe("CP422");
+      }
       expect(
         (
           await expectSqlError(setup, "select public.intake_record_block($1, null)", [
@@ -804,6 +808,26 @@ describe("intake_record_block", () => {
         ).code,
       ).toBe("CP422");
       await actAsPostgres(setup);
+    });
+  });
+
+  it("cuenta en un formulario en pausa, pero no en un borrador", async () => {
+    await withTx(setup, async () => {
+      const fx = await publishedForm();
+      const draft = await makeForm(setup, w.owner, w.tenantA, { publish: false });
+      const block = (id: string) =>
+        callAsServer<Json>(setup, "select public.intake_record_block($1, 'rate') as r", [id]);
+      expect(await block(draft.publicId)).toEqual({ recorded: false });
+      expect(await countersOf(draft.formId)).toBeUndefined();
+      await callAs(
+        setup,
+        w.owner,
+        w.tenantA,
+        "select public.set_intake_form_status($1, 'paused') as r",
+        [fx.form.formId],
+      );
+      expect(await block(fx.form.publicId)).toEqual({ recorded: true });
+      expect((await countersOf(fx.form.formId))?.blocked_rate).toBe(1);
     });
   });
 
@@ -969,6 +993,7 @@ describe("avisos al equipo, sin datos del visitante", () => {
     await withTx(setup, async () => {
       const fx = await publishedForm();
       const id = await insertRequest(setup, w.tenantA, fx.form.formId);
+      await assign(id, w.sales.id);
       const emailId = randomUUID();
       const REGISTER =
         "select public.intake_notice_register($1, $2, $3, $4, 'v1.dest.dest', $5, $6) as r";
@@ -1077,6 +1102,290 @@ describe("avisos al equipo, sin datos del visitante", () => {
       );
       expect(error.code).toBe("CP422");
       await actAsPostgres(setup);
+    });
+  });
+});
+
+describe("avisos: regla de destinatarios, identificador ajeno y organización activa (menores 2 y 4)", () => {
+  const REGISTER =
+    "select public.intake_notice_register($1, $2, $3, $4, 'v1.dest.dest', $5, $6) as r";
+  const registerAs = (
+    kind: string,
+    requestId: string | null,
+    toUser: string,
+    over: { id?: string; formId?: string | null; hash?: string } = {},
+  ) =>
+    callAsServer<Json>(setup, REGISTER, [
+      over.id ?? randomUUID(),
+      requestId,
+      kind,
+      toUser,
+      over.hash ?? sha256Hex("dest"),
+      over.formId ?? null,
+    ]);
+  const assignTo = async (requestId: string, to: string) => {
+    await actAsPostgres(setup);
+    await setup.query(
+      "update public.intake_requests set status = 'assigned', assigned_to = $2, assigned_at = now(), assigned_by = $3 where id = $1",
+      [requestId, to, w.owner.id],
+    );
+  };
+
+  it("el registro aplica la regla del aviso: «llegó una solicitud» y «tope» solo a Dueño y Administradores", async () => {
+    await withTx(setup, async () => {
+      const fx = await publishedForm();
+      const id = await insertRequest(setup, w.tenantA, fx.form.formId);
+      expect(await registerAs("request_received", id, w.admin.id)).toEqual({ registered: true });
+      await actAsService(setup);
+      for (const who of [w.sales, w.approver, w.viewer]) {
+        const error = await expectFails(setup, () =>
+          setup.query(REGISTER, [
+            randomUUID(),
+            id,
+            "request_received",
+            who.id,
+            sha256Hex("d"),
+            null,
+          ]),
+        );
+        expect(error.code, who.email).toBe("42501");
+      }
+      const cap = await expectFails(setup, () =>
+        setup.query(REGISTER, [
+          randomUUID(),
+          null,
+          "intake_cap_reached",
+          w.sales.id,
+          sha256Hex("d"),
+          fx.form.formId,
+        ]),
+      );
+      expect(cap.code).toBe("42501");
+      await actAsPostgres(setup);
+    });
+  });
+
+  it("«te asignaron» solo a la persona asignada (o a Dueño y Administradores si ya no sigue)", async () => {
+    await withTx(setup, async () => {
+      const fx = await publishedForm();
+      const id = await insertRequest(setup, w.tenantA, fx.form.formId);
+      await assignTo(id, w.sales.id);
+      expect(await registerAs("request_assigned", id, w.sales.id)).toEqual({ registered: true });
+      await actAsService(setup);
+      // con una persona asignada activa, nadie más recibe ese aviso
+      const other = await expectFails(setup, () =>
+        setup.query(REGISTER, [
+          randomUUID(),
+          id,
+          "request_assigned",
+          w.owner.id,
+          sha256Hex("d"),
+          null,
+        ]),
+      );
+      expect(other.code).toBe("42501");
+      await actAsPostgres(setup);
+    });
+  });
+
+  it("un identificador de aviso que ya es de otra fila no se registra, y repetir el mismo aviso sí es un reintento", async () => {
+    await withTx(setup, async () => {
+      const fx = await publishedForm();
+      const first = await insertRequest(setup, w.tenantA, fx.form.formId);
+      const second = await insertRequest(setup, w.tenantA, fx.form.formId);
+      const emailId = randomUUID();
+      expect(await registerAs("request_received", first, w.owner.id, { id: emailId })).toEqual({
+        registered: true,
+      });
+      // el mismo aviso otra vez: reintento
+      expect(await registerAs("request_received", first, w.owner.id, { id: emailId })).toEqual({
+        registered: true,
+      });
+      // el mismo identificador para otra solicitud, otro tipo o otro destinatario: no
+      for (const attempt of [
+        () => registerAs("request_received", second, w.owner.id, { id: emailId }),
+        () =>
+          registerAs("request_received", first, w.owner.id, { id: emailId, hash: sha256Hex("x") }),
+        () =>
+          registerAs("intake_cap_reached", null, w.owner.id, {
+            id: emailId,
+            formId: fx.form.formId,
+          }),
+      ]) {
+        expect(await attempt()).toEqual({ registered: false, reason: "id_in_use" });
+      }
+      const { rows } = await setup.query(
+        "select intake_request_id from public.email_messages where id = $1",
+        [emailId],
+      );
+      expect(rows).toEqual([{ intake_request_id: first }]);
+      // y el identificador de un aviso de OTRA organización tampoco se pisa
+      const b = await makeForm(setup, w.ownerB, w.tenantB);
+      const requestB = await insertRequest(setup, w.tenantB, b.formId);
+      const foreign = randomUUID();
+      await registerAs("request_received", requestB, w.ownerB.id, { id: foreign });
+      expect(await registerAs("request_received", first, w.owner.id, { id: foreign })).toEqual({
+        registered: false,
+        reason: "id_in_use",
+      });
+    });
+  });
+
+  it("si la organización ya no está activa, no hay destinatarios y no se registra nada", async () => {
+    await withTx(setup, async () => {
+      const fx = await publishedForm();
+      const id = await insertRequest(setup, w.tenantA, fx.form.formId);
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.tenants set status = 'archived', archived_at = now() where tenant_id = $1",
+        [w.tenantA],
+      );
+      for (const kind of ["request_received", "request_assigned"]) {
+        const result = await callAsServer<{ recipients: unknown[] }>(
+          setup,
+          "select public.intake_notice_recipients($1, $2, null) as r",
+          [id, kind],
+        );
+        expect(result.recipients, kind).toEqual([]);
+        expect(await registerAs(kind, id, w.owner.id), kind).toEqual({
+          registered: false,
+          reason: "tenant_inactive",
+        });
+      }
+      const cap = await callAsServer<{ recipients: unknown[] }>(
+        setup,
+        "select public.intake_notice_recipients(null, 'intake_cap_reached', $1) as r",
+        [fx.form.formId],
+      );
+      expect(cap.recipients).toEqual([]);
+      expect(
+        await registerAs("intake_cap_reached", null, w.owner.id, { formId: fx.form.formId }),
+      ).toEqual({ registered: false, reason: "tenant_inactive" });
+      const { rows } = await setup.query(
+        "select count(*)::int as n from public.email_messages where tenant_id = $1 and intake_request_id is not null",
+        [w.tenantA],
+      );
+      expect(rows[0].n).toBe(0);
+    });
+  });
+});
+
+describe("el tope avisa cuál es (menor 5)", () => {
+  const noticeCount = async (key: "cap_notified_at" | "org_cap_notified_at") =>
+    (
+      await setup.query<{ n: number }>(
+        `select count(*)::int as n from public.intake_daily_counters where tenant_id = $1 and ${key} is not null`,
+        [w.tenantA],
+      )
+    ).rows[0].n;
+
+  it("el del formulario trae cap_kind 'form' y avisa una vez por formulario", async () => {
+    await withTx(setup, async () => {
+      const fx = await publishedForm({ form: { daily_cap: 1 } });
+      expect((await submitAsServer(setup, args(fx))).result).toBe("ok");
+      const first = await submitAsServer(setup, args(fx));
+      const second = await submitAsServer(setup, args(fx));
+      expect(first).toMatchObject({ result: "cap_reached", cap_kind: "form", notify_cap: true });
+      expect(second).toMatchObject({ result: "cap_reached", cap_kind: "form", notify_cap: false });
+      expect(await noticeCount("cap_notified_at")).toBe(1);
+      expect(await noticeCount("org_cap_notified_at")).toBe(0);
+    });
+  });
+
+  it("el de la organización trae cap_kind 'org' y avisa UNA vez por organización aunque sean varios formularios", async () => {
+    await withTx(setup, async () => {
+      const fx = await publishedForm();
+      const second = await makeForm(setup, w.owner, w.tenantA);
+      const third = await makeForm(setup, w.owner, w.tenantA);
+      const fillers: MadeForm[] = [];
+      for (let n = 0; n < 6; n++) fillers.push(await makeForm(setup, w.owner, w.tenantA));
+      await actAsPostgres(setup);
+      for (const form of fillers) {
+        await setup.query(
+          "insert into public.intake_daily_counters (tenant_id, form_id, day, accepted) values ($1, $2, app.current_business_date(), 50)",
+          [w.tenantA, form.formId],
+        );
+      }
+      const results = [
+        await submitAsServer(setup, args(fx)),
+        await submitAsServer(setup, args(fx)),
+        await submitAsServer(setup, {
+          publicId: second.publicId,
+          revision: second.revision,
+          items: [{ form_item_id: second.itemIds[0], quantity_milli: null }],
+        }),
+        await submitAsServer(setup, {
+          publicId: third.publicId,
+          revision: third.revision,
+          items: [{ form_item_id: third.itemIds[0], quantity_milli: null }],
+        }),
+      ];
+      expect(results.map((r) => [r.result, r.cap_kind, r.notify_cap])).toEqual([
+        ["cap_reached", "org", true],
+        ["cap_reached", "org", false],
+        ["cap_reached", "org", false],
+        ["cap_reached", "org", false],
+      ]);
+      expect(await noticeCount("org_cap_notified_at")).toBe(1);
+      expect(await noticeCount("cap_notified_at")).toBe(0);
+    });
+  });
+});
+
+describe("consentimiento y correlación en el envío (I1 y menor 6)", () => {
+  it("guarda el texto aceptado y la huella la calcula la base", async () => {
+    await withTx(setup, async () => {
+      const fx = await publishedForm();
+      const text = "Acepto que Mi Organización use mis datos para responder esta solicitud.";
+      await submitAsServer(setup, args(fx, { over: { consentText: text } }));
+      const [row] = await requestsOf(fx.form.formId);
+      expect(row).toMatchObject({
+        consent_text: text,
+        consent_text_sha256: sha256Hex(text),
+        consent_text_unavailable: false,
+        consent_template_version: CONSENT_VERSION,
+      });
+      // con tildes y eñes, la huella es la del texto en UTF-8
+      const accents = "Acepto el tratamiento de mis datos: ñandú, camión, años.";
+      await submitAsServer(setup, args(fx, { over: { consentText: accents } }));
+      const rows = await requestsOf(fx.form.formId);
+      expect(rows.find((r) => r.consent_text === accents)?.consent_text_sha256).toBe(
+        sha256Hex(accents),
+      );
+    });
+  });
+
+  it("la auditoría del envío lleva la correlación de x-cp-request-id y ninguna IP", async () => {
+    await withTx(setup, async () => {
+      const fx = await publishedForm();
+      const correlation = randomUUID();
+      const requestId = randomUUID();
+      await actAsService(setup);
+      await setup.query("select set_config('request.headers', $1, true)", [
+        JSON.stringify({ "x-cp-request-id": correlation, "x-cp-client-ip": "203.0.113.9" }),
+      ]);
+      await setup.query(SUBMIT_SQL, submitParams(args(fx, { requestId })));
+      await actAsPostgres(setup);
+      const { rows } = await setup.query(
+        "select correlation_id, origin_ip, actor_type from public.audit_log where resource_id = $1 and action = 'intake_request.received'",
+        [requestId],
+      );
+      expect(rows).toEqual([
+        { correlation_id: correlation, origin_ip: null, actor_type: "public" },
+      ]);
+      // sin cabecera, o con una que no es un identificador, queda vacía
+      const other = randomUUID();
+      await actAsService(setup);
+      await setup.query("select set_config('request.headers', $1, true)", [
+        JSON.stringify({ "x-cp-request-id": "no-es-uuid" }),
+      ]);
+      await setup.query(SUBMIT_SQL, submitParams(args(fx, { requestId: other })));
+      await actAsPostgres(setup);
+      const none = await setup.query(
+        "select correlation_id from public.audit_log where resource_id = $1 and action = 'intake_request.received'",
+        [other],
+      );
+      expect(none.rows).toEqual([{ correlation_id: null }]);
     });
   });
 });

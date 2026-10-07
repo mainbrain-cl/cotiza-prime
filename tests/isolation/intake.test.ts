@@ -1,6 +1,6 @@
 // Sprint 4 · Ataques de aislamiento del formulario público y de las solicitudes (plan §7).
 // Siempre con pases reales y `fetch` directo; la llave maestra solo sirve para montar y verificar.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { decryptPii, PiiCryptoError } from "@/lib/crypto/pii";
@@ -262,8 +262,8 @@ describe("Ataque 7 · un dato cifrado copiado a otra fila no se abre", () => {
       await db.query(
         `insert into public.intake_requests
            (id, tenant_id, form_id, contact_name_enc, contact_email_enc, contact_email_hash, items,
-            form_revision, submit_key, consent_template_version, consent_text_sha256)
-         values ($1, $2, $3, 'v1.x.x', $4, $5, $6::jsonb, 1, gen_random_uuid(), 'v1', $7)`,
+            form_revision, submit_key, consent_template_version, consent_text, consent_text_sha256)
+         values ($1, $2, $3, 'v1.x.x', $4, $5, $6::jsonb, 1, gen_random_uuid(), 'intake-v1', $7, $8)`,
         [
           copyId,
           fx.orgs.A.tenantId,
@@ -271,7 +271,10 @@ describe("Ataque 7 · un dato cifrado copiado a otra fila no se abre", () => {
           encrypted,
           "c".repeat(64),
           JSON.stringify([{ form_item_id: a.freeItemId, name: "copia", unit: "unit" }]),
-          "d".repeat(64),
+          "Acepto que la organización use mis datos para responder esta solicitud.",
+          createHash("sha256")
+            .update("Acepto que la organización use mis datos para responder esta solicitud.")
+            .digest("hex"),
         ],
       );
       const copied = await db.query<{ contact_email_enc: string }>(

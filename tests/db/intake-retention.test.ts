@@ -312,3 +312,72 @@ describe("contadores y la función misma", () => {
     });
   });
 });
+
+describe("la limpieza deja constancia (menor 10) y la función de día no es inmutable (menor 13)", () => {
+  it("una fila de auditoría por organización con lo que se borró y anonimizó, sin datos personales", async () => {
+    await withTx(setup, async () => {
+      const form = await makeForm(setup, w.owner, w.tenantA);
+      const formB = await makeForm(setup, w.ownerB, w.tenantB);
+      await actAsPostgres(setup);
+      // organización A: una nueva vencida con un aviso, una descartada vencida, una convertida vencida y un contador viejo
+      const old = await requestAged(form, "13 months", { contact_name_enc: "v1.secreto.secreto" });
+      await setup.query(
+        `insert into public.email_messages (id, tenant_id, intake_request_id, kind, to_email_enc, to_email_hash, provider)
+         values ($1, $2, $3, 'request_received', 'v1.to.to', $4, 'pending')`,
+        [randomUUID(), w.tenantA, old, sha256Hex("destino")],
+      );
+      const gone = await requestAged(form, "2 months");
+      await discarded(gone, "31 days");
+      const converted = await requestAged(form, "13 months");
+      await convert(converted);
+      await setup.query(
+        "insert into public.intake_daily_counters (tenant_id, form_id, day, accepted) values ($1, $2, app.current_business_date() - 100, 1)",
+        [w.tenantA, form.formId],
+      );
+      // organización B: una sola solicitud vencida
+      await insertRequest(setup, w.tenantB, formB.formId, {
+        created_at: new Date(Date.now() - 400 * 86_400_000),
+      });
+      await purge();
+      const audit = async (tenant: string) =>
+        (
+          await setup.query<{ actor_type: string; actor_user_id: string | null; details: unknown }>(
+            `select actor_type, actor_user_id, details from public.audit_log
+              where tenant_id = $1 and action = 'intake_retention.purged' order by id`,
+            [tenant],
+          )
+        ).rows;
+      expect(await audit(w.tenantA)).toEqual([
+        {
+          actor_type: "system",
+          actor_user_id: null,
+          details: {
+            requests_deleted: 2,
+            notices_deleted: 1,
+            requests_anonymized: 1,
+            counters_deleted: 1,
+          },
+        },
+      ]);
+      expect(await audit(w.tenantB)).toMatchObject([{ details: { requests_deleted: 1 } }]);
+      expect(JSON.stringify(await audit(w.tenantA))).not.toContain("secreto");
+      // otra pasada sin nada vencido en estas organizaciones no agrega filas
+      await purge();
+      expect(await audit(w.tenantA)).toHaveLength(1);
+      expect(await audit(w.tenantB)).toHaveLength(1);
+    });
+  });
+
+  it("app.business_date_of es estable (no inmutable) y existe el índice parcial de descartadas", async () => {
+    const volatility = await setup.query<{ provolatile: string }>(
+      "select provolatile from pg_proc where oid = 'app.business_date_of(timestamptz)'::regprocedure",
+    );
+    expect(volatility.rows[0].provolatile).toBe("s");
+    const index = await setup.query<{ indexdef: string }>(
+      "select indexdef from pg_indexes where tablename = 'intake_requests' and indexname = 'intake_requests_discarded'",
+    );
+    expect(index.rows).toHaveLength(1);
+    expect(index.rows[0].indexdef).toContain("(discarded_at)");
+    expect(index.rows[0].indexdef).toContain("WHERE (status = 'discarded'::text)");
+  });
+});

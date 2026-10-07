@@ -44,8 +44,8 @@ async function freshRequestOfA(): Promise<string> {
       p_contact_email_hash: "9".repeat(64),
       p_desired_date: null,
       p_items: [{ form_item_id: a.freeItemId, quantity_milli: null }],
-      p_consent_template_version: "v1",
-      p_consent_text_sha256: "8".repeat(64),
+      p_consent_template_version: "intake-v1",
+      p_consent_text: "Acepto que la organización use mis datos para responder esta solicitud.",
       p_consent_ip_enc: null,
     },
     { apikey: secretKey },
@@ -80,6 +80,7 @@ describe("Ataque 1 · actuar sobre una solicitud de B con el pase de A", () => {
       ],
       ["discard_intake_request", { p_request_id: b.requestId, p_reason: "spam", p_note: null }],
       ["restore_intake_request", { p_request_id: b.requestId }],
+      ["anonymize_intake_request", { p_request_id: b.requestId, p_reason: "data_subject_request" }],
       [
         "convert_intake_request",
         {
@@ -121,6 +122,10 @@ describe("Ataque 1 · actuar sobre una solicitud de B con el pase de A", () => {
         ],
         ["discard_intake_request", { p_request_id: b.requestId, p_reason: "spam", p_note: null }],
         ["restore_intake_request", { p_request_id: b.requestId }],
+        [
+          "anonymize_intake_request",
+          { p_request_id: b.requestId, p_reason: "data_subject_request" },
+        ],
         [
           "convert_intake_request",
           {

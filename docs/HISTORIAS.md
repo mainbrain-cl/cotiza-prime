@@ -1446,7 +1446,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 **Criterios de aceptación**
 - [ ] Elijo qué servicios o cálculos se pueden pedir
-- [ ] Elijo qué datos pido al solicitante; el sistema me sugiere lo mínimo y me advierte si pido RUT
+- [ ] Elijo qué datos pido al solicitante; el sistema me sugiere lo mínimo; no se puede pedir RUT y se explica por qué
 - [ ] Veo cómo queda con mi marca antes de publicarlo
 - [ ] Al publicarlo obtengo su enlace, y puedo pausarlo
 - [ ] Puedo tener más de un formulario

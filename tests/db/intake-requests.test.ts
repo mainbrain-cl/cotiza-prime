@@ -9,6 +9,8 @@ import { actAsPostgres, connect, expectSqlError, withTx } from "./helpers";
 import {
   asUser,
   buildIntakeWorld,
+  CONSENT_TEXT,
+  CONSENT_VERSION,
   expectFails,
   insertRequest,
   makeForm,
@@ -57,7 +59,10 @@ describe("la forma de cada estado", () => {
         discard_reason: null,
         quote_id: null,
         anonymized_at: null,
-        consent_template_version: "v1",
+        consent_template_version: CONSENT_VERSION,
+        consent_text: CONSENT_TEXT,
+        consent_text_sha256: sha256Hex(CONSENT_TEXT),
+        consent_text_unavailable: false,
       });
       expect(row.consented_at).not.toBeNull();
       expect(row.created_at).not.toBeNull();
@@ -120,7 +125,15 @@ describe("la forma de cada estado", () => {
       ["message_enc", "x".repeat(12001)],
       ["contact_email_hash", "no-es-huella"],
       ["consent_text_sha256", "ABC"],
+      // la huella tiene que ser la del texto, y el texto tiene largo y caracteres acotados
+      ["consent_text_sha256", sha256Hex("otro texto")],
+      ["consent_text", "otro texto"],
+      ["consent_text", ""],
+      ["consent_text", null],
       ["consent_template_version", ""],
+      ["consent_template_version", "v1"],
+      ["consent_template_version", "intake-v"],
+      ["consent_template_version", "intake-v1 "],
       ["consent_template_version", "v".repeat(41)],
       ["consent_ip_enc", ""],
       ["form_revision", 0],
@@ -277,6 +290,8 @@ describe("el contenido no cambia; los estados siguen una lista cerrada", () => {
         ["submit_key", "gen_random_uuid()"],
         ["consent_template_version", "'v2'"],
         ["consent_text_sha256", `'${sha256Hex("otro")}'`],
+        ["consent_text", "'otro texto'"],
+        ["consent_text_unavailable", "true"],
         ["consented_at", "now() - interval '1 day'"],
         ["consent_ip_enc", "'v1.ip.ip'"],
         ["created_at", "now() - interval '1 year'"],
@@ -699,7 +714,35 @@ describe("límites de intentos y avisos por correo", () => {
           .code,
       ).toBe(INSUFFICIENT_PRIVILEGE);
       await setup.query("select set_config('app.retention_purge', 'on', true)");
-      await setup.query("delete from public.email_messages where id = $1", [mailId]);
+      // con la limpieza encendida, un aviso de una solicitud que NO venció tampoco se borra (menor 9)
+      expect(
+        (await expectSqlError(setup, "delete from public.email_messages where id = $1", [mailId]))
+          .code,
+      ).toBe(INSUFFICIENT_PRIVILEGE);
+      // el de una solicitud vencida, sí
+      const oldRequest = await insertRequest(setup, w.tenantA, form.formId, {
+        created_at: new Date(Date.now() - 13 * 31 * 86_400_000),
+      });
+      const oldMailId = randomUUID();
+      await insertMail({ id: oldMailId, kind: "request_assigned", intake_request_id: oldRequest });
+      await setup.query("delete from public.email_messages where id = $1", [oldMailId]);
+      expect(
+        (await setup.query("select 1 from public.email_messages where id = $1", [oldMailId])).rows,
+      ).toHaveLength(0);
+      // una descartada hace más de 30 días, también
+      const discarded = await insertRequest(setup, w.tenantA, form.formId);
+      await setup.query(
+        `update public.intake_requests set status = 'discarded', discard_reason = 'spam', discarded_by = $2,
+           discarded_at = now() - interval '31 days' where id = $1`,
+        [discarded, w.owner.id],
+      );
+      const discardedMail = randomUUID();
+      await insertMail({
+        id: discardedMail,
+        kind: "request_received",
+        intake_request_id: discarded,
+      });
+      await setup.query("delete from public.email_messages where id = $1", [discardedMail]);
       // el del tope no es de una solicitud: tampoco se borra en la limpieza de solicitudes
       expect(
         (await expectSqlError(setup, "delete from public.email_messages where id = $1", [capId]))
@@ -753,5 +796,52 @@ describe("la tabla de solicitudes no guarda dinero", () => {
         /price|cost|clp|tarif|amount|margin|estimate/i,
       );
     }
+  });
+});
+
+describe("el consentimiento se puede comprobar después", () => {
+  // Una fila rechazada aborta la transacción: cada intento va en la suya.
+  const rejected = (over: Record<string, unknown>) =>
+    withTx(setup, async () => {
+      const form = await formA();
+      await expect(insertRequest(setup, w.tenantA, form.formId, over)).rejects.toMatchObject({
+        code: CHECK_VIOLATION,
+      });
+    });
+
+  it("el texto guardado tiene que ser el que da la huella, con largo y caracteres acotados", async () => {
+    await withTx(setup, async () => {
+      const form = await formA();
+      const long = "a".repeat(3000);
+      const id = await insertRequest(setup, w.tenantA, form.formId, {
+        consent_text: long,
+        consent_text_sha256: sha256Hex(long),
+      });
+      expect((await statusOf(id)).consent_text).toBe(long);
+    });
+    const tooLong = "a".repeat(3001);
+    await rejected({ consent_text: tooLong, consent_text_sha256: sha256Hex(tooLong) });
+    const disguised = "Acepto‮texto";
+    await rejected({ consent_text: disguised, consent_text_sha256: sha256Hex(disguised) });
+  });
+
+  it("una fila anterior a la migración (sin texto) se marca como no disponible y no se inventa el texto", async () => {
+    await withTx(setup, async () => {
+      const form = await formA();
+      const id = await insertRequest(setup, w.tenantA, form.formId, {
+        consent_text: null,
+        consent_text_unavailable: true,
+        consent_template_version: "v1",
+        consent_text_sha256: sha256Hex("texto que ya no se tiene"),
+      });
+      expect(await statusOf(id)).toMatchObject({
+        consent_text: null,
+        consent_text_unavailable: true,
+        consent_template_version: "v1",
+      });
+    });
+    // Marcar «no disponible» no sirve para esquivar la regla en una fila con texto, ni al revés.
+    await rejected({ consent_text_unavailable: true });
+    await rejected({ consent_text: null });
   });
 });

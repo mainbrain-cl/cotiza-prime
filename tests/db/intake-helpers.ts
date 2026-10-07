@@ -36,6 +36,11 @@ export async function buildIntakeWorld(db: Client): Promise<IntakeWorld> {
 export const sha256Hex = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
 
+/** El texto de consentimiento de las pruebas (solo datos de la organización, ninguno del visitante) y su versión. */
+export const CONSENT_TEXT =
+  "Acepto que Organización de prueba use mis datos para responder a esta solicitud de cotización.";
+export const CONSENT_VERSION = "intake-v1";
+
 /** Un servicio libre válido para `save_intake_form`. */
 export const freeItem = (over: Record<string, unknown> = {}) => ({
   id: randomUUID(),
@@ -183,8 +188,9 @@ export async function insertRequest(
     items: [requestItem(randomUUID())],
     form_revision: 1,
     submit_key: randomUUID(),
-    consent_template_version: "v1",
-    consent_text_sha256: sha256Hex("texto de consentimiento"),
+    consent_template_version: CONSENT_VERSION,
+    consent_text: CONSENT_TEXT,
+    consent_text_sha256: sha256Hex(CONSENT_TEXT),
     ...over,
   };
   columns.items = JSON.stringify(columns.items);
@@ -216,7 +222,7 @@ export interface SubmitArgs {
     emailHash: string | null;
     desiredDate: string | null;
     consentVersion: string | null;
-    consentSha: string | null;
+    consentText: string | null;
     consentIp: string | null;
   }>;
 }
@@ -244,8 +250,8 @@ export function submitParams(a: SubmitArgs): unknown[] {
     pick("emailHash", sha256Hex("visitante@ejemplo.test")),
     pick("desiredDate", null),
     JSON.stringify(a.items),
-    pick("consentVersion", "v1"),
-    pick("consentSha", sha256Hex("texto de consentimiento")),
+    pick("consentVersion", CONSENT_VERSION),
+    pick("consentText", CONSENT_TEXT),
     pick("consentIp", null),
   ];
 }

@@ -333,6 +333,60 @@ tope diario dependa del limitador «deja pasar si falla»; generar el QR con una
    datos del visitante; sin respuesta automática al visitante.
 8. **Quién hace qué:** asignan Dueño y Administrador; el Comercial convierte las suyas o las sin asignar y
    descarta las suyas.
-9. **RUT y preguntas libres:** el formulario no pide RUT ni permite preguntas propias; H-086 hoy dice «me advierte
-   si pido RUT» y pasaría a «no se puede pedir RUT y se explica por qué».
+9. **RUT y preguntas libres:** el formulario no pide RUT ni permite preguntas propias; H-086 decía «me advierte
+   si pido RUT» y ahora dice «no se puede pedir RUT y se explica por qué» (corregido).
 10. **Nombre de la tabla:** `intake_requests` en vez de `requests`.
+
+## 11. Correcciones de la revisión de las migraciones
+
+Opus revisó las migraciones 29 a 33. Todo lo corregido va en la **migración 34**
+(`20261007150000_intake_review_fixes.sql`, con su deshacer). Pruebas nuevas en `tests/db/intake-*.test.ts` y en
+el registro de aislamiento.
+
+### Importantes
+
+| # | Hallazgo | Qué se corrigió |
+|---|---|---|
+| I1 | El consentimiento no se podía comprobar después (solo se guardaba la huella) | `intake_requests.consent_text` (1 a 3.000 caracteres, sin caracteres invisibles ni de control) y la regla `consent_text_sha256 = sha256(consent_text)` en la tabla. El envío recibe el texto (cambia la firma: el parámetro 16 pasa de la huella al texto) y **la base calcula la huella**. La versión queda con formato fijo `intake-v<n>`. Las filas anteriores no tienen el texto: se marcan `consent_text_unavailable = true` (no se inventa ninguno) y quedan exentas del formato de versión. El texto solo puede llevar datos de la organización: el portero lo arma con la plantilla fija y nunca con algo que escribió el visitante (ver «Recordatorios para el portero») |
+| I2 | Faltaba el derecho de supresión para solicitudes que no son «convertidas con 12 meses» | `anonymize_intake_request(p_request_id, p_reason)` para Dueño y Administrador, en **cualquier estado**: vacía los datos de contacto cifrados, mensaje, dirección, huella del correo y la IP del consentimiento, y marca `anonymized_at`. Conserva servicios, fechas, responsable, vínculo con la cotización y el texto y la huella del consentimiento. Es idempotente, deja `intake_request.anonymized` en la auditoría (solo motivo y estado, sin datos personales) y la guarda de la tabla lo permite únicamente con el interruptor interno que enciende esa función, y solo para vaciar. El motivo es de una lista cerrada (`data_subject_request`, `wrong_data`, `other`) |
+| I3 | `convert_intake_request` podía amarrar la solicitud a una cotización que no era la recién creada | Después de `create_quote`, la cotización devuelta tiene que estar en borrador y sin solicitud de origen; si no, `CP422 creation_key_reused` y no se cambia nada. **Límite conocido:** una cotización borrador y sin vincular que la misma persona creó antes con esa misma clave sí pasa (no se puede distinguir de una recién creada sin cambiar `create_quote`) |
+
+### Menores (14)
+
+| # | Tema | Estado |
+|---|---|---|
+| 1 | `intake_record_block` | **Corregido.** Solo acepta `captcha`, `rate` e `invalid`, y solo para formularios publicados o en pausa. El tope y la pausa ya se cuentan dentro del envío |
+| 2 | `intake_notice_register` | **Corregido.** Usa la misma regla de destinatarios que `intake_notice_recipients` (una sola función, `app.intake_notice_audience`): asignado si sigue activo, o Dueño y Administradores. Si no es destinatario, `42501`. Si el identificador del aviso ya es de otra fila (otra solicitud, otro tipo, otro destinatario u otra organización), devuelve `registered:false, reason:'id_in_use'`; un reintento idéntico sigue devolviendo `registered:true` |
+| 3 | Tope de 20 avisos al día | **Corregido.** `pg_advisory_xact_lock` por organización y tipo, al contar y al registrar |
+| 4 | Avisos y organización activa | **Corregido.** Si la organización no está activa, no hay destinatarios y el registro devuelve `registered:false, reason:'tenant_inactive'` |
+| 5 | Aviso del tope | **Corregido.** El resultado trae `cap_kind` (`form` \| `org`). El del formulario avisa una vez por formulario y día; el de la organización, **una vez por organización y día** (columna nueva `intake_daily_counters.org_cap_notified_at`). Si se cumplen los dos topes, manda el del formulario |
+| 6 | Auditoría del envío | **Corregido.** Lleva el identificador de correlación de `x-cp-request-id` (como `write_audit`); sigue sin IP |
+| 7 | `revision` de `save_intake_form` | **Corregido.** Solo sube si cambia lo que ve el público: título, introducción, mensaje de éxito, campos, política de privacidad y servicios (los activos y lo que de ellos se muestra). No sube por el nombre interno, el tope diario ni los sitios autorizados, ni por guardar lo mismo. **Consecuencia aceptada:** dos pestañas que cambian solo cosas internas ya no chocan (`CP409`) entre sí |
+| 8 | Servicios inactivos del catálogo | **Corregido.** `catalog_item_inactive` (`CP422`) al agregar o cambiar un servicio activo con un servicio de catálogo inactivo. Uno que el formulario ya traía con ese mismo servicio no impide guardar otros cambios (si no, desactivar un servicio del catálogo bloquearía todo el formulario) |
+| 9 | Borrado de avisos en `email_messages_guard` | **Corregido.** Solo en la limpieza por plazo y solo si la solicitud del aviso ya venció (nuevas o asignadas de más de 12 meses, o descartadas de más de 30 días): la misma regla con que se borra la solicitud |
+| 10 | Constancia de la limpieza | **Corregido.** `purge_intake_data` deja una fila `intake_retention.purged` por organización afectada (actor `system`; solo cantidades) y se agregó el índice parcial `(discarded_at) where status = 'discarded'`. Se eligió la auditoría porque su tabla exige `tenant_id`: no hay una fila «global» |
+| 11 | Recordatorios para el portero de H-087 | **No es de la base.** Quedan anotados abajo |
+| 12 | Borradores futuros | **Sin cambios en la base:** son ideas para más adelante, no defectos de lo construido |
+| 13 | `app.business_date_of` | **Corregido.** Pasa de `immutable` a `stable` (depende de `now()` en los usos y de la zona horaria) |
+| 14 | `docs/HISTORIAS.md` | **Corregido.** H-086: «el sistema me sugiere lo mínimo; no se puede pedir RUT y se explica por qué» |
+
+### Recordatorios para el portero de H-087
+
+- Mandar a `intake_request_submit` el **texto exacto** del aviso de privacidad que se mostró, armado solo con la
+  plantilla fija y datos de la organización (nombre, contacto, dirección de su política); jamás con algo que
+  escribió el visitante. Versión en formato `intake-v<n>`. La huella no se manda: la calcula la base.
+- Reenviar `x-cp-request-id` (identificador de la petición) en las llamadas, para que la auditoría quede
+  correlacionada.
+- Llamar a `intake_record_block` solo con `captcha`, `rate` o `invalid`; el tope y la pausa los cuenta el envío.
+- Con `cap_reached`, usar `cap_kind` para el texto del aviso: `form` dice «tu formulario llegó al tope de hoy»; `org`
+  dice que la organización llegó a su tope diario. Avisar solo si `notify_cap` es verdadero.
+- Respetar `registered:false` de `intake_notice_register` (`daily_limit`, `tenant_inactive`, `id_in_use`): no enviar el
+  correo en esos casos.
+- Una solicitud anonimizada (`anonymized_at` no nulo) no tiene datos de contacto: la pantalla debe mostrarla como
+  «datos eliminados» y no ofrecer convertirla ni avisar por correo.
+
+### Fuera de este cambio
+
+- `convert_intake_request` y `assign_intake_request` aceptan hoy una solicitud ya anonimizada (no se pidió
+  tocarlas). La pantalla debe impedirlo; si se quiere también en la base, es una corrección chica para la próxima
+  migración.

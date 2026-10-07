@@ -481,9 +481,41 @@ describe("convertir en cotización", () => {
       await callAs(setup, w.owner, w.tenantA, CONVERT, [id, w.customerA, key]);
       await asUser(setup, w.owner, w.tenantA);
       const error = await expectSqlError(setup, CONVERT, [second, w.customerA, key]);
-      expect(error.code).toBe("23505");
+      // la clave devuelve la cotización que ya nació de la primera solicitud: no se amarra a la segunda
+      expect(error.code).toBe("CP422");
+      expect(error.message).toContain("creation_key_reused");
       await actAsPostgres(setup);
       expect((await rowOf(second)).status).toBe("new");
+      expect((await rowOf(second)).quote_id).toBeNull();
+    });
+  });
+
+  it("una clave de creación ya usada en otra cotización suya que ya no es borrador no amarra la solicitud", async () => {
+    await withRequest(async (id) => {
+      const key = randomUUID();
+      await asUser(setup, w.owner, w.tenantA);
+      const created = await setup.query<{ quote_id: string }>(
+        "select * from public.create_quote($1, $2)",
+        [w.customerA, key],
+      );
+      const quoteId = created.rows[0].quote_id;
+      await actAsPostgres(setup);
+      // una cotización que ya avanzó (se salta la guarda de estados solo para montar la prueba)
+      await setup.query("set local session_replication_role = replica");
+      await setup.query("update public.quotes set status = 'sent' where id = $1", [quoteId]);
+      await setup.query("set local session_replication_role = origin");
+      await asUser(setup, w.owner, w.tenantA);
+      const error = await expectSqlError(setup, CONVERT, [id, w.customerA, key]);
+      expect(error.code).toBe("CP422");
+      expect(error.message).toContain("creation_key_reused");
+      await actAsPostgres(setup);
+      const request = await rowOf(id);
+      expect(request).toMatchObject({ status: "new", quote_id: null });
+      const quote = await setup.query(
+        "select status, source_request_id from public.quotes where id = $1",
+        [quoteId],
+      );
+      expect(quote.rows[0]).toEqual({ status: "sent", source_request_id: null });
     });
   });
 
@@ -503,5 +535,195 @@ describe("convertir en cotización", () => {
       );
       expect(error.code).toBe("23503");
     });
+  });
+});
+
+describe("anonymize_intake_request (derecho de supresión)", () => {
+  const ANONYMIZE = "select public.anonymize_intake_request($1, $2) as r";
+  const PERSONAL = [
+    "contact_name_enc",
+    "contact_email_enc",
+    "contact_phone_enc",
+    "company_enc",
+    "comuna_enc",
+    "service_address_enc",
+    "message_enc",
+    "contact_email_hash",
+    "consent_ip_enc",
+  ];
+  const withData = {
+    contact_phone_enc: "v1.tel.tel",
+    company_enc: "v1.emp.emp",
+    comuna_enc: "v1.com.com",
+    service_address_enc: "v1.dir.dir",
+    message_enc: "v1.msg.msg",
+    consent_ip_enc: "v1.ip.ip",
+    desired_date: "2030-05-05",
+  };
+
+  it("el Dueño y el Administrador vacían los datos personales y conservan lo demás; queda en la auditoría sin datos personales", async () => {
+    for (const by of [w.owner, w.admin]) {
+      await withRequest(async (id) => {
+        const before = await rowOf(id);
+        const result = await callAs<Json>(setup, by, w.tenantA, ANONYMIZE, [
+          id,
+          "data_subject_request",
+        ]);
+        expect(result).toEqual({ anonymized: true, changed: true });
+        const row = await rowOf(id);
+        for (const column of PERSONAL) expect(row[column], column).toBeNull();
+        expect(row.anonymized_at).not.toBeNull();
+        // se conserva la historia de la organización y la prueba del consentimiento
+        for (const column of [
+          "items",
+          "desired_date",
+          "consent_text",
+          "consent_text_sha256",
+          "consent_template_version",
+          "consented_at",
+          "status",
+          "form_revision",
+        ])
+          expect(row[column], column).toEqual(before[column]);
+        const { rows } = await setup.query(
+          "select actor_user_id, actor_type, result, details from public.audit_log where resource_id = $1 and action = 'intake_request.anonymized'",
+          [id],
+        );
+        expect(rows).toEqual([
+          {
+            actor_user_id: by.id,
+            actor_type: "user",
+            result: "success",
+            details: { reason: "data_subject_request", status: "new" },
+          },
+        ]);
+        expect(JSON.stringify(rows)).not.toContain("v1.");
+        // el interruptor interno no queda encendido
+        const flag = await setup.query("select current_setting('app.intake_anonymize', true) as v");
+        expect(flag.rows[0].v ?? "").toBe("");
+      }, withData);
+    }
+  });
+
+  it("funciona en cualquier estado: nueva, asignada, descartada y convertida", async () => {
+    await withTx(setup, async () => {
+      form = await makeForm(setup, w.owner, w.tenantA);
+      const assigned = await newRequest(withData);
+      await assignTo(assigned, w.sales);
+      const discarded = await newRequest(withData);
+      await callAs(setup, w.owner, w.tenantA, DISCARD, [discarded, "spam", null]);
+      const converted = await newRequest(withData);
+      await callAs(setup, w.owner, w.tenantA, CONVERT, [converted, w.customerA, randomUUID()]);
+      const fresh = await newRequest(withData);
+      for (const [id, status] of [
+        [fresh, "new"],
+        [assigned, "assigned"],
+        [discarded, "discarded"],
+        [converted, "converted"],
+      ] as const) {
+        expect(
+          await callAs<Json>(setup, w.admin, w.tenantA, ANONYMIZE, [id, "other"]),
+          status,
+        ).toEqual({ anonymized: true, changed: true });
+        const row = await rowOf(id);
+        expect(row.status).toBe(status);
+        expect(row.anonymized_at).not.toBeNull();
+        for (const column of PERSONAL) expect(row[column], `${status} ${column}`).toBeNull();
+      }
+      // el vínculo con la cotización y el responsable se conservan
+      expect((await rowOf(converted)).quote_id).not.toBeNull();
+      expect((await rowOf(assigned)).assigned_to).toBe(w.sales.id);
+    });
+  });
+
+  it("es idempotente: repetir no cambia nada ni deja otro registro", async () => {
+    await withRequest(async (id) => {
+      await callAs(setup, w.owner, w.tenantA, ANONYMIZE, [id, "wrong_data"]);
+      const once = await rowOf(id);
+      expect(await callAs<Json>(setup, w.admin, w.tenantA, ANONYMIZE, [id, "other"])).toEqual({
+        anonymized: true,
+        changed: false,
+      });
+      expect(await rowOf(id)).toEqual(once);
+      const { rows } = await setup.query(
+        "select details from public.audit_log where resource_id = $1 and action = 'intake_request.anonymized'",
+        [id],
+      );
+      expect(rows).toEqual([{ details: { reason: "wrong_data", status: "new" } }]);
+    }, withData);
+  });
+
+  it("Comercial, Aprobador y Lector no pueden (42501), ni con la solicitud asignada a ellos", async () => {
+    await withRequest(async (id) => {
+      await assignTo(id, w.sales);
+      for (const user of [w.sales, w.approver, w.viewer]) {
+        expect((await denied(user, ANONYMIZE, [id, "other"])).code, user.email).toBe(
+          INSUFFICIENT_PRIVILEGE,
+        );
+      }
+      const row = await rowOf(id);
+      expect(row.anonymized_at).toBeNull();
+      expect(row.contact_name_enc).not.toBeNull();
+    }, withData);
+  });
+
+  it("una solicitud de otra organización no existe (CP404); ni con la cabecera de la otra (42501)", async () => {
+    await withTx(setup, async () => {
+      const other = await makeForm(setup, w.ownerB, w.tenantB);
+      const theirs = await insertRequest(setup, w.tenantB, other.formId, withData);
+      expect((await denied(w.owner, ANONYMIZE, [theirs, "other"])).code).toBe("CP404");
+      expect((await denied(w.owner, ANONYMIZE, [theirs, "other"], w.tenantB)).code).toBe(
+        INSUFFICIENT_PRIVILEGE,
+      );
+      expect((await denied(w.owner, ANONYMIZE, [randomUUID(), "other"])).code).toBe("CP404");
+      const row = await rowOf(theirs);
+      expect(row.anonymized_at).toBeNull();
+      expect(row.contact_name_enc).not.toBeNull();
+    });
+  });
+
+  it("el motivo es de una lista cerrada y no hay otro camino para anonimizar", async () => {
+    await withRequest(async (id) => {
+      for (const reason of [null, "", "porque sí", "Data_Subject_Request", "juan@correo.cl"]) {
+        expect((await denied(w.owner, ANONYMIZE, [id, reason])).code, String(reason)).toBe("CP422");
+      }
+      expect((await denied(w.owner, ANONYMIZE, [null, "other"])).code).toBe("CP422");
+      expect((await rowOf(id)).anonymized_at).toBeNull();
+      // sin la función, vaciar los datos a mano sigue prohibido (la guarda no se abre sola)
+      expect(
+        (
+          await expectSqlError(
+            setup,
+            `update public.intake_requests set contact_name_enc = null, contact_email_enc = null,
+               contact_email_hash = null, anonymized_at = now() where id = $1`,
+            [id],
+          )
+        ).code,
+      ).toBe(INSUFFICIENT_PRIVILEGE);
+    }, withData);
+  });
+
+  it("la función no sirve para escribir datos: con el interruptor encendido, la guarda solo deja vaciar", async () => {
+    await withRequest(async (id) => {
+      await setup.query("select set_config('app.intake_anonymize', 'on', true)");
+      expect(
+        (
+          await expectSqlError(
+            setup,
+            "update public.intake_requests set contact_name_enc = 'v1.nuevo.nuevo', anonymized_at = now() where id = $1",
+            [id],
+          )
+        ).code,
+      ).toBe(INSUFFICIENT_PRIVILEGE);
+      expect(
+        (
+          await expectSqlError(
+            setup,
+            "update public.intake_requests set items = '[]'::jsonb, contact_name_enc = null, contact_email_enc = null, contact_email_hash = null, anonymized_at = now() where id = $1",
+            [id],
+          )
+        ).code,
+      ).toBe(INSUFFICIENT_PRIVILEGE);
+    }, withData);
   });
 });

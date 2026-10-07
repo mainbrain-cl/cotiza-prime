@@ -529,9 +529,9 @@ async function buildIntakeData(db: Client, data: OrgData, owner: Persona): Promi
   await db.query(
     `insert into public.intake_requests
        (id, tenant_id, form_id, contact_name_enc, contact_email_enc, contact_phone_enc, message_enc,
-        contact_email_hash, items, form_revision, submit_key, consent_template_version, consent_text_sha256,
-        consent_ip_enc, desired_date)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, 'v1', $12, $13, current_date + 30)`,
+        contact_email_hash, items, form_revision, submit_key, consent_template_version, consent_text,
+        consent_text_sha256, consent_ip_enc, desired_date)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, 'intake-v1', $12, $13, $14, current_date + 30)`,
     [
       requestId,
       data.tenantId,
@@ -552,6 +552,7 @@ async function buildIntakeData(db: Client, data: OrgData, owner: Persona): Promi
       ]),
       saved.revision,
       randomUUID(),
+      "texto-de-consentimiento",
       createHash("sha256").update("texto-de-consentimiento").digest("hex"),
       encryptPii("203.0.113.9", seal("consent_ip")),
     ],

@@ -43,8 +43,8 @@ const submitArgs = (
   p_contact_email_hash: "e".repeat(64),
   p_desired_date: null,
   p_items: items,
-  p_consent_template_version: "v1",
-  p_consent_text_sha256: "f".repeat(64),
+  p_consent_template_version: "intake-v1",
+  p_consent_text: "Acepto que la organización use mis datos para responder esta solicitud.",
   p_consent_ip_enc: null,
 });
 

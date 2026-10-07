@@ -415,12 +415,12 @@ describe("sitios autorizados para incrustar (H-093)", () => {
         "https://mi-sitio.cl:8443",
         "https://www.mi-sitio.cl",
       ]);
-      // diez sí caben
-      await save(id, 2, {
+      // diez sí caben (los sitios no cambian lo que ve el público: la revisión sigue en 1)
+      await save(id, 1, {
         embed_origins: Array.from({ length: 10 }, (_, n) => `https://s${n}.cl`),
       });
       // y se pueden vaciar
-      await save(id, 3, { embed_origins: [] });
+      await save(id, 1, { embed_origins: [] });
       const audit = await setup.query(
         `select details from public.audit_log where resource_id = $1 and action = 'intake_form.embed_origins_changed' order by id`,
         [id],
@@ -440,7 +440,7 @@ describe("sitios autorizados para incrustar (H-093)", () => {
       const id = randomUUID();
       await callAs(setup, w.owner, w.tenantA, CREATE, [id, "Sin cambio"]);
       await save(id, 1, { embed_origins: ["https://uno.cl"] });
-      await save(id, 2, { embed_origins: ["https://uno.cl"], title: "Otro título" });
+      await save(id, 1, { embed_origins: ["https://uno.cl"], title: "Otro título" });
       const audit = await setup.query(
         `select 1 from public.audit_log where resource_id = $1 and action = 'intake_form.embed_origins_changed'`,
         [id],
@@ -764,6 +764,121 @@ describe("regenerar el enlace", () => {
       ]);
       expect(rows.every((r) => r.actor_user_id === w.owner.id)).toBe(true);
       expect(JSON.stringify(rows)).not.toContain("Texto que no va");
+    });
+  });
+});
+
+describe("la revisión solo sube con lo que ve el público (menor 7)", () => {
+  const revisionOf = async (formId: string) =>
+    (await setup.query("select revision from public.intake_forms where id = $1", [formId])).rows[0]
+      .revision as number;
+
+  it("el nombre interno, el tope diario y los sitios no la suben; el título, la introducción, el mensaje, los campos, la política y los servicios sí", async () => {
+    await withTx(setup, async () => {
+      const shown = freeItem({ public_name: "Visible" });
+      const hidden = freeItem({ public_name: "Oculto", is_active: false });
+      const form = await makeForm(setup, w.owner, w.tenantA, {
+        publish: false,
+        items: [shown, hidden],
+      });
+      let rev = form.revision;
+      const same = async (formPart: object, items: object[] | null = null) => {
+        const saved = await save(form.formId, rev, formPart, items);
+        expect(saved.revision, JSON.stringify(formPart)).toBe(rev);
+        expect(await revisionOf(form.formId)).toBe(rev);
+      };
+      const bumps = async (formPart: object, items: object[] | null = null) => {
+        const saved = await save(form.formId, rev, formPart, items);
+        expect(saved.revision, JSON.stringify(formPart)).toBe(rev + 1);
+        rev = saved.revision;
+      };
+      await same({ name: "Otro nombre interno" });
+      await same({ daily_cap: 77 });
+      await same({ embed_origins: ["https://mi-sitio.cl"] });
+      await same({}, [shown, hidden]); // los mismos servicios
+      await same({}, [shown, { ...hidden, public_name: "Oculto editado" }]); // un servicio apagado no se ve
+      await bumps({ title: "Otro título público" });
+      await bumps({ intro: "Una introducción" });
+      await bumps({ success_message: "Gracias, te escribimos" });
+      await bumps({ privacy_policy_url: "https://mi-sitio.cl/privacidad" });
+      await bumps({
+        fields: {
+          phone: "required",
+          company: "off",
+          comuna: "off",
+          serviceAddress: "optional",
+          desiredDate: "optional",
+          message: "optional",
+        },
+      });
+      await bumps({}, [{ ...shown, public_name: "Visible editado" }, hidden]);
+      await bumps({}, [
+        { ...shown, public_name: "Visible editado" },
+        hidden,
+        freeItem({ public_name: "Servicio nuevo" }),
+      ]);
+    });
+  });
+
+  it("el aviso de la auditoría dice 'items' solo si los servicios cambiaron de verdad", async () => {
+    await withTx(setup, async () => {
+      const item = freeItem();
+      const form = await makeForm(setup, w.owner, w.tenantA, { publish: false, items: [item] });
+      await save(form.formId, form.revision, { name: "Solo nombre" }, [item]);
+      await save(form.formId, form.revision, {}, [{ ...item, public_name: "Distinto" }]);
+      const { rows } = await setup.query<{ details: { changed: string[] } }>(
+        `select details from public.audit_log where resource_id = $1 and action = 'intake_form.updated' order by id`,
+        [form.formId],
+      );
+      expect(rows.at(-2)?.details.changed).toEqual(["name"]);
+      expect(rows.at(-1)?.details.changed).toEqual(["items"]);
+    });
+  });
+});
+
+describe("servicios del catálogo inactivos (menor 8)", () => {
+  it("no se pueden agregar; el que el formulario ya traía no impide guardar otros cambios", async () => {
+    await withTx(setup, async () => {
+      const catalog = catalogItem(w.catalogA);
+      const form = await makeForm(setup, w.owner, w.tenantA, { publish: false, items: [catalog] });
+      await setup.query("update public.catalog_items set is_active = false where id = $1", [
+        w.catalogA,
+      ]);
+      // el servicio que ya estaba sigue pudiendo guardarse con otros cambios
+      const saved = await save(form.formId, form.revision, { title: "Con catálogo apagado" }, [
+        catalog,
+      ]);
+      expect(saved.revision).toBe(form.revision + 1);
+      // uno nuevo con ese servicio inactivo, no
+      await asUser(setup, w.owner, w.tenantA);
+      const added = await expectSqlError(setup, SAVE, [
+        form.formId,
+        saved.revision,
+        "{}",
+        JSON.stringify([catalog, catalogItem(w.catalogA)]),
+      ]);
+      expect(added.code).toBe("CP422");
+      expect(added.message).toContain("catalog_item_inactive");
+      // uno nuevo pero apagado en el formulario, sí
+      await actAsPostgres(setup);
+      await save(form.formId, saved.revision, {}, [
+        catalog,
+        catalogItem(w.catalogA, { is_active: false }),
+      ]);
+    });
+  });
+
+  it("un servicio de otra organización sigue siendo 'no encontrado'", async () => {
+    await withTx(setup, async () => {
+      const form = await makeForm(setup, w.owner, w.tenantA, { publish: false });
+      await asUser(setup, w.owner, w.tenantA);
+      const error = await expectSqlError(setup, SAVE, [
+        form.formId,
+        form.revision,
+        "{}",
+        JSON.stringify([catalogItem(w.catalogB)]),
+      ]);
+      expect(error.code).toBe("CP404");
     });
   });
 });

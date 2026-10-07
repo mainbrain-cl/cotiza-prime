@@ -468,3 +468,19 @@ legal al cliente final; pruebas de «reemplazada» por la ruta, de `respond-requ
 **Regla de enlaces ya respondidos (pendiente de Aarón):** H-031 no la contradice ni la aplica. Cuando se
 decida, agregar un estado en `share_link_read` y cambiar el texto «Puedes seguir descargando el PDF»
 (`response-panel.tsx:100-101`). Conviene decidirla antes de H-053.
+
+### Correcciones de la revisión de H-031 (2026-10-07, migración 27)
+
+Hecho: B-1 (la base entrega los destinatarios ya filtrados: autor activo, o Dueño y Administradores activos;
+`auth.admin` fuera del portero), I-1, I-2, I-3 (nombre y comentario visibles solo en el detalle de la
+cotización; el correo lleva solo número, decisión y motivo de la lista), I-4 (el aviso queda en
+`email_messages`, `internal_notice`, con `package_id` y sin enlace; `failed` con `error_code`), I-5, y los
+menores 1, 2, 3, 5, 6, 7, 8, 10 y 11. La organización no es parámetro de las funciones nuevas (guardia G4).
+
+**Anotado sin hacer:**
+
+- Menor 4 (redes móviles que comparten IP: 10 respuestas por hora es poco a escala): revisar el tope antes del piloto.
+- Menor 9 (aviso legal al cliente final en la pantalla pública): pendiente legal antes del piloto.
+- Desviación: `record_email_event` (migración 25) escribe el evento «El correo rebotó: no llegó al cliente» también
+  para un aviso interno rebotado. Corregir en la historia de rebotes (H-033/H-034): escribir el evento solo si
+  `kind in ('quote', 'quote_resend')`. Fecha propuesta: al integrar H-033.

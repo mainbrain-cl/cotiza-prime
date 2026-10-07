@@ -53,7 +53,17 @@ describe("respondToShare (H-031)", () => {
       reasonTextEnc: null,
       acceptanceTextVersion: "v1",
     });
-    expect(result.notify).toMatchObject({ authorId: AUTHOR, decision: "accepted", quoteId: QUOTE });
+    expect(result.notify).toMatchObject({
+      decision: "accepted",
+      quoteId: QUOTE,
+      tenantId: TENANT,
+      responseId: args.responseId,
+      numberDisplay: "COT-1",
+      hasFreeText: false,
+    });
+    // el aviso no lleva el nombre de quien aceptó ni a quién se avisa: eso lo decide la base
+    expect(JSON.stringify(result.notify)).not.toContain("Ana");
+    expect(result.notify).not.toHaveProperty("authorId");
   });
 
   it("rechazar con «otro»: cifra el texto y no manda nombre", async () => {
@@ -67,7 +77,8 @@ describe("respondToShare (H-031)", () => {
     expect(args.reasonTextEnc).toBe(`enc(reason_text|${TENANT}|${args.responseId}|muy caro)`);
     expect(args.acceptorNameEnc).toBeNull();
     expect(args.acceptanceTextVersion).toBeNull();
-    expect(result.notify?.reasonText).toBe("muy caro");
+    expect(result.notify).toMatchObject({ reasonCode: "other", hasFreeText: true });
+    expect(JSON.stringify(result.notify)).not.toContain("muy caro");
   });
 
   it("el mismo envío repetido no vuelve a avisar", async () => {

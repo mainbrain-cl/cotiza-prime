@@ -111,11 +111,15 @@ describe("guardias estáticas del aislamiento", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("8. el portero del enlace del cliente solo llama a sus tres funciones y nunca lee una tabla", () => {
+  it("8. el portero del enlace del cliente solo llama a sus seis funciones y nunca lee una tabla", () => {
     const allowedFunctions = new Set([
       "share_link_read",
       "share_link_record_view",
       "share_link_respond",
+      // el aviso interno de la respuesta (H-031): destinatarios ya filtrados por la base, anotarlo y cerrarlo
+      "share_notice_recipients",
+      "internal_notice_register",
+      "internal_notice_settle",
     ]);
     const gateway = stripComments(read(path.join(SRC, "lib", "share", "gateway.ts"))).replace(
       /\s+/g,
@@ -136,6 +140,8 @@ describe("guardias estáticas del aislamiento", () => {
     // (`.update(` no se vigila aquí: lo usa el sello `sha256` del PDF; sin `.from(` sobre una tabla no
     // hay forma de escribir en ella.)
     expect(/\.(insert|upsert|delete|select)\(/.test(gateway)).toBe(false);
+    // ni la API de cuentas (`auth.admin...`): los correos de destino los entrega la base ya filtrados
+    expect(/\.auth\b/.test(gateway)).toBe(false);
   });
 
   it("8b. toda ruta del enlace del cliente valida el token y aplica los límites antes de leer", () => {
@@ -156,16 +162,23 @@ describe("guardias estáticas del aislamiento", () => {
     }
   });
 
-  it("8c. los POST públicos comprueban el Origin", () => {
-    for (const name of ["view", "accept", "reject"]) {
-      const route = read(
-        path.join(SRC, "app", "api", "v1", "public", "quote-links", "[token]", name, "route.ts"),
-      );
-      expect(route, name).toContain("isSameOriginPost(");
-      // el origen se comprueba antes que nada
-      expect(route.indexOf("isSameOriginPost("), name).toBeLessThan(
-        route.indexOf("passTokenGate("),
-      );
+  it("8c. TODA ruta del enlace con POST comprueba el Origin antes de la puerta del token", () => {
+    const postRoutes = discoverAppRoutes(path.join(SRC, "app")).filter(
+      (r) =>
+        APP_ROUTES.some((a) => a.scope === "token" && routeKey(a) === routeKey(r)) &&
+        /export\s+(async\s+)?function\s+POST\b|export\s+const\s+POST\b/.test(
+          stripComments(read(r.absoluteFile)),
+        ),
+    );
+    // por lo menos: view, accept y reject
+    expect(postRoutes.length).toBeGreaterThanOrEqual(3);
+    for (const route of postRoutes) {
+      const text = stripComments(read(route.absoluteFile));
+      const origin = text.indexOf("isSameOriginPost(");
+      const gate = text.indexOf("passTokenGate(");
+      expect(origin, `${route.file} debe llamar a isSameOriginPost(`).toBeGreaterThan(-1);
+      expect(gate, `${route.file} debe llamar a passTokenGate(`).toBeGreaterThan(-1);
+      expect(origin, `${route.file}: el origen se comprueba antes que nada`).toBeLessThan(gate);
     }
   });
 

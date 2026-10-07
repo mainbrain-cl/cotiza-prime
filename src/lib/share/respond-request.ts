@@ -4,6 +4,7 @@ import { getRequestContext } from "@/lib/http/request-context";
 import { serverLog } from "@/lib/log/server-log";
 import { consumeShareRespondQuota } from "@/lib/security/login-rate-limit";
 import { onQuoteResponded } from "./after-response";
+import { ShareGatewayError } from "./gateway";
 import { PUBLIC_RESPONSE_HEADERS, TOO_MANY_REQUESTS_MESSAGE } from "./public-request";
 import {
   MSG_INVALID_REQUEST,
@@ -41,13 +42,29 @@ function json(outcome: RespondOutcome): Response {
 const invalidRequest = () =>
   json({ status: "invalid", fieldErrors: { form: MSG_INVALID_REQUEST } });
 
-async function readJsonBody(request: Request): Promise<unknown> {
+/**
+ * Lee el cuerpo POR PARTES y corta apenas pasa el tope: una petición con `Content-Length` mentiroso, o
+ * sin él (envío por trozos), no obliga al servidor a cargar todo en memoria.
+ */
+export async function readJsonBody(request: Request): Promise<unknown> {
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (declared > RESPOND_BODY_MAX_BYTES) return undefined;
-  const text = await request.text();
-  if (text.length > RESPOND_BODY_MAX_BYTES) return undefined;
+  const reader = request.body?.getReader();
+  if (!reader) return undefined;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > RESPOND_BODY_MAX_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return undefined;
+    }
+    chunks.push(value);
+  }
   try {
-    return JSON.parse(text);
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     return undefined;
   }
@@ -88,8 +105,10 @@ export async function respondFromRequest(
     // El aviso al autor sale DESPUÉS de responderle al cliente, y si falla no le afecta.
     if (notify) after(() => onQuoteResponded(notify));
     return json(result.outcome);
-  } catch {
-    await serverLog("error", "share_respond_failed");
+  } catch (cause) {
+    // Solo un código (de la base o «unexpected»): nunca el mensaje completo, el token ni datos del cliente.
+    const code = cause instanceof ShareGatewayError ? cause.message : "unexpected";
+    await serverLog("error", "share_respond_failed", { code });
     return json({ status: "error" });
   }
 }

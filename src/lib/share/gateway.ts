@@ -1,6 +1,9 @@
 import "server-only";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { encryptPii } from "@/lib/crypto/pii";
+import { searchHash } from "@/lib/crypto/search-hash";
+import { normalizeEmail } from "@/lib/normalize/email";
 import { createAdminClient } from "@/lib/supabase/admin-client";
 import { hashShareToken, isWellFormedShareToken } from "./token";
 import {
@@ -14,8 +17,9 @@ import {
  * El PORTERO del enlace del cliente (decisión 017). Es el ÚNICO archivo que usa la llave maestra
  * para atender a alguien que no tiene sesión, y lo hace de dos maneras muy angostas:
  *
- *  1. Llama SOLO a tres funciones de la base, ejecutables únicamente por el servidor:
- *     `share_link_read`, `share_link_record_view` y `share_link_respond` (esta última la usa H-031).
+ *  1. Llama SOLO a seis funciones de la base, ejecutables únicamente por el servidor:
+ *     `share_link_read`, `share_link_record_view` y `share_link_respond`, más las tres del aviso interno
+ *     de H-031 (`share_notice_recipients`, `internal_notice_register`, `internal_notice_settle`).
  *  2. Lee del bucket privado `quote-documents` SOLO el PDF y el logo congelados de ese enlace.
  *
  * No toca ninguna tabla (una prueba estática vigila que no aparezca `.from(` sobre tablas ni otra
@@ -160,16 +164,80 @@ export async function respondShareLink(
   return result as { result: string; [key: string]: unknown };
 }
 
+export type NoticeRecipient = { userId: string; email: string };
+
+const noticeRecipientsSchema = z.object({
+  package_id: z.uuid(),
+  audience: z.enum(["author", "managers"]),
+  recipients: z.array(z.object({ user_id: z.uuid(), email: z.string().min(3).max(254) })).max(50),
+});
+
 /**
- * Correo de quien creó la cotización, para el aviso interno de H-031. El id sale de la respuesta de
- * `share_link_respond` (la base), nunca de la petición. Usa la API de cuentas del servidor (no toca
- * ninguna tabla). Si no se encuentra, devuelve `null`.
+ * Destinatarios del aviso interno de H-031, YA FILTRADOS por la base: el autor de la cotización solo si
+ * sigue como miembro activo de la organización; si no, el Dueño y los Administradores activos. El id de
+ * la respuesta sale de lo que la base acaba de registrar, nunca de la petición.
  */
-export async function readAuthorEmail(authorId: string | null | undefined): Promise<string | null> {
-  if (!authorId || !UUID_PATTERN.test(authorId)) return null;
-  const { data, error } = await createAdminClient().auth.admin.getUserById(authorId);
-  if (error || !data.user?.email) return null;
-  return data.user.email;
+export async function readNoticeRecipients(ref: {
+  tenantId: string;
+  quoteId: string;
+  responseId: string;
+}): Promise<{ packageId: string; audience: "author" | "managers"; recipients: NoticeRecipient[] }> {
+  const { data, error } = await createAdminClient().rpc("share_notice_recipients", {
+    p_quote_id: ref.quoteId,
+    p_response_id: ref.responseId,
+  });
+  if (error) throw new ShareGatewayError("notice_recipients", error.code);
+  const parsed = noticeRecipientsSchema.safeParse(data);
+  if (!parsed.success) throw new ShareGatewayError("notice_recipients", "shape");
+  return {
+    packageId: parsed.data.package_id,
+    audience: parsed.data.audience,
+    recipients: parsed.data.recipients.map((r) => ({ userId: r.user_id, email: r.email })),
+  };
+}
+
+/**
+ * Deja anotado el aviso interno (antes de enviarlo) en el registro de correos: con el paquete, sin
+ * enlace del cliente. El correo del destinatario va cifrado, con el sello de la fila, y con su huella.
+ */
+export async function registerInternalNotice(input: {
+  emailId: string;
+  tenantId: string;
+  quoteId: string;
+  responseId: string;
+  recipient: NoticeRecipient;
+}): Promise<void> {
+  const email = normalizeEmail(input.recipient.email);
+  const { error } = await createAdminClient().rpc("internal_notice_register", {
+    p_email_id: input.emailId,
+    p_quote_id: input.quoteId,
+    p_response_id: input.responseId,
+    p_to_user_id: input.recipient.userId,
+    p_to_email_enc: encryptPii(email, {
+      table: "email_messages",
+      field: "to_email",
+      tenantId: input.tenantId,
+      rowId: input.emailId,
+    }),
+    p_to_email_hash: searchHash("email", input.tenantId, email),
+  });
+  if (error) throw new ShareGatewayError("notice_register", error.code);
+}
+
+/** Cierra el aviso interno: enviado (con lo que informó el proveedor) o fallido (solo un código). */
+export async function settleInternalNotice(input: {
+  emailId: string;
+  tenantId: string;
+  sent?: { provider: string; providerMessageId: string };
+  errorCode?: string;
+}): Promise<void> {
+  const { error } = await createAdminClient().rpc("internal_notice_settle", {
+    p_email_id: input.emailId,
+    p_provider: input.sent?.provider ?? null,
+    p_provider_message_id: input.sent?.providerMessageId ?? null,
+    p_error_code: input.sent ? null : (input.errorCode ?? "unknown"),
+  });
+  if (error) throw new ShareGatewayError("notice_settle", error.code);
 }
 
 /** Ruta que le corresponde al PDF congelado de este enlace: `{tenant}/{quote}/{package}.pdf`. */

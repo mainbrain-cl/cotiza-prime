@@ -2,7 +2,7 @@
 
 import { Check, CircleCheck, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type Ref } from "react";
 import {
   ACCEPTANCE_TEXT,
   NAME_MAX_LENGTH,
@@ -10,7 +10,9 @@ import {
   REJECT_REASONS,
   acceptInputSchema,
   fieldErrorsOf,
+  newResponseKey,
   rejectInputSchema,
+  visibleErrors,
   type FieldErrors,
   type RespondOutcome,
 } from "@/lib/share/respond";
@@ -28,6 +30,8 @@ export type ResponsePanelProps = {
   /** Dirección base del enlace: `/api/v1/public/quote-links/{token}`. */
   apiBase: string;
   organizationName: string;
+  /** Datos de contacto de la organización (los mismos del documento), para cuando ya no se puede responder. */
+  contactLines?: string[];
   /** Respuesta ya registrada (al abrir o recargar), con la fecha lista para mostrar. */
   initialResponse: { decision: "accepted" | "rejected"; dateText: string | null } | null;
   /** `true` solo si el enlace está vigente y la cotización está Enviada o Vista. */
@@ -39,16 +43,38 @@ type Done = { decision: "accepted" | "rejected"; fresh: boolean };
 
 const MSG_GENERIC_ERROR = "No pudimos registrar tu respuesta. Inténtalo de nuevo en un momento.";
 const MSG_NETWORK_ERROR = "No pudimos conectarnos. Revisa tu conexión e inténtalo de nuevo.";
+const MSG_NOT_ALLOWED =
+  "Esta cotización ya no se puede responder desde este enlace. Escríbele directamente a la empresa para resolverlo.";
 
 const BUTTON_BASE =
   "inline-flex h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-sm px-5 text-base font-semibold shadow-1 transition-colors focus-visible:ring-3 focus-visible:ring-[var(--brand)]/40 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60";
+// El tamaño de letra de los campos (16 px, para que el iPhone no haga zoom) lo fija la regla base de
+// `globals.css` para input, select y textarea: aquí no se repite.
 const FIELD =
-  "w-full rounded-sm border border-border-strong bg-surface px-3 py-2.5 text-[16px] text-fg focus-visible:ring-3 focus-visible:ring-[var(--brand)]/40 focus-visible:outline-none";
+  "w-full rounded-sm border border-border-strong bg-surface px-3 py-2.5 text-fg focus-visible:ring-3 focus-visible:ring-[var(--brand)]/40 focus-visible:outline-none";
 
-function FieldError({ id, message }: { id: string; message?: string }) {
+/** Campos que existen en cada formulario: un error de cualquier otra clave se muestra como error del formulario. */
+const ACCEPT_FIELDS = ["name", "confirmed", "form"] as const;
+const REJECT_FIELDS = ["reasonCode", "reasonText", "form"] as const;
+
+function FieldError({
+  id,
+  message,
+  ref,
+}: {
+  id: string;
+  message?: string;
+  ref?: Ref<HTMLParagraphElement>;
+}) {
   if (!message) return null;
   return (
-    <p id={id} role="alert" className="mt-1 text-sm font-medium text-danger">
+    <p
+      ref={ref}
+      id={id}
+      role="alert"
+      tabIndex={-1}
+      className="mt-1 text-sm font-medium text-danger"
+    >
       {message}
     </p>
   );
@@ -57,6 +83,7 @@ function FieldError({ id, message }: { id: string; message?: string }) {
 export function ResponsePanel({
   apiBase,
   organizationName,
+  contactLines = [],
   initialResponse,
   canRespond,
 }: ResponsePanelProps) {
@@ -65,13 +92,51 @@ export function ResponsePanel({
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [done, setDone] = useState<Done | null>(null);
+  const [notAllowed, setNotAllowed] = useState(false);
   const [name, setName] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [reasonCode, setReasonCode] = useState("");
   const [reasonText, setReasonText] = useState("");
   // Una clave por formulario: repetir el mismo envío no registra dos veces.
   const keys = useRef<{ accept?: string; reject?: string }>({});
-  const keyFor = (kind: "accept" | "reject") => (keys.current[kind] ??= crypto.randomUUID());
+  const keyFor = (kind: "accept" | "reject") => (keys.current[kind] ??= newResponseKey());
+
+  // Foco: al abrir un formulario va a su primer campo; al volver, al botón que lo abrió; y si la
+  // validación falla, al primer campo con error (el lector de pantalla lo anuncia).
+  const openAcceptRef = useRef<HTMLButtonElement>(null);
+  const openRejectRef = useRef<HTMLButtonElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const confirmRef = useRef<HTMLInputElement>(null);
+  const firstReasonRef = useRef<HTMLInputElement>(null);
+  const reasonTextRef = useRef<HTMLTextAreaElement>(null);
+  const formErrorRef = useRef<HTMLParagraphElement>(null);
+  const previousMode = useRef<Mode>("idle");
+
+  useEffect(() => {
+    const before = previousMode.current;
+    previousMode.current = mode;
+    if (mode === "accept") nameRef.current?.focus();
+    else if (mode === "reject") firstReasonRef.current?.focus();
+    else if (before === "accept") openAcceptRef.current?.focus();
+    else if (before === "reject") openRejectRef.current?.focus();
+  }, [mode]);
+
+  useEffect(() => {
+    if (Object.keys(errors).length === 0) return;
+    const target =
+      mode === "accept"
+        ? errors.name
+          ? nameRef
+          : errors.confirmed
+            ? confirmRef
+            : formErrorRef
+        : errors.reasonCode
+          ? firstReasonRef
+          : errors.reasonText
+            ? reasonTextRef
+            : formErrorRef;
+    target.current?.focus();
+  }, [errors, mode]);
 
   const final: Done | null =
     done ?? (initialResponse ? { decision: initialResponse.decision, fresh: false } : null);
@@ -127,11 +192,16 @@ export function ResponsePanel({
       } else if (body.status === "already_responded") {
         setDone({ decision: body.decision, fresh: false });
         router.refresh();
+      } else if (body.status === "unavailable" && body.reason === "not_allowed") {
+        // La cotización cambió de estado y ya no admite respuesta: se explica con el contacto, sin recargar a ciegas.
+        setNotAllowed(true);
       } else if (body.status === "unavailable") {
         // Vencida, revocada o reemplazada: la página muestra el mensaje que corresponde.
         window.location.reload();
       } else if (body.status === "invalid") {
-        setErrors(body.fieldErrors);
+        setErrors(
+          visibleErrors(body.fieldErrors, kind === "accept" ? ACCEPT_FIELDS : REJECT_FIELDS),
+        );
       } else if (body.status === "rate_limited") {
         setErrors({ form: body.message });
       } else {
@@ -149,7 +219,8 @@ export function ResponsePanel({
     if (busy) return;
     const payload = { responseKey: keyFor("accept"), name, confirmed };
     const parsed = acceptInputSchema.safeParse(payload);
-    if (!parsed.success) return setErrors(fieldErrorsOf(parsed.error));
+    if (!parsed.success)
+      return setErrors(visibleErrors(fieldErrorsOf(parsed.error), ACCEPT_FIELDS));
     void send("accept", parsed.data);
   }
 
@@ -162,7 +233,8 @@ export function ResponsePanel({
       reasonText: reasonCode === "other" ? reasonText : undefined,
     };
     const parsed = rejectInputSchema.safeParse(payload);
-    if (!parsed.success) return setErrors(fieldErrorsOf(parsed.error));
+    if (!parsed.success)
+      return setErrors(visibleErrors(fieldErrorsOf(parsed.error), REJECT_FIELDS));
     void send("reject", parsed.data);
   }
 
@@ -170,6 +242,29 @@ export function ResponsePanel({
     setErrors({});
     setMode(next);
   };
+
+  if (notAllowed) {
+    return (
+      <section
+        role="alert"
+        data-testid="response-not-allowed"
+        className="flex flex-col gap-2 rounded-md border border-border p-4 sm:p-5"
+      >
+        <h2 className="text-md font-semibold">Ya no se puede responder desde este enlace</h2>
+        <p className="text-base">{MSG_NOT_ALLOWED}</p>
+        <p className="text-base font-semibold break-words">{organizationName}</p>
+        {contactLines.length > 0 ? (
+          <ul className="text-sm text-fg-muted">
+            {contactLines.map((line, index) => (
+              <li key={`${index}-${line}`} className="break-words">
+                {line}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+    );
+  }
 
   return (
     <section
@@ -180,6 +275,7 @@ export function ResponsePanel({
       {mode === "idle" ? (
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
+            ref={openAcceptRef}
             type="button"
             data-testid="response-accept-open"
             onClick={() => open("accept")}
@@ -189,6 +285,7 @@ export function ResponsePanel({
             Aceptar
           </button>
           <button
+            ref={openRejectRef}
             type="button"
             data-testid="response-reject-open"
             onClick={() => open("reject")}
@@ -216,6 +313,7 @@ export function ResponsePanel({
               Tu nombre
             </label>
             <input
+              ref={nameRef}
               id="accept-name"
               data-testid="accept-name"
               type="text"
@@ -232,6 +330,7 @@ export function ResponsePanel({
           <div>
             <label className="flex items-start gap-3 text-sm">
               <input
+                ref={confirmRef}
                 type="checkbox"
                 data-testid="accept-confirm"
                 checked={confirmed}
@@ -244,7 +343,7 @@ export function ResponsePanel({
             </label>
             <FieldError id="accept-confirm-error" message={errors.confirmed} />
           </div>
-          <FieldError id="accept-form-error" message={errors.form} />
+          <FieldError id="accept-form-error" message={errors.form} ref={formErrorRef} />
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="submit"
@@ -279,15 +378,23 @@ export function ResponsePanel({
           data-testid="reject-form"
           className="flex flex-col gap-4 rounded-md border border-border p-4 sm:p-5"
         >
-          <fieldset className="flex flex-col gap-2">
+          <fieldset
+            className="flex flex-col gap-2"
+            aria-describedby={
+              errors.reasonCode ? "reject-reason-help reject-reason-error" : "reject-reason-help"
+            }
+          >
             <legend className="text-md font-semibold">¿Por qué rechazas la cotización?</legend>
-            <p className="text-sm text-fg-muted">Elige un motivo: nos ayuda a mejorar.</p>
-            {REJECT_REASONS.map((reason) => (
+            <p id="reject-reason-help" className="text-sm text-fg-muted">
+              Elige un motivo: nos ayuda a mejorar.
+            </p>
+            {REJECT_REASONS.map((reason, index) => (
               <label
                 key={reason.code}
                 className="flex min-h-11 items-center gap-3 rounded-sm border border-border px-3 text-base"
               >
                 <input
+                  ref={index === 0 ? firstReasonRef : undefined}
                   type="radio"
                   name="reason"
                   value={reason.code}
@@ -307,6 +414,7 @@ export function ResponsePanel({
                 Cuéntanos brevemente el motivo
               </label>
               <textarea
+                ref={reasonTextRef}
                 id="reject-reason-text"
                 data-testid="reject-reason-text"
                 rows={3}
@@ -320,7 +428,7 @@ export function ResponsePanel({
               <FieldError id="reject-reason-text-error" message={errors.reasonText} />
             </div>
           ) : null}
-          <FieldError id="reject-form-error" message={errors.form} />
+          <FieldError id="reject-form-error" message={errors.form} ref={formErrorRef} />
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="submit"

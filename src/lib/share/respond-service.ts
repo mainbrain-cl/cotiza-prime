@@ -92,20 +92,17 @@ export async function respondToShare(
   if (result.result === "ok" && decision) {
     // `replayed`: el mismo envío repetido (doble clic). Ya se avisó la primera vez.
     if (result.replayed === true) return { outcome: { status: "ok", decision }, notify: null };
-    const authorId = typeof result.author_id === "string" ? result.author_id : null;
     const numberDisplay = typeof result.number_display === "string" ? result.number_display : "";
     return {
       outcome: { status: "ok", decision },
       notify: {
         tenantId: link.tenantId,
         quoteId: link.quoteId,
-        authorId,
         numberDisplay,
         responseId,
         decision,
-        acceptorName: accepted ? request.input.name : null,
         reasonCode: accepted ? null : request.input.reasonCode,
-        reasonText,
+        hasFreeText: reasonText !== null,
       },
     };
   }

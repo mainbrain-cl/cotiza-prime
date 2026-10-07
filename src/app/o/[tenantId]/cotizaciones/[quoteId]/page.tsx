@@ -17,11 +17,13 @@ import {
   toBadgeStatus,
 } from "@/lib/quotes/format";
 import { getQuote } from "@/lib/quotes/queries";
+import { getQuoteResponse } from "@/lib/quotes/response";
 import { listQuoteTimeline } from "@/lib/quotes/timeline";
 import { editorValidity } from "@/lib/quotes/editor-model";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
+import { CustomerResponse } from "./customer-response";
 import { QuoteEditor } from "./quote-editor";
 import { QuoteReadOnly } from "./quote-read-only";
 import { QuoteTimeline } from "./quote-timeline";
@@ -60,6 +62,7 @@ export default async function QuotePage({
     RESENDABLE_STATUSES.includes(quote.status) &&
     ((WRITER_ROLES.includes(active.role) && isAuthor) || ["owner", "admin"].includes(active.role));
   const timeline = await listQuoteTimeline(active, quote.id);
+  const customerResponse = await getQuoteResponse(active, quote.id);
 
   let readOnlyReason: string | null = null;
   if (!editable) {
@@ -136,6 +139,8 @@ export default async function QuotePage({
           {formatDate(quote.created_at)}
         </p>
       </header>
+
+      <CustomerResponse response={customerResponse} />
 
       {readOnlyReason ? <FormAlert tone="warning">{readOnlyReason}</FormAlert> : null}
 

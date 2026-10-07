@@ -115,6 +115,10 @@ describe("guardia del registro de aislamiento", () => {
       expect(route.scope === "token", `${route.path}: alcance ${route.scope}`).toBe(
         isTokenPage || isTokenApi,
       );
+      // Los avisos firmados de proveedores externos (sin sesión ni token).
+      expect(route.scope === "signed", `${route.path}: alcance ${route.scope}`).toBe(
+        route.path.startsWith("/api/v1/webhooks/"),
+      );
       if (route.scope === "tenant") expect(route.kind).toBe(isPage ? "page" : "api");
       if (route.scope === "token") expect(route.kind).toBe(isTokenPage ? "page" : "api");
     }

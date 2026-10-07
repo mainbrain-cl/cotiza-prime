@@ -17,6 +17,12 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "catalog_item.price_changed": "Cambió el precio de un servicio",
   "customer.created": "Se registró un cliente",
   "customer.updated": "Cambió un cliente",
+  "quote.sent": "Se envió una cotización al cliente",
+  "quote.resent": "Se reenvió una cotización al cliente",
+  "quote.send_failed": "No se pudo enviar una cotización",
+  "quote.accepted": "El cliente aceptó una cotización",
+  "quote.rejected": "El cliente rechazó una cotización",
+  "share_link.revoked": "Se revocó el enlace de una cotización",
 };
 
 const RESOURCE_LABELS: Readonly<Record<string, string>> = {

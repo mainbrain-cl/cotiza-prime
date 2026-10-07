@@ -9,6 +9,8 @@ import { BASIC_FORMAT_ERROR_MESSAGES, parseBasicFormat } from "@/lib/email/basic
 import { buildQuoteEmail, MAX_PDF_BYTES } from "@/lib/email/quote-email";
 import { EmailConfigError, getEmailTransport } from "@/lib/email/transport";
 import { loadEmailConfig } from "@/lib/email/config";
+import { recordDeliveryEvent } from "@/lib/email/delivery-events-service";
+import type { DeliveryEvent } from "@/lib/email/delivery-events";
 import type { EmailMessage, EmailTransport } from "@/lib/email/types";
 import { serverLog } from "@/lib/log/server-log";
 import { getAppOrigin } from "@/lib/http/request-context";
@@ -16,6 +18,7 @@ import { normalizeEmail } from "@/lib/normalize/email";
 import { quotePdfFileName } from "@/lib/pdf/file-name";
 import { loadQuoteDocumentData } from "@/lib/pdf/quote-document-data";
 import { renderQuotePdf } from "@/lib/pdf/render";
+import { canRevokeLinks, REVOCABLE_STATUSES } from "@/lib/quotes/link-rules";
 import { getQuote } from "@/lib/quotes/queries";
 import {
   consumePdfQuota,
@@ -221,8 +224,27 @@ async function dispatchAndConfirm(params: {
     revalidateQuote(active.tenantId, params.quoteId);
     return failure(MSG_CONFIRM_FAILED);
   }
+  // Fuera de producción, un destinatario `@rebota.ejemplo.test` simula el rebote que el proveedor
+  // real avisaría después: entra por la MISMA función que el aviso real (ruta de avisos).
+  await applySimulatedEvents(transport, sent.simulatedEvents);
   revalidateQuote(active.tenantId, params.quoteId);
   return { status: "sent" };
+}
+
+/** Anota los avisos simulados. Un fallo aquí no cambia el resultado del envío: solo se registra. */
+async function applySimulatedEvents(
+  transport: EmailTransport,
+  events: DeliveryEvent[] | undefined,
+): Promise<void> {
+  for (const event of events ?? []) {
+    try {
+      await recordDeliveryEvent(transport.provider, event);
+    } catch (error) {
+      await serverLog("warn", "quote_send_simulated_event_failed", {
+        code: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
 }
 
 function loadTransport():
@@ -639,4 +661,60 @@ export async function resendQuoteAction(
     failedMessages: RESEND_FAILED_MESSAGES,
     startedAtMs,
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Revocar el enlace del cliente (H-035)
+// ---------------------------------------------------------------------------------------------
+
+export type RevokeLinksResult =
+  { status: "revoked" } | { status: "nothing_to_revoke" } | { status: "error"; message: string };
+
+const MSG_REVOKE_FORBIDDEN =
+  "Solo quien creó la cotización, el Dueño o un Administrador pueden revocar su enlace.";
+const MSG_REVOKE_CLOSED =
+  "Esta cotización ya no permite revocar el enlace: el cliente ya respondió, venció o no se ha enviado.";
+const MSG_REVOKE_FAILED = "No pudimos revocar el enlace. Intenta de nuevo en unos minutos.";
+
+/**
+ * Revoca todos los enlaces activos de la cotización: desde ese momento el cliente ve que el enlace ya
+ * no está disponible. La regla de estados se exige aquí (una cotización aceptada no se revoca: el
+ * cliente perdería los datos de pago) y la base vuelve a verificar quién puede (`revoke_quote_links`).
+ * Quién y cuándo quedan en la línea de tiempo y en la auditoría, que escribe la propia base.
+ */
+export async function revokeQuoteLinksAction(
+  tenantId: string,
+  quoteId: string,
+): Promise<RevokeLinksResult> {
+  const active = await requireActiveTenant(tenantId);
+  if (!isUuid(quoteId)) return { status: "error", message: MSG_NOT_FOUND };
+  if (!WRITER_ROLES.includes(active.role)) return { status: "error", message: MSG_ROLE };
+  const detail = await getQuote(active, quoteId);
+  if (detail === null) return { status: "error", message: MSG_NOT_FOUND };
+  if (
+    !canRevokeLinks({
+      role: active.role,
+      isAuthor: detail.quote.created_by === active.userId,
+      status: detail.quote.status,
+    })
+  ) {
+    return {
+      status: "error",
+      message: REVOCABLE_STATUSES.includes(detail.quote.status)
+        ? MSG_REVOKE_FORBIDDEN
+        : MSG_REVOKE_CLOSED,
+    };
+  }
+  const { data, error } = await active.supabase.rpc("revoke_quote_links", {
+    p_quote_id: quoteId,
+  });
+  if (error) {
+    await serverLog("warn", "quote_revoke_links_failed", { code: error.code });
+    if (error.code === SQLSTATE_FORBIDDEN)
+      return { status: "error", message: MSG_REVOKE_FORBIDDEN };
+    if (error.code === SQLSTATE_NOT_FOUND) return { status: "error", message: MSG_NOT_FOUND };
+    return { status: "error", message: MSG_REVOKE_FAILED };
+  }
+  revalidateQuote(active.tenantId, quoteId);
+  return (data as number) > 0 ? { status: "revoked" } : { status: "nothing_to_revoke" };
 }

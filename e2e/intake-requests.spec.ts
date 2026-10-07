@@ -1,3 +1,5 @@
+import { consentFingerprint } from "../src/lib/intake/consent-fingerprint";
+import { HONEYPOT_FIELD } from "../src/lib/intake/submit-schema";
 import { randomUUID } from "node:crypto";
 import type { Browser, BrowserContext } from "@playwright/test";
 import type { Client } from "pg";
@@ -16,7 +18,9 @@ import { expect, randomTestIp, test, type Page } from "./fixtures";
 const MAILBOX_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:56324";
 const MOBILE = { width: 375, height: 812 };
 const NOT_FOUND_HEADING = "No encontrado";
-const RENDER_TOKEN = /v1\.\d{9,12}\.[A-Za-z0-9_-]{43}/;
+/** Sello de tiempo y clave de envío que el servidor entrega juntos (van seguidos en los datos de la página). */
+const STAMP_IN_HTML =
+  /(v1\.\d{9,12}\.[A-Za-z0-9_-]{43})\\*",\\*"submitKey\\*":\\*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/;
 /** El sello de tiempo del formulario pide al menos 3 segundos entre mostrarlo y enviarlo. */
 const AFTER_MIN_FILL_MS = 3_500;
 const XSS_NAME = "<img src=x onerror=alert(1)>";
@@ -210,8 +214,20 @@ async function visitorSubmit(
 ) {
   const origin = new URL(test.info().project.use.baseURL!).origin;
   const html = await (await page.request.get(`/f/${org.publicId}`)).text();
-  const token = RENDER_TOKEN.exec(html)?.[0];
-  expect(token, "la página trae el sello de tiempo").toBeTruthy();
+  const found = STAMP_IN_HTML.exec(html);
+  expect(found, "la página trae el sello de tiempo y su clave de envío").toBeTruthy();
+  const [, token, submitKey] = found!;
+  // La huella del aviso de privacidad que ve la persona, igual que la calcula el navegador.
+  const reader = await page.context().newPage();
+  let fingerprint: string;
+  try {
+    await reader.goto(`/f/${org.publicId}`);
+    const consentText = await reader.locator('label[for="pf-consent"]').textContent();
+    expect(consentText, "el aviso de privacidad está a la vista").toBeTruthy();
+    fingerprint = consentFingerprint(consentText!, null);
+  } finally {
+    await reader.close();
+  }
   await page.waitForTimeout(AFTER_MIN_FILL_MS);
   const itemId = await withDb(async (db) => {
     const { rows } = await db.query<{ id: string }>(
@@ -227,10 +243,10 @@ async function visitorSubmit(
       email: `visitante-${randomUUID().slice(0, 8)}@ejemplo.test`,
       items: [{ formItemId: itemId, quantity: "3" }],
       consent: true,
-      submitKey: randomUUID(),
-      requestId: randomUUID(),
+      submitKey,
+      consentFingerprint: fingerprint,
       formRevision: revision,
-      website: "",
+      [HONEYPOT_FIELD]: "",
       renderToken: token,
       antibotToken: "test-pass",
       ...overrides,

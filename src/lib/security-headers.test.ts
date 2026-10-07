@@ -62,8 +62,8 @@ describe("cabeceras del enlace del cliente (H-030)", () => {
       const rule = rules.find((r) => r.source === source);
       expect(rule, `falta la regla para ${source}`).toBeDefined();
       const value = (key: string) => rule!.headers.find((h) => h.key === key)?.value ?? "";
-      expect(value("Cache-Control")).toMatch(/private/);
-      expect(value("Cache-Control")).toMatch(/no-store/);
+      // Valor exacto: es la regla que se publica en producción (el servidor de desarrollo la cambia).
+      expect(value("Cache-Control")).toBe("private, no-store, max-age=0");
       expect(value("Referrer-Policy")).toBe("no-referrer");
       expect(value("X-Robots-Tag")).toBe("noindex, nofollow");
     }

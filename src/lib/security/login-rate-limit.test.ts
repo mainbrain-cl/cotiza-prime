@@ -146,7 +146,19 @@ describe("consumeShareRespondQuota (H-031)", () => {
     expect(await consumeShareRespondQuota("203.0.113.7")).toBe(false);
   });
 
-  it("sin IP conocida no cuenta, y si el contador falla se deja pasar", async () => {
+  it("sin IP conocida, en producción cuenta en el grupo 'desconocida'", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(await consumeShareRespondQuota(null)).toBe(true);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_scope: "share_respond_ip",
+      p_key_hash: "share_respond_ip|desconocida",
+    });
+    rpc.mockResolvedValue({ data: "2026-10-01T00:00:00Z", error: null });
+    expect(await consumeShareRespondQuota(null)).toBe(false);
+  });
+
+  it("sin IP conocida, fuera de producción no cuenta, y si el contador falla se deja pasar", async () => {
+    vi.stubEnv("NODE_ENV", "test");
     expect(await consumeShareRespondQuota(null)).toBe(true);
     expect(rpc).not.toHaveBeenCalled();
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
@@ -167,7 +179,16 @@ describe("consumeShareQuota (enlace del cliente, H-030)", () => {
     expect(calls[1].p_key_hash).toBe(`share_token|${SHA}`);
   });
 
-  it("sin IP conocida solo limita por enlace", async () => {
+  it("sin IP conocida, en producción cuenta la IP en el grupo 'desconocida' y el enlace", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    await consumeShareQuota(null, SHA);
+    const calls = rpc.mock.calls.map(([, args]) => args);
+    expect(calls.map((c) => c.p_scope)).toEqual(["share_ip", "share_token"]);
+    expect(calls[0].p_key_hash).toBe("share_ip|desconocida");
+  });
+
+  it("sin IP conocida, fuera de producción solo limita por enlace", async () => {
+    vi.stubEnv("NODE_ENV", "test");
     await consumeShareQuota(null, SHA);
     expect(rpc.mock.calls.map(([, args]) => args.p_scope)).toEqual(["share_token"]);
   });

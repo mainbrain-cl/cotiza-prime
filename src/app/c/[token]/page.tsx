@@ -10,9 +10,17 @@ import { isAvailable } from "@/lib/share/read-model";
 
 /**
  * Pantalla pública de la cotización (H-030): la abre el cliente final desde el botón del correo, sin
- * cuenta. La puerta es el token de la dirección. Aquí NADA cambia el estado de la cotización: leer
- * la página es un GET, y la apertura la registra aparte el aviso `ViewBeacon` desde el navegador
- * (los antivirus que abren los enlaces solos no ejecutan la página).
+ * cuenta. La puerta es el token de la dirección. Leer la página es un GET y nunca registra una
+ * apertura ni una respuesta: la apertura la registra aparte el aviso `ViewBeacon` desde el navegador
+ * (los antivirus que abren los enlaces solos no ejecutan la página). Lo único que un GET sí puede
+ * hacer es dejar vencida la cotización si ya pasó su vigencia (`share_link_read` la vence al leer),
+ * porque eso no depende de quién la mire.
+ *
+ * Códigos de estado (desviación declarada, 2026-10-07): esta pantalla responde 200 también para un
+ * token inexistente o mal formado y para el límite excedido. `loading.tsx` envía el esqueleto antes
+ * de que la página decida, así que `notFound()` ya no puede cambiar el código (se probó: seguía en
+ * 200) y una página no puede fijar un 429. La API pública (`/api/v1/public/quote-links/...`) sí
+ * responde 404 y 429. El mensaje es el mismo para cualquier causa y la página no se indexa.
  *
  * Metadatos genéricos: ni montos ni el nombre del cliente salen en el título ni en la descripción.
  */

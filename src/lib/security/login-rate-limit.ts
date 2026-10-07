@@ -387,16 +387,27 @@ export async function consumePdfQuota(userId: string, tenantId: string): Promise
 }
 
 /**
+ * Clave de IP de los límites del enlace del cliente. Sin IP conocida, en producción todo lo que no
+ * trae origen cuenta junto en el grupo "desconocida" (como el registro de cuentas): se prefiere
+ * frenar de más a dejar intentos sin tope. En desarrollo y pruebas sin IP no se limita por IP.
+ */
+function shareIpKey(ip: string | null): string | null {
+  if (ip) return ipLimitKey(ip);
+  return process.env.NODE_ENV === "production" ? UNKNOWN_IP_GROUP : null;
+}
+
+/**
  * ¿Puede esta lectura del enlace del cliente seguir (H-030)? Cuenta el pedido contra dos límites:
  * la IP (si se conoce) y el enlace, y responde `false` si alguno ya está bloqueado. Las claves son
  * huellas: de la IP agrupada y del sello (sha256) del enlace, nunca el token ni la IP en claro. Si el
  * contador falla, se deja pasar y se avisa en el log (igual que el resto del limitador).
  */
 export async function consumeShareQuota(ip: string | null, tokenSha256: string): Promise<boolean> {
-  if (ip) {
+  const ipKey = shareIpKey(ip);
+  if (ipKey) {
     const byIp: Target = {
       scope: "share_ip",
-      keyHash: searchHash("share_ip", PLATFORM_TENANT_ID, ipLimitKey(ip)),
+      keyHash: searchHash("share_ip", PLATFORM_TENANT_ID, ipKey),
     };
     if (await failOpen("share_quota_ip", false, () => recordAll([byIp]))) return false;
   }
@@ -410,14 +421,15 @@ export async function consumeShareQuota(ip: string | null, tokenSha256: string):
 /**
  * ¿Esta IP puede responder otra cotización ahora (H-031)? Cuenta el intento y responde `false` si ya
  * llegó al tope por hora. La clave es una huella de la IP agrupada, nunca la IP en claro. Sin IP
- * conocida no hay a quién contar (los límites de lectura del enlace siguen valiendo). Si el contador
+ * conocida, en producción cuenta en el grupo "desconocida"; en desarrollo y pruebas no se limita. Si el contador
  * falla, se deja pasar y se avisa en el log.
  */
 export async function consumeShareRespondQuota(ip: string | null): Promise<boolean> {
-  if (!ip) return true;
+  const ipKey = shareIpKey(ip);
+  if (!ipKey) return true;
   const target: Target = {
     scope: "share_respond_ip",
-    keyHash: searchHash("share_respond_ip", PLATFORM_TENANT_ID, ipLimitKey(ip)),
+    keyHash: searchHash("share_respond_ip", PLATFORM_TENANT_ID, ipKey),
   };
   return !(await failOpen("share_respond_quota_ip", false, () => recordAll([target])));
 }

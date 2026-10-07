@@ -34,6 +34,9 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // La insignia flotante del modo de desarrollo cae justo sobre el botón «Cerrar sesión» del menú vertical
+  // y tapa el clic en las pruebas locales; los errores de compilación se siguen mostrando.
+  devIndicators: false,
   // El PDF se arma en el servidor con @react-pdf/renderer; las tipografías incrustadas viven en el
   // repositorio y hay que llevarlas al despliegue (se leen en tiempo de ejecución, no se importan).
   serverExternalPackages: ["@react-pdf/renderer"],

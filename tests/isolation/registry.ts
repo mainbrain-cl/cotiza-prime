@@ -258,6 +258,41 @@ export const ISOLATION_TABLES: TableSpec[] = [
     ownWriteAccepted: false,
   },
   {
+    name: "intake_forms",
+    visibility: "business",
+    idColumn: "id",
+    ownedByB: byTenantB,
+    readColumns: "id,tenant_id,name,title,status",
+    insertAttack: (_fx, tenant, marker) => ({
+      id: randomUUID(),
+      tenant_id: tenant,
+      name: marker,
+      title: marker,
+    }),
+    updateAttack: (marker) => ({ title: marker, status: "published" }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
+    name: "intake_form_items",
+    visibility: "business",
+    idColumn: "id",
+    ownedByB: byTenantB,
+    readColumns: "id,tenant_id,form_id,public_name,unit",
+    insertAttack: (fx, tenant, marker) => ({
+      id: randomUUID(),
+      tenant_id: tenant,
+      form_id: fx.orgs.B.intake!.formId,
+      position: 9,
+      kind: "free",
+      public_name: marker,
+      unit: "unit",
+    }),
+    updateAttack: (marker) => ({ public_name: marker }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
     name: "numbering_settings",
     visibility: "business",
     idColumn: "tenant_id",
@@ -484,6 +519,20 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: true,
   },
   revoke_quote_links: { args: { p_quote_id: randomUUID() }, writesActiveTenant: true },
+  // Sprint 4 · formularios públicos (M29). Los argumentos son válidos en forma y apuntan a nada propio.
+  create_intake_form: {
+    args: { p_form_id: randomUUID(), p_name: "Ataque" },
+    writesActiveTenant: true,
+  },
+  save_intake_form: {
+    args: { p_form_id: randomUUID(), p_expected_revision: 1, p_form: {}, p_items: null },
+    writesActiveTenant: true,
+  },
+  set_intake_form_status: {
+    args: { p_form_id: randomUUID(), p_status: "paused" },
+    writesActiveTenant: true,
+  },
+  regenerate_intake_form_public_id: { args: { p_form_id: randomUUID() }, writesActiveTenant: true },
 };
 
 /** Funciones de `public` que solo ejecuta el servidor con la llave maestra: nadie con pase las llama. */

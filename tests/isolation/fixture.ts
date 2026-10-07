@@ -79,6 +79,22 @@ export interface OrgData {
   quoteIds: string[];
   /** Cotización enviada con paquete y enlace (A y B; C no tiene). */
   share: ShareData | null;
+  /** Formulario público publicado, con sus servicios y una solicitud recibida (A y B; C no tiene). */
+  intake: IntakeData | null;
+}
+
+/** Un formulario público publicado y una solicitud ya recibida (solo A y B). */
+export interface IntakeData {
+  formId: string;
+  /** Identificador público actual (el de la dirección `/f/...`). */
+  publicId: string;
+  revision: number;
+  /** Servicio libre del formulario. */
+  freeItemId: string;
+  /** Servicio del formulario copiado desde el catálogo. */
+  catalogFormItemId: string;
+  /** Servicio del catálogo de la organización al que apunta el anterior. */
+  catalogItemId: string;
 }
 
 /** Una cotización ya enviada, con su paquete congelado y su enlace (solo A y B). */
@@ -208,6 +224,7 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       catalogIds: [],
       quoteIds: [],
       share: null,
+      intake: null,
     };
   }
 
@@ -387,6 +404,10 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
   for (const key of ["A", "B"] as const) {
     orgs[key].share = await buildShareData(db, key, orgs[key], personas[owners[key]], runId);
   }
+  // Un formulario público publicado en A y en B, por el camino legítimo (funciones con el pase de la dueña).
+  for (const key of ["A", "B"] as const) {
+    orgs[key].intake = await buildIntakeData(db, orgs[key], personas[owners[key]]);
+  }
   // C: un cliente, y luego se archiva
   {
     const id = randomUUID();
@@ -427,6 +448,77 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     orgs,
     platformAuditId: Number(audit.rows[0].id),
     rateLimitKeyHash,
+  };
+}
+
+async function buildIntakeData(db: Client, data: OrgData, owner: Persona): Promise<IntakeData> {
+  const token = owner.session.accessToken;
+  const headers = org(data.tenantId);
+  // Para publicar, la organización necesita un correo de contacto (el alta de la fixture no lo pide).
+  await db.query(`update public.tenants set contact_email = $2 where tenant_id = $1`, [
+    data.tenantId,
+    `contacto-${data.canary.toLowerCase()}@ejemplo.test`,
+  ]);
+  const formId = randomUUID();
+  const created = await mustOk<{ public_id: string; revision: number }>(
+    rpc(
+      token,
+      "create_intake_form",
+      { p_form_id: formId, p_name: `Formulario ${data.canary}` },
+      headers,
+    ),
+    "create_intake_form",
+  );
+  const freeItemId = randomUUID();
+  const catalogFormItemId = randomUUID();
+  const saved = await mustOk<{ revision: number }>(
+    rpc(
+      token,
+      "save_intake_form",
+      {
+        p_form_id: formId,
+        p_expected_revision: created.revision,
+        p_form: {
+          title: `Pide tu cotización ${data.canary}`,
+          intro: `Introducción ${data.canary}`,
+          success_message: `Gracias ${data.canary}`,
+        },
+        p_items: [
+          {
+            id: freeItemId,
+            kind: "free",
+            public_name: `Servicio libre ${data.canary}`,
+            public_description: `Detalle ${data.canary}`,
+            unit: "service",
+            quantity_mode: "optional",
+          },
+          {
+            id: catalogFormItemId,
+            kind: "catalog",
+            catalog_item_id: data.catalogIds[0],
+            public_name: `Servicio de catálogo ${data.canary}`,
+            unit: "service",
+            quantity_mode: "required",
+            min_qty_milli: 1000,
+            max_qty_milli: 100000,
+          },
+        ],
+      },
+      headers,
+    ),
+    "save_intake_form",
+  );
+  await mustOk(
+    rpc(token, "set_intake_form_status", { p_form_id: formId, p_status: "published" }, headers),
+    "set_intake_form_status",
+  );
+  return {
+    formId,
+    publicId: created.public_id,
+    revision: saved.revision,
+    freeItemId,
+    catalogFormItemId,
+    catalogItemId: data.catalogIds[0],
   };
 }
 

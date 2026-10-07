@@ -49,6 +49,8 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
         "share_link_views",
         "email_messages",
         "quote_responses",
+        "intake_forms",
+        "intake_form_items",
       ]),
     );
   });

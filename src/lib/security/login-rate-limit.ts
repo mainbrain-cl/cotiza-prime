@@ -83,6 +83,20 @@ export const SHARE_RESPOND_MAX_PER_IP_PER_WINDOW = 10;
 export const SHARE_RESPOND_WINDOW_SECONDS = 60 * SECONDS_PER_MINUTE;
 export const SHARE_RESPOND_LOCK_SECONDS = 60 * SECONDS_PER_MINUTE;
 
+/**
+ * Formulario público (H-087): lo llena cualquiera sin cuenta, así que se limita por IP antes de tocar la
+ * base. Envíos por IP en 10 minutos y en el día (cada intento cuenta, también los que fallan) y lecturas
+ * de la página por IP por minuto. El intento número N+1 es el que bloquea. Siempre con huellas.
+ */
+export const INTAKE_SUBMIT_MAX_PER_IP_PER_WINDOW = 5;
+export const INTAKE_SUBMIT_WINDOW_SECONDS = 10 * SECONDS_PER_MINUTE;
+export const INTAKE_SUBMIT_LOCK_SECONDS = 10 * SECONDS_PER_MINUTE;
+export const INTAKE_SUBMIT_MAX_PER_IP_PER_DAY = 20;
+export const INTAKE_SUBMIT_DAY_SECONDS = 24 * 60 * SECONDS_PER_MINUTE;
+export const INTAKE_READ_MAX_PER_IP_PER_WINDOW = 60;
+export const INTAKE_READ_WINDOW_SECONDS = SECONDS_PER_MINUTE;
+export const INTAKE_READ_LOCK_SECONDS = SECONDS_PER_MINUTE;
+
 export type RateLimitScope =
   | "login_email"
   | "login_ip"
@@ -95,7 +109,10 @@ export type RateLimitScope =
   | "quote_send_user"
   | "share_ip"
   | "share_token"
-  | "share_respond_ip";
+  | "share_respond_ip"
+  | "intake_read_ip"
+  | "intake_submit_ip"
+  | "intake_submit_ip_day";
 
 /**
  * La tabla `auth_rate_limits` solo admite ciertos valores en su columna `scope`. Los pedidos de
@@ -116,6 +133,9 @@ const STORAGE_SCOPE: Record<RateLimitScope, string> = {
   share_ip: "share_ip",
   share_token: "share_token",
   share_respond_ip: "share_respond_ip",
+  intake_read_ip: "intake_read_ip",
+  intake_submit_ip: "intake_submit_ip",
+  intake_submit_ip_day: "intake_submit_ip_day",
 };
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
@@ -183,6 +203,21 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: SHARE_RESPOND_MAX_PER_IP_PER_WINDOW + 1,
     windowSeconds: SHARE_RESPOND_WINDOW_SECONDS,
     lockSeconds: SHARE_RESPOND_LOCK_SECONDS,
+  },
+  intake_read_ip: {
+    maxFailures: INTAKE_READ_MAX_PER_IP_PER_WINDOW + 1,
+    windowSeconds: INTAKE_READ_WINDOW_SECONDS,
+    lockSeconds: INTAKE_READ_LOCK_SECONDS,
+  },
+  intake_submit_ip: {
+    maxFailures: INTAKE_SUBMIT_MAX_PER_IP_PER_WINDOW + 1,
+    windowSeconds: INTAKE_SUBMIT_WINDOW_SECONDS,
+    lockSeconds: INTAKE_SUBMIT_LOCK_SECONDS,
+  },
+  intake_submit_ip_day: {
+    maxFailures: INTAKE_SUBMIT_MAX_PER_IP_PER_DAY + 1,
+    windowSeconds: INTAKE_SUBMIT_DAY_SECONDS,
+    lockSeconds: INTAKE_SUBMIT_DAY_SECONDS,
   },
 };
 
@@ -432,4 +467,41 @@ export async function consumeShareRespondQuota(ip: string | null): Promise<boole
     keyHash: searchHash("share_respond_ip", PLATFORM_TENANT_ID, ipKey),
   };
   return !(await failOpen("share_respond_quota_ip", false, () => recordAll([target])));
+}
+
+/**
+ * ¿Puede esta IP leer la página del formulario público (H-087)? Cuenta la lectura y responde `false` al
+ * pasar el tope por minuto. La clave es una huella de la IP agrupada, nunca la IP en claro. Sin IP
+ * conocida, en producción cuenta en el grupo "desconocida"; en desarrollo y pruebas no se limita. Si el
+ * contador falla, se deja pasar y se avisa en el log.
+ */
+export async function consumeIntakeReadQuota(ip: string | null): Promise<boolean> {
+  const ipKey = shareIpKey(ip);
+  if (!ipKey) return true;
+  const target: Target = {
+    scope: "intake_read_ip",
+    keyHash: searchHash("intake_read_ip", PLATFORM_TENANT_ID, ipKey),
+  };
+  return !(await failOpen("intake_read_quota_ip", false, () => recordAll([target])));
+}
+
+/**
+ * ¿Puede esta IP enviar otra solicitud por un formulario público (H-087)? Cada intento cuenta (también
+ * los que fallan), primero contra el tope de 10 minutos y, si pasa, contra el del día. Responde `false`
+ * si alguno ya está bloqueado. Huellas de la IP agrupada, nunca la IP en claro. Si el contador falla,
+ * se deja pasar y se avisa en el log: el tope diario de solicitudes vive dentro de la base, no aquí.
+ */
+export async function consumeIntakeSubmitQuota(ip: string | null): Promise<boolean> {
+  const ipKey = shareIpKey(ip);
+  if (!ipKey) return true;
+  const window: Target = {
+    scope: "intake_submit_ip",
+    keyHash: searchHash("intake_submit_ip", PLATFORM_TENANT_ID, ipKey),
+  };
+  if (await failOpen("intake_submit_quota_window", false, () => recordAll([window]))) return false;
+  const day: Target = {
+    scope: "intake_submit_ip_day",
+    keyHash: searchHash("intake_submit_ip_day", PLATFORM_TENANT_ID, ipKey),
+  };
+  return !(await failOpen("intake_submit_quota_day", false, () => recordAll([day])));
 }

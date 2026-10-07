@@ -29,11 +29,8 @@ export const FORM_POLICY_URL_MAX = 500;
 /** Formularios sin archivar que puede tener una organización (la base impone el mismo tope). */
 export const FORMS_PER_ORGANIZATION_MAX = 20;
 
-/**
- * La página pública `/f/[publicId]` la construye la historia H-087. Mientras no exista, el enlace se
- * muestra con una nota. Al construirla, cambiar a `true` (y la nota desaparece).
- */
-export const PUBLIC_FORM_ROUTE_AVAILABLE = false;
+/** La página pública `/f/[publicId]` ya existe (H-087): el enlace del constructor funciona. */
+export const PUBLIC_FORM_ROUTE_AVAILABLE = true;
 
 export const FIELD_MODE_OPTIONS: readonly { value: FieldMode; label: string }[] = [
   { value: "off", label: "No pedir" },

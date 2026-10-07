@@ -9,6 +9,11 @@ vi.mock("@/lib/crypto/search-hash", () => ({
 }));
 
 import {
+  INTAKE_READ_MAX_PER_IP_PER_WINDOW,
+  INTAKE_SUBMIT_MAX_PER_IP_PER_DAY,
+  INTAKE_SUBMIT_MAX_PER_IP_PER_WINDOW,
+  consumeIntakeReadQuota,
+  consumeIntakeSubmitQuota,
   SEND_MAX_PER_USER_PER_WINDOW,
   SHARE_RESPOND_MAX_PER_IP_PER_WINDOW,
   consumeShareRespondQuota,
@@ -210,5 +215,72 @@ describe("consumeShareQuota (enlace del cliente, H-030)", () => {
   it("si el contador falla, se deja pasar", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
     expect(await consumeShareQuota("203.0.113.7", SHA)).toBe(true);
+  });
+});
+
+describe("formulario público (H-087)", () => {
+  it("envíos: cuenta la IP en la ventana de 10 minutos y en el día, con huellas y con las constantes del plan", async () => {
+    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe(true);
+    const calls = rpc.mock.calls.map(([, args]) => args);
+    expect(calls.map((c) => c.p_scope)).toEqual(["intake_submit_ip", "intake_submit_ip_day"]);
+    expect(calls[0]).toMatchObject({
+      p_key_hash: "intake_submit_ip|203.0.113.7",
+      p_max_failures: 6,
+      p_window_seconds: 600,
+    });
+    expect(calls[1]).toMatchObject({
+      p_key_hash: "intake_submit_ip_day|203.0.113.7",
+      p_max_failures: 21,
+      p_window_seconds: 86_400,
+    });
+    expect(INTAKE_SUBMIT_MAX_PER_IP_PER_WINDOW).toBe(5);
+    expect(INTAKE_SUBMIT_MAX_PER_IP_PER_DAY).toBe(20);
+  });
+
+  it("el sexto envío en 10 minutos bloquea sin gastar el cupo del día", async () => {
+    rpc.mockResolvedValue({ data: "2026-10-01T00:00:00Z", error: null });
+    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe(false);
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("el envío número 21 del día bloquea aunque la ventana corta esté libre", async () => {
+    rpc
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({ data: "2026-10-02T00:00:00Z", error: null });
+    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe(false);
+  });
+
+  it("una IPv6 se agrupa por bloque /64 y nunca se guarda la IP en claro", async () => {
+    await consumeIntakeSubmitQuota("2001:db8:1:2:aaaa:bbbb:cccc:dddd");
+    const keys = rpc.mock.calls.map(([, args]) => args.p_key_hash);
+    expect(keys[0]).toBe("intake_submit_ip|2001:0db8:0001:0002::/64");
+  });
+
+  it("sin IP conocida, en producción cuenta en el grupo 'desconocida'; fuera de producción no limita", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    await consumeIntakeSubmitQuota(null);
+    expect(rpc.mock.calls[0][1].p_key_hash).toBe("intake_submit_ip|desconocida");
+    rpc.mockClear();
+    vi.stubEnv("NODE_ENV", "test");
+    expect(await consumeIntakeSubmitQuota(null)).toBe(true);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("lecturas de la página: 60 por minuto por IP", async () => {
+    expect(await consumeIntakeReadQuota("203.0.113.7")).toBe(true);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_scope: "intake_read_ip",
+      p_key_hash: "intake_read_ip|203.0.113.7",
+      p_max_failures: INTAKE_READ_MAX_PER_IP_PER_WINDOW + 1,
+      p_window_seconds: 60,
+    });
+    rpc.mockResolvedValue({ data: "2026-10-01T00:00:00Z", error: null });
+    expect(await consumeIntakeReadQuota("203.0.113.7")).toBe(false);
+  });
+
+  it("si el contador falla se deja pasar: el tope diario vive dentro de la base", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe(true);
+    expect(await consumeIntakeReadQuota("203.0.113.7")).toBe(true);
   });
 });

@@ -278,9 +278,8 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await expect(panel.getByText("Publicado", { exact: true })).toBeVisible();
   const link = (await page.getByTestId("public-link").innerText()).trim();
   expect(link).toMatch(new RegExp(`^http://localhost:\\d+/f/[A-Za-z0-9_-]{22}$`));
-  await expect(page.getByTestId("link-not-ready")).toContainText(
-    "todavía no está disponible hasta la siguiente historia",
-  );
+  // la página pública ya existe (H-087): ya no hay nota de «todavía no disponible»
+  await expect(page.getByTestId("link-not-ready")).toHaveCount(0);
   await panel.getByRole("button", { name: "Copiar enlace" }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(link);
   await dismissToasts(page);

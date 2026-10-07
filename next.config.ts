@@ -6,14 +6,19 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
 // CSP inicial. Next.js inserta scripts en línea, por eso 'unsafe-inline' en script-src;
 // más adelante se puede pasar a una CSP con nonce. 'unsafe-eval' solo en desarrollo.
-const buildContentSecurityPolicy = (frameAncestors: "'none'" | "'self'") =>
+const buildContentSecurityPolicy = (
+  frameAncestors: "'none'" | "'self'",
+  // Solo el formulario público con Turnstile: Cloudflare carga su script y su marco desde aquí.
+  antibotHost?: string,
+) =>
   [
     "default-src 'self'",
-    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}${antibotHost ? ` ${antibotHost}` : ""}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
     `connect-src 'self' ${supabaseUrl}${isDev ? " ws: wss:" : ""}`.trim(),
+    ...(antibotHost ? [`frame-src ${antibotHost}`] : []),
     `frame-ancestors ${frameAncestors}`,
     "base-uri 'self'",
     "form-action 'self'",
@@ -23,6 +28,13 @@ const contentSecurityPolicy = buildContentSecurityPolicy("'none'");
 // El PDF de la cotización es lo único que la propia aplicación enmarca (vista previa de enviar).
 // Conserva TODA la política base y solo cambia quién puede enmarcarlo.
 const pdfContentSecurityPolicy = buildContentSecurityPolicy("'self'");
+// Formulario público (H-087): igual que la general, y con Turnstile se abre SOLO a Cloudflare. Sigue
+// con `frame-ancestors 'none'`: la versión incrustable es otra historia (H-093) con su propia ruta.
+const TURNSTILE_HOST = "https://challenges.cloudflare.com";
+const publicFormContentSecurityPolicy = buildContentSecurityPolicy(
+  "'none'",
+  process.env.ANTIBOT_PROVIDER === "turnstile" ? TURNSTILE_HOST : undefined,
+);
 
 const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
@@ -58,16 +70,23 @@ const nextConfig: NextConfig = {
         source,
         headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }],
       })),
-      // El enlace del cliente (H-030) lo abre cualquiera con el token: nada se guarda en cachés ni en
-      // buscadores, y al salir de la página no se manda la dirección (lleva el token) a ningún sitio.
-      ...["/c/:path*", "/api/v1/public/:path*"].map((source) => ({
+      // El enlace del cliente (H-030) y el formulario público (H-087) los abre cualquiera: nada se guarda en
+      // cachés ni en buscadores, y al salir de la página no se manda la dirección (lleva el token o el
+      // identificador del formulario) a ningún sitio.
+      ...["/c/:path*", "/f/:path*", "/api/v1/public/:path*"].map((source) => ({
         source,
         headers: [
           { key: "Cache-Control", value: "private, no-store, max-age=0" },
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
         ],
       })),
+      // La página del formulario público: política propia (con Turnstile, abierta solo a Cloudflare).
+      {
+        source: "/f/:publicId",
+        headers: [{ key: "Content-Security-Policy", value: publicFormContentSecurityPolicy }],
+      },
       // La vista previa de enviar muestra el PDF dentro de la propia aplicación (iframe del mismo
       // origen): solo este archivo puede enmarcarse, y solo desde nuestras pantallas.
       {

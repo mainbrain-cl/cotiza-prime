@@ -385,6 +385,23 @@ el registro de aislamiento.
 - Una solicitud anonimizada (`anonymized_at` no nulo) no tiene datos de contacto: la pantalla debe mostrarla como
   «datos eliminados» y no ofrecer convertirla ni avisar por correo.
 
+### H-087 · cómo quedó construido (2026-10-07)
+
+- **Orden del envío** (`src/lib/intake/submit-service.ts`): Origin (en la ruta) → forma del identificador → límite por IP
+  → cuerpo (≤16 kB, solo JSON) → forma mínima (sello y token) → campo trampa y sello de tiempo → anti-robot →
+  lectura del formulario → **validación estricta** → cifrado → base → avisos. Desviación del §2: la validación
+  completa va DESPUÉS de leer el formulario (necesita sus reglas); antes de eso solo se mira la forma mínima.
+- **Bloqueos que se cuentan:** captcha (anti-robot, campo trampa y sello), rate (límite por IP) e invalid (cuerpo o
+  datos inválidos). Nunca `paused` ni `cap`.
+- **form_changed / invalid_items:** la respuesta trae el contenido vigente y un sello nuevo; la pantalla lo cambia sin
+  perder lo escrito (y pide aceptar de nuevo el aviso si su texto cambió).
+- **El envío espera 3,3 s desde que se mostró la página** (del lado del navegador) para no chocar con el sello
+  mínimo de 3 s cuando el navegador autocompleta rápido.
+- **Texto de consentimiento guardado:** el aviso más, si la organización la tiene, el enlace a su política en la línea
+  siguiente. Versión `intake-v1`.
+- **No hay límite por formulario** (`intake_submit_form`), solo por IP y el tope diario de la base.
+- El resumen en vivo (H-088) queda para su historia: `FormView` ya acepta `interaction` y deja un lugar para él.
+
 ### Fuera de este cambio
 
 - `convert_intake_request` y `assign_intake_request` aceptan hoy una solicitud ya anonimizada (no se pidió

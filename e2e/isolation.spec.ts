@@ -18,6 +18,8 @@ import { countRows, loadFixture, stateFile } from "./isolation-support";
 const NOT_FOUND_HEADING = "No encontrado";
 /** Un token con la forma correcta (43 caracteres base64url) que no existe en ninguna parte. */
 const INVENTED_SHARE_TOKEN = "A".repeat(43);
+/** Un identificador de formulario público con la forma correcta (22 caracteres) que no existe en ninguna parte. */
+const INVENTED_PUBLIC_ID = "A".repeat(22);
 
 async function withDb<T>(fn: (db: Client) => Promise<T>): Promise<T> {
   const db = await connect();
@@ -232,6 +234,21 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         });
         expect([404, 405], route.path).toContain(res.status());
         expect(await res.text()).not.toContain(fx.orgs.B.canary);
+      } else if (route.scope === "form") {
+        // Formulario público (H-087): con un identificador inventado, un GET no entrega nada (404, o 405 si
+        // solo acepta POST) y un POST sin `Origin` de la aplicación se rechaza sin tocar datos.
+        const path = route.path.replace("[publicId]", INVENTED_PUBLIC_ID);
+        const get = await page.request.get(path, {
+          headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
+        });
+        expect([200, 404, 405], path).toContain(get.status());
+        expect(await get.text(), path).not.toContain(fx.orgs.B.canary);
+        const post = await page.request.post(path, {
+          headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
+          data: {},
+        });
+        expect([400, 403, 404, 405], path).toContain(post.status());
+        expect(await post.text(), path).not.toContain(fx.orgs.B.canary);
       } else if (route.scope === "signed") {
         // Aviso firmado del proveedor de correo: un GET no es válido (405) y un POST sin firma da 401,
         // sin datos de nadie.
@@ -572,6 +589,75 @@ test.describe("Quien dejó de ser miembro y quien tiene la organización archiva
 
 test.describe("Sin sesión", () => {
   test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("P29 · el formulario público de A no entrega nada de B ni acepta un servicio de B (y no muestra identificadores internos)", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const fx = loadFixture();
+    const { A, B } = fx.orgs;
+    const a = A.intake!;
+    const b = B.intake!;
+    const origin = new URL(test.info().project.use.baseURL!).origin;
+    const requestsOf = (formId: string) =>
+      withDb((db) =>
+        countRows(db, "select 1 from public.intake_requests where form_id = $1", [formId]),
+      );
+    const beforeA = await requestsOf(a.formId);
+    const beforeB = await requestsOf(b.formId);
+
+    const res = await page.request.get(`/f/${a.publicId}`);
+    expect(res.status()).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(A.canary);
+    for (const secret of [
+      B.canary,
+      A.tenantId,
+      B.tenantId,
+      a.formId,
+      b.formId,
+      a.catalogItemId,
+      b.catalogItemId,
+      `Formulario ${A.canary}`,
+    ]) {
+      expect(
+        html,
+        "la página pública no puede traer datos internos ni de otra organización",
+      ).not.toContain(secret);
+    }
+    const renderToken = /v1\.\d{9,12}\.[A-Za-z0-9_-]{43}/.exec(html)?.[0];
+    expect(renderToken, "la página trae el sello de tiempo").toBeTruthy();
+
+    // El sello pide al menos 3 segundos entre mostrar el formulario y enviarlo.
+    await page.waitForTimeout(3_500);
+    const post = await page.request.post(`/api/v1/public/forms/${a.publicId}/requests`, {
+      headers: { origin },
+      data: {
+        name: "Visitante Ficticio",
+        email: "visitante-p28@ejemplo.test",
+        items: [{ formItemId: b.freeItemId, quantity: null }],
+        consent: true,
+        submitKey: randomUUID(),
+        requestId: randomUUID(),
+        formRevision: a.revision,
+        website: "",
+        renderToken,
+        antibotToken: "test-pass",
+      },
+    });
+    const text = await post.text();
+    expect(post.status(), text).toBe(422);
+    expect(text).toContain("ya no está disponible");
+    expect(text).not.toContain(B.canary);
+    expect(text).not.toContain(B.tenantId);
+    expect(await requestsOf(a.formId)).toBe(beforeA);
+    expect(await requestsOf(b.formId)).toBe(beforeB);
+
+    // La página de un identificador inventado no dice nada de nadie.
+    const invented = await (await page.request.get(`/f/${INVENTED_PUBLIC_ID}`)).text();
+    expect(invented).not.toContain(A.canary);
+    expect(invented).not.toContain(B.canary);
+  });
 
   test("una dirección de una organización lleva a ingresar y no muestra nada", async ({ page }) => {
     const fx = loadFixture();

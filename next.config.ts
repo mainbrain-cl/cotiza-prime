@@ -101,6 +101,11 @@ const nextConfig: NextConfig = {
         source: "/api/v1/tenants/:tenantId/logo",
         headers: [{ key: "Content-Security-Policy", value: LOGO_CONTENT_SECURITY_POLICY }],
       },
+      // El código QR del formulario (H-091) es otro archivo servido por nosotros: misma política estricta.
+      {
+        source: "/api/v1/tenants/:tenantId/intake-forms/:formId/qr",
+        headers: [{ key: "Content-Security-Policy", value: LOGO_CONTENT_SECURITY_POLICY }],
+      },
     ];
   },
 };

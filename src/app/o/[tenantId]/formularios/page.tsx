@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CopyLinkButton } from "@/components/intake/copy-link-button";
 import { FormStatusBadge } from "@/components/intake/form-status-badge";
+import { QrDownloads } from "@/components/intake/qr-downloads";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FORMS_PER_ORGANIZATION_MAX } from "@/lib/intake/builder-model";
@@ -159,6 +160,14 @@ export default async function IntakeFormsPage({
                         {row.publicUrl}
                       </p>
                       <CopyLinkButton url={row.publicUrl} />
+                      {canEdit ? (
+                        <QrDownloads
+                          compact
+                          tenantId={active.tenantId}
+                          formId={row.id}
+                          publicUrl={row.publicUrl}
+                        />
+                      ) : null}
                     </div>
                   ) : null}
                 </li>

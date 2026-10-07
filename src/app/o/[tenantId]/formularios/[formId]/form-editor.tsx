@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/intake/confirm-action";
 import { CopyLinkButton } from "@/components/intake/copy-link-button";
+import { QrDownloads } from "@/components/intake/qr-downloads";
 import { FormStatusBadge } from "@/components/intake/form-status-badge";
 import { FormView } from "@/components/intake/form-view";
 import { Button } from "@/components/ui/button";
@@ -741,6 +742,14 @@ export function FormEditor({
               <div className="flex flex-wrap gap-2">
                 <CopyLinkButton url={publicUrl} />
               </div>
+              {canEdit ? (
+                <QrDownloads
+                  tenantId={tenantId}
+                  formId={formId}
+                  publicUrl={publicUrl}
+                  paused={status === "paused"}
+                />
+              ) : null}
               {status === "paused" ? (
                 <p className="text-sm text-fg-muted">
                   El formulario está en pausa: quien abra el enlace verá que por ahora no recibe

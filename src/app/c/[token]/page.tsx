@@ -78,6 +78,7 @@ export default async function SharedQuotePage({ params }: PageProps<"/c/[token]"
           <ResponsePanel
             apiBase={`${API_PREFIX}/${token}`}
             organizationName={link.document.organization.name}
+            contactLines={link.contact.detailLines}
             initialResponse={
               link.response
                 ? {

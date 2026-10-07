@@ -136,6 +136,27 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
         p_user_agent: null,
         p_acceptance_text_version: "v1",
       },
+      share_notice_recipients: {
+        p_tenant_id: randomUUID(),
+        p_quote_id: randomUUID(),
+        p_response_id: randomUUID(),
+      },
+      internal_notice_register: {
+        p_email_id: randomUUID(),
+        p_tenant_id: randomUUID(),
+        p_quote_id: randomUUID(),
+        p_response_id: randomUUID(),
+        p_to_user_id: randomUUID(),
+        p_to_email_enc: "x",
+        p_to_email_hash: "0".repeat(64),
+      },
+      internal_notice_settle: {
+        p_email_id: randomUUID(),
+        p_tenant_id: randomUUID(),
+        p_provider: "memory",
+        p_provider_message_id: "x",
+        p_error_code: null,
+      },
     };
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {

@@ -1,8 +1,9 @@
 /**
  * Aviso interno al autor de una cotización cuando el cliente la acepta o la rechaza (H-031).
  * Es un correo para una persona del equipo, no para el cliente: lleva el número, la decisión (con el
- * motivo si fue un rechazo) y un botón hacia la cotización dentro de la aplicación. NUNCA lleva datos
- * bancarios ni el enlace del cliente.
+ * motivo de la lista si fue un rechazo) y un botón hacia la cotización dentro de la aplicación. NUNCA
+ * lleva datos bancarios, el enlace del cliente, ni nada escrito por el cliente (su nombre y su comentario
+ * libre se ven solo dentro de la aplicación, a los miembros de la organización).
  */
 import { z } from "zod";
 import { escapeHtml } from "./basic-format";
@@ -11,6 +12,7 @@ import { HEADER_UNSAFE } from "./unsafe-characters";
 
 export const INTERNAL_SENDER_NAME = "Cotiza Prime";
 export const NOTICE_BUTTON_LABEL = "Ver la cotización";
+export const FREE_TEXT_NOTICE = "El cliente dejó un comentario; míralo en la cotización.";
 const MAX_SUBJECT_LENGTH = 150;
 const UNSAFE_GLOBAL = new RegExp(HEADER_UNSAFE.source, "g");
 const emailSchema = z.email().max(254);
@@ -20,12 +22,10 @@ export type InternalNoticeInput = {
   fromAddress: string;
   quoteNumber: string;
   decision: "accepted" | "rejected";
-  /** Nombre de quien aceptó (solo en aceptaciones). */
-  acceptorName?: string | null;
-  /** Motivo ya traducido a texto (solo en rechazos). */
+  /** Motivo de la lista, ya traducido a texto (solo en rechazos). */
   reasonLabel?: string | null;
-  /** Detalle escrito por el cliente cuando eligió «otro». */
-  reasonText?: string | null;
+  /** `true` si el cliente dejó un comentario libre: el correo solo avisa que existe, no lo copia. */
+  hasFreeText?: boolean;
   /** Dirección de la cotización dentro de la aplicación. */
   quoteUrl: string;
   idempotencyKey?: string;
@@ -61,15 +61,12 @@ export function buildInternalNotice(input: InternalNoticeInput): InternalNoticeR
       ? `Tu cliente aceptó la cotización ${number}.`
       : `Tu cliente rechazó la cotización ${number}.`,
   ];
-  const acceptor = input.acceptorName ? clean(input.acceptorName) : "";
-  if (accepted && acceptor) lines.push(`Aceptó: ${acceptor}.`);
   if (!accepted) {
     const reason = input.reasonLabel ? clean(input.reasonLabel) : "";
     if (reason) lines.push(`Motivo: ${reason}.`);
-    const detail = input.reasonText ? clean(input.reasonText) : "";
-    if (detail) lines.push(`Detalle: ${detail}`);
+    if (input.hasFreeText) lines.push(FREE_TEXT_NOTICE);
   }
-  lines.push("Puedes revisar el historial completo en la cotización.");
+  lines.push("Puedes revisar el detalle y el historial en la cotización.");
 
   const paragraphs = lines.map((line) => `<p style="margin:0 0 12px 0;">${escapeHtml(line)}</p>`);
   const link = escapeHtml(url.href);

@@ -43,6 +43,37 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
       ["share_link_read", { p_token_sha256: sha }],
       ["share_link_record_view", { p_token_sha256: sha, p_ip_enc: "x", p_user_agent: "x" }],
       ["share_link_respond", respondArgs(sha)],
+      // el aviso interno de H-031: con ids reales de B, nadie con pase llega a los correos del equipo
+      [
+        "share_notice_recipients",
+        {
+          p_tenant_id: fx.orgs.B.tenantId,
+          p_quote_id: fx.orgs.B.share!.quoteId,
+          p_response_id: fx.orgs.B.share!.responseId,
+        },
+      ],
+      [
+        "internal_notice_register",
+        {
+          p_email_id: randomUUID(),
+          p_tenant_id: fx.orgs.B.tenantId,
+          p_quote_id: fx.orgs.B.share!.quoteId,
+          p_response_id: fx.orgs.B.share!.responseId,
+          p_to_user_id: fx.personas.ana.userId,
+          p_to_email_enc: "ataque",
+          p_to_email_hash: "0".repeat(64),
+        },
+      ],
+      [
+        "internal_notice_settle",
+        {
+          p_email_id: fx.orgs.B.share!.emailMessageId,
+          p_tenant_id: fx.orgs.B.tenantId,
+          p_provider: "memory",
+          p_provider_message_id: "ataque",
+          p_error_code: null,
+        },
+      ],
       [
         "record_email_event",
         {
@@ -99,6 +130,35 @@ describe("Ataque 3 · las funciones del portero no las llama nadie con un pase n
     });
     expect(event.status, event.text).toBe(200);
     expect(event.json).toEqual({ result: "unknown" });
+  });
+
+  it("los destinatarios del aviso son solo miembros activos de la organización de la respuesta", async () => {
+    const fx = fixture();
+    const ok = await asServer("share_notice_recipients", {
+      p_tenant_id: fx.orgs.B.tenantId,
+      p_quote_id: fx.orgs.B.share!.quoteId,
+      p_response_id: fx.orgs.B.share!.responseId,
+    });
+    expect(ok.status, ok.text).toBe(200);
+    const body = ok.json as { recipients: { user_id: string }[] };
+    expect(body.recipients.length).toBeGreaterThan(0);
+    const { rows } = await db.query<{ user_id: string }>(
+      "select user_id from public.members where tenant_id = $1 and status = 'active'",
+      [fx.orgs.B.tenantId],
+    );
+    const activeInB = new Set(rows.map((r) => r.user_id));
+    for (const recipient of body.recipients) expect(activeInB.has(recipient.user_id)).toBe(true);
+    // Ana solo es de A: nunca aparece como destinataria de un aviso de B
+    expect(ok.text).not.toContain(fx.personas.ana.userId);
+
+    // la respuesta de B pedida con la organización A no existe: no entrega nada
+    const crossed = await asServer("share_notice_recipients", {
+      p_tenant_id: fx.orgs.A.tenantId,
+      p_quote_id: fx.orgs.B.share!.quoteId,
+      p_response_id: fx.orgs.B.share!.responseId,
+    });
+    expect(crossed.status).toBeGreaterThanOrEqual(400);
+    expect(crossed.text).not.toContain("@");
   });
 });
 

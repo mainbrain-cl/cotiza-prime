@@ -14,13 +14,22 @@ vi.mock("@/lib/crypto/pii", () => ({
   ) => `cifrado(${plain})|${ctx.table}.${ctx.field}|${ctx.tenantId}|${ctx.rowId}`,
 }));
 
+vi.mock("@/lib/crypto/search-hash", () => ({
+  searchHash: (field: string, tenantId: string, value: string) =>
+    `huella(${field}|${tenantId}|${value})`,
+}));
+
 import {
+  ShareGatewayError,
   expectedPdfPath,
   readFrozenLogoDataUrl,
   readFrozenPdf,
+  readNoticeRecipients,
   readShareLink,
   recordShareView,
+  registerInternalNotice,
   respondShareLink,
+  settleInternalNotice,
 } from "./gateway";
 import type { ShareAvailable } from "./read-model";
 import { hashShareToken, newShareToken } from "./token";
@@ -230,5 +239,90 @@ describe("el portero: archivos congelados", () => {
     ).toBeNull();
     expect(await readFrozenLogoDataUrl(available({ logoPath: null }))).toBeNull();
     expect(download).not.toHaveBeenCalled();
+  });
+});
+
+describe("aviso interno de H-031 por el portero", () => {
+  const RESPONSE = "66666666-6666-4666-8666-666666666666";
+  const USER = "77777777-7777-4777-8777-777777777777";
+  const EMAIL = "88888888-8888-4888-8888-888888888888";
+
+  it("los destinatarios salen ya filtrados de la base y no se usa la API de cuentas", async () => {
+    rpc.mockResolvedValue({
+      data: {
+        package_id: PACKAGE,
+        audience: "managers",
+        recipients: [{ user_id: USER, email: "dueno@ejemplo.test" }],
+      },
+      error: null,
+    });
+    const result = await readNoticeRecipients({
+      tenantId: TENANT,
+      quoteId: QUOTE,
+      responseId: RESPONSE,
+    });
+    expect(rpc).toHaveBeenCalledWith("share_notice_recipients", {
+      p_tenant_id: TENANT,
+      p_quote_id: QUOTE,
+      p_response_id: RESPONSE,
+    });
+    expect(result).toEqual({
+      packageId: PACKAGE,
+      audience: "managers",
+      recipients: [{ userId: USER, email: "dueno@ejemplo.test" }],
+    });
+  });
+
+  it("una respuesta de la base con otra forma es un error, no una lista vacía", async () => {
+    rpc.mockResolvedValue({ data: { recipients: "x" }, error: null });
+    await expect(
+      readNoticeRecipients({ tenantId: TENANT, quoteId: QUOTE, responseId: RESPONSE }),
+    ).rejects.toThrow(ShareGatewayError);
+    rpc.mockResolvedValue({ data: null, error: { code: "CP404" } });
+    await expect(
+      readNoticeRecipients({ tenantId: TENANT, quoteId: QUOTE, responseId: RESPONSE }),
+    ).rejects.toThrow("share_gateway_notice_recipients:CP404");
+  });
+
+  it("registrar: el correo va normalizado, cifrado con el sello de la fila y con su huella", async () => {
+    await registerInternalNotice({
+      emailId: EMAIL,
+      tenantId: TENANT,
+      quoteId: QUOTE,
+      responseId: RESPONSE,
+      recipient: { userId: USER, email: " Dueno@Ejemplo.TEST " },
+    });
+    expect(rpc).toHaveBeenCalledWith("internal_notice_register", {
+      p_email_id: EMAIL,
+      p_tenant_id: TENANT,
+      p_quote_id: QUOTE,
+      p_response_id: RESPONSE,
+      p_to_user_id: USER,
+      p_to_email_enc: `cifrado(dueno@ejemplo.test)|email_messages.to_email|${TENANT}|${EMAIL}`,
+      p_to_email_hash: `huella(email|${TENANT}|dueno@ejemplo.test)`,
+    });
+  });
+
+  it("cerrar: enviado lleva lo que informó el proveedor; fallido, solo un código", async () => {
+    await settleInternalNotice({
+      emailId: EMAIL,
+      tenantId: TENANT,
+      sent: { provider: "mailpit", providerMessageId: "m-1" },
+    });
+    expect(rpc).toHaveBeenLastCalledWith("internal_notice_settle", {
+      p_email_id: EMAIL,
+      p_tenant_id: TENANT,
+      p_provider: "mailpit",
+      p_provider_message_id: "m-1",
+      p_error_code: null,
+    });
+    await settleInternalNotice({ emailId: EMAIL, tenantId: TENANT, errorCode: "timeout" });
+    expect(rpc).toHaveBeenLastCalledWith("internal_notice_settle", {
+      p_email_id: EMAIL,
+      p_tenant_id: TENANT,
+      p_provider: null,
+      p_provider_message_id: null,
+      p_error_code: "timeout",
+    });
   });
 });

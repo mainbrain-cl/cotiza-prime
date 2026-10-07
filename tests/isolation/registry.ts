@@ -495,6 +495,10 @@ export const SERVER_ONLY_FUNCTIONS = [
   "share_link_read",
   "share_link_record_view",
   "share_link_respond",
+  // Sprint 3 (H-031): destinatarios del aviso interno ya filtrados por la base, y su registro
+  "share_notice_recipients",
+  "internal_notice_register",
+  "internal_notice_settle",
   // Sprint 3: los avisos del proveedor de correo (la ruta verifica la firma antes de llamarla)
   "record_email_event",
 ];

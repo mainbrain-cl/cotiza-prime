@@ -4,9 +4,12 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FormAlert } from "@/components/ui/form-controls";
+import { DeliveryBadge } from "@/components/ui/delivery-badge";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatDate } from "@/lib/format-date";
 import { formatClp } from "@/lib/money/clp";
+import { getDeliveryByQuote } from "@/lib/quotes/delivery";
+import { needsAttention, type QuoteDelivery } from "@/lib/quotes/delivery-model";
 import { formatQuoteNumber, toBadgeStatus } from "@/lib/quotes/format";
 import {
   QUOTE_SCOPE_PARAM,
@@ -23,6 +26,20 @@ export const metadata: Metadata = { title: "Cotizaciones · Cotiza Prime" };
 
 const WRITER_ROLES = ["owner", "admin", "sales"];
 
+/** Estado de la cotización; si su correo rebotó, además el aviso (solo lo que pide atención). */
+function StatusCell({ status, delivery }: { status: string; delivery: QuoteDelivery | undefined }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <StatusBadge status={toBadgeStatus(status)} />
+      {delivery && needsAttention(delivery) ? (
+        <span data-testid="list-bounce">
+          <DeliveryBadge status={delivery.status} />
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 const SCOPE_OPTIONS: { scope: QuoteListScope; label: string }[] = [
   { scope: "all", label: "Todas" },
   { scope: "mine", label: "Mías" },
@@ -35,6 +52,7 @@ export default async function QuotesPage({
   const active = await requireActiveTenant((await params).tenantId);
   const scope = parseQuoteScope((await searchParams)[QUOTE_SCOPE_PARAM]);
   const quotes = await listRecentQuotes(active, scope);
+  const deliveries = await getDeliveryByQuote(active, quotes?.map((quote) => quote.id) ?? []);
   const listPath = tenantPath(active.tenantId, "cotizaciones");
   const canCreate = WRITER_ROLES.includes(active.role);
   const newPath = tenantPath(active.tenantId, "cotizaciones/nueva");
@@ -115,7 +133,7 @@ export default async function QuotesPage({
                     <span className="font-mono font-semibold text-fg">
                       {formatQuoteNumber(quote.numberDisplay, quote.version)}
                     </span>
-                    <StatusBadge status={toBadgeStatus(quote.status)} />
+                    <StatusCell status={quote.status} delivery={deliveries.get(quote.id)} />
                   </span>
                   <span className="text-fg">{quote.customerName}</span>
                   <span className="flex items-center justify-between text-sm text-fg-muted">
@@ -172,7 +190,7 @@ export default async function QuotesPage({
                       {formatClp(quote.totalClp)}
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={toBadgeStatus(quote.status)} />
+                      <StatusCell status={quote.status} delivery={deliveries.get(quote.id)} />
                     </td>
                     <td className="px-4 py-3">{quote.authorName}</td>
                     <td className="px-4 py-3 tabular-nums">{formatDate(quote.createdAt)}</td>

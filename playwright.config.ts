@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { appSupabaseEnv } from "./tests/support/local-supabase";
 import { ensureTestCryptoEnv } from "./tests/support/test-env";
+import { E2E_WEBHOOK_SECRET } from "./tests/support/webhook-secret";
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
 const USE_PRODUCTION_BUILD = !!process.env.CI || process.env.E2E_PROD === "1";
@@ -58,6 +59,8 @@ export default defineConfig({
       // Los correos de las pruebas salen a Mailpit (http://127.0.0.1:56324), nunca a un proveedor real.
       EMAIL_PROVIDER: "mailpit",
       MAILPIT_API_URL: process.env.MAILPIT_URL ?? "http://127.0.0.1:56324",
+      // Secreto ficticio con que las pruebas firman los avisos de entrega (H-033).
+      EMAIL_WEBHOOK_SECRET: E2E_WEBHOOK_SECRET,
     },
     reuseExistingServer: false,
     timeout: WEB_SERVER_STARTUP_TIMEOUT_MS,

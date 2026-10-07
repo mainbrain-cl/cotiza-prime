@@ -1,9 +1,10 @@
-import { ChevronLeft, Send } from "lucide-react";
+import { ChevronLeft, Pencil, Send } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
+import { DeliveryBadge } from "@/components/ui/delivery-badge";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { maskEmail } from "@/lib/customers/mask";
 import { getCustomer } from "@/lib/customers/queries";
@@ -16,6 +17,10 @@ import {
   formatQuoteNumber,
   toBadgeStatus,
 } from "@/lib/quotes/format";
+import { getQuoteDelivery } from "@/lib/quotes/delivery";
+import { needsAttention } from "@/lib/quotes/delivery-model";
+import { canRevokeLinks } from "@/lib/quotes/link-rules";
+import { hasActiveShareLink } from "@/lib/quotes/links";
 import { getQuote } from "@/lib/quotes/queries";
 import { listQuoteTimeline } from "@/lib/quotes/timeline";
 import { editorValidity } from "@/lib/quotes/editor-model";
@@ -26,6 +31,7 @@ import { QuoteEditor } from "./quote-editor";
 import { QuoteReadOnly } from "./quote-read-only";
 import { QuoteTimeline } from "./quote-timeline";
 import { ResendButton } from "./resend-button";
+import { RevokeLinkButton } from "./revoke-link-button";
 
 export const metadata: Metadata = { title: "Cotización · Cotiza Prime" };
 
@@ -60,6 +66,18 @@ export default async function QuotePage({
     RESENDABLE_STATUSES.includes(quote.status) &&
     ((WRITER_ROLES.includes(active.role) && isAuthor) || ["owner", "admin"].includes(active.role));
   const timeline = await listQuoteTimeline(active, quote.id);
+  // Entrega del último correo (H-033) y enlace del cliente (H-035): solo si la cotización ya salió.
+  const delivery = quote.status === "draft" ? null : await getQuoteDelivery(active, quote.id);
+  const bounced = needsAttention(delivery);
+  const revocable = canRevokeLinks({
+    role: active.role,
+    isAuthor,
+    status: quote.status,
+  });
+  const linkIsActive = revocable ? await hasActiveShareLink(active, quote.id) : true;
+  const canRevoke = revocable && linkIsActive;
+  const linkRevoked = revocable && !linkIsActive;
+  const customerEditPath = tenantPath(active.tenantId, `clientes/${quote.customer_id}/editar`);
 
   let readOnlyReason: string | null = null;
   if (!editable) {
@@ -114,6 +132,7 @@ export default async function QuotePage({
             {formatQuoteNumber(quote.number_display, quote.version)}
           </h1>
           <StatusBadge status={toBadgeStatus(quote.status)} />
+          {delivery ? <DeliveryBadge status={delivery.status} /> : null}
           {editable && quote.status === "draft" ? (
             <Link
               href={sendPath}
@@ -124,9 +143,14 @@ export default async function QuotePage({
               Enviar al cliente
             </Link>
           ) : null}
-          {canResend ? (
-            <div className="md:ml-auto">
-              <ResendButton tenantId={active.tenantId} quoteId={quote.id} />
+          {(canResend && !bounced) || canRevoke ? (
+            <div className="flex flex-wrap items-start gap-2 md:ml-auto">
+              {canResend && !bounced ? (
+                <ResendButton tenantId={active.tenantId} quoteId={quote.id} />
+              ) : null}
+              {canRevoke ? (
+                <RevokeLinkButton tenantId={active.tenantId} quoteId={quote.id} />
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -135,6 +159,42 @@ export default async function QuotePage({
           {customerEmail ? <> · {customerEmail}</> : null} · Creada por {authorName} el{" "}
           {formatDate(quote.created_at)}
         </p>
+        {bounced ? (
+          <div
+            role="alert"
+            data-testid="bounce-alert"
+            className="flex flex-col gap-3 rounded-md border border-danger bg-danger-soft p-4 text-danger"
+          >
+            <p className="font-semibold">
+              {delivery?.status === "complained"
+                ? "El cliente marcó tu correo como spam."
+                : "El correo no llegó: la dirección del cliente rebotó."}
+            </p>
+            <p className="text-sm">
+              Revisa que el correo del cliente esté bien escrito, corrígelo en su ficha y vuelve a
+              reenviar la cotización. El reenvío usa el correo que tenga la ficha en ese momento.
+            </p>
+            <div className="flex flex-wrap items-start gap-2">
+              <Link
+                href={customerEditPath}
+                data-testid="fix-customer-email"
+                className={buttonVariants({ variant: "secondary" })}
+              >
+                <Pencil aria-hidden />
+                Corregir correo del cliente
+              </Link>
+              {canResend ? <ResendButton tenantId={active.tenantId} quoteId={quote.id} /> : null}
+            </div>
+          </div>
+        ) : null}
+        {linkRevoked ? (
+          <FormAlert tone="warning">
+            <span data-testid="link-revoked-note">
+              Revocaste el enlace del cliente: ya no puede abrir esta cotización. Para volver a
+              ofrecérsela, reenvíala y le llegará un enlace nuevo.
+            </span>
+          </FormAlert>
+        ) : null}
       </header>
 
       {readOnlyReason ? <FormAlert tone="warning">{readOnlyReason}</FormAlert> : null}

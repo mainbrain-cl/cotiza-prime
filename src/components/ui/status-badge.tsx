@@ -43,7 +43,7 @@ export const STATUS_DEFINITIONS: Record<QuoteStatus, StatusDefinition> = {
   replaced: { label: "Reemplazada", tone: "neutral", strikethrough: true },
 };
 
-const TONE_CLASSES: Record<StatusTone, { badge: string; dot: string }> = {
+export const TONE_CLASSES: Record<StatusTone, { badge: string; dot: string }> = {
   neutral: { badge: "bg-surface-2 text-fg-muted", dot: "bg-fg-subtle" },
   accent: { badge: "bg-accent-soft text-accent", dot: "bg-accent" },
   warning: { badge: "bg-warning-soft text-warning", dot: "bg-warning" },

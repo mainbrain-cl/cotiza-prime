@@ -44,6 +44,7 @@ describe("guardias estáticas del aislamiento", () => {
       "src/lib/brand/logo-storage.ts",
       "src/lib/quotes/send/document-storage.ts",
       "src/lib/share/gateway.ts",
+      "src/lib/email/delivery-events-service.ts",
       "src/server/jobs/",
     ];
     const offenders = sourceFiles
@@ -69,11 +70,16 @@ describe("guardias estáticas del aislamiento", () => {
       APP_ROUTES.filter((r) => r.scope === "none").map((r) => routeKey(r)),
     );
     const byToken = new Set(APP_ROUTES.filter((r) => r.scope === "token").map((r) => routeKey(r)));
+    const bySignature = new Set(
+      APP_ROUTES.filter((r) => r.scope === "signed").map((r) => routeKey(r)),
+    );
     for (const route of discovered) {
       // Una ruta que no esté en el registro la atrapa G5; aquí solo cuentan las declaradas "none".
       if (withoutOrganization.has(routeKey(route))) continue;
       // Las del enlace del cliente tienen su propia guardia (8b).
       if (byToken.has(routeKey(route))) continue;
+      // Las de avisos firmados por un proveedor tienen su propia guardia (8e).
+      if (bySignature.has(routeKey(route))) continue;
       expect(
         read(route.absoluteFile),
         `src/app/${route.file} debe llamar a requireActiveTenant( o declararse sin organización en APP_ROUTES`,
@@ -176,6 +182,31 @@ describe("guardias estáticas del aislamiento", () => {
     );
     expect(/admin-client|createClient|\.rpc\(|\.from\(/.test(text)).toBe(false);
     expect(text).toContain("respondShareLink(");
+  });
+
+  it("8e. los avisos del proveedor de correo: la firma se verifica antes de tocar la base, y el servicio solo llama a record_email_event", () => {
+    const signedRoutes = discoverAppRoutes(path.join(SRC, "app")).filter((r) =>
+      APP_ROUTES.some((a) => a.scope === "signed" && routeKey(a) === routeKey(r)),
+    );
+    expect(signedRoutes.length).toBeGreaterThanOrEqual(1);
+    for (const route of signedRoutes) {
+      const text = stripComments(read(route.absoluteFile));
+      const verify = text.indexOf("verifyAndParseWebhook(");
+      const record = text.indexOf("recordDeliveryEvent(");
+      expect(verify, `${route.file} debe verificar la firma`).toBeGreaterThan(-1);
+      expect(record, `${route.file} debe anotar el aviso`).toBeGreaterThan(verify);
+      // la ruta no toca la base ni la llave maestra directo: solo por el servicio
+      expect(/admin-client|createClient|\.rpc\(|\.from\(/.test(text), route.file).toBe(false);
+    }
+    const service = stripComments(
+      read(path.join(SRC, "lib", "email", "delivery-events-service.ts")),
+    ).replace(/\s+/g, " ");
+    // una sola función de la base, nombrada con una constante; nunca una tabla
+    expect([...service.matchAll(/\.rpc\(\s*([A-Za-z_]+)\s*,/g)].map((m) => m[1])).toEqual([
+      "RECORD_FUNCTION",
+    ]);
+    expect(service).toContain('RECORD_FUNCTION = "record_email_event"');
+    expect(/\.(from|insert|update|upsert|delete|select)\(/.test(service)).toBe(false);
   });
 
   it("9. el token no se escribe en los registros del servidor", () => {

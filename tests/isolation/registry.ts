@@ -536,8 +536,11 @@ export function visibilityDeclarationErrors(
  * - `token`: la abre el cliente final SIN cuenta con el token de su enlace (`/c/[token]` y
  *   `/api/v1/public/quote-links/[token]/...`). La organización sale de la fila del enlace, nunca de la
  *   dirección; pasan por el portero (`src/lib/share/gateway.ts`) con el token y los límites validados.
+ * - `signed`: la llama un proveedor externo (avisos de entrega del correo, `/api/v1/webhooks/...`), sin
+ *   sesión ni token: solo vale con la firma del proveedor verificada ANTES de mirar el cuerpo o tocar
+ *   la base (guardia 8e).
  */
-export type RouteScope = "tenant" | "none" | "token";
+export type RouteScope = "tenant" | "none" | "token" | "signed";
 
 export interface AppRoute {
   /** Como la escribe Next.js, p. ej. `/o/[tenantId]/clientes/[customerId]`. Sin grupos `(x)`. */
@@ -567,6 +570,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/api/v1/public/quote-links/[token]/view", kind: "api", scope: "token" },
   { path: "/api/v1/public/quote-links/[token]/accept", kind: "api", scope: "token" },
   { path: "/api/v1/public/quote-links/[token]/reject", kind: "api", scope: "token" },
+  { path: "/api/v1/webhooks/email/[provider]", kind: "api", scope: "signed" },
   { path: "/o/[tenantId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo/[itemId]", kind: "page", scope: "tenant" },

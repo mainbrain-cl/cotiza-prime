@@ -7,13 +7,20 @@ import { usePathname } from "next/navigation";
 import { useTransition } from "react";
 import { signOutAction } from "@/lib/auth/actions";
 import { cn } from "@/lib/utils";
-import { MOBILE_PRIMARY_SEGMENTS, NAV_ITEMS, isActive } from "./nav-items";
+import {
+  MOBILE_PRIMARY_SEGMENTS,
+  NAV_ITEMS,
+  badgeText,
+  isActive,
+  labelWithBadge,
+  type NavBadges,
+} from "./nav-items";
 
 const TAB_CLASS =
   "flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-xs font-semibold outline-none transition-[background-color,color,transform] duration-(--dur-fast) ease-ios active:scale-[0.97] focus-visible:ring-3 focus-visible:ring-ring/40";
 
 /** Barra inferior flotante del teléfono: tres destinos y "Más". Cada uno mide al menos 44 px. */
-export function MobileNav({ basePath }: { basePath: string }) {
+export function MobileNav({ basePath, badges }: { basePath: string; badges: NavBadges }) {
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
   const primary = NAV_ITEMS.filter((item) =>
@@ -21,6 +28,8 @@ export function MobileNav({ basePath }: { basePath: string }) {
   );
   const secondary = NAV_ITEMS.filter((item) => !primary.includes(item));
   const moreActive = secondary.some((item) => isActive(pathname, basePath, item.segment));
+  // Lo que espera a la persona dentro de «Más»: se avisa en el propio botón para que no pase inadvertido.
+  const morePending = secondary.reduce((sum, item) => sum + (badges[item.segment] ?? 0), 0);
 
   return (
     <nav
@@ -51,9 +60,20 @@ export function MobileNav({ basePath }: { basePath: string }) {
             TAB_CLASS,
             moreActive ? "bg-accent-soft text-accent glass-strong" : "text-fg-muted",
           )}
-          aria-label="Más opciones"
+          aria-label={labelWithBadge("Más opciones", morePending)}
         >
-          <Ellipsis aria-hidden strokeWidth={1.75} className="size-6" />
+          <span className="relative flex">
+            <Ellipsis aria-hidden strokeWidth={1.75} className="size-6" />
+            {morePending > 0 ? (
+              <span
+                aria-hidden
+                data-testid="more-badge"
+                className="absolute -top-1 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[11px] font-semibold text-on-accent"
+              >
+                {badgeText(morePending)}
+              </span>
+            ) : null}
+          </span>
           Más
         </Menu.Trigger>
         <Menu.Portal>
@@ -67,6 +87,15 @@ export function MobileNav({ basePath }: { basePath: string }) {
                 >
                   <Icon aria-hidden strokeWidth={1.75} className="size-5" />
                   {label}
+                  {badges[segment] ? (
+                    <span
+                      data-testid={`menu-badge-${segment}`}
+                      aria-label={labelWithBadge("", badges[segment]).replace(/^, /, "")}
+                      className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-xs font-semibold text-on-accent"
+                    >
+                      {badgeText(badges[segment])}
+                    </span>
+                  ) : null}
                 </Menu.LinkItem>
               ))}
               <Menu.Separator className="my-1.5 h-px bg-border" />

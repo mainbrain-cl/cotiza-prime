@@ -76,6 +76,8 @@ async function expectNotFound(page: Page, path: string) {
 }
 
 const PAGE_ROUTES = TENANT_PAGES;
+/** Igual a `TENANT_DENIED_MAX_LOGGED_PER_WINDOW` de src/lib/security/login-rate-limit.ts. */
+const TENANT_DENIED_MAX_LOGGED = 20;
 
 test.describe("Ana (Dueña de A) frente a la organización B", () => {
   test.use({ storageState: stateFile("ana") });
@@ -100,6 +102,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         B.catalogIds[0],
         B.quoteIds[0],
         B.intake!.formId,
+        B.intake!.requestId,
       );
       await expectNotFound(page, path);
       const html = await page.content();
@@ -149,7 +152,11 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
     const events = await deniedEvents(fx.personas.ana.userId, B.tenantId);
     // (otra prueba de este archivo, P22b, escribe el mismo identificador en mayúsculas: "invalid_id")
     const notMember = events.filter((e) => e.reason === "not_a_member");
-    expect(notMember.length).toBeGreaterThanOrEqual(PAGE_ROUTES.length);
+    // La constancia por persona tiene tope (TENANT_DENIED_MAX_LOGGED_PER_WINDOW, 20 cada 15 minutos): con
+    // más de 20 pantallas ya no se puede exigir una constancia por cada una.
+    expect(notMember.length).toBeGreaterThanOrEqual(
+      Math.min(PAGE_ROUTES.length, TENANT_DENIED_MAX_LOGGED),
+    );
     expect(events.every((e) => ["not_a_member", "invalid_id"].includes(e.reason))).toBe(true);
     // B no recibió ninguna fila nueva: ni datos, ni auditoría visible para su Dueño
     expect(await bRowCount(B.tenantId)).toBe(rowsBefore);
@@ -194,6 +201,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         fx.orgs.A.catalogIds[0],
         fx.orgs.A.quoteIds[0],
         fx.orgs.A.intake!.formId,
+        fx.orgs.A.intake!.requestId,
       );
       const response = await page.goto(path);
       expect(response?.status(), path).toBe(200);

@@ -259,7 +259,7 @@ export async function submitIntakeRequest(input: IntakeSubmitInput): Promise<Int
   return { result: body.result };
 }
 
-export type IntakeNoticeKind = "request_received" | "intake_cap_reached";
+export type IntakeNoticeKind = "request_assigned" | "request_received" | "intake_cap_reached";
 export type IntakeNoticeRecipient = { userId: string; email: string };
 
 const noticeRecipientsSchema = z.object({
@@ -279,7 +279,7 @@ const noticeRecipientsSchema = z.object({
  */
 export async function readIntakeNoticeRecipients(
   ref:
-    | { kind: "request_received"; requestId: string }
+    | { kind: "request_assigned" | "request_received"; requestId: string }
     | { kind: "intake_cap_reached"; formId: string },
 ): Promise<{
   tenantId: string;
@@ -289,7 +289,7 @@ export async function readIntakeNoticeRecipients(
   recipients: IntakeNoticeRecipient[];
 }> {
   const { data, error } = await createAdminClient().rpc("intake_notice_recipients", {
-    p_request_id: ref.kind === "request_received" ? ref.requestId : null,
+    p_request_id: ref.kind !== "intake_cap_reached" ? ref.requestId : null,
     p_kind: ref.kind,
     p_form_id: ref.kind === "intake_cap_reached" ? ref.formId : null,
   });
@@ -331,7 +331,7 @@ export async function registerIntakeNotice(input: {
   const email = normalizeEmail(input.recipient.email);
   const { data, error } = await createAdminClient().rpc("intake_notice_register", {
     p_email_id: input.emailId,
-    p_request_id: input.kind === "request_received" ? (input.requestId ?? null) : null,
+    p_request_id: input.kind !== "intake_cap_reached" ? (input.requestId ?? null) : null,
     p_kind: input.kind,
     p_to_user_id: input.recipient.userId,
     p_to_email_enc: encryptPii(email, {

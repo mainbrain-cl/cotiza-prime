@@ -9,6 +9,7 @@ import { APP_ENV, isTestEnv } from "@/lib/env/app-env";
 import type { MemberRole, Membership } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { MobileNav } from "./mobile-nav";
+import type { NavBadges } from "./nav-items";
 import { PageTransition } from "./page-transition";
 import { SidebarNav } from "./sidebar-nav";
 import { TenantSwitcher } from "./tenant-switcher";
@@ -31,11 +32,14 @@ export function AppShell({
   activeTenantId,
   memberships,
   userName,
+  badges = {},
   children,
 }: {
   activeTenantId: string;
   memberships: Membership[];
   userName: string;
+  /** Cuántas cosas esperan a la persona en cada destino del menú (hoy, solicitudes). */
+  badges?: NavBadges;
   children: ReactNode;
 }) {
   const basePath = tenantPath(activeTenantId);
@@ -67,7 +71,7 @@ export function AppShell({
         <Dock className="flex size-full flex-col items-center gap-4 rounded-xl p-2 glass">
           <BrandMark compact />
           <TenantSwitcher activeTenantId={activeTenantId} tenants={switcherTenants} collapsed />
-          <SidebarNav basePath={basePath} />
+          <SidebarNav basePath={basePath} badges={badges} />
           <div className="mt-auto flex flex-col items-center gap-2 border-t border-border pt-3">
             <form action={signOutAction}>
               <DockItem
@@ -91,7 +95,7 @@ export function AppShell({
         <LegalFooter className="pb-[calc(env(safe-area-inset-bottom)+5.5rem)] md:pb-3" />
       </div>
 
-      <MobileNav basePath={basePath} />
+      <MobileNav basePath={basePath} badges={badges} />
     </div>
   );
 }

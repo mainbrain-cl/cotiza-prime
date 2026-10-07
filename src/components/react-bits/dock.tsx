@@ -64,6 +64,8 @@ type DockItemProps = {
   /** Segunda línea de la etiqueta visible (por ejemplo, quién tiene la sesión abierta). */
   hint?: string;
   icon: ReactNode;
+  /** Número corto sobre el ícono (por ejemplo, cuántas solicitudes esperan). Lo lee el nombre accesible. */
+  badge?: string;
   active?: boolean;
   className?: string;
 } & (
@@ -78,6 +80,7 @@ export function DockItem({
   label,
   hint,
   icon,
+  badge,
   active,
   href,
   type = "button",
@@ -153,6 +156,15 @@ export function DockItem({
           {content}
         </button>
       )}
+      {badge ? (
+        <span
+          aria-hidden
+          data-testid="dock-badge"
+          className="pointer-events-none absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-xs font-semibold text-on-accent shadow-1"
+        >
+          {badge}
+        </span>
+      ) : null}
       {/* Etiqueta visual: el nombre accesible ya está en aria-label, por eso no se repite. */}
       <span
         aria-hidden

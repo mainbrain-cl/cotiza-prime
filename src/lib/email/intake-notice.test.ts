@@ -21,6 +21,17 @@ describe("aviso al equipo del formulario público", () => {
     expect(result.message.html).toContain("No lleva datos de quien llenó el formulario");
   });
 
+  it("«Te asignaron una solicitud»: asunto, botón a la solicitud y nada del visitante", () => {
+    const result = buildIntakeNotice({ ...base, kind: "request_assigned" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.message.subject).toBe("Te asignaron una solicitud");
+    expect(result.message.html).toContain("Ver la solicitud");
+    expect(result.message.html).toContain(base.appUrl);
+    expect(result.message.text).toContain("Fletes web");
+    expect(result.message.html).toContain("No lleva datos de quien llenó el formulario");
+  });
+
   it("el tope: asuntos distintos para el del formulario y el de la organización", () => {
     const form = buildIntakeNotice({ ...base, kind: "intake_cap_reached", capKind: "form" });
     const org = buildIntakeNotice({ ...base, kind: "intake_cap_reached", capKind: "org" });

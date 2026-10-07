@@ -2,7 +2,7 @@
 
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Loader2 } from "lucide-react";
-import { useRef, useState, type ReactElement } from "react";
+import { useRef, useState, type ReactElement, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
 
@@ -16,6 +16,10 @@ type ConfirmActionProps = {
   /** Devuelve un mensaje de error para dejar el diálogo abierto, o `null` si todo salió bien. */
   onConfirm: () => Promise<string | null>;
   testId: string;
+  /** Campos extra dentro del diálogo (por ejemplo, el motivo). */
+  children?: ReactNode;
+  /** Estilo del botón de confirmar. Por defecto, el de una acción destructiva. */
+  confirmVariant?: "danger" | "primary";
 };
 
 /** Confirmación antes de una acción que no se puede deshacer, con la consecuencia explicada. */
@@ -27,6 +31,8 @@ export function ConfirmAction({
   pendingLabel,
   onConfirm,
   testId,
+  children,
+  confirmVariant = "danger",
 }: ConfirmActionProps) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -71,6 +77,7 @@ export function ConfirmAction({
             <AlertDialog.Description className="text-fg-muted">
               {description}
             </AlertDialog.Description>
+            {children}
             {error ? <FormAlert>{error}</FormAlert> : null}
             <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
               <AlertDialog.Close
@@ -84,7 +91,7 @@ export function ConfirmAction({
               />
               <Button
                 type="button"
-                variant="danger"
+                variant={confirmVariant}
                 onClick={() => void confirm()}
                 disabled={pending}
                 aria-disabled={pending}

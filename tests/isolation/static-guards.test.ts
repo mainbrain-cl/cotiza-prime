@@ -293,10 +293,25 @@ describe("guardias estáticas del aislamiento", () => {
     const others = sourceFiles
       .filter((f) => rel(f).startsWith("src/lib/intake/") || rel(f).startsWith("src/app/f/"))
       .filter((f) => rel(f) !== "src/lib/intake/gateway.ts")
-      .filter((f) => !/\/builder-(actions|queries)\.ts$/.test(rel(f)))
+      .filter((f) => !/\/(builder|requests)-(actions|queries)\.ts$/.test(rel(f)))
       .filter((f) => /\.rpc\(|createAdminClient|\.storage\b/.test(stripComments(read(f))))
       .map(rel);
     expect(others).toEqual([]);
+  });
+
+  it("10g. (H-089) lo que escribió el visitante se muestra como texto plano: ni HTML inyectado ni formato básico en las pantallas de solicitudes", () => {
+    const files = sourceFiles.filter(
+      (f) =>
+        rel(f).startsWith("src/app/o/[tenantId]/solicitudes/") ||
+        /^src\/lib\/intake\/requests-/.test(rel(f)) ||
+        /^src\/components\/intake\/request-/.test(rel(f)),
+    );
+    expect(files.length).toBeGreaterThan(5);
+    for (const file of files) {
+      const code = stripComments(read(file));
+      expect(/dangerouslySetInnerHTML/.test(code), rel(file)).toBe(false);
+      expect(/basic-format|innerHTML/.test(code), rel(file)).toBe(false);
+    }
   });
 
   it("10b. TODA ruta del formulario público con POST comprueba el Origin antes que cualquier otra cosa", () => {

@@ -1,6 +1,6 @@
 /**
- * Avisos al equipo del formulario público (H-087): «Llegó una solicitud» y «Tu formulario llegó al tope de
- * hoy». Son correos para personas de la organización, nunca para quien llenó el formulario. NUNCA llevan
+ * Avisos al equipo del formulario público (H-087 y H-089): «Llegó una solicitud», «Te asignaron una
+ * solicitud» y «Tu formulario llegó al tope de hoy». Son correos para personas de la organización, nunca para quien llenó el formulario. NUNCA llevan
  * datos del visitante (nombre, correo, teléfono, mensaje ni servicios pedidos): solo el nombre interno del
  * formulario y un botón hacia la aplicación, donde sí se ven con la sesión de un miembro.
  */
@@ -12,6 +12,8 @@ import { HEADER_UNSAFE } from "./unsafe-characters";
 export const INTAKE_SENDER_NAME = "Cotiza Prime";
 export const REQUEST_RECEIVED_SUBJECT = "Llegó una solicitud";
 export const REQUEST_RECEIVED_BUTTON = "Ver las solicitudes";
+export const REQUEST_ASSIGNED_SUBJECT = "Te asignaron una solicitud";
+export const REQUEST_ASSIGNED_BUTTON = "Ver la solicitud";
 export const CAP_FORM_SUBJECT = "Tu formulario llegó al tope de hoy";
 export const CAP_ORG_SUBJECT = "Tu organización llegó al tope diario de solicitudes";
 export const CAP_BUTTON = "Ver el formulario";
@@ -27,7 +29,11 @@ export type IntakeNoticeInput = {
   /** Dirección dentro de la aplicación a la que lleva el botón. */
   appUrl: string;
   idempotencyKey?: string;
-} & ({ kind: "request_received" } | { kind: "intake_cap_reached"; capKind: "form" | "org" });
+} & (
+  | { kind: "request_assigned" }
+  | { kind: "request_received" }
+  | { kind: "intake_cap_reached"; capKind: "form" | "org" }
+);
 
 export type IntakeNoticeResult =
   { ok: true; message: EmailMessage } | { ok: false; code: "invalid_input" };
@@ -35,6 +41,16 @@ export type IntakeNoticeResult =
 const clean = (value: string) => value.replace(UNSAFE_GLOBAL, " ").replace(/\s+/g, " ").trim();
 
 function copyFor(input: IntakeNoticeInput, formName: string) {
+  if (input.kind === "request_assigned") {
+    return {
+      subject: REQUEST_ASSIGNED_SUBJECT,
+      button: REQUEST_ASSIGNED_BUTTON,
+      lines: [
+        `Te asignaron una solicitud del formulario «${formName}».`,
+        "Los datos de quien la envió se ven dentro de la aplicación.",
+      ],
+    };
+  }
   if (input.kind === "request_received") {
     return {
       subject: REQUEST_RECEIVED_SUBJECT,

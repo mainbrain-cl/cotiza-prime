@@ -729,6 +729,8 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/formularios", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/formularios/nuevo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/formularios/[formId]", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/solicitudes", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/solicitudes/[requestId]", kind: "page", scope: "tenant" },
 ];
 
 /** Pantallas dentro de una organización (las que se atacan con la dirección de otra). */
@@ -742,13 +744,15 @@ export function concretePath(
   itemId: string,
   quoteId: string = itemId,
   formId: string = itemId,
+  requestId: string = itemId,
 ): string {
   return route.path
     .replace("[tenantId]", tenantId)
     .replace("[customerId]", customerId)
     .replace("[itemId]", itemId)
     .replace("[quoteId]", quoteId)
-    .replace("[formId]", formId);
+    .replace("[formId]", formId)
+    .replace("[requestId]", requestId);
 }
 
 /** Qué se pide para "ver todo" de una tabla: `*`, o las columnas legibles si hay columnas privadas. */

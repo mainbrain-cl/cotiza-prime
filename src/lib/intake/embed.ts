@@ -13,6 +13,8 @@ export const MAX_EMBED_ORIGIN_LENGTH = 255;
 export const EMBED_MIN_HEIGHT_PX = 200;
 export const EMBED_MAX_HEIGHT_PX = 4_000;
 export const EMBED_INITIAL_HEIGHT_PX = 640;
+/** Último tramo de la dirección: `/f/<id>/incrustar`. */
+export const EMBED_PATH_SEGMENT = "incrustar";
 export const EMBED_MESSAGE_SOURCE = "cotiza-prime";
 export const EMBED_MESSAGE_TYPE = "resize";
 export const DEFAULT_EMBED_TITLE = "Solicitar una cotización";
@@ -71,6 +73,11 @@ function isValidAppOrigin(origin: unknown): origin is string {
  * Lanza `EmbedError` si algún origen no es válido: nunca se arma una política con texto dudoso.
  */
 export function buildEmbedCsp(origins: readonly string[]): string {
+  return `frame-ancestors ${embedFrameAncestors(origins)}`;
+}
+
+/** Solo el valor de `frame-ancestors` (`'none'` o la lista), para armar la política completa. */
+export function embedFrameAncestors(origins: readonly string[]): string {
   if (origins.length > MAX_EMBED_ORIGINS) {
     throw new EmbedError(`Se pueden autorizar hasta ${MAX_EMBED_ORIGINS} sitios.`);
   }
@@ -78,8 +85,54 @@ export function buildEmbedCsp(origins: readonly string[]): string {
   for (const origin of unique) {
     if (!isValidEmbedOrigin(origin)) throw new EmbedError("Uno de los sitios no es válido.");
   }
-  if (unique.length === 0) return "frame-ancestors 'none'";
-  return `frame-ancestors ${unique.join(" ")}`;
+  return unique.length === 0 ? "'none'" : unique.join(" ");
+}
+
+/**
+ * Lo que la página incrustada le dice al sitio que la contiene: SOLO la altura. Nunca datos del
+ * formulario, del visitante ni el identificador. Es un número entero acotado (el script del sitio vuelve a
+ * acotarlo entre 200 y 4.000 px).
+ */
+export type EmbedResizeMessage = {
+  source: typeof EMBED_MESSAGE_SOURCE;
+  type: typeof EMBED_MESSAGE_TYPE;
+  height: number;
+};
+
+export function buildResizeMessage(height: number): EmbedResizeMessage | null {
+  if (!Number.isFinite(height) || height < 0) return null;
+  return {
+    source: EMBED_MESSAGE_SOURCE,
+    type: EMBED_MESSAGE_TYPE,
+    height: Math.min(EMBED_MAX_HEIGHT_PX, Math.ceil(height)),
+  };
+}
+
+/**
+ * Por qué un sitio no se puede autorizar, en español y sin jerga; `null` si es válido. Es lo que se
+ * muestra en la pantalla (la regla real es `isValidEmbedOrigin`, que la base y el servidor repiten).
+ */
+export function embedOriginProblem(value: string): string | null {
+  const candidate: unknown = value;
+  if (isValidEmbedOrigin(candidate)) return null;
+  if (value === "") return "Escribe la dirección de tu sitio web.";
+  if (value.length > MAX_EMBED_ORIGIN_LENGTH) return "La dirección es demasiado larga.";
+  if (/[\s;,'"`]/.test(value)) {
+    return "No puede llevar espacios ni signos como ; , o comillas: escribe una sola dirección.";
+  }
+  if (value.includes("*")) {
+    return "No se aceptan comodines (*): autoriza cada sitio con su dirección exacta.";
+  }
+  if (/^http:\/\//i.test(value))
+    return "Debe empezar con https:// (los sitios sin https no se aceptan).";
+  if (!/^https:\/\//.test(value))
+    return "Debe empezar con https://, por ejemplo https://www.tuempresa.cl.";
+  if (/^https:\/\/[^/?#]*@/.test(value)) return "No puede llevar usuario ni contraseña.";
+  if (/^https:\/\/[^/?#]+[/?#]/.test(value)) {
+    return "Escribe solo el sitio, sin ruta ni barra final (https://www.tuempresa.cl).";
+  }
+  if (value !== value.toLowerCase()) return "Escríbela en minúsculas.";
+  return "No es una dirección válida. Escribe solo el sitio, por ejemplo https://www.tuempresa.cl.";
 }
 
 function escapeHtml(value: string): string {

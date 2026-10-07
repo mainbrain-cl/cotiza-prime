@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import nextConfig from "../../next.config";
+import { EMBED_ROUTE_EXCLUSION } from "./intake/embed-headers";
 
 describe("cabeceras de caché de las pantallas privadas", () => {
   it("las pantallas de una organización y de cuenta son privadas y no se guardan", async () => {
@@ -21,7 +22,7 @@ describe("enmarcado de las páginas (M3)", () => {
 
   it("la ruta del PDF conserva la política base y solo cambia frame-ancestors a 'self'", async () => {
     const rules = await nextConfig.headers!();
-    const base = rules.find((r) => r.source === "/:path*")!;
+    const base = rules.find((r) => r.source === EMBED_ROUTE_EXCLUSION)!;
     const pdf = rules.find((r) => r.source === PDF_SOURCE)!;
     const baseCsp = valueOf(base.headers, "Content-Security-Policy")!;
     const pdfCsp = valueOf(pdf.headers, "Content-Security-Policy")!;
@@ -45,13 +46,22 @@ describe("enmarcado de las páginas (M3)", () => {
         expect(csp, rule.source).toContain("frame-ancestors 'none'");
       }
     }
-    const base = rules.find((r) => r.source === "/:path*")!;
+    const base = rules.find((r) => r.source === EMBED_ROUTE_EXCLUSION)!;
     expect(valueOf(base.headers, "X-Frame-Options")).toBe("DENY");
     // El logo tiene su propia política, que no permite que lo enmarquen.
     const logo = rules.find((r) => r.source === "/api/v1/tenants/:tenantId/logo")!;
     expect(valueOf(logo.headers, "Content-Security-Policy")).not.toContain(
       "frame-ancestors 'self'",
     );
+  });
+});
+
+describe("formulario incrustable (H-093)", () => {
+  it("la regla base (DENY) es la única que lo deja fuera, y no hay otra regla global que lo cubra", async () => {
+    const rules = await nextConfig.headers!();
+    const global = rules.filter((r) => r.source === "/:path*");
+    expect(global).toEqual([]);
+    expect(rules.filter((r) => r.source === EMBED_ROUTE_EXCLUSION)).toHaveLength(1);
   });
 });
 

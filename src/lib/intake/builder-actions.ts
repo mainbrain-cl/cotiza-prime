@@ -7,7 +7,14 @@ import { getAppOrigin } from "@/lib/http/request-context";
 import { serverLog } from "@/lib/log/server-log";
 import { requireActiveTenant, type ActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
-import { publicFormUrl, toSavePayload, type EditorForm, type FormStatus } from "./builder-model";
+import {
+  embedSnippetFor,
+  publicFormUrl,
+  toSavePayload,
+  type EditorForm,
+  type FormStatus,
+} from "./builder-model";
+import { MAX_EMBED_ORIGINS, embedOriginProblem } from "./embed";
 import { GENERIC_FAILURE, NO_PERMISSION, mapBuilderError } from "./builder-errors";
 import { itemsToKeepInactive } from "./builder-queries";
 import { editorFormSchema, isFormId, validateEditorForm } from "./builder-schema";
@@ -21,6 +28,10 @@ export type BuilderResult =
       formStatus?: FormStatus;
       /** Enlace público, solo si el formulario está publicado o en pausa. */
       publicUrl?: string | null;
+      /** Código para pegar en el sitio web (H-093), solo si está publicado o en pausa. */
+      embedSnippet?: string | null;
+      /** Sitios autorizados tal como quedaron guardados (H-093). */
+      embedOrigins?: string[];
     }
   | {
       status: "error";
@@ -74,7 +85,11 @@ function refresh(active: ActiveTenant) {
 async function readPublicUrl(
   active: ActiveTenant,
   formId: string,
-): Promise<{ status: FormStatus; publicUrl: string | null } | null> {
+): Promise<{
+  status: FormStatus;
+  publicUrl: string | null;
+  embedSnippet: string | null;
+} | null> {
   const { data } = await active.supabase
     .from("intake_forms")
     .select("public_id, status")
@@ -86,6 +101,7 @@ async function readPublicUrl(
   return {
     status,
     publicUrl: live ? publicFormUrl(getAppOrigin(), data.public_id as string) : null,
+    embedSnippet: live ? embedSnippetFor(getAppOrigin(), data.public_id as string) : null,
   };
 }
 
@@ -204,6 +220,7 @@ export async function setIntakeFormStatusAction(
     message: resumed ? "Reanudamos el formulario." : STATUS_MESSAGES[status],
     formStatus: read?.status ?? status,
     publicUrl: read?.publicUrl ?? null,
+    embedSnippet: read?.embedSnippet ?? null,
   };
 }
 
@@ -226,5 +243,58 @@ export async function regenerateIntakeFormLinkAction(
     message: "Creamos un enlace nuevo. El anterior dejó de funcionar.",
     formStatus: read?.status,
     publicUrl: read?.publicUrl ?? null,
+    embedSnippet: read?.embedSnippet ?? null,
+  };
+}
+
+/**
+ * H-093: guarda los sitios autorizados para incrustar el formulario. Solo Dueño y Administrador. Cada sitio se
+ * valida aquí con la misma regla del navegador (`isValidEmbedOrigin`) y otra vez en la base, que además deja el
+ * cambio en la auditoría (`intake_form.embed_origins_changed`, con la lista anterior y la nueva). No toca el
+ * resto del formulario ni su revisión: se manda a `save_intake_form` SOLO esa clave y sin servicios.
+ */
+export async function saveEmbedOriginsAction(
+  tenantId: string,
+  formId: string,
+  origins: readonly string[],
+): Promise<BuilderResult> {
+  const active = await requireActiveTenant(tenantId);
+  if (!canManageForms(active.role)) return FORBIDDEN;
+  if (!isFormId(formId)) return ID_INVALID;
+  if (!Array.isArray(origins) || origins.some((origin) => typeof origin !== "string")) {
+    return { status: "error", kind: "invalid", message: GENERIC_FAILURE };
+  }
+  const unique = [...new Set(origins)].sort();
+  if (unique.length > MAX_EMBED_ORIGINS) {
+    return {
+      status: "error",
+      kind: "invalid",
+      message: `Puedes autorizar hasta ${MAX_EMBED_ORIGINS} sitios.`,
+    };
+  }
+  const problem = unique.map(embedOriginProblem).find((text) => text !== null);
+  if (problem) return { status: "error", kind: "invalid", message: problem };
+  // La revisión vigente: este cambio no la mueve, pero la función la pide para detectar cambios cruzados.
+  const { data: row } = await active.supabase
+    .from("intake_forms")
+    .select("revision")
+    .eq("id", formId)
+    .maybeSingle();
+  if (!row) return ID_INVALID;
+  const { error } = await active.supabase.rpc("save_intake_form", {
+    p_form_id: formId,
+    p_expected_revision: row.revision as number,
+    p_form: { embed_origins: unique },
+    p_items: null,
+  });
+  if (error) return failure(active, error, "intake_form_embed_origins_failed", "save");
+  refresh(active);
+  return {
+    status: "ok",
+    message:
+      unique.length === 0
+        ? "Quitamos todos los sitios autorizados."
+        : "Guardamos los sitios autorizados.",
+    embedOrigins: unique,
   };
 }

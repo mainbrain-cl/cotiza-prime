@@ -1,3 +1,4 @@
+import { buildEmbedSnippet } from "./embed";
 import type { FieldMode, FieldModes, QuantityMode } from "./field-modes";
 
 /**
@@ -238,4 +239,13 @@ export function toSavePayload(form: EditorForm): {
 /** Texto del enlace público de un formulario (solo para quien lo muestra con `getAppOrigin()`). */
 export function publicFormUrl(origin: string, publicId: string): string {
   return `${origin.replace(/\/+$/, "")}/f/${publicId}`;
+}
+
+/** Código para pegar en el sitio web (H-093). `null` si la dirección de la aplicación no sirve para armarlo. */
+export function embedSnippetFor(origin: string, publicId: string): string | null {
+  try {
+    return buildEmbedSnippet(origin.replace(/\/+$/, ""), publicId);
+  } catch {
+    return null;
+  }
 }

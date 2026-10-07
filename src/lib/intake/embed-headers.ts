@@ -1,0 +1,67 @@
+/**
+ * Cabeceras del formulario incrustable (H-093), sin dependencias del servidor: las usan `next.config.ts` (para
+ * dejar la ruta fuera de la regla que prohíbe enmarcar) y `src/proxy.ts` (para armar su política con la lista de
+ * sitios de cada formulario).
+ *
+ * Por qué así: `X-Frame-Options` no admite una lista de sitios, así que en esta ruta NO se envía; la autoriza
+ * `frame-ancestors`. Todo lo demás (`/o/*`, `/c/*`, `/f/[id]`, el PDF, la API) sigue con `DENY` y `'none'`.
+ */
+
+import { EMBED_PATH_SEGMENT, embedFrameAncestors } from "./embed";
+import { HSTS_VALUE, TURNSTILE_HOST, buildContentSecurityPolicy } from "../security/csp";
+
+/**
+ * `source` de la regla global de `next.config.ts`: todo MENOS `/f/<id>/incrustar`. Es una expresión regular de
+ * Next (`/:param(regex)`), con un `(?!…)` que deja fuera solo esa ruta.
+ */
+export const EMBED_ROUTE_EXCLUSION = `/:path((?!f/[^/]+/${EMBED_PATH_SEGMENT}$).*)`;
+
+/** `matcher` del `proxy` para esa ruta (se suma al general, que excluye `f/`). */
+export const EMBED_PROXY_MATCHER = `/f/:publicId/${EMBED_PATH_SEGMENT}`;
+
+const EMBED_PATH = new RegExp(`^/f/([^/]+)/${EMBED_PATH_SEGMENT}$`);
+
+/** Si la ruta es la del formulario incrustable devuelve el identificador tal como vino; si no, `null`. */
+export function parseEmbedPath(pathname: string): { publicId: string } | null {
+  const match = EMBED_PATH.exec(pathname);
+  return match ? { publicId: match[1] } : null;
+}
+
+/**
+ * Valor de `frame-ancestors` para esa lista. Cualquier problema (lista dudosa, demasiado larga) deja `'none'`:
+ * nunca se arma una política con texto sin validar.
+ */
+export function safeFrameAncestors(origins: readonly string[]): string {
+  try {
+    return embedFrameAncestors(origins);
+  } catch {
+    return "'none'";
+  }
+}
+
+export type EmbedHeaderEnv = { isDev: boolean; supabaseUrl: string; antibotProvider?: string };
+
+/**
+ * Las cabeceras de seguridad de `/f/<id>/incrustar`: la política general (con Cloudflare abierto si el
+ * anti-robot es Turnstile) y SOLO los sitios autorizados en `frame-ancestors`. Sin `X-Frame-Options`, sin
+ * CORS. El resto (`Cache-Control`, `X-Robots-Tag`, `Referrer-Policy`, `nosniff`) las pone la regla `/f/:path*`
+ * de `next.config.ts`; aquí se repiten para que no dependan del orden en que Next las junta.
+ */
+export function buildEmbedResponseHeaders(
+  origins: readonly string[],
+  env: EmbedHeaderEnv,
+): Record<string, string> {
+  return {
+    "Content-Security-Policy": buildContentSecurityPolicy({
+      frameAncestors: safeFrameAncestors(origins),
+      antibotHost: env.antibotProvider === "turnstile" ? TURNSTILE_HOST : undefined,
+      isDev: env.isDev,
+      supabaseUrl: env.supabaseUrl,
+    }),
+    "Strict-Transport-Security": HSTS_VALUE,
+    "Cache-Control": "private, no-store, max-age=0",
+    "X-Robots-Tag": "noindex, nofollow",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  };
+}

@@ -709,6 +709,8 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/api/v1/public/quote-links/[token]/accept", kind: "api", scope: "token" },
   { path: "/api/v1/public/quote-links/[token]/reject", kind: "api", scope: "token" },
   { path: "/f/[publicId]", kind: "page", scope: "form" },
+  // H-093: la misma pantalla para pegar en el sitio web de la organización (sin marco de afuera).
+  { path: "/f/[publicId]/incrustar", kind: "page", scope: "form" },
   { path: "/api/v1/public/forms/[publicId]/requests", kind: "api", scope: "form" },
   { path: "/api/v1/webhooks/email/[provider]", kind: "api", scope: "signed" },
   { path: "/o/[tenantId]", kind: "page", scope: "tenant" },

@@ -388,6 +388,39 @@ describe("guardias estáticas del aislamiento", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("10h. (H-093) solo /f/:publicId/incrustar queda fuera de la regla que prohíbe enmarcar, y su política sale del proxy", () => {
+    const config = stripComments(read(path.join(ROOT, "next.config.ts")));
+    // Una sola regla con `X-Frame-Options: DENY`, y su `source` es la exclusión de esa única ruta.
+    expect(config.match(/value:\s*"DENY"/g)?.length).toBe(1);
+    expect(config).toMatch(/source:\s*EMBED_ROUTE_EXCLUSION,\s*headers:\s*securityHeaders/);
+    expect(config).not.toMatch(/source:\s*["']\/:path\*["'],\s*headers:\s*securityHeaders/);
+    // Nada más en la aplicación nombra `X-Frame-Options` ni `frame-ancestors` con una lista de sitios.
+    const framing = sourceFiles
+      .filter((f) => /x-frame-options/i.test(stripComments(read(f))))
+      .map(rel);
+    expect(framing).toEqual([]);
+    // El proxy solo arma su política para esa ruta, con los sitios que valida el portero.
+    const proxy = stripComments(read(path.join(SRC, "proxy.ts")));
+    expect(proxy).toContain("parseEmbedPath(");
+    expect(proxy).toContain("readFrameAncestors(");
+    expect(proxy).toContain('"/f/:publicId/incrustar"');
+    expect(proxy).not.toMatch(/x-frame-options/i);
+    // La ruta incrustable usa la MISMA pantalla que la normal (no se duplica la lógica pública).
+    for (const page of [
+      "src/app/f/[publicId]/page.tsx",
+      "src/app/f/[publicId]/incrustar/page.tsx",
+    ]) {
+      expect(stripComments(read(path.join(ROOT, page))), page).toContain("<PublicIntakeScreen");
+    }
+    // La página incrustada solo informa su altura y no escucha mensajes de afuera.
+    const resizer = stripComments(
+      read(path.join(SRC, "components", "intake", "embed-resizer.tsx")),
+    );
+    expect(resizer).not.toMatch(/addEventListener\(\s*["']message["']/);
+    expect(resizer.match(/postMessage\(/g)?.length).toBe(1);
+    expect(resizer).toContain("buildResizeMessage(");
+  });
+
   it("10f. la guardia 10e detecta de verdad una violación", () => {
     const sample = 'serverLog("warn", "x", { email: data.email, ip: clientIp })';
     expect(serverLogCalls(sample)).toHaveLength(1);

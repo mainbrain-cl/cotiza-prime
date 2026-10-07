@@ -41,6 +41,11 @@ const baseSchema = {
     secondary_color: z.string().nullable(),
   }),
   logo_path: z.string().max(300).nullable(),
+  /**
+   * Sitios autorizados para incrustar (H-093). Solo lo lee `readFrameAncestors`; nunca llega al navegador.
+   * Hoy la base lo entrega solo con el formulario publicado (opcional aquí a propósito).
+   */
+  embed_origins: z.array(z.string()).max(50).optional(),
 };
 
 const itemSchema = z.object({

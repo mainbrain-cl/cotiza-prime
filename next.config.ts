@@ -1,43 +1,30 @@
 import type { NextConfig } from "next";
 import { LOGO_CONTENT_SECURITY_POLICY } from "./src/lib/brand/headers";
+import { EMBED_ROUTE_EXCLUSION } from "./src/lib/intake/embed-headers";
+import { HSTS_VALUE, TURNSTILE_HOST, buildContentSecurityPolicy } from "./src/lib/security/csp";
 
 const isDev = process.env.NODE_ENV !== "production";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
-// CSP inicial. Next.js inserta scripts en línea, por eso 'unsafe-inline' en script-src;
-// más adelante se puede pasar a una CSP con nonce. 'unsafe-eval' solo en desarrollo.
-const buildContentSecurityPolicy = (
-  frameAncestors: "'none'" | "'self'",
-  // Solo el formulario público con Turnstile: Cloudflare carga su script y su marco desde aquí.
-  antibotHost?: string,
-) =>
-  [
-    "default-src 'self'",
-    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}${antibotHost ? ` ${antibotHost}` : ""}`,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    `connect-src 'self' ${supabaseUrl}${isDev ? " ws: wss:" : ""}`.trim(),
-    ...(antibotHost ? [`frame-src ${antibotHost}`] : []),
-    `frame-ancestors ${frameAncestors}`,
-    "base-uri 'self'",
-    "form-action 'self'",
-    "object-src 'none'",
-  ].join("; ");
-const contentSecurityPolicy = buildContentSecurityPolicy("'none'");
+const baseCsp = { isDev, supabaseUrl };
+const contentSecurityPolicy = buildContentSecurityPolicy({ ...baseCsp, frameAncestors: "'none'" });
 // El PDF de la cotización es lo único que la propia aplicación enmarca (vista previa de enviar).
 // Conserva TODA la política base y solo cambia quién puede enmarcarlo.
-const pdfContentSecurityPolicy = buildContentSecurityPolicy("'self'");
+const pdfContentSecurityPolicy = buildContentSecurityPolicy({
+  ...baseCsp,
+  frameAncestors: "'self'",
+});
 // Formulario público (H-087): igual que la general, y con Turnstile se abre SOLO a Cloudflare. Sigue
-// con `frame-ancestors 'none'`: la versión incrustable es otra historia (H-093) con su propia ruta.
-const TURNSTILE_HOST = "https://challenges.cloudflare.com";
-const publicFormContentSecurityPolicy = buildContentSecurityPolicy(
-  "'none'",
-  process.env.ANTIBOT_PROVIDER === "turnstile" ? TURNSTILE_HOST : undefined,
-);
+// con `frame-ancestors 'none'`: la versión incrustable es otra ruta (`/f/:publicId/incrustar`, H-093) con
+// su propia política, armada en `src/proxy.ts` con la lista de sitios de cada formulario.
+const publicFormContentSecurityPolicy = buildContentSecurityPolicy({
+  ...baseCsp,
+  frameAncestors: "'none'",
+  antibotHost: process.env.ANTIBOT_PROVIDER === "turnstile" ? TURNSTILE_HOST : undefined,
+});
 
 const securityHeaders = [
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+  { key: "Strict-Transport-Security", value: HSTS_VALUE },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -63,7 +50,11 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
-      { source: "/:path*", headers: securityHeaders },
+      // Todo lleva `X-Frame-Options: DENY` y `frame-ancestors 'none'` MENOS el formulario incrustable
+      // (`/f/:publicId/incrustar`, H-093): `X-Frame-Options` no admite una lista de sitios y, si estuviera,
+      // el navegador bloquearía el marco en todos. Su cabecera, con la lista de ese formulario, la arma
+      // `src/proxy.ts`. Una prueba vigila que esta sea la ÚNICA exclusión.
+      { source: EMBED_ROUTE_EXCLUSION, headers: securityHeaders },
       // Todo lo que depende de quien lo mira es privado: nunca se guarda en cachés compartidas
       // (STACK.md §6b). Las pantallas de una organización y las de cuenta lo exigen.
       ...["/o/:path*", "/organizaciones/:path*", "/aceptar-terminos"].map((source) => ({

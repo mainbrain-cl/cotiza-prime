@@ -119,8 +119,8 @@ describe("guardia del registro de aislamiento", () => {
       expect(route.scope === "signed", `${route.path}: alcance ${route.scope}`).toBe(
         route.path.startsWith("/api/v1/webhooks/"),
       );
-      // El formulario público (sin cuenta): la pantalla `/f/[publicId]` y la API pública por formulario.
-      const isFormPage = route.path === "/f/[publicId]";
+      // El formulario público (sin cuenta): la pantalla `/f/[publicId]`, su versión incrustable `/f/[publicId]/incrustar` y la API pública por formulario.
+      const isFormPage = route.path === "/f/[publicId]" || route.path === "/f/[publicId]/incrustar";
       const isFormApi = route.path.startsWith("/api/v1/public/forms/[publicId]/");
       expect(route.scope === "form", `${route.path}: alcance ${route.scope}`).toBe(
         isFormPage || isFormApi,

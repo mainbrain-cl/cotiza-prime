@@ -1,17 +1,5 @@
-import { randomUUID } from "node:crypto";
 import type { Metadata } from "next";
-import { BrandHeader } from "@/components/intake/brand-header";
-import { IntakeBusy, IntakeNotFound, IntakeUnavailable } from "@/components/intake/public-states";
-import { PublicIntakeForm } from "@/components/intake/public-intake-form";
-import { loadAntibotConfig } from "@/lib/antibot";
-import { getRequestContext } from "@/lib/http/request-context";
-import { buildConsentNotice, ConsentNoticeError } from "@/lib/intake/consent-notice";
-import { readIntakeForm, readOrganizationLogoFile } from "@/lib/intake/gateway";
-import { shrinkLogoToDataUrl } from "@/lib/intake/logo-thumbnail";
-import { buildPublicView, buildUnavailableView } from "@/lib/intake/public-view";
-import { isWellFormedPublicId } from "@/lib/intake/read-model";
-import { createRenderToken } from "@/lib/intake/render-token";
-import { consumeIntakeReadQuota } from "@/lib/security/login-rate-limit";
+import { PublicIntakeScreen } from "@/components/intake/public-intake-screen";
 
 /**
  * Pantalla pública del formulario (H-087): la abre cualquiera con el enlace o el QR, sin cuenta. La puerta
@@ -37,57 +25,5 @@ export const metadata: Metadata = {
 
 export default async function PublicIntakePage({ params }: PageProps<"/f/[publicId]">) {
   const { publicId } = await params;
-  // Identificador mal formado: no se toca la base ni se gasta el límite.
-  if (!isWellFormedPublicId(publicId)) return <IntakeNotFound />;
-
-  const { clientIp } = await getRequestContext();
-  if (!(await consumeIntakeReadQuota(clientIp))) return <IntakeBusy />;
-
-  // Si la base falla, `error.tsx` muestra un mensaje de reintento (nunca un detalle técnico).
-  const form = await readIntakeForm(publicId);
-  if (form.state === "not_found") return <IntakeNotFound />;
-  if (form.state === "paused") {
-    return <IntakeUnavailable organization={buildUnavailableView(form).organization} />;
-  }
-
-  // Sin un contacto válido de la organización no se puede armar el aviso de privacidad: no se recibe nada.
-  let consent;
-  try {
-    consent = buildConsentNotice({
-      organizationName: form.organization.name,
-      contactEmail: form.organization.email ?? "",
-      privacyPolicyUrl: form.privacyPolicyUrl,
-    });
-  } catch (cause) {
-    if (cause instanceof ConsentNoticeError) {
-      return <IntakeUnavailable organization={buildUnavailableView(form).organization} />;
-    }
-    throw cause;
-  }
-
-  // El logo se reduce aquí (256 px como máximo) y la cabecera de la marca se dibuja en el servidor: el
-  // formulario del navegador recibe el encabezado ya armado, no la imagen como dato.
-  const logoFile = await readOrganizationLogoFile(form.tenantId, form.logoPath);
-  const logoSrc = logoFile ? await shrinkLogoToDataUrl(logoFile.bytes, logoFile.kind) : null;
-  const antibot = loadAntibotConfig();
-  // La clave de envío la crea el servidor y el sello de tiempo queda atado a ella.
-  const submitKey = randomUUID();
-
-  return (
-    <div className="customer-light min-h-dvh">
-      <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
-        <PublicIntakeForm
-          publicId={publicId}
-          view={buildPublicView(form, consent)}
-          renderToken={createRenderToken(publicId, submitKey)}
-          submitKey={submitKey}
-          header={<BrandHeader organizationName={form.organization.name} logoSrc={logoSrc} />}
-          antibot={{
-            provider: antibot.provider,
-            siteKey: antibot.provider === "turnstile" ? antibot.turnstileSiteKey : null,
-          }}
-        />
-      </main>
-    </div>
-  );
+  return <PublicIntakeScreen publicId={publicId} embedded={false} />;
 }

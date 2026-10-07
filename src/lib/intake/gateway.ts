@@ -6,6 +6,8 @@ import { getRequestContext } from "@/lib/http/request-context";
 import { normalizeEmail } from "@/lib/normalize/email";
 import { createAdminClient } from "@/lib/supabase/admin-client";
 import { REQUEST_ID_HEADER } from "@/lib/tenant/constants";
+import { MAX_EMBED_ORIGINS, isValidEmbedOrigin } from "./embed";
+import { TtlCache } from "./ttl-cache";
 import {
   intakeFormReadSchema,
   isWellFormedPublicId,
@@ -58,19 +60,23 @@ async function correlationHeaders(): Promise<Record<string, string> | undefined>
   }
 }
 
-/**
- * Lee el formulario. SOLO LEE: un GET que llegue aquí nunca cambia nada. Identificador mal formado o
- * inexistente: `not_found` (el primero sin tocar la base).
- */
-export async function readIntakeForm(publicId: string): Promise<IntakeFormReadResult> {
-  if (!isWellFormedPublicId(publicId)) return { state: "not_found" };
+async function fetchIntakeForm(publicId: string) {
   const { data, error } = await createAdminClient().rpc("intake_form_read", {
     p_public_id: publicId,
   });
   if (error) throw new IntakeGatewayError("read", error.code);
   const parsed = intakeFormReadSchema.safeParse(data);
   if (!parsed.success) throw new IntakeGatewayError("read", "shape");
-  const body = parsed.data;
+  return parsed.data;
+}
+
+/**
+ * Lee el formulario. SOLO LEE: un GET que llegue aquí nunca cambia nada. Identificador mal formado o
+ * inexistente: `not_found` (el primero sin tocar la base).
+ */
+export async function readIntakeForm(publicId: string): Promise<IntakeFormReadResult> {
+  if (!isWellFormedPublicId(publicId)) return { state: "not_found" };
+  const body = await fetchIntakeForm(publicId);
   if (body.state === "not_found") return { state: "not_found" };
   const internal = {
     tenantId: body.tenant_id,
@@ -104,6 +110,46 @@ export async function readIntakeForm(publicId: string): Promise<IntakeFormReadRe
       maxQtyMilli: item.max_qty_milli,
     })),
   };
+}
+
+const FRAME_ANCESTORS_TTL_MS = 60_000;
+const FRAME_ANCESTORS_CACHE_MAX = 500;
+const frameAncestorsCache = new TtlCache<string[]>(
+  FRAME_ANCESTORS_TTL_MS,
+  FRAME_ANCESTORS_CACHE_MAX,
+);
+
+/** Solo una lista completa y válida sirve: ante cualquier duda, ningún sitio (`'none'`). */
+function validEmbedOriginsOrNone(raw: readonly string[] | undefined): string[] {
+  if (!raw || raw.length > MAX_EMBED_ORIGINS) return [];
+  return raw.every(isValidEmbedOrigin) ? [...new Set(raw)] : [];
+}
+
+/** Vacía el recuerdo de sitios autorizados (para las pruebas). */
+export function clearFrameAncestorsCache(): void {
+  frameAncestorsCache.clear();
+}
+
+/**
+ * Sitios autorizados para mostrar el formulario incrustado (H-093): lo único que usa `src/proxy.ts` para armar
+ * `frame-ancestors`. Usa la MISMA función de la base que la página (`intake_form_read`) y toma SOLO ese campo.
+ * Se recuerda 60 s en memoria (también «no existe»), con un máximo de entradas. Identificador mal formado,
+ * formulario inexistente, en pausa (hoy la base no entrega la lista) o falla de la base: lista vacía, es decir,
+ * que no se pueda incrustar en ningún sitio. Un fallo no se recuerda.
+ */
+export async function readFrameAncestors(publicId: string, now = Date.now()): Promise<string[]> {
+  if (!isWellFormedPublicId(publicId)) return [];
+  const cached = frameAncestorsCache.get(publicId, now);
+  if (cached) return cached;
+  let origins: string[];
+  try {
+    const body = await fetchIntakeForm(publicId);
+    origins = body.state === "not_found" ? [] : validEmbedOriginsOrNone(body.embed_origins);
+  } catch {
+    return [];
+  }
+  frameAncestorsCache.set(publicId, origins, now);
+  return origins;
 }
 
 /** Motivos que el servidor puede contar como bloqueo. El tope y la pausa los cuenta el propio envío. */

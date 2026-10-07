@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/intake/confirm-action";
 import { CopyLinkButton } from "@/components/intake/copy-link-button";
+import { EmbedPanel } from "@/components/intake/embed-panel";
 import { QrDownloads } from "@/components/intake/qr-downloads";
 import { FormStatusBadge } from "@/components/intake/form-status-badge";
 import { FormView } from "@/components/intake/form-view";
@@ -66,6 +67,9 @@ type FormEditorProps = {
   initialRevision: number;
   initialStatus: FormStatus;
   initialPublicUrl: string | null;
+  /** Sitios autorizados para incrustar y código para pegar (H-093); solo se usan con permiso de editar. */
+  initialEmbedOrigins: string[];
+  initialEmbedSnippet: string | null;
   initialForm: EditorForm;
   catalog: CatalogChoice[];
   brand: PdfBrand;
@@ -129,6 +133,8 @@ export function FormEditor({
   initialRevision,
   initialStatus,
   initialPublicUrl,
+  initialEmbedOrigins,
+  initialEmbedSnippet,
   initialForm,
   catalog,
   brand,
@@ -143,6 +149,7 @@ export function FormEditor({
   const [revision, setRevision] = useState(initialRevision);
   const [status, setStatus] = useState<FormStatus>(initialStatus);
   const [publicUrl, setPublicUrl] = useState<string | null>(initialPublicUrl);
+  const [embedSnippet, setEmbedSnippet] = useState<string | null>(initialEmbedSnippet);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [banner, setBanner] = useState<{
     message: string;
@@ -287,6 +294,7 @@ export function FormEditor({
       }
       if (result.formStatus) setStatus(result.formStatus);
       setPublicUrl(result.publicUrl ?? null);
+      setEmbedSnippet(result.embedSnippet ?? null);
       toast.success(result.message, { id: SAVED_TOAST_ID });
       return null;
     } catch {
@@ -305,6 +313,7 @@ export function FormEditor({
       return result.message;
     }
     setPublicUrl(result.publicUrl ?? null);
+    setEmbedSnippet(result.embedSnippet ?? null);
     toast.success(result.message, { id: SAVED_TOAST_ID });
     return null;
   }
@@ -860,6 +869,17 @@ export function FormEditor({
             <p className="text-sm text-fg-muted">Guarda los cambios antes de publicar.</p>
           ) : null}
         </section>
+
+        {canEdit && live ? (
+          <EmbedPanel
+            tenantId={tenantId}
+            formId={formId}
+            initialOrigins={initialEmbedOrigins}
+            snippet={embedSnippet}
+            paused={status === "paused"}
+            editable={editable}
+          />
+        ) : null}
 
         <section aria-labelledby="preview-title" className="flex min-w-0 flex-col gap-3">
           <div className="flex flex-col gap-1">

@@ -679,6 +679,28 @@ test.describe("Sin sesión", () => {
     const invented = await (await page.request.get(`/f/${INVENTED_PUBLIC_ID}`)).text();
     expect(invented).not.toContain(A.canary);
     expect(invented).not.toContain(B.canary);
+
+    // H-093: la versión incrustable es la misma pantalla y tampoco trae nada de B ni identificadores internos.
+    const embedRes = await page.request.get(`/f/${a.publicId}/incrustar`);
+    expect(embedRes.status()).toBe(200);
+    const embedHtml = await embedRes.text();
+    expect(embedHtml).toContain(A.canary);
+    for (const secret of [B.canary, A.tenantId, B.tenantId, a.formId, b.formId, a.catalogItemId]) {
+      expect(
+        embedHtml,
+        "la versión incrustable no trae datos internos ni de otra organización",
+      ).not.toContain(secret);
+    }
+    // Sin sitios autorizados, nadie puede mostrarla: `frame-ancestors` queda en 'none' y no hay X-Frame-Options.
+    const embedCsp = embedRes.headers()["content-security-policy"] ?? "";
+    expect(embedCsp).toContain("frame-ancestors 'none'");
+    const inventedEmbed = await page.request.get(`/f/${INVENTED_PUBLIC_ID}/incrustar`);
+    const inventedEmbedHtml = await inventedEmbed.text();
+    expect(inventedEmbedHtml).not.toContain(A.canary);
+    expect(inventedEmbedHtml).not.toContain(B.canary);
+    expect(inventedEmbed.headers()["content-security-policy"] ?? "").toContain(
+      "frame-ancestors 'none'",
+    );
   });
 
   test("una dirección de una organización lleva a ingresar y no muestra nada", async ({ page }) => {

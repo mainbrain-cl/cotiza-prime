@@ -93,6 +93,8 @@ export default async function IntakeFormEditorPage({
         initialRevision={loaded.revision}
         initialStatus={loaded.status}
         initialPublicUrl={loaded.publicUrl}
+        initialEmbedOrigins={canEdit ? loaded.embedOrigins : []}
+        initialEmbedSnippet={canEdit ? loaded.embedSnippet : null}
         initialForm={loaded.form}
         catalog={catalog}
         brand={resolvePdfBrand(brand?.primaryColor ?? null, brand?.secondaryColor ?? null)}

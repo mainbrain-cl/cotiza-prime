@@ -3,6 +3,7 @@ import type { ActiveTenant } from "@/lib/tenant/active-tenant";
 import { getAppOrigin } from "@/lib/http/request-context";
 import {
   DEFAULT_FIELD_MODES,
+  embedSnippetFor,
   publicFormUrl,
   type CatalogChoice,
   type EditorForm,
@@ -95,6 +96,10 @@ export type LoadedForm = {
   status: FormStatus;
   revision: number;
   publicUrl: string | null;
+  /** Sitios autorizados para incrustar el formulario (H-093). */
+  embedOrigins: string[];
+  /** Código para pegar; solo si el formulario está publicado o en pausa. */
+  embedSnippet: string | null;
   form: EditorForm;
 };
 
@@ -137,7 +142,7 @@ export async function loadForm(active: ActiveTenant, formId: string): Promise<Lo
   const { data: row, error: formError } = await active.supabase
     .from("intake_forms")
     .select(
-      "id, public_id, status, revision, name, title, intro, success_message, fields, privacy_policy_url",
+      "id, public_id, status, revision, name, title, intro, success_message, fields, privacy_policy_url, embed_origins",
     )
     .eq("id", formId)
     .maybeSingle();
@@ -161,6 +166,10 @@ export async function loadForm(active: ActiveTenant, formId: string): Promise<Lo
       status,
       revision: row.revision as number,
       publicUrl: isLive(status) ? publicFormUrl(getAppOrigin(), row.public_id as string) : null,
+      embedOrigins: ((row.embed_origins as string[] | null) ?? []).slice(),
+      embedSnippet: isLive(status)
+        ? embedSnippetFor(getAppOrigin(), row.public_id as string)
+        : null,
       form: {
         name: row.name as string,
         title: row.title as string,

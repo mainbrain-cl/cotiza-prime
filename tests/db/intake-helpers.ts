@@ -135,6 +135,68 @@ export async function makeForm(
   return { formId, publicId: created.public_id, revision, itemIds: ids };
 }
 
+/** Corre `fn` esperando un error; usa un savepoint para no abortar la transacción de la prueba. */
+export async function expectFails(
+  db: Client,
+  fn: () => Promise<unknown>,
+): Promise<{ code?: string; message: string }> {
+  await db.query("savepoint expect_fails");
+  try {
+    await fn();
+  } catch (error) {
+    await db.query("rollback to savepoint expect_fails");
+    const e = error as { code?: string; message: string };
+    return { code: e.code, message: e.message };
+  }
+  await db.query("release savepoint expect_fails");
+  throw new Error("Se esperaba un error y la operación tuvo éxito");
+}
+
+/** Un servicio de la copia congelada de una solicitud. */
+export const requestItem = (formItemId: string, over: Record<string, unknown> = {}) => ({
+  form_item_id: formItemId,
+  catalog_item_id: null,
+  name: "Servicio pedido",
+  unit: "service",
+  quantity_milli: 1000,
+  ...over,
+});
+
+/**
+ * Inserta una solicitud como `postgres` (montaje de pruebas; la parte pública usa `intake_request_submit`).
+ * `over` pisa columnas por su nombre; `items` se manda como JSON.
+ */
+export async function insertRequest(
+  db: Client,
+  tenantId: string,
+  formId: string,
+  over: Record<string, unknown> = {},
+): Promise<string> {
+  const id = (over.id as string | undefined) ?? randomUUID();
+  const columns: Record<string, unknown> = {
+    id,
+    tenant_id: tenantId,
+    form_id: formId,
+    contact_name_enc: "v1.nombre.cifrado",
+    contact_email_enc: "v1.correo.cifrado",
+    contact_email_hash: sha256Hex(`correo-${id}`),
+    items: [requestItem(randomUUID())],
+    form_revision: 1,
+    submit_key: randomUUID(),
+    consent_template_version: "v1",
+    consent_text_sha256: sha256Hex("texto de consentimiento"),
+    ...over,
+  };
+  columns.items = JSON.stringify(columns.items);
+  const names = Object.keys(columns);
+  await db.query(
+    `insert into public.intake_requests (${names.join(", ")})
+     values (${names.map((n, i) => `$${i + 1}${n === "items" ? "::jsonb" : ""}`).join(", ")})`,
+    names.map((n) => columns[n]),
+  );
+  return id;
+}
+
 /** Los argumentos de `intake_request_submit`, con valores válidos que cada prueba puede cambiar. */
 export interface SubmitArgs {
   publicId: string;

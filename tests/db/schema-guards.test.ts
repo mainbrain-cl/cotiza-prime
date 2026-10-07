@@ -51,6 +51,8 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
         "quote_responses",
         "intake_forms",
         "intake_form_items",
+        "intake_requests",
+        "intake_daily_counters",
       ]),
     );
   });

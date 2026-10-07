@@ -1,8 +1,10 @@
 // Sprint 4 · Ataques de aislamiento del formulario público y de las solicitudes (plan §7).
 // Siempre con pases reales y `fetch` directo; la llave maestra solo sirve para montar y verificar.
+import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { rpc } from "../support/local-supabase";
+import { decryptPii, PiiCryptoError } from "@/lib/crypto/pii";
+import { rest, rpc } from "../support/local-supabase";
 import { fingerprint, fixture, openDb, tenantHeader, tokenOf } from "./context";
 import { ISOLATION_TABLES } from "./registry";
 
@@ -170,5 +172,122 @@ describe("Ataque 3 · un servicio del catálogo de B dentro de un formulario de 
       [b.freeItemId],
     );
     expect(rows[0]).toEqual({ tenant_id: fx.orgs.B.tenantId, form_id: b.formId });
+  });
+});
+
+describe("Ataque 6 · lo que ningún pase puede leer", () => {
+  it("nadie pide la IP cifrada del consentimiento, ni con `select=*` ni filtrando por ella", async () => {
+    const fx = fixture();
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+    for (const persona of ["ana", "mixta", "dante"] as const) {
+      const token = await tokenOf(persona);
+      for (const query of [
+        "intake_requests?select=consent_ip_enc",
+        "intake_requests?select=*",
+        "intake_requests?select=id&consent_ip_enc=not.is.null",
+        "intake_requests?select=id&order=consent_ip_enc",
+      ]) {
+        const res = await rest(token, query, { headers });
+        expect(res.status, `${persona} ${query}`).toBeGreaterThanOrEqual(400);
+        expect(res.text).not.toMatch(/"v1\.[A-Za-z0-9_-]{16}/); // ningún dato cifrado
+      }
+    }
+  });
+
+  it("un Lector no ve los contadores del día; el Dueño ve los de A y no los de B", async () => {
+    const fx = fixture();
+    const query = "intake_daily_counters?select=tenant_id,form_id,accepted,blocked_rate";
+    const dante = await rest(await tokenOf("dante"), query, {
+      headers: tenantHeader(fx.orgs.A.tenantId),
+    });
+    expect(dante.json).toEqual([]);
+    const ana = await rest(await tokenOf("ana"), query, {
+      headers: tenantHeader(fx.orgs.A.tenantId),
+    });
+    const rows = ana.json as { tenant_id: string }[];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.tenant_id === fx.orgs.A.tenantId)).toBe(true);
+    const crossed = await rest(
+      await tokenOf("ana"),
+      `${query}&tenant_id=eq.${fx.orgs.B.tenantId}`,
+      {
+        headers: tenantHeader(fx.orgs.A.tenantId),
+      },
+    );
+    expect(crossed.json).toEqual([]);
+  });
+
+  it("los datos de contacto de las solicitudes de A los leen los miembros de A, no los de B", async () => {
+    const fx = fixture();
+    const query = "intake_requests?select=id,contact_name_enc,contact_email_enc,items";
+    for (const persona of ["ana", "dante"] as const) {
+      const res = await rest(await tokenOf(persona), query, {
+        headers: tenantHeader(fx.orgs.A.tenantId),
+      });
+      expect(res.status, persona).toBe(200);
+      const rows = res.json as { id: string }[];
+      expect(rows.map((r) => r.id)).toContain(fx.orgs.A.intake!.requestId);
+      expect(rows.map((r) => r.id)).not.toContain(fx.orgs.B.intake!.requestId);
+    }
+    const beto = await rest(await tokenOf("beto"), query, {
+      headers: tenantHeader(fx.orgs.A.tenantId),
+    });
+    expect(beto.json).toEqual([]);
+  });
+});
+
+describe("Ataque 7 · un dato cifrado copiado a otra fila no se abre", () => {
+  it("el correo cifrado de la solicitud de B, copiado a una fila de A, falla por el sello", async () => {
+    const fx = fixture();
+    const a = fx.orgs.A.intake!;
+    const b = fx.orgs.B.intake!;
+    const { rows } = await db.query<{ contact_email_enc: string }>(
+      "select contact_email_enc from public.intake_requests where id = $1",
+      [b.requestId],
+    );
+    const encrypted = rows[0].contact_email_enc;
+    const seal = (tenantId: string, rowId: string, field = "contact_email") => ({
+      table: "intake_requests",
+      field,
+      tenantId,
+      rowId,
+    });
+    // control positivo: con su propio sello, se abre
+    expect(decryptPii(encrypted, seal(fx.orgs.B.tenantId, b.requestId))).toBe(b.contactEmail);
+
+    // copiado a una fila nueva de A (en una transacción que se deshace)
+    const copyId = randomUUID();
+    await db.query("begin");
+    try {
+      await db.query(
+        `insert into public.intake_requests
+           (id, tenant_id, form_id, contact_name_enc, contact_email_enc, contact_email_hash, items,
+            form_revision, submit_key, consent_template_version, consent_text_sha256)
+         values ($1, $2, $3, 'v1.x.x', $4, $5, $6::jsonb, 1, gen_random_uuid(), 'v1', $7)`,
+        [
+          copyId,
+          fx.orgs.A.tenantId,
+          a.formId,
+          encrypted,
+          "c".repeat(64),
+          JSON.stringify([{ form_item_id: a.freeItemId, name: "copia", unit: "unit" }]),
+          "d".repeat(64),
+        ],
+      );
+      const copied = await db.query<{ contact_email_enc: string }>(
+        "select contact_email_enc from public.intake_requests where id = $1",
+        [copyId],
+      );
+      for (const sealed of [
+        seal(fx.orgs.A.tenantId, copyId),
+        seal(fx.orgs.B.tenantId, copyId),
+        seal(fx.orgs.A.tenantId, b.requestId),
+        seal(fx.orgs.B.tenantId, b.requestId, "contact_name"),
+      ]) {
+        expect(() => decryptPii(copied.rows[0].contact_email_enc, sealed)).toThrow(PiiCryptoError);
+      }
+    } finally {
+      await db.query("rollback");
+    }
   });
 });

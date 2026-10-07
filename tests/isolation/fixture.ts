@@ -95,6 +95,10 @@ export interface IntakeData {
   catalogFormItemId: string;
   /** Servicio del catálogo de la organización al que apunta el anterior. */
   catalogItemId: string;
+  /** Solicitud ya recibida por este formulario (con datos de contacto cifrados y con el canario). */
+  requestId: string;
+  /** Texto en claro de lo que se cifró en la solicitud (sirve para comprobar que no se descifra en otra fila). */
+  contactEmail: string;
 }
 
 /** Una cotización ya enviada, con su paquete congelado y su enlace (solo A y B). */
@@ -512,6 +516,51 @@ async function buildIntakeData(db: Client, data: OrgData, owner: Persona): Promi
     rpc(token, "set_intake_form_status", { p_form_id: formId, p_status: "published" }, headers),
     "set_intake_form_status",
   );
+  // Una solicitud recibida y los contadores del día. Se monta con `pg` (los datos llegan ya cifrados, con el
+  // sello `intake_requests.<campo>|tenant|id`; así los trae la aplicación).
+  const requestId = randomUUID();
+  const contactEmail = `visitante-${data.canary.toLowerCase()}@ejemplo.test`;
+  const seal = (field: string) => ({
+    table: "intake_requests",
+    field,
+    tenantId: data.tenantId,
+    rowId: requestId,
+  });
+  await db.query(
+    `insert into public.intake_requests
+       (id, tenant_id, form_id, contact_name_enc, contact_email_enc, contact_phone_enc, message_enc,
+        contact_email_hash, items, form_revision, submit_key, consent_template_version, consent_text_sha256,
+        consent_ip_enc, desired_date)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, 'v1', $12, $13, current_date + 30)`,
+    [
+      requestId,
+      data.tenantId,
+      formId,
+      encryptPii(`Visitante ${data.canary}`, seal("contact_name")),
+      encryptPii(contactEmail, seal("contact_email")),
+      encryptPii("+56912345678", seal("contact_phone")),
+      encryptPii(`Mensaje ${data.canary}`, seal("message")),
+      createHash("sha256").update(`correo-${requestId}`).digest("hex"),
+      JSON.stringify([
+        {
+          form_item_id: freeItemId,
+          catalog_item_id: null,
+          name: `Servicio libre ${data.canary}`,
+          unit: "service",
+          quantity_milli: 2000,
+        },
+      ]),
+      saved.revision,
+      randomUUID(),
+      createHash("sha256").update("texto-de-consentimiento").digest("hex"),
+      encryptPii("203.0.113.9", seal("consent_ip")),
+    ],
+  );
+  await db.query(
+    `insert into public.intake_daily_counters (tenant_id, form_id, day, accepted, blocked_rate)
+     values ($1, $2, app.current_business_date(), 1, 2)`,
+    [data.tenantId, formId],
+  );
   return {
     formId,
     publicId: created.public_id,
@@ -519,6 +568,8 @@ async function buildIntakeData(db: Client, data: OrgData, owner: Persona): Promi
     freeItemId,
     catalogFormItemId,
     catalogItemId: data.catalogIds[0],
+    requestId,
+    contactEmail,
   };
 }
 

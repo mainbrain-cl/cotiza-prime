@@ -5,9 +5,10 @@ import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { connect } from "./helpers";
-import { actAsService } from "./send-helpers";
+import { actAsService, asUser } from "./send-helpers";
 import {
   buildIntakeWorld,
+  insertRequest,
   makeForm,
   submitParams,
   SUBMIT_SQL,
@@ -133,5 +134,55 @@ describe("envíos simultáneos", () => {
       [w.tenantA],
     );
     expect(Number(total[0].n)).toBe(300);
+  });
+});
+
+describe("conversiones simultáneas", () => {
+  it("10 conversiones a la vez de la misma solicitud: una sola cotización y todas reciben la misma", async () => {
+    await setup.query("begin");
+    const form = await makeForm(setup, w.owner, w.tenantA);
+    const requestId = await insertRequest(setup, w.tenantA, form.formId);
+    await setup.query("commit");
+    const quotesBefore = (
+      await setup.query("select count(*)::int as n from public.quotes where tenant_id = $1", [
+        w.tenantA,
+      ])
+    ).rows[0].n as number;
+
+    const people = [w.owner, w.admin];
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, n) =>
+        inOwnTx(async (client) => {
+          await asUser(client, people[n % people.length], w.tenantA);
+          const { rows } = await client.query<{
+            r: { quote_id: string; number_display: string; converted: boolean };
+          }>("select public.convert_intake_request($1, $2, $3) as r", [
+            requestId,
+            w.customerA,
+            randomUUID(),
+          ]);
+          return rows[0].r;
+        }),
+      ),
+    );
+    expect(results.filter((r) => r.converted)).toHaveLength(1);
+    expect(new Set(results.map((r) => r.quote_id)).size).toBe(1);
+    expect(new Set(results.map((r) => r.number_display)).size).toBe(1);
+    const quotesAfter = (
+      await setup.query("select count(*)::int as n from public.quotes where tenant_id = $1", [
+        w.tenantA,
+      ])
+    ).rows[0].n as number;
+    expect(quotesAfter).toBe(quotesBefore + 1);
+    const { rows } = await setup.query(
+      "select count(*)::int as n from public.quotes where source_request_id = $1",
+      [requestId],
+    );
+    expect(rows[0].n).toBe(1);
+    const events = await setup.query(
+      "select count(*)::int as n from public.quote_events where quote_id = $1 and type = 'created_from_request'",
+      [results[0].quote_id],
+    );
+    expect(events.rows[0].n).toBe(1);
   });
 });

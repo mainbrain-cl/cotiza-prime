@@ -583,6 +583,20 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: true,
   },
   regenerate_intake_form_public_id: { args: { p_form_id: randomUUID() }, writesActiveTenant: true },
+  // Sprint 4 · solicitudes del formulario público (M32).
+  assign_intake_request: {
+    args: { p_request_id: randomUUID(), p_assignee_user_id: randomUUID() },
+    writesActiveTenant: true,
+  },
+  discard_intake_request: {
+    args: { p_request_id: randomUUID(), p_reason: "spam", p_note: null },
+    writesActiveTenant: true,
+  },
+  restore_intake_request: { args: { p_request_id: randomUUID() }, writesActiveTenant: true },
+  convert_intake_request: {
+    args: { p_request_id: randomUUID(), p_customer_id: randomUUID(), p_creation_key: randomUUID() },
+    writesActiveTenant: true,
+  },
 };
 
 /** Funciones de `public` que solo ejecuta el servidor con la llave maestra: nadie con pase las llama. */

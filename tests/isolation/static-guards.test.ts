@@ -293,7 +293,7 @@ describe("guardias estáticas del aislamiento", () => {
     const others = sourceFiles
       .filter((f) => rel(f).startsWith("src/lib/intake/") || rel(f).startsWith("src/app/f/"))
       .filter((f) => rel(f) !== "src/lib/intake/gateway.ts")
-      .filter((f) => !/\/(builder|requests)-(actions|queries)\.ts$/.test(rel(f)))
+      .filter((f) => !/\/(builder|requests|convert)-(actions|queries)\.ts$/.test(rel(f)))
       .filter((f) => /\.rpc\(|createAdminClient|\.storage\b/.test(stripComments(read(f))))
       .map(rel);
     expect(others).toEqual([]);
@@ -303,8 +303,8 @@ describe("guardias estáticas del aislamiento", () => {
     const files = sourceFiles.filter(
       (f) =>
         rel(f).startsWith("src/app/o/[tenantId]/solicitudes/") ||
-        /^src\/lib\/intake\/requests-/.test(rel(f)) ||
-        /^src\/components\/intake\/request-/.test(rel(f)),
+        /^src\/lib\/intake\/(requests|convert)-/.test(rel(f)) ||
+        /^src\/components\/intake\/(request-|convert-|source-)/.test(rel(f)),
     );
     expect(files.length).toBeGreaterThan(5);
     for (const file of files) {

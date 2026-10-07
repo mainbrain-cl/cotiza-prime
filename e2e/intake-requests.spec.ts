@@ -394,7 +394,7 @@ test.describe("H-089 · recibir y asignar solicitudes", () => {
     await expect(page.getByTestId("request-row")).toHaveCount(1);
   });
 
-  test("el detalle muestra los datos descifrados como texto plano, el consentimiento y el marcador «Llega pronto»", async () => {
+  test("el detalle muestra los datos descifrados como texto plano, el consentimiento y el botón «Crear cotización»", async () => {
     const { page } = ctx.admin;
     const dialogs: string[] = [];
     page.on("dialog", async (dialog) => {
@@ -420,9 +420,8 @@ test.describe("H-089 · recibir y asignar solicitudes", () => {
     await page.getByText("Ver el texto que aceptó").click();
     await expect(page.getByText(`Tus datos los recibirá ${ctx.a.name}`)).toBeVisible();
     await expect(page.getByTestId("request-assignee")).toHaveText("Nadie todavía");
-    // «Crear cotización» solo como marcador
-    await expect(page.getByTestId("convert-soon")).toBeDisabled();
-    await expect(page.getByText("Llega pronto")).toBeVisible();
+    // «Crear cotización» abre el flujo de H-090
+    await expect(page.getByTestId("convert-open")).toBeVisible();
     await expectNoPrices(page);
     expect(dialogs).toEqual([]);
 
@@ -659,7 +658,7 @@ test.describe("H-089 · recibir y asignar solicitudes", () => {
     await expect(page.getByTestId("request-title")).toHaveText("Datos eliminados");
     await expect(page.getByTestId("data-deleted")).toBeVisible();
     await expect(page.getByTestId("assignee-select")).toHaveCount(0);
-    await expect(page.getByTestId("convert-soon")).toHaveCount(0);
+    await expect(page.getByTestId("convert-open")).toHaveCount(0);
     await expect(page.getByTestId("anonymize-open")).toHaveCount(0);
     // Se vuelve a cargar: el HTML de la carga anterior aún trae los datos que ya se eliminaron.
     await page.reload();

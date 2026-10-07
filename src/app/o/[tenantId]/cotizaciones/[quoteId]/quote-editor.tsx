@@ -111,6 +111,7 @@ export function QuoteEditor({
   taxRateBp,
   savedValidUntil,
   initialCatalog,
+  requestSeedLines = [],
 }: {
   tenantId: string;
   quoteId: string;
@@ -120,6 +121,8 @@ export function QuoteEditor({
   /** Fecha de vigencia ya guardada (`aaaa-mm-dd`), si la hay. */
   savedValidUntil: string | null;
   initialCatalog: QuotableCatalogItem[];
+  /** Líneas de los servicios de la solicitud de origen; solo se ofrecen si la cotización no tiene líneas. */
+  requestSeedLines?: EditorLine[];
 }) {
   const [state, setState] = useState<EditorState>(initialState);
   const [catalog, setCatalog] = useState<QuotableCatalogItem[]>(initialCatalog);
@@ -340,6 +343,27 @@ export function QuoteEditor({
               className="rounded-lg border border-dashed border-border-strong bg-surface p-6 text-center text-fg-muted"
             >
               Aún no hay líneas. Agrega un servicio de tu catálogo o una línea libre.
+              {requestSeedLines.length > 0 ? (
+                <span className="mt-3 flex justify-center">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    data-testid="load-request-services"
+                    disabled={blocked}
+                    onClick={() => {
+                      setState((current) =>
+                        current.lines.length > 0
+                          ? current
+                          : { ...current, lines: requestSeedLines.slice(0, QUOTE_MAX_LINES) },
+                      );
+                      setAnnouncement("Se cargaron los servicios de la solicitud.");
+                    }}
+                  >
+                    <Plus aria-hidden />
+                    Cargar los servicios de la solicitud
+                  </Button>
+                </span>
+              ) : null}
             </p>
           ) : (
             <ol className="flex flex-col gap-3">

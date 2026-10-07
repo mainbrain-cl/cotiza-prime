@@ -225,6 +225,148 @@ describe("Ataque 2 · asignar a quien no es miembro activo de la organización",
   });
 });
 
+describe("Ataque 3b · convertir (H-090): Comercial ajena, clave repetida y doble conversión", () => {
+  const quotesOfA = async (tenantId: string) =>
+    (
+      await db.query<{ n: number }>(
+        "select count(*)::int as n from public.quotes where tenant_id = $1",
+        [tenantId],
+      )
+    ).rows[0].n;
+
+  it("Carla (Comercial de A) no convierte la solicitud asignada a otra persona (42501); una sin asignar sí y queda a su cargo", async () => {
+    const fx = fixture();
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+    // Carla es Dueña de C: aquí entra a A como Comercial (y al terminar queda como «quitada»).
+    const setCarla = (status: "active" | "removed") =>
+      db.query(
+        `insert into public.members (tenant_id, user_id, role, status, removed_at)
+         values ($1, $2, 'sales', $3, case when $3 = 'removed' then now() end)
+         on conflict (tenant_id, user_id) do update
+           set role = 'sales', status = excluded.status, removed_at = excluded.removed_at`,
+        [fx.orgs.A.tenantId, fx.personas.carla.userId, status],
+      );
+    await setCarla("active");
+    try {
+      await carlaAttacks(fx, headers);
+    } finally {
+      await setCarla("removed");
+    }
+  });
+
+  async function carlaAttacks(fx: ReturnType<typeof fixture>, headers: Record<string, string>) {
+    const assigned = await freshRequestOfA();
+    const mixtaAssign = await rpc(
+      await tokenOf("ana"),
+      "assign_intake_request",
+      { p_request_id: assigned, p_assignee_user_id: fx.personas.mixta.userId },
+      headers,
+    );
+    expect(mixtaAssign.status, mixtaAssign.text).toBe(200);
+    const before = await quotesOfA(fx.orgs.A.tenantId);
+
+    const token = await tokenOf("carla");
+    const denied = await rpc(
+      token,
+      "convert_intake_request",
+      {
+        p_request_id: assigned,
+        p_customer_id: fx.orgs.A.customerIds[0],
+        p_creation_key: randomUUID(),
+      },
+      headers,
+    );
+    expect(denied.status).toBeGreaterThanOrEqual(400);
+    expect(codeOf(denied), denied.text).toBe("42501");
+    expect(await quotesOfA(fx.orgs.A.tenantId)).toBe(before);
+    expect(await statusOf(assigned)).toMatchObject({
+      status: "assigned",
+      assigned_to: fx.personas.mixta.userId,
+      quote_id: null,
+    });
+
+    // control positivo: una sin asignar sí, y queda a cargo de Carla
+    const free = await freshRequestOfA();
+    const ok = await rpc(
+      token,
+      "convert_intake_request",
+      {
+        p_request_id: free,
+        p_customer_id: fx.orgs.A.customerIds[0],
+        p_creation_key: randomUUID(),
+      },
+      headers,
+    );
+    expect(ok.status, ok.text).toBe(200);
+    expect(await statusOf(free)).toMatchObject({
+      status: "converted",
+      assigned_to: fx.personas.carla.userId,
+    });
+  }
+
+  it("la misma clave de creación en otra solicitud: CP422 y la segunda queda intacta", async () => {
+    const fx = fixture();
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+    const token = await tokenOf("ana");
+    const key = randomUUID();
+    const first = await freshRequestOfA();
+    const second = await freshRequestOfA();
+    const ok = await rpc(
+      token,
+      "convert_intake_request",
+      { p_request_id: first, p_customer_id: fx.orgs.A.customerIds[0], p_creation_key: key },
+      headers,
+    );
+    expect(ok.status, ok.text).toBe(200);
+    const before = await quotesOfA(fx.orgs.A.tenantId);
+    const reused = await rpc(
+      token,
+      "convert_intake_request",
+      { p_request_id: second, p_customer_id: fx.orgs.A.customerIds[0], p_creation_key: key },
+      headers,
+    );
+    expect(reused.status).toBeGreaterThanOrEqual(400);
+    expect(codeOf(reused), reused.text).toBe("CP422");
+    expect(await quotesOfA(fx.orgs.A.tenantId)).toBe(before);
+    expect(await statusOf(second)).toMatchObject({ status: "new", quote_id: null });
+  });
+
+  it("convertir dos veces la misma solicitud (otra pestaña) devuelve la misma cotización sin crear otra", async () => {
+    const fx = fixture();
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+    const token = await tokenOf("ana");
+    const requestId = await freshRequestOfA();
+    const first = await rpc(
+      token,
+      "convert_intake_request",
+      {
+        p_request_id: requestId,
+        p_customer_id: fx.orgs.A.customerIds[0],
+        p_creation_key: randomUUID(),
+      },
+      headers,
+    );
+    expect(first.status, first.text).toBe(200);
+    const before = await quotesOfA(fx.orgs.A.tenantId);
+    const again = await rpc(
+      token,
+      "convert_intake_request",
+      {
+        p_request_id: requestId,
+        p_customer_id: fx.orgs.A.customerIds[0],
+        p_creation_key: randomUUID(),
+      },
+      headers,
+    );
+    expect(again.status, again.text).toBe(200);
+    expect((again.json as { quote_id: string; converted: boolean }).converted).toBe(false);
+    expect((again.json as { quote_id: string }).quote_id).toBe(
+      (first.json as { quote_id: string }).quote_id,
+    );
+    expect(await quotesOfA(fx.orgs.A.tenantId)).toBe(before);
+  });
+});
+
 describe("Ataque 3 · convertir con un cliente de otra organización", () => {
   it("el `customer_id` de B con una solicitud de A: rechazado, sin cotización y sin cambios; con uno de A, sí", async () => {
     const fx = fixture();

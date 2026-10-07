@@ -390,3 +390,15 @@ el registro de aislamiento.
 - `convert_intake_request` y `assign_intake_request` aceptan hoy una solicitud ya anonimizada (no se pidió
   tocarlas). La pantalla debe impedirlo; si se quiere también en la base, es una corrección chica para la próxima
   migración.
+
+### Recordatorios textuales de la revisión de Opus para el portero de H-087 (menor 11)
+
+- `intake_form_read` y el envío le devuelven al servidor `tenant_id`, `form_id`, `form_name` (el nombre
+  interno) y `logo_path`. **El portero arma la respuesta al navegador con una lista blanca de campos**: ningún
+  UUID interno puede salir al público (`PROYECTO.md` §13.10). Debe haber una prueba que lo vigile (recorrer la
+  respuesta de `/f/*` y exigir que no aparezca ningún UUID ni el nombre interno).
+- Un choque `23505` (por ejemplo una `submit_key` repetida con otro contenido) se traduce a un mensaje claro
+  para el visitante, nunca se muestra como error crudo.
+- El portero **no** llama a `intake_record_block` con `paused` ni `cap` (el envío ya los cuenta por dentro).
+- El texto de consentimiento que se manda a `intake_request_submit` lo arma el servidor con la plantilla fija
+  (`consent-notice.ts`) y los datos de la organización; nunca con algo que escribió el visitante.

@@ -230,6 +230,21 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         });
         expect([404, 405], route.path).toContain(res.status());
         expect(await res.text()).not.toContain(fx.orgs.B.canary);
+      } else if (route.scope === "signed") {
+        // Aviso firmado del proveedor de correo: un GET no es válido (405) y un POST sin firma da 401,
+        // sin datos de nadie.
+        const path = route.path.replace("[provider]", "resend");
+        const get = await page.request.get(path, {
+          headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
+        });
+        expect(get.status(), path).toBe(405);
+        expect(await get.text()).not.toContain(fx.orgs.B.canary);
+        const post = await page.request.post(path, {
+          headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
+          data: {},
+        });
+        expect(post.status(), path).toBe(401);
+        expect(await post.text()).not.toContain(fx.orgs.B.canary);
       } else if (route.scope === "none") {
         const res = await page.request.get(route.path, {
           headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },

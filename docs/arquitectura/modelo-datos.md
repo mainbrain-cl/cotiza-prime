@@ -767,7 +767,12 @@ revoke execute on function app.allocate_quote_number(uuid) from public, anon, au
 | `invitations` | 4 | `email_enc`, `email_hash`, `role`, `token_sha256`, `expires_at`, `invited_by`, `accepted_at`, `revoked_at` | Se acepta solo si `email_hash` coincide con el correo de la cuenta (H-009) |
 | `member_catalog_permissions` | 4 | `member_id`, `catalog_item_id` | H-042 |
 | `approval_rules`, `text_snippets`, `templates`, `categories`, `tags`, `quote_tags`, `notifications`, `rate_configs` | 4 a 8 | — | Configuración por organización, con RLS normal |
-| `intake_forms`, `requests` | 9 | En `requests`: datos de contacto `_enc` + `_hash`, `consent_document_id`, `consented_at`, `estimate_clp` | Entrada pública por el servidor (mismo patrón del portero, decisión 017; se confirma en el sprint 9), con anti-robot y límites en la aplicación |
+| `intake_forms` | 4 (migración 29) | `public_id` (22 caracteres al azar, único en toda la plataforma, va en el QR; **no es secreto**), `name`, `title`, `intro`, `success_message`, `status` (`draft`/`published`/`paused`/`archived`), `revision`, `fields jsonb` (lista **cerrada**: teléfono, empresa, comuna, dirección del servicio, fecha deseada y mensaje, cada uno `off`/`optional`/`required`; nombre y correo siempre; **sin RUT ni preguntas libres**), `embed_origins text[]` (solo `https`, máx. 10, sin comodines), `daily_cap` (1 a 200, 50 por defecto), `privacy_policy_url` | Se escribe solo con funciones (`create_intake_form`, `save_intake_form`, `set_intake_form_status`, `regenerate_intake_form_public_id`), solo Dueño y Administrador; la leen todos los miembros. Tope de 20 formularios no archivados por organización. Cada guardado sube `revision` |
+| `intake_form_items` | 4 (migración 29) | `form_id`, `position`, `kind` (`catalog`/`free`), `catalog_item_id` (relación compuesta), `public_name`, `public_description`, `unit`, `quantity_mode`, `min_qty_milli`, `max_qty_milli`, `is_active` | **Sin ninguna columna de precio**: al elegir un servicio del catálogo la aplicación copia nombre, descripción y unidad; lo que lee el público nunca se cruza con `catalog_items` |
+| `intake_requests` (antes `requests`) | 4 (migración 30) | `form_id`, `status` (`new`/`assigned`/`converted`/`discarded`), `assigned_to/at/by`, `discard_reason`, `discard_note`, `quote_id`, datos de contacto **cifrados** (`contact_name_enc`, `contact_email_enc` + `contact_email_hash`, `contact_phone_enc`, `company_enc`, `comuna_enc`, `service_address_enc`, `message_enc`), `desired_date`, `items jsonb` (copia congelada `[{form_item_id, catalog_item_id, name, unit, quantity_milli}]`, **sin precios**: la base rechaza cualquier otra clave), `form_revision`, `submit_key`, consentimiento (`consent_template_version`, `consent_text_sha256`, `consented_at`, `consent_ip_enc`), `anonymized_at` | **No hay `estimate_clp`**: el formulario no muestra ni guarda precios. El contenido no cambia después de creado; los estados siguen una lista cerrada. Los miembros leen por columnas (nadie lee `consent_ip_enc`). Retención: nuevas o asignadas 12 meses, descartadas 30 días, convertidas se anonimizan a los 12 meses (migración 33) |
+| `intake_daily_counters` | 4 (migración 30) | `form_id`, `day` (día de Chile), `accepted`, `blocked_captcha`, `blocked_rate`, `blocked_cap`, `blocked_paused`, `blocked_invalid`, `cap_notified_at` | Solo la leen Dueño y Administrador; solo escribe el servidor, dentro de la transacción del envío. 90 días de retención |
+
+La entrada pública usa el patrón del portero (decisión 017): el navegador nunca habla con la base; el servidor llama a `intake_form_read`, `intake_request_submit`, `intake_record_block` y a los avisos (`intake_notice_*`), todas solo para `service_role` (migración 31). `email_messages` suma los tipos `request_assigned`, `request_received` e `intake_cap_reached` (con `intake_request_id` o `intake_form_id`, sin datos del visitante) y `quotes` suma `source_request_id` (migración 32, función `convert_intake_request`).
 | `data_subject_requests` | 11 | `kind`, `subject_hash`, `handled_by`, `handled_at` | H-106 y H-107 |
 | `idempotency_keys` | 3 | `key`, `actor`, `response_hash`, `created_at` | Para "enviar", "aceptar" y "marcar pago": un doble clic no repite la acción |
 
@@ -794,6 +799,7 @@ revoke execute on function app.allocate_quote_number(uuid) from public, anon, au
   | `beto@ejemplo.test` | Dueño de **Org B** |
   | `mixta@ejemplo.test` | Administradora de Org A y de Org B (no Dueña: cada organización tiene un solo Dueño activo) |
   | `ex@ejemplo.test` | Estaba en Org A y fue quitada |
+  | `carla@ejemplo.test` | Comercial activa de Org A (solo en el `seed`, para probar la asignación de solicitudes) |
 
   Cada organización tiene catálogo, clientes cifrados, numeración y auditoría.
 - **Clientes de prueba:** se inicia sesión de verdad con cada persona (pase real) y se crea un cliente de Supabase con la llave pública más ese pase. Así se reproduce exactamente lo que podría hacer un atacante con una cuenta válida.
@@ -888,7 +894,7 @@ Las migraciones posteriores al sprint 1 se listan en el sprint que las crea.
 
 - Un script `scripts/seed.ts` en TypeScript, porque los clientes cifrados necesitan el módulo de cifrado y las cuentas se crean con la API de administración de Auth.
 - **Se niega a correr** si `SUPABASE_URL` no es local (`127.0.0.1` o `localhost`) o el proyecto de pruebas declarado. Nunca contra producción.
-- Contenido: las 4 personas de §8.1 con correos `@ejemplo.test` (dominio reservado que no existe); "Negocio Demo 1" y "Negocio Demo 2"; 5 servicios por organización; 5 clientes ficticios por organización con RUT generados de forma válida, nombres inventados y teléfonos `+56 9 0000 00xx`.
+- Contenido: las 5 personas de §8.1 (con carla, Comercial de Org A) con correos `@ejemplo.test` (dominio reservado que no existe); "Negocio Demo 1" y "Negocio Demo 2"; 5 servicios por organización; 5 clientes ficticios por organización con RUT generados de forma válida, nombres inventados y teléfonos `+56 9 0000 00xx`.
 - **Nunca** se copia nada de producción a pruebas.
 
 ---

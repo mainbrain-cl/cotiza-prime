@@ -46,6 +46,12 @@ const PEOPLE: {
     ],
   },
   {
+    // Comercial activa de Negocio Demo 1: sirve para probar la asignación de solicitudes del formulario público.
+    email: "carla@ejemplo.test",
+    fullName: "Carla Prueba",
+    memberships: [{ tenant: "A", role: "sales" }],
+  },
+  {
     email: "ex@ejemplo.test",
     fullName: "Ex Prueba",
     memberships: [{ tenant: "A", role: "sales", removed: true }],

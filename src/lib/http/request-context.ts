@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
-import { cache } from "react";
 import { headers } from "next/headers";
 
 const USER_AGENT_MAX_LENGTH = 300;
@@ -20,14 +19,26 @@ export type RequestContext = {
   userAgent: string | null;
 };
 
-/** Origen y correlación de la petición actual, para auditoría. Se calcula una vez por petición. */
-export const getRequestContext = cache(async (): Promise<RequestContext> => {
+/**
+ * Un contexto por petición, guardado por el objeto de cabeceras de ESA petición. Antes se usaba `cache` de
+ * React, que memoiza al dibujar páginas pero NO en las rutas de la API: ahí cada llamada daba un
+ * `requestId` distinto y el registro (`serverLog`) y la auditoría (`x-cp-request-id`) de una misma petición
+ * no coincidían. Las cabeceras de la petición son el mismo objeto durante toda ella, en páginas y en rutas.
+ */
+const contexts = new WeakMap<object, RequestContext>();
+
+/** Origen y correlación de la petición actual, para auditoría. Es el mismo durante toda la petición. */
+export async function getRequestContext(): Promise<RequestContext> {
   const requestHeaders = await headers();
+  const known = contexts.get(requestHeaders);
+  if (known) return known;
   const forwarded = requestHeaders.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const clientIp = forwarded && isIP(forwarded) !== 0 ? forwarded : null;
   const userAgent = requestHeaders.get("user-agent")?.slice(0, USER_AGENT_MAX_LENGTH) ?? null;
-  return { requestId: randomUUID(), clientIp, userAgent };
-});
+  const context: RequestContext = { requestId: randomUUID(), clientIp, userAgent };
+  contexts.set(requestHeaders, context);
+  return context;
+}
 
 /**
  * Dirección pública de la aplicación, para los enlaces de los correos.

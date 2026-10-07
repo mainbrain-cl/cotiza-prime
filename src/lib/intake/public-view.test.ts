@@ -58,7 +58,7 @@ const consent = buildConsentNotice({
 });
 
 describe("lo que llega al navegador (lista blanca)", () => {
-  const view = buildPublicView(form, consent, "data:image/png;base64,AAAA");
+  const view = buildPublicView(form, consent);
   const json = JSON.stringify(view);
 
   it("trae lo que la pantalla necesita", () => {
@@ -81,7 +81,7 @@ describe("lo que llega al navegador (lista blanca)", () => {
       contactPhone: "+56 2 2345 6789",
     });
     expect(view.consentText).toContain("Tus datos los recibirá Empresa Ficticia");
-    expect(view.logoDataUrl).toBe("data:image/png;base64,AAAA");
+    expect("logoDataUrl" in view).toBe(false);
     expect(view.brand.primary).toBe("#2b54e0");
   });
 

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { normalizeEmail } from "@/lib/normalize/email";
 import { isValidPhone, normalizePhone } from "@/lib/normalize/phone";
 import { parseQuantity } from "@/lib/quotes/parse";
+import { CONSENT_FINGERPRINT_PATTERN } from "./consent-fingerprint";
 import type { FieldMode, FieldModes, QuantityMode } from "./field-modes";
 import { hasLoneSurrogate, MULTI_LINE_UNSAFE, SINGLE_LINE_UNSAFE } from "./unsafe-text";
 
@@ -28,8 +29,12 @@ const CHILE_TIME_ZONE = "America/Santiago";
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MILLI_PER_UNIT = 1_000;
 
-/** Nombre del campo que una persona nunca ve ni llena. */
-export const HONEYPOT_FIELD = "website";
+/**
+ * Nombre del campo que una persona nunca ve ni llena (campo trampa). Es un nombre sin significado a
+ * propósito: ni «website», ni «url», ni «email»… que los gestores de contraseñas y el autocompletado del
+ * navegador reconocen y llenan solos (eso bloquearía a una persona real).
+ */
+export const HONEYPOT_FIELD = "pf_ref_q7x";
 
 export type { FieldMode, QuantityMode };
 
@@ -59,7 +64,8 @@ export type SubmitData = {
   items: { formItemId: string; quantityMilli: number | null }[];
   consent: true;
   submitKey: string;
-  requestId: string;
+  /** Huella del aviso de privacidad que la persona vio (`consent-fingerprint.ts`). */
+  consentFingerprint: string;
   formRevision: number;
   renderToken: string;
   antibotToken: string;
@@ -257,7 +263,11 @@ export function buildSubmitSchema(
         error: "Para enviar tienes que aceptar el aviso de privacidad.",
       }),
       submitKey: z.uuid({ error: "No se pudo identificar el envío. Recarga la página." }),
-      requestId: z.uuid({ error: "No se pudo identificar el envío. Recarga la página." }),
+      consentFingerprint: z
+        .string({ error: "El aviso de privacidad cambió. Recarga la página." })
+        .regex(CONSENT_FINGERPRINT_PATTERN, {
+          error: "El aviso de privacidad cambió. Recarga la página.",
+        }),
       formRevision: z
         .number({ error: "El formulario cambió. Recarga la página." })
         .int({ error: "El formulario cambió. Recarga la página." })
@@ -327,7 +337,7 @@ export function buildSubmitSchema(
       items,
       consent: data.consent,
       submitKey: data.submitKey,
-      requestId: data.requestId,
+      consentFingerprint: data.consentFingerprint,
       formRevision: data.formRevision,
       renderToken: data.renderToken,
       antibotToken: data.antibotToken,

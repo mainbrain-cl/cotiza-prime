@@ -4,6 +4,8 @@
 import "../tests/support/stub-server-only"; // debe ir primero
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
+import { consentFingerprint } from "../src/lib/intake/consent-fingerprint";
+import { HONEYPOT_FIELD } from "../src/lib/intake/submit-schema";
 import { PLATFORM_TENANT_ID, TENANT_HEADER } from "../src/lib/tenant/constants";
 import { connect } from "../tests/db/helpers";
 import {
@@ -633,8 +635,13 @@ test.describe("Sin sesión", () => {
         "la página pública no puede traer datos internos ni de otra organización",
       ).not.toContain(secret);
     }
-    const renderToken = /v1\.\d{9,12}\.[A-Za-z0-9_-]{43}/.exec(html)?.[0];
-    expect(renderToken, "la página trae el sello de tiempo").toBeTruthy();
+    const stamp =
+      /(v1\.\d{9,12}\.[A-Za-z0-9_-]{43})\\*",\\*"submitKey\\*":\\*"([0-9a-f-]{36})/.exec(html);
+    expect(stamp, "la página trae el sello de tiempo y su clave de envío").toBeTruthy();
+    // La huella del aviso de privacidad que ve la persona (la calcula el navegador; aquí, desde la pantalla).
+    await page.goto(`/f/${a.publicId}`);
+    const consentText = await page.locator('label[for="pf-consent"]').textContent();
+    expect(consentText).toBeTruthy();
 
     // El sello pide al menos 3 segundos entre mostrar el formulario y enviarlo.
     await page.waitForTimeout(3_500);
@@ -645,11 +652,11 @@ test.describe("Sin sesión", () => {
         email: "visitante-p28@ejemplo.test",
         items: [{ formItemId: b.freeItemId, quantity: null }],
         consent: true,
-        submitKey: randomUUID(),
-        requestId: randomUUID(),
+        submitKey: stamp![2],
+        consentFingerprint: consentFingerprint(consentText!, null),
         formRevision: a.revision,
-        website: "",
-        renderToken,
+        [HONEYPOT_FIELD]: "",
+        renderToken: stamp![1],
         antibotToken: "test-pass",
       },
     });

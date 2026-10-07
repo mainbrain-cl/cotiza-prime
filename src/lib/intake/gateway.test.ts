@@ -32,7 +32,7 @@ import {
   IntakeGatewayError,
   readIntakeForm,
   readIntakeNoticeRecipients,
-  readOrganizationLogoDataUrl,
+  readOrganizationLogoFile,
   recordIntakeBlock,
   registerIntakeNotice,
   settleIntakeNotice,
@@ -351,10 +351,11 @@ describe("el portero: avisos al equipo", () => {
 describe("el portero: el logo de la organización", () => {
   const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
-  it("lo entrega como data: si la ruta empieza por el tenant_id que devolvió la base", async () => {
+  it("entrega el archivo si la ruta empieza por el tenant_id que devolvió la base", async () => {
     download.mockResolvedValue({ data: blobOf(PNG), error: null });
-    const url = await readOrganizationLogoDataUrl(TENANT, `${TENANT}/logo-ab12cd34ef56.png`);
-    expect(url).toBe(`data:image/png;base64,${Buffer.from(PNG).toString("base64")}`);
+    const file = await readOrganizationLogoFile(TENANT, `${TENANT}/logo-ab12cd34ef56.png`);
+    expect(file?.kind).toBe("png");
+    expect(file?.bytes.equals(Buffer.from(PNG))).toBe(true);
     expect(from).toHaveBeenCalledWith("tenant-logos");
   });
 
@@ -367,16 +368,16 @@ describe("el portero: el logo de la organización", () => {
       `${TENANT}/logo`,
       `logo-ab12cd34ef56.png`,
     ];
-    for (const path of bad) expect(await readOrganizationLogoDataUrl(TENANT, path)).toBeNull();
-    expect(await readOrganizationLogoDataUrl(TENANT, null)).toBeNull();
-    expect(await readOrganizationLogoDataUrl("no-es-uuid", "no-es-uuid/logo.png")).toBeNull();
+    for (const path of bad) expect(await readOrganizationLogoFile(TENANT, path)).toBeNull();
+    expect(await readOrganizationLogoFile(TENANT, null)).toBeNull();
+    expect(await readOrganizationLogoFile("no-es-uuid", "no-es-uuid/logo.png")).toBeNull();
     expect(download).not.toHaveBeenCalled();
   });
 
   it("un logo demasiado grande o una falla de Storage dan null", async () => {
     download.mockResolvedValue({ data: { size: 2 * 1024 * 1024 }, error: null });
-    expect(await readOrganizationLogoDataUrl(TENANT, `${TENANT}/logo-a.png`)).toBeNull();
+    expect(await readOrganizationLogoFile(TENANT, `${TENANT}/logo-a.png`)).toBeNull();
     download.mockResolvedValue({ data: null, error: { message: "no existe" } });
-    expect(await readOrganizationLogoDataUrl(TENANT, `${TENANT}/logo-a.png`)).toBeNull();
+    expect(await readOrganizationLogoFile(TENANT, `${TENANT}/logo-a.png`)).toBeNull();
   });
 });

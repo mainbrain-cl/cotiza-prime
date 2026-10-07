@@ -220,15 +220,17 @@ describe("consumeShareQuota (enlace del cliente, H-030)", () => {
 
 describe("formulario público (H-087)", () => {
   it("envíos: cuenta la IP en la ventana de 10 minutos y en el día, con huellas y con las constantes del plan", async () => {
-    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe(true);
-    const calls = rpc.mock.calls.map(([, args]) => args);
-    expect(calls.map((c) => c.p_scope)).toEqual(["intake_submit_ip", "intake_submit_ip_day"]);
-    expect(calls[0]).toMatchObject({
+    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe("allowed");
+    const recorded = rpc.mock.calls
+      .filter(([name]) => name === "auth_limit_record_failure")
+      .map(([, args]) => args);
+    expect(recorded.map((c) => c.p_scope)).toEqual(["intake_submit_ip", "intake_submit_ip_day"]);
+    expect(recorded[0]).toMatchObject({
       p_key_hash: "intake_submit_ip|203.0.113.7",
       p_max_failures: 6,
       p_window_seconds: 600,
     });
-    expect(calls[1]).toMatchObject({
+    expect(recorded[1]).toMatchObject({
       p_key_hash: "intake_submit_ip_day|203.0.113.7",
       p_max_failures: 21,
       p_window_seconds: 86_400,
@@ -237,17 +239,33 @@ describe("formulario público (H-087)", () => {
     expect(INTAKE_SUBMIT_MAX_PER_IP_PER_DAY).toBe(20);
   });
 
-  it("el sexto envío en 10 minutos bloquea sin gastar el cupo del día", async () => {
-    rpc.mockResolvedValue({ data: "2026-10-01T00:00:00Z", error: null });
-    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe(false);
-    expect(rpc).toHaveBeenCalledTimes(1);
+  it("el sexto envío en 10 minutos bloquea AHORA, sin gastar el cupo del día", async () => {
+    rpc.mockImplementation(async (name: string) => ({
+      data: name === "auth_limit_record_failure" ? "2026-10-01T00:00:00Z" : null,
+      error: null,
+    }));
+    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe("blocked_now");
+    const recorded = rpc.mock.calls.filter(([name]) => name === "auth_limit_record_failure");
+    expect(recorded).toHaveLength(1);
+  });
+
+  it("una IP que ya estaba bloqueada no suma ni cuenta como bloqueo nuevo", async () => {
+    rpc.mockImplementation(async (name: string) => ({
+      data: name === "auth_limit_locked_until" ? "2026-10-01T00:00:00Z" : null,
+      error: null,
+    }));
+    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe("blocked_repeat");
+    expect(rpc.mock.calls.some(([name]) => name === "auth_limit_record_failure")).toBe(false);
   });
 
   it("el envío número 21 del día bloquea aunque la ventana corta esté libre", async () => {
-    rpc
-      .mockResolvedValueOnce({ data: null, error: null })
-      .mockResolvedValueOnce({ data: "2026-10-02T00:00:00Z", error: null });
-    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe(false);
+    let records = 0;
+    rpc.mockImplementation(async (name: string) => {
+      if (name !== "auth_limit_record_failure") return { data: null, error: null };
+      records += 1;
+      return { data: records === 2 ? "2026-10-02T00:00:00Z" : null, error: null };
+    });
+    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe("blocked_now");
   });
 
   it("una IPv6 se agrupa por bloque /64 y nunca se guarda la IP en claro", async () => {
@@ -262,7 +280,7 @@ describe("formulario público (H-087)", () => {
     expect(rpc.mock.calls[0][1].p_key_hash).toBe("intake_submit_ip|desconocida");
     rpc.mockClear();
     vi.stubEnv("NODE_ENV", "test");
-    expect(await consumeIntakeSubmitQuota(null)).toBe(true);
+    expect(await consumeIntakeSubmitQuota(null)).toBe("allowed");
     expect(rpc).not.toHaveBeenCalled();
   });
 
@@ -280,7 +298,7 @@ describe("formulario público (H-087)", () => {
 
   it("si el contador falla se deja pasar: el tope diario vive dentro de la base", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
-    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe(true);
+    expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe("allowed");
     expect(await consumeIntakeReadQuota("203.0.113.7")).toBe(true);
   });
 });

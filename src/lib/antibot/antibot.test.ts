@@ -203,21 +203,59 @@ describe("adaptador turnstile", () => {
 });
 
 describe("loadAntibotConfig", () => {
-  it("fuera de producción usa memory por defecto", () => {
-    expect(loadAntibotConfig({ NEXT_PUBLIC_APP_ENV: "test" }).provider).toBe("memory");
-    expect(loadAntibotConfig({}).provider).toBe("memory");
-  });
-
-  it("en producción exige el proveedor", () => {
+  it("no hay proveedor por defecto: sin ANTIBOT_PROVIDER no arranca, en ningún entorno", () => {
+    expect(() => loadAntibotConfig({})).toThrow(/ANTIBOT_PROVIDER/);
+    expect(() => loadAntibotConfig({ NEXT_PUBLIC_APP_ENV: "test" })).toThrow(AntibotConfigError);
     expect(() => loadAntibotConfig({ NEXT_PUBLIC_APP_ENV: "production" })).toThrow(
       AntibotConfigError,
     );
+    expect(() => loadAntibotConfig({ NODE_ENV: "production" })).toThrow(AntibotConfigError);
   });
 
-  it("en producción se niega a arrancar con memory", () => {
+  it("memory solo se permite en un computador local", () => {
+    expect(loadAntibotConfig({ ANTIBOT_PROVIDER: "memory" }).provider).toBe("memory");
+    expect(
+      loadAntibotConfig({ ANTIBOT_PROVIDER: "memory", NEXT_PUBLIC_APP_ENV: "test" }).provider,
+    ).toBe("memory");
+    expect(
+      loadAntibotConfig({ ANTIBOT_PROVIDER: "memory", NODE_ENV: "development" }).provider,
+    ).toBe("memory");
+  });
+
+  it("memory se niega con entorno production, con NODE_ENV=production o con cualquier VERCEL_ENV", () => {
+    for (const env of [
+      { NEXT_PUBLIC_APP_ENV: "production" },
+      { NODE_ENV: "production" },
+      { VERCEL_ENV: "preview" },
+      { VERCEL_ENV: "production" },
+      // un valor que no dice exactamente «production» en el entorno de la aplicación NO abre la puerta
+      { NEXT_PUBLIC_APP_ENV: "Production", NODE_ENV: "production" },
+      { NEXT_PUBLIC_APP_ENV: "staging", VERCEL_ENV: "preview" },
+    ]) {
+      expect(() => loadAntibotConfig({ ANTIBOT_PROVIDER: "memory", ...env })).toThrow(
+        /no se permite en un despliegue/,
+      );
+    }
+  });
+
+  it("ANTIBOT_ALLOW_MEMORY=1 solo abre memory en CI y pruebas, nunca con el entorno production", () => {
+    const allow = { ANTIBOT_PROVIDER: "memory", ANTIBOT_ALLOW_MEMORY: "1" };
+    expect(loadAntibotConfig({ ...allow, NODE_ENV: "production" }).provider).toBe("memory");
+    expect(
+      loadAntibotConfig({ ...allow, NODE_ENV: "production", NEXT_PUBLIC_APP_ENV: "test" }).provider,
+    ).toBe("memory");
+    expect(loadAntibotConfig({ ...allow, VERCEL_ENV: "preview" }).provider).toBe("memory");
     expect(() =>
-      loadAntibotConfig({ NEXT_PUBLIC_APP_ENV: "production", ANTIBOT_PROVIDER: "memory" }),
-    ).toThrow(/no se permite en producción/);
+      loadAntibotConfig({ ...allow, NODE_ENV: "production", NEXT_PUBLIC_APP_ENV: "production" }),
+    ).toThrow(/no se permite/);
+    // cualquier otro valor de la variable no cuenta
+    expect(() =>
+      loadAntibotConfig({
+        ANTIBOT_PROVIDER: "memory",
+        ANTIBOT_ALLOW_MEMORY: "true",
+        NODE_ENV: "production",
+      }),
+    ).toThrow(/no se permite/);
   });
 
   it("turnstile exige las dos claves", () => {
@@ -256,8 +294,8 @@ describe("loadAntibotConfig", () => {
   });
 
   it("trata variables vacías como ausentes", () => {
-    expect(loadAntibotConfig({ ANTIBOT_PROVIDER: "  ", TURNSTILE_SECRET_KEY: "" }).provider).toBe(
-      "memory",
+    expect(() => loadAntibotConfig({ ANTIBOT_PROVIDER: "  ", TURNSTILE_SECRET_KEY: "" })).toThrow(
+      /ANTIBOT_PROVIDER/,
     );
   });
 

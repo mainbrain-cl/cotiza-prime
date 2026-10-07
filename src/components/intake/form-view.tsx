@@ -6,6 +6,7 @@ import { itemUnitShort } from "@/lib/intake/builder-model";
 import { brandStyle } from "@/lib/share/brand-vars";
 import type { PdfBrand } from "@/lib/pdf/types";
 import { cn } from "@/lib/utils";
+import { BRAND_BG, BrandHeader } from "./brand-header";
 
 /**
  * El formulario público tal como lo ve quien pide una cotización. Es PRESENTACIONAL: lo usan la vista
@@ -46,13 +47,29 @@ export type FormInteraction = {
   onSubmit: () => void;
   /** Va justo antes del botón de enviar: verificación anti-robot, campo trampa y avisos. */
   beforeSubmit?: ReactNode;
+  /**
+   * La página ya está lista (hidratada). Mientras no lo esté, y siempre que el navegador no ejecute
+   * JavaScript, el botón queda desactivado: un envío «clásico» del navegador pondría los datos en la dirección
+   * de la página (y de ahí en los registros del servidor y el historial).
+   */
+  ready: boolean;
+  /**
+   * Dirección que recibe el formulario si el navegador lo envía por su cuenta. Con `method="post"` y SIN
+   * `name` en los campos, ese envío no lleva ningún dato; el servidor igual lo rechaza (solo acepta JSON).
+   */
+  action: string;
 };
 
 export type FormViewProps = {
   brand: PdfBrand;
   organizationName: string;
-  /** Logo ya resuelto (dirección de la aplicación o `data:`); `null` si no hay. */
-  logoSrc: string | null;
+  /** Logo ya resuelto (dirección de la aplicación o `data:`); `null` si no hay. Se ignora si viene `header`. */
+  logoSrc?: string | null;
+  /**
+   * Encabezado de la marca ya dibujado por quien arma la página (componente de servidor). Si no viene, se
+   * dibuja con `logoSrc`.
+   */
+  header?: ReactNode;
   title: string;
   intro: string;
   fields: FieldModes;
@@ -71,12 +88,24 @@ export type FormViewProps = {
   interaction?: FormInteraction;
 };
 
-const BRAND_BG = "bg-[var(--brand)] text-[var(--on-brand)]";
 const BRAND_TEXT = "text-[var(--brand-text)]";
 const LABEL = "text-sm font-semibold text-fg";
 
 function requirement(mode: FieldMode | "required"): string {
   return mode === "optional" ? " (opcional)" : "";
+}
+
+/** Segunda defensa: aunque la base y el editor ya lo exigen, aquí solo se dibuja un enlace `https://`. */
+function httpsUrlOrNull(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.username === "" && url.password === ""
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function FieldError({ id, message }: { id: string; message: string | undefined }) {
@@ -123,7 +152,6 @@ function TextField({
       </label>
       <Input
         id={id}
-        name={id}
         type={type}
         autoComplete={autoComplete}
         disabled={disabled}
@@ -145,7 +173,8 @@ function TextField({
 export function FormView({
   brand,
   organizationName,
-  logoSrc,
+  logoSrc = null,
+  header,
   title,
   intro,
   fields,
@@ -160,6 +189,7 @@ export function FormView({
   const Heading = `h${headingLevel}` as "h1" | "h2" | "h3";
   const id = (name: string) => `${idPrefix}-${name}`;
   const locked = preview;
+  const safePolicyUrl = httpsUrlOrNull(privacyPolicyUrl);
 
   return (
     <div
@@ -167,18 +197,7 @@ export function FormView({
       style={brandStyle(brand) as CSSProperties}
       data-testid="form-view"
     >
-      <header className={cn("flex min-w-0 items-center gap-3 p-4 sm:p-6", BRAND_BG)}>
-        {logoSrc ? (
-          // Logo de la organización: una dirección de la aplicación o `data:` (no se descarga de afuera).
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={logoSrc}
-            alt={`Logo de ${organizationName}`}
-            className="max-h-12 max-w-32 shrink-0 rounded-xs bg-surface object-contain p-1"
-          />
-        ) : null}
-        <p className="min-w-0 text-lg font-semibold break-words">{organizationName}</p>
-      </header>
+      {header ?? <BrandHeader organizationName={organizationName} logoSrc={logoSrc} />}
 
       {/* En la vista previa no se puede escribir ni tabular: `inert` lo saca también del orden de lectura. */}
       <form
@@ -187,6 +206,8 @@ export function FormView({
         {...(preview ? { inert: true } : {})}
         {...(interaction
           ? {
+              method: "post",
+              action: interaction.action,
               onSubmit: (event) => {
                 event.preventDefault();
                 interaction.onSubmit();
@@ -199,7 +220,12 @@ export function FormView({
           {intro ? <p className="break-words whitespace-pre-line text-fg-muted">{intro}</p> : null}
         </div>
 
-        <fieldset className="flex min-w-0 flex-col gap-3">
+        <fieldset
+          className="flex min-w-0 flex-col gap-3"
+          tabIndex={-1}
+          aria-describedby={interaction?.errors.items ? id("items-error") : undefined}
+          data-invalid-group={interaction?.errors.items ? "true" : undefined}
+        >
           <legend className={cn("mb-1 text-xs tracking-[0.08em] uppercase", BRAND_TEXT)}>
             Qué necesitas
           </legend>
@@ -248,6 +274,10 @@ export function FormView({
                       <div className="flex flex-wrap items-center gap-2 pl-8">
                         <label htmlFor={id(`qty-${item.id}`)} className="text-sm text-fg-muted">
                           Cantidad{requirement(item.quantityMode)}
+                          <span className="sr-only">
+                            {" "}
+                            de {item.publicName || "servicio sin nombre"}
+                          </span>
                         </label>
                         <Input
                           id={id(`qty-${item.id}`)}
@@ -368,7 +398,6 @@ export function FormView({
               </label>
               <Textarea
                 id={id("message")}
-                name={id("message")}
                 disabled={locked}
                 aria-invalid={interaction?.errors.message ? true : undefined}
                 aria-describedby={interaction?.errors.message ? id("message-error") : undefined}
@@ -403,30 +432,38 @@ export function FormView({
             <label htmlFor={id("consent")} className="min-w-0 text-sm break-words text-fg">
               {consentText ??
                 "El aviso de privacidad aparecerá aquí cuando tu organización tenga un correo de contacto."}
-              {privacyPolicyUrl ? (
-                <>
-                  {" "}
-                  <a
-                    href={privacyPolicyUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={cn("font-semibold underline", BRAND_TEXT)}
-                  >
-                    Leer la política de privacidad
-                  </a>
-                  .
-                </>
-              ) : null}
             </label>
           </div>
+          {safePolicyUrl ? (
+            // Fuera de la etiqueta: un enlace dentro de un `label` se activa al marcar la casilla y confunde a
+            // los lectores de pantalla.
+            <p className="pl-8 text-sm">
+              <a
+                href={safePolicyUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn("font-semibold underline", BRAND_TEXT)}
+              >
+                Leer la política de privacidad
+              </a>
+            </p>
+          ) : null}
           <FieldError id={id("consent-error")} message={interaction?.errors.consent} />
         </div>
 
         {interaction?.beforeSubmit}
 
+        {interaction ? (
+          <noscript>
+            <p className="rounded-md bg-danger-soft p-3 text-sm text-danger">
+              Para enviar este formulario necesitas activar JavaScript.
+            </p>
+          </noscript>
+        ) : null}
+
         <button
           type={interaction ? "submit" : "button"}
-          disabled={locked || interaction?.submitting}
+          disabled={locked || (interaction ? !interaction.ready || interaction.submitting : false)}
           data-testid="submit-request"
           className={cn(
             "inline-flex h-12 w-full items-center justify-center gap-2 rounded-sm px-5 text-base font-semibold shadow-1 disabled:opacity-100",

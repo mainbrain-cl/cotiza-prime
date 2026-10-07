@@ -9,6 +9,7 @@ import { serverLog } from "@/lib/log/server-log";
 import { consumeIntakeSubmitQuota } from "@/lib/security/login-rate-limit";
 import { PUBLIC_RESPONSE_HEADERS } from "@/lib/share/public-request";
 import { buildConsentNotice, ConsentNoticeError, type ConsentNotice } from "./consent-notice";
+import { consentFingerprint } from "./consent-fingerprint";
 import {
   IntakeGatewayError,
   readIntakeForm,
@@ -46,9 +47,11 @@ import { buildSubmitSchema, fieldErrors, HONEYPOT_FIELD, type SubmitData } from 
  *
  *  2. forma del identificador (404 sin tocar la base)
  *  3. límite por IP (5 cada 10 minutos y 20 al día)
- *  4. cuerpo: solo `application/json`, hasta 16 kB
- *  5. forma mínima: sello de tiempo, token anti-robot y campo trampa
- *  6. campo trampa y sello de tiempo (≥ 3 s, ≤ 24 h, de este formulario)
+ *  4. cuerpo: solo `application/json`, hasta 16 kB. Un envío clásico del navegador (formulario
+ *     `application/x-www-form-urlencoded` o `multipart/form-data`, p. ej. sin JavaScript) se rechaza con 415 SIN
+ *     leer el cuerpo y sin registrar nada de él
+ *  5. forma mínima: clave de envío, sello de tiempo, token anti-robot y campo trampa
+ *  6. campo trampa y sello de tiempo (≥ 3 s, ≤ 24 h, de este formulario y de esta clave de envío)
  *  7. anti-robot (si el proveedor no responde, se bloquea)
  *  8. lectura del formulario y validación estricta con sus reglas (errores por campo)
  *  9. cifrado de los datos personales y envío a la base (que aplica el tope diario)
@@ -140,10 +143,13 @@ export async function handleIntakeSubmit(request: Request, publicId: string): Pr
   try {
     const { clientIp } = await getRequestContext();
 
-    // 3. Límite por IP (cada intento cuenta, también los que fallan).
-    if (!(await consumeIntakeSubmitQuota(clientIp))) {
+    // 3. Límite por IP (cada intento cuenta, también los que fallan). Solo el bloqueo NUEVO se anota como
+    // bloqueo del formulario: quien insiste con la IP ya bloqueada no infla los contadores. (Para un
+    // identificador que no existe, la base no cuenta nada: `intake_record_block` responde `recorded: false`.)
+    const quota = await consumeIntakeSubmitQuota(clientIp);
+    if (quota !== "allowed") {
       await serverLog("warn", "intake_submit_rate_limited");
-      await countBlock(publicId, "rate");
+      if (quota === "blocked_now") await countBlock(publicId, "rate");
       return respond({ status: "rate_limited", message: MSG_RATE_LIMITED }, STATUS.rate_limited, {
         "Retry-After": String(RETRY_AFTER_SECONDS),
       });
@@ -171,6 +177,7 @@ export async function handleIntakeSubmit(request: Request, publicId: string): Pr
     const raw = body.value;
     if (
       !isRecord(raw) ||
+      typeof raw.submitKey !== "string" ||
       typeof raw.renderToken !== "string" ||
       typeof raw.antibotToken !== "string"
     ) {
@@ -185,7 +192,7 @@ export async function handleIntakeSubmit(request: Request, publicId: string): Pr
       await countBlock(publicId, "captcha");
       return respond({ status: "blocked", message: MSG_BLOCKED }, STATUS.blocked);
     }
-    const stamp = verifyRenderToken(raw.renderToken, publicId);
+    const stamp = verifyRenderToken(raw.renderToken, publicId, raw.submitKey);
     if (!stamp.ok) {
       await serverLog("warn", "intake_submit_blocked", { reason: `render_${stamp.reason}` });
       await countBlock(publicId, "captcha");
@@ -223,9 +230,16 @@ export async function handleIntakeSubmit(request: Request, publicId: string): Pr
       return respond({ status: "paused", message: MSG_PAUSED }, STATUS.conflict);
     }
 
-    // El formulario cambió desde que la persona lo abrió: se le entrega el nuevo para que revise.
-    if (typeof raw.formRevision === "number" && raw.formRevision !== form.revision) {
-      return respond(formChanged(form, consent, publicId), STATUS.conflict);
+    // El formulario o el aviso de privacidad cambiaron desde que la persona los vio: se le entrega lo nuevo
+    // para que revise y vuelva a aceptar. Lo que se guarda como consentimiento es siempre lo que leyó.
+    const consentChanged =
+      typeof raw.consentFingerprint === "string" &&
+      raw.consentFingerprint !== consentFingerprint(consent.text, consent.privacyPolicyUrl);
+    if (
+      consentChanged ||
+      (typeof raw.formRevision === "number" && raw.formRevision !== form.revision)
+    ) {
+      return respond(formChanged(form, consent, publicId, raw.submitKey), STATUS.conflict);
     }
 
     const parsed = buildSubmitSchema({
@@ -280,7 +294,7 @@ export async function handleIntakeSubmit(request: Request, publicId: string): Pr
         if (fresh.state !== "ok" || !freshConsent) {
           return respond({ status: "paused", message: MSG_PAUSED }, STATUS.conflict);
         }
-        return respond(formChanged(fresh, freshConsent, publicId), STATUS.conflict);
+        return respond(formChanged(fresh, freshConsent, publicId, data.submitKey), STATUS.conflict);
       }
       case "invalid_data":
         return respond(
@@ -307,11 +321,12 @@ function formChanged(
   form: IntakeFormAvailable,
   consent: ConsentNotice,
   publicId: string,
+  submitKey: string,
 ): SubmitResponse {
   return {
     status: "form_changed",
     message: MSG_FORM_CHANGED,
     content: buildPublicContent(form, consent),
-    renderToken: createRenderToken(publicId),
+    renderToken: createRenderToken(publicId, submitKey),
   };
 }

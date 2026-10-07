@@ -94,6 +94,21 @@ describe("«Llegó una solicitud»", () => {
     expect(mocks.registerIntakeNotice).not.toHaveBeenCalled();
   });
 
+  it("si hay más de 10 destinatarios, avisa a 10 y deja el corte anotado en el log, sin direcciones", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      userId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      email: `admin${i}@ejemplo.test`,
+    }));
+    mocks.readIntakeNoticeRecipients.mockResolvedValue(info({ recipients: many }));
+    await notifyRequestReceived(REQUEST);
+    expect(mocks.sendWithRetry).toHaveBeenCalledTimes(10);
+    const logged = mocks.serverLog.mock.calls.find(
+      ([, message]) => message === "intake_notice_recipients_truncated",
+    );
+    expect(logged?.[2]).toEqual({ code: "recipients_over_limit", recipients: 12, limit: 10 });
+    expect(JSON.stringify(mocks.serverLog.mock.calls)).not.toContain("@ejemplo.test");
+  });
+
   it("si la base responde que no se registró, el correo NO sale", async () => {
     mocks.registerIntakeNotice.mockResolvedValue({ registered: false, reason: "daily_limit" });
     await notifyRequestReceived(REQUEST);

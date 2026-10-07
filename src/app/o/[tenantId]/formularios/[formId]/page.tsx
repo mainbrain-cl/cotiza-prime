@@ -21,8 +21,30 @@ export default async function IntakeFormEditorPage({
   const active = await requireActiveTenant(tenantId);
   if (!isFormId(formId)) notFound();
 
-  const loaded = await loadForm(active, formId);
-  if (!loaded) notFound();
+  const result = await loadForm(active, formId);
+  if (!result.ok && result.reason === "not_found") notFound();
+  if (!result.ok) {
+    // La lectura falló: nunca se muestra un editor vacío (guardarlo borraría los servicios).
+    return (
+      <div className="flex flex-col gap-4">
+        <Link
+          href={tenantPath(active.tenantId, "formularios")}
+          className="inline-flex min-h-11 w-fit items-center gap-1 rounded-sm text-sm font-medium text-fg-muted outline-none hover:text-fg focus-visible:ring-3 focus-visible:ring-ring/30"
+        >
+          <ChevronLeft aria-hidden className="size-4" />
+          Formularios
+        </Link>
+        <p
+          role="alert"
+          data-testid="form-load-error"
+          className="rounded-sm bg-danger-soft px-3 py-2.5 text-sm font-medium text-danger"
+        >
+          No pudimos cargar este formulario. Recarga la página en unos minutos.
+        </p>
+      </div>
+    );
+  }
+  const loaded = result.loaded;
 
   const canEdit = active.role === "owner" || active.role === "admin";
   const [brand, catalog, contact] = await Promise.all([

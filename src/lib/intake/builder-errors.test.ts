@@ -3,8 +3,10 @@ import {
   CONFLICT_MESSAGE,
   GENERIC_FAILURE,
   NO_PERMISSION,
+  NEEDS_ITEM_ON_SAVE_MESSAGE,
   mapBuilderError,
 } from "./builder-errors";
+import { FORM_ITEMS_MAX, FORMS_PER_ORGANIZATION_MAX } from "./builder-model";
 
 describe("mapBuilderError", () => {
   it("un choque de revisión pide recargar sin perder lo escrito", () => {
@@ -26,6 +28,19 @@ describe("mapBuilderError", () => {
     expect(mapped.message).toContain("al menos un servicio");
   });
 
+  it("guardar un formulario publicado sin servicios no habla de publicar", () => {
+    const mapped = mapBuilderError({ code: "CP422", message: "needs_item" }, "save");
+    expect(mapped.message).toBe(NEEDS_ITEM_ON_SAVE_MESSAGE);
+    expect(mapped.message).toContain("Un formulario publicado necesita al menos un servicio");
+    expect(mapped.message).not.toContain("Para publicar");
+  });
+
+  it("el tope de servicios sale de la constante", () => {
+    expect(mapBuilderError({ code: "CP422", message: "too_many_items" }).message).toContain(
+      String(FORM_ITEMS_MAX),
+    );
+  });
+
   it("publicar sin correo de contacto dice cómo corregirlo y a dónde ir", () => {
     const mapped = mapBuilderError({ code: "CP422", message: "needs_contact_email" });
     expect(mapped.message).toContain("correo de contacto");
@@ -34,7 +49,9 @@ describe("mapBuilderError", () => {
   });
 
   it("el tope de formularios muestra el máximo", () => {
-    expect(mapBuilderError({ code: "CP422", message: "too_many_forms" }).message).toContain("20");
+    expect(mapBuilderError({ code: "CP422", message: "too_many_forms" }).message).toContain(
+      String(FORMS_PER_ORGANIZATION_MAX),
+    );
   });
 
   it("nunca muestra el texto técnico de la base", () => {

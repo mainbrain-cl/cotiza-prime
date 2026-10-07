@@ -3,6 +3,8 @@
  * detalle técnico. `fixPath` indica a qué parte de la aplicación ir para corregirlo.
  */
 
+import { FORM_ITEMS_MAX, FORMS_PER_ORGANIZATION_MAX } from "./builder-model";
+
 export type BuilderErrorKind = "conflict" | "forbidden" | "not_found" | "other";
 
 export type BuilderError = {
@@ -39,7 +41,7 @@ const BY_MESSAGE: Record<string, BuilderError> = {
   },
   too_many_forms: {
     kind: "other",
-    message: "Llegaste al máximo de 20 formularios. Archiva alguno que ya no uses para crear otro.",
+    message: `Llegaste al máximo de ${FORMS_PER_ORGANIZATION_MAX} formularios. Archiva alguno que ya no uses para crear otro.`,
   },
   archived: {
     kind: "other",
@@ -61,18 +63,25 @@ const BY_MESSAGE: Record<string, BuilderError> = {
   },
   too_many_items: {
     kind: "other",
-    message: "Un formulario admite hasta 50 servicios.",
+    message: `Un formulario admite hasta ${FORM_ITEMS_MAX} servicios.`,
   },
   form_id_taken: { kind: "other", message: GENERIC_FAILURE },
 };
 
-export function mapBuilderError(error: {
-  code?: string | null;
-  message?: string | null;
-}): BuilderError {
+/** Al guardar un formulario que ya está publicado o en pausa, `needs_item` no habla de «publicar». */
+export const NEEDS_ITEM_ON_SAVE_MESSAGE =
+  "Un formulario publicado necesita al menos un servicio. Agrega uno o pausa el formulario antes de quitar el último.";
+
+export function mapBuilderError(
+  error: { code?: string | null; message?: string | null },
+  context: "save" | "other" = "other",
+): BuilderError {
   const code = error.code ?? "";
   if (code === SQLSTATE_FORBIDDEN) return { kind: "forbidden", message: NO_PERMISSION };
   if (code === SQLSTATE_CONFLICT) return { kind: "conflict", message: CONFLICT_MESSAGE };
+  if (context === "save" && error.message === "needs_item") {
+    return { kind: "other", message: NEEDS_ITEM_ON_SAVE_MESSAGE };
+  }
   const known = BY_MESSAGE[error.message ?? ""];
   if (known) return known;
   if (code === SQLSTATE_NOT_FOUND) {

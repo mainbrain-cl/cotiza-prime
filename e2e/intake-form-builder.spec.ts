@@ -1,7 +1,7 @@
 import "../tests/support/stub-server-only"; // debe ir primero
 import { randomUUID } from "node:crypto";
 import { TENANT_HEADER } from "../src/lib/tenant/constants";
-import { localEnv, rpc } from "../tests/support/local-supabase";
+import { localEnv, rest, rpc } from "../tests/support/local-supabase";
 import { expect, randomTestIp, test, type Page } from "./fixtures";
 
 // H-086: crear mi formulario público (el constructor). Usa las cuentas de la semilla local
@@ -11,8 +11,35 @@ import { expect, randomTestIp, test, type Page } from "./fixtures";
 const SEED_PASSWORD = "Prueba-Cotiza-2026";
 const MOBILE = { width: 375, height: 812 };
 const DESKTOP = { width: 1440, height: 900 };
-/** Precios de la semilla: ninguno puede aparecer en el constructor. */
-const SEED_PRICES = ["45.000", "280.000", "1.200", "18.000", "6.500", "45000", "280000"];
+/** Precios de la semilla (`scripts/seed.ts`): ninguno puede aparecer en el constructor. */
+const SEED_PRICES = [45000, 280000, 1200, 18000, 6500];
+/** Cada monto, entero y con puntos de miles, aislado de otras cifras (`12000` no es `1200`). */
+const SEED_PRICE_PATTERNS = SEED_PRICES.flatMap((amount) => {
+  const dotted = String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return [String(amount), dotted].map((text) => ({
+    text,
+    pattern: new RegExp(`(?<![0-9A-Za-z.,_-])${text.replace(/\./g, "\\.")}(?![0-9A-Za-z.,_%-])`),
+  }));
+});
+/** Palabras de dinero que no pueden viajar al navegador (como palabra suelta, no dentro de otra). */
+const MONEY_WORDS =
+  /(?<![\w-])(?:price|prices|unit_price|unitPrice|clp|cost|costs|margin)(?![\w-])/i;
+/** Hojas de estilo y estilos en línea: ahí `margin` es CSS, no dinero. */
+const STYLE_PARTS = /<style[\s\S]*?<\/style>|\sstyle="[^"]*"/gi;
+
+/** Un texto (HTML o respuesta de una acción) sin ningún monto de la semilla ni palabra de dinero. */
+function expectNoMoney(body: string, where: string) {
+  for (const { text, pattern } of SEED_PRICE_PATTERNS) {
+    expect(pattern.test(body), `monto ${text} en ${where}`).toBe(false);
+  }
+  const bare = body.replace(STYLE_PARTS, " ");
+  const word = MONEY_WORDS.exec(bare);
+  const around = word ? bare.slice(Math.max(0, word.index - 80), word.index + 80) : "";
+  expect(word, `palabra de dinero «${word?.[0]}» en ${where}: …${around}…`).toBeNull();
+}
+
+/** Texto del catálogo de la prueba del aviso de precio (se crea y se desactiva en la propia prueba). */
+let pricedCatalogItem: { id: string; tenantId: string; token: string } | null = null;
 
 async function login(page: Page, email: string): Promise<string> {
   await page.goto("/ingresar");
@@ -50,11 +77,26 @@ async function expectToast(page: Page, text: string | RegExp) {
 async function expectNoPrices(page: Page) {
   const text = await page.locator("main").first().innerText();
   expect(text, "el editor no lleva el signo $").not.toContain("$");
-  const html = await page.content();
-  for (const price of SEED_PRICES) {
-    expect(text, `precio ${price} en pantalla`).not.toContain(price);
-  }
-  expect(html).not.toContain("unit_price");
+  // Texto visible y HTML completo (incluye los datos que Next manda a los componentes del navegador).
+  expectNoMoney(text, "el texto visible");
+  expectNoMoney(await page.content(), "el HTML completo");
+}
+
+/** Guarda el cuerpo de cada respuesta de una acción del servidor (guardar, publicar, pausar…). */
+function collectActionBodies(page: Page): { bodies: string[]; pending: Promise<void>[] } {
+  const bodies: string[] = [];
+  const pending: Promise<void>[] = [];
+  page.on("response", (response) => {
+    const request = response.request();
+    if (request.method() !== "POST" || !("next-action" in request.headers())) return;
+    pending.push(
+      response
+        .text()
+        .then((body) => void bodies.push(body))
+        .catch(() => undefined),
+    );
+  });
+  return { bodies, pending };
 }
 
 async function createForm(page: Page, tenantId: string, name: string): Promise<string> {
@@ -79,6 +121,18 @@ async function passwordToken(email: string): Promise<string> {
   return ((await res.json()) as { access_token: string }).access_token;
 }
 
+test.afterEach(async () => {
+  // El servicio de catálogo con precio que creó la prueba se desactiva (el catálogo nunca se borra).
+  if (!pricedCatalogItem) return;
+  const { id, tenantId, token } = pricedCatalogItem;
+  pricedCatalogItem = null;
+  await rest(token, `catalog_items?id=eq.${id}`, {
+    method: "PATCH",
+    headers: { [TENANT_HEADER]: tenantId },
+    body: { is_active: false },
+  });
+});
+
 test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo mira", async ({
   page,
   browser,
@@ -91,6 +145,7 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   page.on("pageerror", (error) => consoleErrors.push(error.message));
   await page.setViewportSize(DESKTOP);
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const actionResponses = collectActionBodies(page);
 
   // --- Ana entra y llega a Formularios desde el menú ------------------------------------------
   const tenantId = await login(page, "ana@ejemplo.test");
@@ -103,6 +158,33 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await expect(page.getByTestId("status-panel").getByText("Borrador")).toBeVisible();
   // Guardar no sirve sin cambios
   await expect(page.getByTestId("save-form")).toBeDisabled();
+
+  // Un error al guardar lleva el foco al primer campo con error
+  await page.getByLabel("Título del formulario").fill("   ");
+  await page.getByTestId("save-form").click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Revisa los campos marcados" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Título del formulario")).toBeFocused();
+
+  // El sistema sugiere lo mínimo: cada valor sugerido lo dice, y un botón lo restituye
+  const suggestedFields = page.getByTestId("section-fields");
+  await expect(suggestedFields.getByLabel("Teléfono")).toHaveValue("optional");
+  await expect(suggestedFields.getByLabel("Teléfono").locator("option:checked")).toContainText(
+    "Sugerido",
+  );
+  await expect(suggestedFields.getByLabel("Empresa").locator("option:checked")).toContainText(
+    "Sugerido",
+  );
+  await suggestedFields.getByLabel("Teléfono").selectOption("required");
+  await suggestedFields.getByLabel("Empresa").selectOption("required");
+  await expect(suggestedFields.getByLabel("Teléfono").locator("option:checked")).not.toContainText(
+    "Sugerido",
+  );
+  await page.getByTestId("use-suggested").click();
+  await expect(suggestedFields.getByLabel("Teléfono")).toHaveValue("optional");
+  await expect(suggestedFields.getByLabel("Empresa")).toHaveValue("off");
+  await expect(suggestedFields.getByLabel("Comuna")).toHaveValue("off");
 
   await page.getByLabel("Título del formulario").fill("Pide tu cotización de flete");
   await page
@@ -143,8 +225,13 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await expect(items.nth(0).getByLabel("Nombre que verá la persona")).toHaveValue(
     "Mudanza completa",
   );
+  // Se anuncia el nuevo puesto y el foco sigue al servicio movido
+  await expect(page.getByTestId("move-note")).toHaveText("Movido al puesto 1 de 2");
+  await expect(page.getByRole("button", { name: "Bajar Mudanza completa" })).toBeFocused();
   await page.getByRole("button", { name: "Bajar Mudanza completa" }).click();
   await expect(items.nth(0).getByLabel("Nombre que verá la persona")).toHaveValue("Flete urbano");
+  await expect(page.getByTestId("move-note")).toHaveText("Movido al puesto 2 de 2");
+  await expect(page.getByRole("button", { name: "Subir Mudanza completa" })).toBeFocused();
 
   // Un servicio libre se agrega y se quita
   await page.getByTestId("add-free-item").click();
@@ -170,6 +257,16 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   expect(brandColor).toMatch(/^#[0-9a-f]{6}$/i);
   // inerte: no se puede escribir ni enviar
   await expect(preview.locator("form")).toHaveAttribute("inert", "");
+
+  // La vista previa también muestra lo que se ve al enviar
+  await page.getByLabel("Mensaje al enviar (opcional)").fill("Gracias, te respondemos hoy mismo.");
+  await page.getByTestId("preview-tab-sent").click();
+  const sent = page.getByTestId("success-view");
+  await expect(sent).toContainText("Negocio Demo 1");
+  await expect(sent).toContainText("Gracias, te respondemos hoy mismo.");
+  await expect(page.getByTestId("form-view")).toHaveCount(0);
+  await page.getByTestId("preview-tab-form").click();
+  await expect(page.getByTestId("form-view")).toBeVisible();
 
   // --- Guardar y publicar ----------------------------------------------------------------------
   await expect(page.getByTestId("publish-form")).toBeDisabled(); // hay cambios sin guardar
@@ -197,6 +294,20 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await expect(page.getByTestId("form-item")).toHaveCount(2);
   await expect(page.getByTestId("section-fields").getByLabel("Teléfono")).toHaveValue("required");
   await expectNoPrices(page);
+
+  // Un formulario publicado no se queda sin servicios: el mensaje habla de eso, no de «publicar»
+  await page.getByRole("button", { name: "Quitar Flete urbano" }).click();
+  await page.getByRole("button", { name: "Quitar Mudanza completa" }).click();
+  await page.getByTestId("save-form").click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Un formulario publicado necesita al menos un servicio" })
+      .first(),
+  ).toBeVisible();
+  await expect(page.getByText("Para publicar, agrega")).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId("form-item")).toHaveCount(2);
 
   // --- Pausar y reanudar -----------------------------------------------------------------------
   await page.getByTestId("pause-form").click();
@@ -255,6 +366,7 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await expect(row.getByText("Publicado")).toBeVisible();
   await expect(row).toContainText("Sin solicitudes");
   await expect(row.getByTestId("row-public-link")).toContainText("/f/");
+  await expect(page.getByTestId("forms-count")).toContainText(/^\d+ de 20 formularios/);
 
   // --- Un segundo formulario -------------------------------------------------------------------
   const secondId = await createForm(page, tenantId, nameTwo);
@@ -262,6 +374,49 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await page.goto(`/o/${tenantId}/formularios`);
   await expect(page.getByTestId("intake-form-row").filter({ hasText: nameTwo })).toBeVisible();
   await expect(page.getByTestId("intake-form-row").filter({ hasText: nameOne })).toBeVisible();
+
+  // --- Un texto copiado del catálogo con un precio escrito avisa, sin bloquear -----------------
+  const token = await passwordToken("ana@ejemplo.test");
+  const pricedName = `Viaje con precio ${suffix}`;
+  const created = await rest(token, "catalog_items", {
+    method: "POST",
+    headers: { [TENANT_HEADER]: tenantId, Prefer: "return=representation" },
+    body: {
+      name: pricedName,
+      description: "Desde $99.990 el viaje",
+      unit: "service",
+      unit_price_clp: 99990,
+    },
+  });
+  expect(created.status).toBe(201);
+  pricedCatalogItem = {
+    id: (created.json as { id: string }[])[0].id,
+    tenantId,
+    token,
+  };
+  await page.goto(`/o/${tenantId}/formularios/${secondId}`);
+  await expect(page.getByTestId("price-warning")).toHaveCount(0);
+  await page.getByLabel("Agregar del catálogo").selectOption({ label: pricedName });
+  await page.getByTestId("add-from-catalog").click();
+  const pricedItem = page.getByTestId("form-item");
+  await expect(pricedItem).toHaveCount(1);
+  const warning = pricedItem.getByTestId("price-warning");
+  await expect(warning).toHaveCount(1);
+  await expect(warning).toContainText(
+    "Parece un precio. Este texto lo verá cualquiera; el formulario no muestra precios",
+  );
+  // no bloquea: se puede guardar con el aviso a la vista, y sigue ahí después de guardar
+  await page.getByTestId("save-form").click();
+  await expectToast(page, "Guardamos los cambios del formulario.");
+  await expect(warning).toHaveCount(1);
+  // al corregir el texto, el aviso se va
+  await pricedItem.getByLabel("Descripción (opcional)").fill("Viaje dentro de la ciudad");
+  await expect(pricedItem.getByTestId("price-warning")).toHaveCount(0);
+  // y un nombre con «CLP» también avisa
+  await pricedItem.getByLabel("Nombre que verá la persona").fill("Viaje 45 CLP");
+  await expect(pricedItem.getByTestId("price-warning")).toHaveCount(1);
+  await page.goto(`/o/${tenantId}/formularios/${secondId}`);
+  await expect(pricedItem.getByTestId("price-warning")).toHaveCount(1); // lo guardado antes sigue avisando
 
   // --- 375 px: sin desplazamiento horizontal, lista en tarjetas y editor usable ---------------
   await page.setViewportSize(MOBILE);
@@ -331,7 +486,18 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   // --- Limpieza: los dos formularios de prueba se archivan -------------------------------------
   for (const id of [formId, secondId]) {
     await page.goto(`/o/${tenantId}/formularios/${id}`);
+    if (id === formId) {
+      // Archivar con cambios sin guardar lo advierte
+      await page.getByLabel("Nombre interno").fill(`${nameOne} editado`);
+      await page.getByTestId("archive-open").click();
+      await expect(page.getByTestId("archive-dialog")).toContainText("Tienes cambios sin guardar");
+      await page.getByTestId("archive-cancel").click();
+      await page.goto(`/o/${tenantId}/formularios/${id}`);
+    }
     await page.getByTestId("archive-open").click();
+    await expect(page.getByTestId("archive-dialog")).not.toContainText(
+      "Tienes cambios sin guardar",
+    );
     await page.getByTestId("archive-confirm").click();
     await expectToast(page, "Archivamos el formulario.");
     await expect(page.getByTestId("status-panel").getByText("Archivado")).toBeVisible();
@@ -341,6 +507,15 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await expect(page.getByTestId("intake-form-row").filter({ hasText: nameOne })).toHaveCount(0);
   await page.goto(`/o/${tenantId}/formularios?estado=archivados`);
   await expect(page.getByTestId("intake-form-row").filter({ hasText: nameOne })).toBeVisible();
+
+  // Ninguna respuesta de una acción del servidor (guardar, publicar, pausar, regenerar) trae dinero
+  // del formulario. La del servicio con precio escrito a mano en el texto no cuenta: lo escribió Ana.
+  await Promise.all(actionResponses.pending);
+  expect(actionResponses.bodies.length).toBeGreaterThan(5);
+  for (const body of actionResponses.bodies) {
+    if (body.includes("99.990")) continue;
+    expectNoMoney(body, "una respuesta de acción del servidor");
+  }
 
   expect(consoleErrors).toEqual([]);
 });

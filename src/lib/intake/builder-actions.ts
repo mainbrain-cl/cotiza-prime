@@ -9,6 +9,7 @@ import { requireActiveTenant, type ActiveTenant } from "@/lib/tenant/active-tena
 import { tenantPath } from "@/lib/tenant/constants";
 import { publicFormUrl, toSavePayload, type EditorForm, type FormStatus } from "./builder-model";
 import { GENERIC_FAILURE, NO_PERMISSION, mapBuilderError } from "./builder-errors";
+import { itemsToKeepInactive } from "./builder-queries";
 import { editorFormSchema, isFormId, validateEditorForm } from "./builder-schema";
 
 /** Resultado de las acciones del editor. Nunca lleva detalle técnico. */
@@ -43,8 +44,9 @@ function failure(
   active: ActiveTenant,
   error: { code?: string | null; message?: string | null },
   logName: string,
+  context: "save" | "other" = "other",
 ): BuilderResult {
-  const mapped = mapBuilderError(error);
+  const mapped = mapBuilderError(error, context);
   const base = {
     status: "error" as const,
     kind: mapped.kind,
@@ -145,13 +147,24 @@ export async function saveIntakeFormAction(
     };
   }
   const payload = toSavePayload(validated.data as EditorForm);
+  // En un formulario publicado, un servicio quitado que ya tuvo solicitudes se guarda inactivo, no se borra.
+  const current = await readPublicUrl(active, formId);
+  if (current && (current.status === "published" || current.status === "paused")) {
+    const keep = await itemsToKeepInactive(
+      active,
+      formId,
+      payload.items.map((item) => item.id as string),
+    );
+    if (!keep) return { status: "error", kind: "other", message: GENERIC_FAILURE };
+    payload.items.push(...keep);
+  }
   const { data, error } = await active.supabase.rpc("save_intake_form", {
     p_form_id: formId,
     p_expected_revision: expectedRevision,
     p_form: payload.form,
     p_items: payload.items,
   });
-  if (error) return failure(active, error, "intake_form_save_failed");
+  if (error) return failure(active, error, "intake_form_save_failed", "save");
   const revision = (data as { revision?: number } | null)?.revision;
   if (typeof revision !== "number") {
     await serverLog("error", "intake_form_save_bad_response");

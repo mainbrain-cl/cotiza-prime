@@ -14,7 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/intake/confirm-action";
 import { CopyLinkButton } from "@/components/intake/copy-link-button";
@@ -40,10 +40,14 @@ import {
   FORM_SUCCESS_MAX,
   FORM_TITLE_MAX,
   ITEM_UNITS,
+  PRICE_WARNING,
   PUBLIC_FORM_ROUTE_AVAILABLE,
   QUANTITY_MODE_OPTIONS,
+  SUGGESTED_FIELD_MODES,
   freeItem,
+  isSuggestedMode,
   itemFromCatalog,
+  looksLikePrice,
   moveItem,
   type CatalogChoice,
   type EditorForm,
@@ -52,6 +56,8 @@ import {
 import { isValidPolicyUrl, validateEditorForm } from "@/lib/intake/builder-schema";
 import type { FieldMode, FieldModes, QuantityMode } from "@/lib/intake/field-modes";
 import type { PdfBrand } from "@/lib/pdf/types";
+import { cn } from "@/lib/utils";
+import { SuccessPreview } from "./success-preview";
 
 type FormEditorProps = {
   tenantId: string;
@@ -71,8 +77,25 @@ type FormEditorProps = {
 };
 
 const SAVED_TOAST_ID = "intake-form-saved";
+const LIVE_NEEDS_ITEM_MESSAGE =
+  "Un formulario publicado necesita al menos un servicio. Agrega uno o pausa el formulario antes de quitar el último.";
 const OFFLINE_MESSAGE =
   "No pudimos comunicarnos con el servidor. Revisa tu conexión; lo que escribiste sigue aquí.";
+
+/** Aviso que no bloquea: el texto parece traer un precio y lo verá cualquiera. */
+function PriceWarning({ text }: { text: string }) {
+  if (!looksLikePrice(text)) return null;
+  return (
+    <p
+      role="status"
+      data-testid="price-warning"
+      className="flex items-start gap-2 rounded-sm bg-warning-soft px-3 py-2 text-sm font-medium text-warning"
+    >
+      <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+      {PRICE_WARNING}
+    </p>
+  );
+}
 
 function Section({
   title,
@@ -129,6 +152,11 @@ export function FormEditor({
   const [saving, setSaving] = useState(false);
   const [working, setWorking] = useState(false);
   const [catalogPick, setCatalogPick] = useState("");
+  const [previewTab, setPreviewTab] = useState<"form" | "sent">("form");
+  const [moveNote, setMoveNote] = useState("");
+  const [errorFocusTick, setErrorFocusTick] = useState(0);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<{ id: string; dir: "up" | "down" } | null>(null);
 
   const dirty = useMemo(() => JSON.stringify(form) !== savedSnapshot, [form, savedSnapshot]);
   const archived = status === "archived";
@@ -140,6 +168,26 @@ export function FormEditor({
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
+
+  // Tras un error al guardar, el foco va al primer campo con error (el aviso solo no alcanza con teclado).
+  useEffect(() => {
+    if (errorFocusTick === 0) return;
+    editorRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [errorFocusTick]);
+
+  // Tras subir o bajar un servicio, el foco sigue al servicio movido.
+  useEffect(() => {
+    const target = pendingFocus.current;
+    if (!target) return;
+    pendingFocus.current = null;
+    const same = document.getElementById(
+      `move-${target.dir}-${target.id}`,
+    ) as HTMLButtonElement | null;
+    const other = document.getElementById(
+      `move-${target.dir === "up" ? "down" : "up"}-${target.id}`,
+    ) as HTMLButtonElement | null;
+    (same && !same.disabled ? same : other)?.focus();
+  }, [form.items]);
 
   const usedCatalogIds = new Set(form.items.map((item) => item.catalogItemId));
   const availableCatalog = catalog.filter((choice) => !usedCatalogIds.has(choice.id));
@@ -159,6 +207,14 @@ export function FormEditor({
     }));
   }
 
+  function move(index: number, delta: -1 | 1) {
+    const item = form.items[index];
+    if (!item) return;
+    pendingFocus.current = { id: item.id, dir: delta === -1 ? "up" : "down" };
+    setMoveNote(`Movido al puesto ${index + delta + 1} de ${form.items.length}`);
+    patch({ items: moveItem(form.items, index, delta) });
+  }
+
   function addFromCatalog() {
     const choice = catalog.find((c) => c.id === catalogPick);
     if (!choice || form.items.length >= FORM_ITEMS_MAX) return;
@@ -173,16 +229,28 @@ export function FormEditor({
 
   function showFailure(result: Extract<BuilderResult, { status: "error" }>) {
     setBanner({ message: result.message, fixHref: result.fixHref, fixLabel: result.fixLabel });
-    if (result.fieldErrors) setErrors(result.fieldErrors);
+    if (result.fieldErrors) {
+      setErrors(result.fieldErrors);
+      setErrorFocusTick((tick) => tick + 1);
+    }
   }
 
   async function save() {
     if (saving || !editable) return;
     setBanner(null);
     const checked = validateEditorForm(form);
-    if (!checked.ok) {
-      setErrors(checked.errors);
-      setBanner({ message: "Revisa los campos marcados y vuelve a guardar." });
+    const needsItem = (status === "published" || status === "paused") && form.items.length === 0;
+    if (!checked.ok || needsItem) {
+      setErrors({
+        ...(checked.ok ? {} : checked.errors),
+        ...(needsItem ? { items: LIVE_NEEDS_ITEM_MESSAGE } : {}),
+      });
+      setBanner({
+        message: needsItem
+          ? LIVE_NEEDS_ITEM_MESSAGE
+          : "Revisa los campos marcados y vuelve a guardar.",
+      });
+      setErrorFocusTick((tick) => tick + 1);
       return;
     }
     setErrors({});
@@ -247,7 +315,10 @@ export function FormEditor({
 
   return (
     <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_26rem] 2xl:grid-cols-[minmax(0,1fr)_32rem]">
-      <div className="flex min-w-0 flex-col gap-6">
+      <div ref={editorRef} className="flex min-w-0 flex-col gap-6">
+        <p className="sr-only" aria-live="polite" data-testid="move-note">
+          {moveNote}
+        </p>
         <OfflineNotice />
         {banner ? (
           <FormAlert>
@@ -339,6 +410,21 @@ export function FormEditor({
             description="El nombre y el correo siempre se piden y son obligatorios. Pide solo lo que necesitas para cotizar."
             testId="section-fields"
           >
+            {editable ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  data-testid="use-suggested"
+                  onClick={() => patch({ fields: { ...SUGGESTED_FIELD_MODES } })}
+                >
+                  Usar lo mínimo sugerido
+                </Button>
+                <p className="min-w-0 flex-1 text-sm text-fg-muted">
+                  Deja solo nombre y correo, más lo que recomendamos (marcado «Sugerido»).
+                </p>
+              </div>
+            ) : null}
             <div className="grid gap-4 sm:grid-cols-2">
               {CONFIGURABLE_FIELDS.map((field) => (
                 <Field key={field.key} label={field.label} hint={field.hint}>
@@ -351,6 +437,7 @@ export function FormEditor({
                       {FIELD_MODE_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
+                          {isSuggestedMode(field.key, option.value) ? " · Sugerido" : ""}
                         </option>
                       ))}
                     </Select>
@@ -374,7 +461,7 @@ export function FormEditor({
 
           <Section
             title="Qué servicios se pueden pedir"
-            description="Elige del catálogo o escribe uno libre. Aquí no se muestran ni se copian precios: la persona solo dice qué necesita."
+            description={`Elige del catálogo o escribe uno libre (hasta ${FORM_ITEMS_MAX}). Aquí no se muestran ni se copian precios: la persona solo dice qué necesita. Revisa que los textos copiados del catálogo no traigan un precio escrito.`}
             testId="section-items"
           >
             {form.items.length === 0 ? (
@@ -404,9 +491,10 @@ export function FormEditor({
                               type="button"
                               variant="ghost"
                               size="icon-sm"
+                              id={`move-up-${item.id}`}
                               aria-label={`Subir ${item.publicName || "servicio"}`}
                               disabled={index === 0}
-                              onClick={() => patch({ items: moveItem(form.items, index, -1) })}
+                              onClick={() => move(index, -1)}
                             >
                               <ArrowUp aria-hidden />
                             </Button>
@@ -414,9 +502,10 @@ export function FormEditor({
                               type="button"
                               variant="ghost"
                               size="icon-sm"
+                              id={`move-down-${item.id}`}
                               aria-label={`Bajar ${item.publicName || "servicio"}`}
                               disabled={index === form.items.length - 1}
-                              onClick={() => patch({ items: moveItem(form.items, index, 1) })}
+                              onClick={() => move(index, 1)}
                             >
                               <ArrowDown aria-hidden />
                             </Button>
@@ -450,6 +539,7 @@ export function FormEditor({
                           />
                         )}
                       </Field>
+                      <PriceWarning text={item.publicName} />
                       <Field
                         label="Descripción (opcional)"
                         error={errors[`${base}.publicDescription`]}
@@ -467,6 +557,7 @@ export function FormEditor({
                           />
                         )}
                       </Field>
+                      <PriceWarning text={item.publicDescription} />
                       <div className="grid gap-3 sm:grid-cols-2">
                         <Field label="Unidad" error={errors[`${base}.unit`]}>
                           {(control) => (
@@ -564,6 +655,15 @@ export function FormEditor({
                     <Plus aria-hidden />
                     Agregar un servicio libre
                   </Button>
+                  {form.items.length >= FORM_ITEMS_MAX ? (
+                    <p className="mt-2 text-sm text-fg-muted">
+                      Llegaste al máximo de {FORM_ITEMS_MAX} servicios.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-sm text-fg-subtle" data-testid="items-count">
+                      {form.items.length} de {FORM_ITEMS_MAX} servicios
+                    </p>
+                  )}
                 </div>
               </div>
             ) : null}
@@ -747,7 +847,7 @@ export function FormEditor({
                   </Button>
                 }
                 title="¿Archivar este formulario?"
-                description="Dejará de recibir solicitudes y no se podrá volver a publicar. Las solicitudes que ya llegaron se conservan. Si solo quieres descansar un tiempo, usa Pausar."
+                description={`Dejará de recibir solicitudes y no se podrá volver a publicar. Las solicitudes que ya llegaron se conservan. Si solo quieres descansar un tiempo, usa Pausar.${dirty ? " Tienes cambios sin guardar: si archivas ahora, se perderán." : ""}`}
                 confirmLabel="Sí, archivar"
                 pendingLabel="Archivando…"
                 onConfirm={() => changeStatus("archived")}
@@ -768,24 +868,57 @@ export function FormEditor({
               Es una vista previa: no se envía nada. Se actualiza mientras escribes.
             </p>
           </div>
-          <FormView
-            preview
-            idPrefix="preview"
-            headingLevel={3}
-            brand={brand}
-            organizationName={organizationName}
-            logoSrc={logoSrc}
-            title={form.title.trim() || "Título del formulario"}
-            intro={form.intro.trim()}
-            fields={form.fields}
-            items={form.items}
-            consentText={consentText}
-            privacyPolicyUrl={
-              form.privacyPolicyUrl.trim() !== "" && isValidPolicyUrl(form.privacyPolicyUrl)
-                ? form.privacyPolicyUrl.trim()
-                : null
-            }
-          />
+          <div role="group" aria-label="Qué parte ver" className="flex gap-2">
+            {(
+              [
+                ["form", "Formulario"],
+                ["sent", "Al enviar"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={previewTab === value}
+                data-testid={`preview-tab-${value}`}
+                onClick={() => setPreviewTab(value)}
+                className={cn(
+                  "inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-semibold outline-none focus-visible:ring-3 focus-visible:ring-ring/30 md:min-h-9",
+                  previewTab === value
+                    ? "border-accent bg-accent text-on-accent"
+                    : "border-border-strong bg-surface text-fg-muted hover:bg-surface-2 hover:text-fg",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {previewTab === "form" ? (
+            <FormView
+              preview
+              idPrefix="preview"
+              headingLevel={3}
+              brand={brand}
+              organizationName={organizationName}
+              logoSrc={logoSrc}
+              title={form.title.trim() || "Título del formulario"}
+              intro={form.intro.trim()}
+              fields={form.fields}
+              items={form.items}
+              consentText={consentText}
+              privacyPolicyUrl={
+                form.privacyPolicyUrl.trim() !== "" && isValidPolicyUrl(form.privacyPolicyUrl)
+                  ? form.privacyPolicyUrl.trim()
+                  : null
+              }
+            />
+          ) : (
+            <SuccessPreview
+              brand={brand}
+              organizationName={organizationName}
+              logoSrc={logoSrc}
+              message={form.successMessage.trim()}
+            />
+          )}
         </section>
       </aside>
     </div>

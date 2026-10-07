@@ -402,3 +402,54 @@ el registro de aislamiento.
 - El portero **no** llama a `intake_record_block` con `paused` ni `cap` (el envío ya los cuenta por dentro).
 - El texto de consentimiento que se manda a `intake_request_submit` lo arma el servidor con la plantilla fija
   (`consent-notice.ts`) y los datos de la organización; nunca con algo que escribió el visitante.
+
+## 12. Correcciones de la revisión de H-086
+
+Opus revisó el constructor del formulario público (H-086) sin bloqueantes. Todo lo de abajo está corregido y
+probado, salvo lo que se dice que no. Sin migraciones nuevas.
+
+### Importantes
+
+| # | Hallazgo | Qué se corrigió |
+|---|---|---|
+| 1 | Si fallaba la lectura de los servicios o del formulario, el editor aparecía vacío y guardar borraba los servicios | `loadForm` devuelve `{ ok: false, reason: "error" \| "not_found" }`. Un error de lectura (del formulario o de los servicios) muestra «No pudimos cargar este formulario. Recarga la página en unos minutos.» y **nunca** el editor; un error en la primera lectura ya no se muestra como «No encontrado». Pruebas en `builder-queries.test.ts` |
+| 2 | «El sistema me sugiere lo mínimo» no se veía | Cada valor sugerido dice «· Sugerido» en su lista, y el botón «Usar lo mínimo sugerido» deja nombre y correo más los valores recomendados (`SUGGESTED_FIELD_MODES`, iguales a los de un formulario nuevo). Cubierto en la e2e |
+| 3 | Un precio escrito en el texto copiado del catálogo pasaba solo al formulario público | `looksLikePrice` (`$`, «CLP», «UF» o cifra con puntos de miles) muestra bajo el nombre y la descripción del servicio «Parece un precio. Este texto lo verá cualquiera; el formulario no muestra precios». No bloquea, se ve al copiar y sigue ahí al guardar y al volver. La e2e crea un servicio de catálogo con «$99.990» en la descripción, comprueba el aviso y lo desactiva al terminar (el catálogo no se borra) |
+
+### Menores
+
+| # | Estado |
+|---|---|
+| 1 | **Corregido.** Selector «Formulario / Al enviar» en la vista previa; «Al enviar» es una vista aparte (`success-preview.tsx`), sin tocar `form-view.tsx` |
+| 2 | **Corregido.** La e2e busca los cinco montos de la semilla (enteros y con puntos, aislados de otras cifras) y las palabras `price`, `clp`, `cost`, `margin` en el texto visible, en el HTML completo (sin hojas de estilo) y en las respuestas de todas las acciones del servidor (guardar, publicar, pausar, regenerar). La única respuesta que se salta es la que lleva el precio escrito a mano por la propia prueba en la descripción de un servicio |
+| 3 | **Corregido.** Los mensajes de tope usan `FORMS_PER_ORGANIZATION_MAX` y `FORM_ITEMS_MAX`; la lista muestra «X de 20 formularios» y desactiva «Crear formulario» al llegar al tope; el editor muestra «X de 50 servicios» |
+| 4 | **Parcial, de H-087.** Ver recordatorios abajo |
+| 5 | **Corregido.** Archivar con cambios sin guardar avisa «Tienes cambios sin guardar: si archivas ahora, se perderán» |
+| 6 | **Corregido.** Guardar un formulario publicado o en pausa sin servicios dice «Un formulario publicado necesita al menos un servicio…» (en el navegador y, si llega a la base, con `mapBuilderError(..., "save")`) |
+| 7 | **Corregido.** Al subir o bajar un servicio el foco lo sigue y una región `aria-live` anuncia «Movido al puesto N de M» |
+| 8 | **Corregido.** Tras un error al guardar el foco va al primer campo con error |
+| 9 | **Corregido.** La lista cuenta con **una sola consulta** (`select form_id … in (ids)`, agrupada en el servidor de la aplicación; PostgREST corta en 1.000 filas y entonces el conteo se muestra «Al menos N»). Si el conteo falla muestra «No pudimos contar las solicitudes» en vez de «Sin solicitudes». *Hallazgo extra:* el conteo anterior (`count` exacto por formulario) devolvía error de permisos por las columnas permitidas de `intake_requests` y siempre mostraba «Sin solicitudes» |
+| 10 | **De H-087.** Ver recordatorios abajo |
+| 11 | **Corregido.** Anotado en `docs/DISENO.md` (Disposición): la columna de vista previa del constructor (26 a 32 rem) es más ancha que el panel de detalle de 380 px por ser una vista previa |
+| 12 | **Corregido sin migración.** En un formulario publicado o en pausa, un servicio quitado que ya aparece en alguna solicitud se guarda con `is_active = false` (la función `save_intake_form` lo permite) en vez de borrarse; los que no tienen solicitudes se borran como antes. Si no se puede leer si tienen solicitudes, no se guarda (mejor un error que perder el vínculo). Probado con unidad (`itemsToKeepInactive`); **no hay prueba de punta a punta** porque crear una solicitud real necesita la página pública de H-087 (pendiente: agregarla a la e2e de H-087). Límite: un servicio inactivo sigue contando para el tope de 50 de la base |
+
+### Lo que NO se hizo
+
+- Una prueba de punta a punta de «error al leer»: está cubierta solo con pruebas unitarias del lector, con un
+  cliente de mentira.
+- El aviso de precio no edita el texto copiado del catálogo: solo advierte.
+- El texto de la vista previa «Al enviar» cuando no hay mensaje («Recibimos tu solicitud. Te responderemos
+  pronto.») es **de ejemplo**: lo que muestre la página pública cuando el mensaje esté vacío lo decide H-087.
+
+### Recordatorios para H-087 (menores 2, 4 parcial y 10 de la revisión)
+
+- `FormView` tiene que dar a cada campo **`name`, valor, manejador de cambios y error propios** (hoy solo es
+  presentacional, con el `id` como `name`).
+- La etiqueta de cada cantidad debe llevar el **nombre del servicio** («Cantidad de Flete urbano»), no solo
+  «Cantidad»: con lector de pantalla hay varias «Cantidad» iguales.
+- El **enlace de privacidad va fuera de la etiqueta de la casilla** de consentimiento (un enlace dentro de un
+  `label` se activa al marcar y confunde a los lectores de pantalla).
+- **Exigir `https://` también dentro de `FormView`** para la dirección de la política de privacidad (hoy lo
+  garantizan el editor y la base, pero el componente debe rechazarla por sí mismo si llega otra cosa).
+- Al construir la página pública, pasar `PUBLIC_FORM_ROUTE_AVAILABLE` a `true` (la nota «todavía no está
+  disponible» del constructor desaparece).

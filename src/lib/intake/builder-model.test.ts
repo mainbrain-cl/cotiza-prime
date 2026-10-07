@@ -2,13 +2,52 @@ import { describe, expect, it } from "vitest";
 import {
   CONFIGURABLE_FIELDS,
   DEFAULT_FIELD_MODES,
+  SUGGESTED_FIELD_MODES,
   freeItem,
+  isSuggestedMode,
   itemFromCatalog,
+  looksLikePrice,
   moveItem,
   publicFormUrl,
   toSavePayload,
   type EditorForm,
 } from "./builder-model";
+
+describe("looksLikePrice", () => {
+  it.each([
+    "Desde $45.000",
+    "$ 1200",
+    "45.000 pesos",
+    "Tarifa 280.000",
+    "Valor en CLP",
+    "clp 5000",
+    "Cobro en UF por mes",
+    "1.200.000",
+  ])("avisa de «%s»", (text) => {
+    expect(looksLikePrice(text)).toBe(true);
+  });
+
+  it.each([
+    "Flete urbano",
+    "Dentro de la Región Metropolitana",
+    "Hasta 3 camiones",
+    "Camión de 3,5 toneladas",
+    "Mudanza completa en 2 días",
+    "ufano y aufa",
+    "",
+  ])("no avisa de «%s»", (text) => {
+    expect(looksLikePrice(text)).toBe(false);
+  });
+});
+
+describe("lo mínimo sugerido", () => {
+  it("coincide con los valores por defecto y se reconoce por campo", () => {
+    expect(SUGGESTED_FIELD_MODES).toEqual(DEFAULT_FIELD_MODES);
+    expect(isSuggestedMode("phone", "optional")).toBe(true);
+    expect(isSuggestedMode("phone", "required")).toBe(false);
+    expect(isSuggestedMode("company", "off")).toBe(true);
+  });
+});
 
 const ID_A = "11111111-1111-4111-8111-111111111111";
 const ID_B = "22222222-2222-4222-8222-222222222222";

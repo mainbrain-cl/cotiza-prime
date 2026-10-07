@@ -248,6 +248,12 @@ transiciones decorativas.
 
 Área táctil mínima de 44 × 44 px. Sin desplazamiento horizontal a 375 px.
 
+**Excepción: el constructor del formulario público** (`/formularios/[id]`). Su columna derecha (estado,
+enlace y vista previa con la marca) mide **26 rem desde 1.280 px y 32 rem desde 1.536 px**, más ancha que
+el panel de detalle de 380 px de arriba. Es a propósito: es una **vista previa** de lo que verá el cliente
+final, que se lee mejor con un ancho parecido al de su pantalla; no es un panel de detalle. Dentro de la
+vista previa hay un selector «Formulario / Al enviar» (la confirmación que ve quien envía).
+
 ---
 
 ## Por qué este documento existe

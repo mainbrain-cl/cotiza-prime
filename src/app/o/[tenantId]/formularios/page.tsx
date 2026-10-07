@@ -5,6 +5,7 @@ import { CopyLinkButton } from "@/components/intake/copy-link-button";
 import { FormStatusBadge } from "@/components/intake/form-status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FORMS_PER_ORGANIZATION_MAX } from "@/lib/intake/builder-model";
 import { loadFormList } from "@/lib/intake/builder-queries";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
@@ -12,7 +13,9 @@ import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Formularios · Cotiza Prime" };
 
-function requestsLabel(count: number): string {
+function requestsLabel(count: number, lowerBound: boolean): string {
+  // Si la lectura llegó al tope, son «al menos» esas: no se afirma un número exacto.
+  if (lowerBound) return count === 0 ? "Hay muchas solicitudes" : `Al menos ${count} solicitudes`;
   if (count === 0) return "Sin solicitudes";
   return count === 1 ? "1 solicitud" : `${count} solicitudes`;
 }
@@ -26,6 +29,8 @@ export default async function IntakeFormsPage({
   const canEdit = active.role === "owner" || active.role === "admin";
   const result = await loadFormList(active, showArchived);
   const base = tenantPath(active.tenantId, "formularios");
+  const atLimit =
+    result.ok && result.totalActive !== null && result.totalActive >= FORMS_PER_ORGANIZATION_MAX;
 
   return (
     <div className="flex flex-col gap-6">
@@ -37,10 +42,29 @@ export default async function IntakeFormsPage({
           </p>
         </div>
         {canEdit ? (
-          <Link href={`${base}/nuevo`} className={cn(buttonVariants())} data-testid="new-form">
-            <Plus aria-hidden />
-            Crear formulario
-          </Link>
+          <div className="flex flex-col items-start gap-1.5 md:items-end">
+            {atLimit ? (
+              <span
+                aria-disabled="true"
+                data-testid="new-form"
+                className={cn(buttonVariants(), "pointer-events-none opacity-50")}
+              >
+                <Plus aria-hidden />
+                Crear formulario
+              </span>
+            ) : (
+              <Link href={`${base}/nuevo`} className={cn(buttonVariants())} data-testid="new-form">
+                <Plus aria-hidden />
+                Crear formulario
+              </Link>
+            )}
+            {result.ok && result.totalActive !== null ? (
+              <p data-testid="forms-count" className="text-sm text-fg-muted">
+                {result.totalActive} de {FORMS_PER_ORGANIZATION_MAX} formularios
+                {atLimit ? ". Archiva alguno para crear otro." : ""}
+              </p>
+            ) : null}
+          </div>
         ) : null}
       </header>
 
@@ -117,7 +141,13 @@ export default async function IntakeFormsPage({
                     </Link>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-fg-muted">
                       <FormStatusBadge status={row.status} />
-                      <span>{requestsLabel(row.requestCount)}</span>
+                      {row.requestCount === null ? (
+                        <span role="status" className="text-warning">
+                          No pudimos contar las solicitudes. Recarga la página.
+                        </span>
+                      ) : (
+                        <span>{requestsLabel(row.requestCount, row.requestCountIsLowerBound)}</span>
+                      )}
                     </div>
                   </div>
                   {row.status === "published" && row.publicUrl ? (

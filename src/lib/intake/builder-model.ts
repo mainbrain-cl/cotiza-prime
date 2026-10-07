@@ -26,7 +26,7 @@ export const FORM_ITEM_NAME_MAX = 150;
 export const FORM_ITEM_DESCRIPTION_MAX = 500;
 export const FORM_ITEMS_MAX = 50;
 export const FORM_POLICY_URL_MAX = 500;
-/** Formularios sin archivar que puede tener una organización (el mensaje de tope lo da la base). */
+/** Formularios sin archivar que puede tener una organización (la base impone el mismo tope). */
 export const FORMS_PER_ORGANIZATION_MAX = 20;
 
 /**
@@ -72,6 +72,25 @@ export const DEFAULT_FIELD_MODES: FieldModes = {
   desiredDate: "optional",
   message: "optional",
 };
+
+/** Lo mínimo sugerido: solo nombre y correo (siempre se piden) más estos valores recomendados. */
+export const SUGGESTED_FIELD_MODES: FieldModes = DEFAULT_FIELD_MODES;
+
+/** ¿El valor de este campo es el que sugiere el sistema? */
+export function isSuggestedMode(key: keyof FieldModes, mode: FieldMode): boolean {
+  return SUGGESTED_FIELD_MODES[key] === mode;
+}
+
+export const PRICE_WARNING =
+  "Parece un precio. Este texto lo verá cualquiera; el formulario no muestra precios.";
+
+/**
+ * ¿Parece que el texto trae un precio? `$`, «CLP», «UF» o una cifra con puntos de miles (1.200,
+ * 45.000). Es solo un aviso: no bloquea nada, porque el texto es de quien lo escribe.
+ */
+export function looksLikePrice(text: string): boolean {
+  return /\$|\bCLP\b|\bUF\b|\d{1,3}(?:\.\d{3})+/i.test(text);
+}
 
 export const ITEM_UNITS = [
   { value: "service", label: "Servicio" },

@@ -19,6 +19,12 @@ describe("texto de la línea de tiempo", () => {
     expect(describeQuoteEvent("rejected_by_customer")).toBe("El cliente rechazó la cotización");
   });
 
+  it("una cotización que nació de una solicitud lo dice (H-090)", () => {
+    expect(describeQuoteEvent("created_from_request", { request_id: "x" })).toBe(
+      "Creada desde una solicitud",
+    );
+  });
+
   it("un evento desconocido no rompe la pantalla", () => {
     expect(describeQuoteEvent("algo_nuevo")).toBe(UNKNOWN_EVENT_TEXT);
   });

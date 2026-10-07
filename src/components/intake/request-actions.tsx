@@ -1,10 +1,11 @@
 "use client";
 
 import { FilePlus2, Loader2, RotateCcw, ShieldAlert, Trash2, UserCheck } from "lucide-react";
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ConfirmAction } from "@/components/intake/confirm-action";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, FormAlert, Select, Textarea } from "@/components/ui/form-controls";
 import {
   anonymizeRequestAction,
@@ -19,6 +20,7 @@ import {
   DISCARD_REASONS,
   type RequestPermissions,
 } from "@/lib/intake/requests-model";
+import { tenantPath } from "@/lib/tenant/constants";
 
 export type AssigneeOption = { userId: string; label: string };
 
@@ -143,11 +145,14 @@ export function RequestActions({
       <div className="flex flex-wrap items-start gap-3">
         {permissions.canConvert ? (
           <div className="flex flex-col gap-1">
-            <Button type="button" disabled aria-disabled="true" data-testid="convert-soon">
+            <Link
+              href={tenantPath(tenantId, `solicitudes/${requestId}/convertir`)}
+              data-testid="convert-open"
+              className={buttonVariants({ variant: "primary" })}
+            >
               <FilePlus2 aria-hidden />
               Crear cotización
-            </Button>
-            <p className="text-sm text-fg-muted">Llega pronto</p>
+            </Link>
           </div>
         ) : null}
 

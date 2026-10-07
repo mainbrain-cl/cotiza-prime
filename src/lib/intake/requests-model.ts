@@ -69,7 +69,7 @@ export type RequestPermissions = {
   canDiscard: boolean;
   canRestore: boolean;
   canAnonymize: boolean;
-  /** Quien podrá convertirla en cotización cuando H-090 la construya. */
+  /** Quien puede convertirla en cotización (H-090): Dueño, Administrador, o el Comercial dueño de la solicitud. */
   canConvert: boolean;
 };
 

@@ -731,6 +731,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/formularios/[formId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/solicitudes", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/solicitudes/[requestId]", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/solicitudes/[requestId]/convertir", kind: "page", scope: "tenant" },
 ];
 
 /** Pantallas dentro de una organización (las que se atacan con la dirección de otra). */

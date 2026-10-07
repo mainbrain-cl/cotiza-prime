@@ -8,7 +8,9 @@ import { DeliveryBadge } from "@/components/ui/delivery-badge";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { maskEmail } from "@/lib/customers/mask";
 import { getCustomer } from "@/lib/customers/queries";
+import { SourceRequestPanelView } from "@/components/intake/source-request-panel";
 import { formatDate } from "@/lib/format-date";
+import { loadQuoteSourceRequestId, loadSourceRequestPanel } from "@/lib/intake/convert-queries";
 import { listQuotableCatalogItems } from "@/lib/quotes/catalog-source";
 import { lineFromSaved, type EditorState } from "@/lib/quotes/editor-model";
 import {
@@ -119,6 +121,13 @@ export default async function QuotePage({
     conditions: quote.conditions ?? "",
   };
   const initialCatalog = editable ? await listQuotableCatalogItems(active, "") : [];
+  // «Solicitud original» (H-090): solo si la cotización nació de una solicitud del formulario público.
+  const sourcePanel = await loadSourceRequestPanel(
+    active,
+    await loadQuoteSourceRequestId(active, quote.id),
+    items.flatMap((item) => (item.catalog_item_id ? [item.catalog_item_id] : [])),
+    editable,
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -204,6 +213,10 @@ export default async function QuotePage({
 
       {readOnlyReason ? <FormAlert tone="warning">{readOnlyReason}</FormAlert> : null}
 
+      {sourcePanel ? (
+        <SourceRequestPanelView tenantId={active.tenantId} panel={sourcePanel} />
+      ) : null}
+
       {editable ? (
         <QuoteEditor
           tenantId={active.tenantId}
@@ -213,6 +226,7 @@ export default async function QuotePage({
           taxRateBp={quote.tax_rate_bp}
           savedValidUntil={quote.valid_until}
           initialCatalog={initialCatalog}
+          requestSeedLines={sourcePanel?.seedLines ?? []}
         />
       ) : (
         <QuoteReadOnly

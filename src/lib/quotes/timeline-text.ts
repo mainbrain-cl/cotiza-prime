@@ -3,6 +3,7 @@ import { reasonTeamText } from "@/lib/share/respond";
 /** Texto, en español de Chile, de cada tipo de evento de la línea de tiempo de una cotización. */
 const EVENT_TEXTS: Record<string, string> = {
   created: "Cotización creada",
+  created_from_request: "Creada desde una solicitud",
   sent: "Enviada al cliente",
   send_failed: "No se pudo enviar el correo al cliente",
   resent: "Reenviada al cliente con un enlace nuevo",

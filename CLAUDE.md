@@ -73,9 +73,9 @@ revocar enlace, registro de actividad, formulario público (constructor, página
 resumen en vivo sin precios, incrustable, QR) y solicitudes (asignar, descartar, anonimizar, convertir en
 cotización). Menú flotante vertical, tarjetas, contadores y fondos animados (React Bits, decisión 018).
 
-**Trabajo a medias: H-092.** Una sesión se cortó con un agente construyendo H-092; su copia (17 archivos
-sin guardar) está en la carpeta de Aarón, en `.claude/worktrees/agent-a66d69ecd199fa396`, no en GitHub.
-Si no está disponible, rehacerlo es barato (ver `docs/TRASPASO.md` §5).
+**Trabajo a medias: H-092.** Una sesión se cortó con un agente construyendo H-092. Su borrador (17 archivos,
+SIN verificar) está en GitHub, en la rama `wip/h-092-bloqueos-y-tope`. Si no sirve, rehacerlo es barato (ver
+`docs/TRASPASO.md` §5).
 
 **El CI de GitHub no corre por la facturación de la cuenta** (las corridas fallan en 2 s con «recent
 account payments have failed…»). Aarón debe regularizarlo. Mientras tanto se verifica todo en local y,

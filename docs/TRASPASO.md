@@ -88,16 +88,20 @@ descartar, anonimizar, convertir en cotización).
 
 ## 5. El trabajo a medias: H-092
 
-La sesión anterior se cortó con un agente construyendo H-092. Quedó una copia de trabajo con **17
-archivos sin guardar** en `.claude/worktrees/agent-a66d69ecd199fa396` **dentro de la carpeta de Aarón**
-(no está en GitHub). Contenido: panel de protección, control del tope diario, aviso de tope alcanzado,
-`e2e/intake-protection.spec.ts`. **No sé cuánto sirve ni si compila.**
+La sesión anterior se cortó con un agente construyendo H-092. Su trabajo quedó **sin guardar** en la
+carpeta de Aarón, y el 2026-10-27 se subió a GitHub como borrador, en la rama
+**`wip/h-092-bloqueos-y-tope`** (17 archivos, un solo commit `357560d`, hecho sobre `main` en `1085ef1`).
+Contenido: panel de protección, control del tope diario, aviso de tope alcanzado y
+`e2e/intake-protection.spec.ts`. **Está sin verificar: no se sabe si compila ni si las pruebas pasan.**
 
-- Si Aarón te pasa esa copia, revisa `git status` y `git diff`, y úsala como borrador.
-- Si no, **rehacer H-092 desde cero es barato** (es la última historia del sprint 4, de tamaño mediano):
-  el encargo exacto está en `docs/HISTORIAS.md` (H-092) y `docs/arquitectura/sprint-4-formulario-publico.md`.
-  Lo que ya existe del lado del servidor: contadores en `intake_daily_counters`, tope por formulario
-  (`daily_cap`, 1 a 200), aviso por correo al llegar al tope. Falta lo que se ve en pantalla.
+- Para usarla: `git fetch`, `git switch -c h-092 origin/wip/h-092-bloqueos-y-tope`, y revisar con
+  `npm run typecheck` y las pruebas antes de confiar en ella.
+- Si no sirve, **rehacer H-092 desde cero es barato** (es la última historia del sprint 4, de tamaño
+  mediano): el encargo está en `docs/HISTORIAS.md` (H-092) y en
+  `docs/arquitectura/sprint-4-formulario-publico.md`. Lo que ya existe del lado del servidor: contadores
+  en `intake_daily_counters`, tope por formulario (`daily_cap`, 1 a 200) y aviso por correo al llegar al
+  tope. Falta lo que se ve en pantalla.
+- Cuando H-092 esté integrada en `main`, se puede borrar esa rama.
 
 ## 6. Cómo se ha trabajado (decisión 013) y cómo seguir
 

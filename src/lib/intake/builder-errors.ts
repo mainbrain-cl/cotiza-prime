@@ -4,6 +4,7 @@
  */
 
 import { FORM_ITEMS_MAX, FORMS_PER_ORGANIZATION_MAX } from "./builder-model";
+import { DAILY_CAP_MAX, DAILY_CAP_MIN } from "./protection-model";
 
 export type BuilderErrorKind = "conflict" | "forbidden" | "not_found" | "other";
 
@@ -64,6 +65,10 @@ const BY_MESSAGE: Record<string, BuilderError> = {
   too_many_items: {
     kind: "other",
     message: `Un formulario admite hasta ${FORM_ITEMS_MAX} servicios.`,
+  },
+  invalid_daily_cap: {
+    kind: "other",
+    message: `El tope diario debe ser un número entero entre ${DAILY_CAP_MIN} y ${DAILY_CAP_MAX}.`,
   },
   form_id_taken: { kind: "other", message: GENERIC_FAILURE },
 };

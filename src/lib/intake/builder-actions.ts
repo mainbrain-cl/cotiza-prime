@@ -15,6 +15,7 @@ import {
   type FormStatus,
 } from "./builder-model";
 import { MAX_EMBED_ORIGINS, embedOriginProblem } from "./embed";
+import { parseDailyCap } from "./protection-model";
 import { GENERIC_FAILURE, NO_PERMISSION, mapBuilderError } from "./builder-errors";
 import { itemsToKeepInactive } from "./builder-queries";
 import { editorFormSchema, isFormId, validateEditorForm } from "./builder-schema";
@@ -32,6 +33,8 @@ export type BuilderResult =
       embedSnippet?: string | null;
       /** Sitios autorizados tal como quedaron guardados (H-093). */
       embedOrigins?: string[];
+      /** Tope diario de solicitudes tal como quedó guardado (H-092). */
+      dailyCap?: number;
     }
   | {
       status: "error";
@@ -296,5 +299,43 @@ export async function saveEmbedOriginsAction(
         ? "Quitamos todos los sitios autorizados."
         : "Guardamos los sitios autorizados.",
     embedOrigins: unique,
+  };
+}
+
+/**
+ * H-092: cambia el tope diario de solicitudes del formulario (1 a 200). Solo Dueño y Administrador. Se valida
+ * aquí y otra vez en la base (`invalid_daily_cap`). Se manda a `save_intake_form` SOLO esa clave y sin servicios:
+ * la base no sube la revisión del formulario por un cambio interno (así no choca con quien esté editando).
+ * El tope de la organización (300 al día) no se toca desde aquí.
+ */
+export async function saveDailyCapAction(
+  tenantId: string,
+  formId: string,
+  dailyCap: number,
+): Promise<BuilderResult> {
+  const active = await requireActiveTenant(tenantId);
+  if (!canManageForms(active.role)) return FORBIDDEN;
+  if (!isFormId(formId)) return ID_INVALID;
+  // Desde el navegador llega un número: un texto ("50") no se acepta.
+  const parsed = parseDailyCap(typeof dailyCap === "number" ? dailyCap : null);
+  if (!parsed.ok) return { status: "error", kind: "invalid", message: parsed.message };
+  const { data: row } = await active.supabase
+    .from("intake_forms")
+    .select("revision")
+    .eq("id", formId)
+    .maybeSingle();
+  if (!row) return ID_INVALID;
+  const { error } = await active.supabase.rpc("save_intake_form", {
+    p_form_id: formId,
+    p_expected_revision: row.revision as number,
+    p_form: { daily_cap: parsed.value },
+    p_items: null,
+  });
+  if (error) return failure(active, error, "intake_form_daily_cap_failed", "save");
+  refresh(active);
+  return {
+    status: "ok",
+    message: `Guardamos el tope: ${parsed.value} ${parsed.value === 1 ? "solicitud" : "solicitudes"} por día.`,
+    dailyCap: parsed.value,
   };
 }

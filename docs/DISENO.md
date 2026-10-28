@@ -90,7 +90,7 @@ Licencia y última versión revisadas en npm y en el repositorio de cada una.
 
 | Librería | Para qué | Licencia | Versión revisada | Peso aprox. | Veredicto |
 |---|---|---|---|---|---|
-| **shadcn/ui** | Base de componentes (se copian al proyecto, no se instalan). Sus estilos base están copiados en `src/app/shadcn-tailwind.css` (2026-10-28); el paquete `shadcn` ya no es dependencia. Para agregar un componente: `npx shadcn@4.23.0 add <componente>` | MIT | 4.23.0 | Solo lo que se usa | ✅ |
+| **shadcn/ui** | Base de componentes (se copian al proyecto, no se instalan). Sus estilos base están copiados en `src/app/shadcn-tailwind.css` (2026-10-28); el paquete `shadcn` ya no es dependencia. Para agregar un componente: `npx shadcn@4.23.0 add <componente>` y **revisar el resultado** (ver la regla de abajo) | MIT | 4.23.0 | Solo lo que se usa | ✅ |
 | **Radix UI** (`radix-ui`) | Lo que hay debajo de shadcn: menús, diálogos, accesibilidad | MIT | 1.6.7 | Por componente | ✅ |
 | **Motion** (`motion`) | Animaciones y transiciones. Hoy lo usan el menú flotante (resorte de la magnificación) y los contadores del inicio, solo con sus valores de movimiento (sin componentes `motion.*`, para no cargar el motor completo). Dependencias que trae: `framer-motion`, `motion-dom` y `motion-utils`, las tres MIT | MIT | **14.0.0** (fija; verificada 2026-10-06) | Solo se incluye lo que se importa (`animate`, `useSpring`, `useTransform`, `useInView`) | ✅ |
 | **Dock** (de React Bits, copiado a `src/components/react-bits/dock.tsx`) | Menú flotante vertical de la aplicación (escritorio y tableta). Adaptado: vertical, enlaces reales, vidrio y colores del sistema, sin magnificación con "reducir movimiento" ni con dedo | MIT + Commons Clause (React Bits) | Código de la rama principal, 2026-10-06 | Sin dependencias propias (usa Motion) | ✅ 2026-10-06 |
@@ -112,6 +112,18 @@ Licencia y última versión revisadas en npm y en el repositorio de cada una.
 | **Transiciones de vista** (`ViewTransition` de React, incluido en Next 16) | Transición corta entre pantallas | — (parte de React/Next, sin paquete nuevo) | — | 0 kB | ✅ En uso desde H-115 (2026-10-05); se apaga con "reducir movimiento" |
 | **Vaul** | Hojas que suben desde abajo en el teléfono | MIT | 1.1.2 | ~5 kB | ⚠️ Sin actualizaciones desde dic-2024. Usar la hoja (`Sheet`) de shadcn; Vaul solo si hace falta arrastrar |
 | **React Bits** | Fondos y efectos animados | **MIT + Commons Clause** | — | Por componente | ⚠️ Se puede usar dentro de Cotiza Prime (también comercialmente), pero **no revender ni redistribuir los componentes sueltos**. **Decisión 018 (2026-10-06, Aarón):** se usan sus componentes gratuitos para menú flotante, tarjetas, contadores y fondos; cada dependencia nueva se verifica antes de adoptarla. Los componentes se copian a `src/components/react-bits/` con su aviso de licencia (`LICENSE.md`). **No usados por sus dependencias** (2026-10-06): los fondos WebGL (Aurora, Particles, Galaxy, Silk…) traen `ogl` (Unlicense, ~420 kB sin comprimir) o `three`, y varios efectos traen `gsap` (licencia propia, no es MIT ni similar). Se eligió Waves, que no necesita ninguna |
+
+### Regla de revisión después de cada `npx shadcn@4.23.0 add <componente>`
+
+El comando se ejecuta una vez y no queda instalado, pero puede tocar archivos que no esperamos. Después de
+cada `add`, antes de subir, se comprueba:
+
+1. `package.json` **no gana** el paquete `shadcn` (decisión 015: ya no es dependencia) **ni paquetes nuevos**
+   (por ejemplo `cn`) sin verificar antes su licencia, versión y vulnerabilidades (`npm audit`). Un paquete
+   nuevo que el comando agregue por su cuenta se revisa o se quita; no se deja pasar en silencio.
+2. `src/app/globals.css` **no vuelve a importar** `shadcn/tailwind.css`: sigue importando
+   `./shadcn-tailwind.css` (la copia local).
+3. Los componentes nuevos usan `cn` de `@/lib/utils`, no de un paquete externo.
 
 ---
 

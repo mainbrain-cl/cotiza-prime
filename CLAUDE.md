@@ -54,68 +54,57 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Estado al 2026-10-06 (noche) — empezar por aquí
+### Estado al 2026-10-27 — empezar por aquí (traspaso a José)
 
-**Recorrido de punta a punta ya funciona en local:** enviar la cotización por correo (Mailpit) → el cliente
-la abre sin cuenta en `/c/[token]` → acepta o rechaza (motivo obligatorio) → el autor recibe un aviso.
-Todo en `main`, CI en verde hasta H-030; la corrida de H-031 estaba en curso al escribir esto.
+**Lee primero `docs/TRASPASO.md`**: es la guía para ponerse al día (cómo levantarlo, qué leer, dónde
+quedó todo, trampas, qué decide Aarón y cómo trabaja). Este bloque es solo el resumen.
 
-**Cambios de alcance de hoy (todos en `docs/PROYECTO.md` §6.0 y `docs/HISTORIAS.md`):** recorrido completo
-como mapa del producto; formulario público **sin precios**, con vista previa en vivo, enlace **e incrustable**
-en la v1 (nueva H-093, H-088 reescrita); motivo de rechazo obligatorio; **formulario público adelantado al
-sprint 4** (12 sprints, 92 historias; tabla en `docs/sprints/001-base-segura.md`); **H-076** (3 plantillas de
-PDF + selector) adelantada al sprint 3. Decisiones nuevas: 016 (proveedor de correo, propuesta Resend,
-**pendiente de Aarón**), 017 (enlace del cliente con portero en el servidor), 018 (React Bits gratuito).
+**Dónde está:** 34 de 92 historias construidas (37 %). Sprint 1 cerrado; sprint 2 construido (falta que
+Aarón lo pruebe y apruebe la plantilla 1); sprint 3 con 8 de 9 (falta **H-076**, las tres plantillas de
+PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3); sprint 4 con 7 de 8
+(falta **H-092**, pantalla de envíos bloqueados y ajuste del tope diario). Sprints 5 a 12 sin partir.
+Último trabajo: 2026-10-07 (el proyecto estuvo 20 días parado; no se perdió nada). `main` limpia y al día
+con GitHub (`1085ef1`). 35 migraciones. Última batería: 1.352 unitarias, 645 de base de datos, 1.061 de
+aislamiento y unas 130 de punta a punta, todas en verde.
 
-**Sprint 3 (~85 %):** hechas H-029, H-030, H-031, H-032, H-014 (más la capa de correo, las migraciones 21–26 y el
-menú/tarjetas/contadores/fondos de React Bits). Revisadas por Opus: migraciones, H-029, H-030 (sin bloqueantes).
-**En curso al cerrar el día:** (1) revisión de Opus de H-031; (2) un agente Sonnet con **H-033, H-034, H-035**
-(rama `worktree-agent-afae94126bb586f12`, copia en `.claude/worktrees/`). Si no terminaron: mirar
-`git worktree list`, revisar la rama, integrar con las pruebas y subir; si la copia quedó a medias, rehacer.
-La copia `agent-a7b9e1375a7b27ce4` es vieja (de antes de hoy): preguntar si se borra.
-**⚠️ BLOQUEANTE ABIERTO (revisión de Opus de H-031, `docs/arquitectura/sprint-3-envio-y-enlace.md` §13):** el aviso de
-aceptar/rechazar le llega al autor aunque ya no sea miembro (fuga de datos). Corregir ANTES de cerrar el sprint 3:
-la base debe entregar el destinatario solo si el autor sigue activo (si no, al Dueño y Administradores activos) y
-quitar `auth.admin.getUserById` del portero; más los 5 importantes y los menores de §13.
-**Al cerrar el día hay DOS agentes con copia aparte** (ver `git worktree list`): H-033/034/035 y la corrección
-del bloqueante + importantes de H-031 (esta trae una migración 27: integrarla ANTES que cualquier otra migración).
-Si no llegaron a terminar, revisar cada rama, correr todas las pruebas, integrar y subir.
-**Falta del sprint 3:** H-033/034/035, **H-076** (esperando que Aarón apruebe el diseño de las plantillas 2 y 3:
-`docs/diseno/plantillas-2-y-3-pdf-vista-previa.html`), y el lote de correcciones menores de la revisión de H-030
-(`docs/arquitectura/sprint-3-envio-y-enlace.md` §12) más lo que salga de la revisión de H-031.
+**Lo que ya funciona (en local):** registro y organizaciones, catálogo y clientes, cotizador con PDF,
+enviar por correo, enlace del cliente (aceptar o rechazar con motivo obligatorio), rebotes, vencimiento,
+revocar enlace, registro de actividad, formulario público (constructor, página pública con anti-robot,
+resumen en vivo sin precios, incrustable, QR) y solicitudes (asignar, descartar, anonimizar, convertir en
+cotización). Menú flotante vertical, tarjetas, contadores y fondos animados (React Bits, decisión 018).
 
-**Orden siguiente:** cerrar sprint 3 → **primera revisión grande de Aarón** (avisarle con: qué está listo, el
-link `http://localhost:3000` y los accesos) → sprint 4 (formulario público) → 5 equipo y permisos → 6 aprobación
-y datos de pago → 7 cobro → piloto privado.
+**Trabajo a medias: H-092.** Una sesión se cortó con un agente construyendo H-092. Su borrador (17 archivos,
+SIN verificar) está en GitHub, en la rama `wip/h-092-bloqueos-y-tope`. Si no sirve, rehacerlo es barato (ver
+`docs/TRASPASO.md` §5).
 
-**Aarón pidió (2026-10-06):** que avance solo y subiendo a `main`; él revisa **de corrido, en un bloque grande**,
-no historia por historia. Cuando haya un lote importante: decirle «tenemos esto listo (…), revisa en este link,
-estos son los accesos». Mirar siempre GitHub Actions tras cada subida.
+**El CI de GitHub no corre por la facturación de la cuenta** (las corridas fallan en 2 s con «recent
+account payments have failed…»). Aarón debe regularizarlo. Mientras tanto se verifica todo en local y,
+**en cada integración grande, se corre la suite completa de punta a punta** (`npx playwright test
+--project=chromium` y `--project=isolation`), no solo las pruebas de la zona tocada.
 
-**Cómo se prueba en pantalla:** `npm run dev` → http://localhost:3000. Accesos: `ana`, `beto`, `mixta`, `ex`
-`@ejemplo.test`, contraseña `Prueba-Cotiza-2026` (Negocio Demo 1 y 2). Correos de prueba: http://127.0.0.1:56324.
-Docker Desktop debe estar abierto y `npx supabase start` corrido. Si `supabase start` dice que faltan servicios
-(Kong), un contenedor quedó atado a una copia de trabajo borrada: `npx supabase stop` y `start`. `test:db:rollbacks`
-y `db reset` vacían la base local: volver a correr `npm run db:seed`. Playwright no corre con el servidor de
-desarrollo abierto en la misma carpeta: cerrarlo antes (puerto 3000).
+**Decisiones de Aarón pendientes** (el código aplica un supuesto): aprobar las plantillas de PDF; regla de
+enlaces ya respondidos (rechazada: tras la vigencia solo aviso; aceptada: activo hasta pagada más un plazo);
+proveedor y dominio de correo (decisión 016, propuesta Resend); anti-robot real (decisión 019, propuesta
+Turnstile o ALTCHA); dominio y marca; facturación de GitHub; antes del piloto, abogado, datos de Main Brain
+para los términos (29 marcadores), custodia de claves de cifrado y quién responde un incidente.
 
-**Decisiones y pendientes de Aarón:** aprobar la plantilla 1 (https://claude.ai/artifact/Ckd62T8HreUpARrfXWLYdg)
-y el diseño de las 2 y 3; **regla de enlaces ya respondidos** (rechazada: tras la vigencia solo aviso;
-aceptada: activo hasta pagada + plazo), anotada en el plan §12; decisión 016 (proveedor y dominio de correo,
-bloquea cerrar con clientes reales); si se puede revocar el enlace de una cotización ya aceptada; ratificar
-decisión 015, el tope de 15 envíos/10 min y los topes de reenvío (5/día, 20 total); fecha propuesta
-2026-11-13 para la reconciliación de envíos a medias; datos de Main Brain para los términos (29 marcadores);
-abogado; custodia de claves de cifrado; quién responde un incidente; cuentas de Supabase y Vercel; GitHub Pro.
+**Qué sigue:** cerrar H-092 y el sprint 4 → revisión grande de Aarón (decirle qué está listo, el link
+`http://localhost:3000` y los accesos) → sprint 5 (equipo y permisos) → 6 aprobación y datos de pago → 7
+cobro → piloto privado. Estimación: unas 2 a 3 semanas hasta el piloto y 4 a 6 hasta el lanzamiento.
 
-**Pruebas al último integrar:** 718 unitarias, 451 de base de datos, 869 de aislamiento, unas 55 de punta a punta;
-26 migraciones. **Ojo con el consumo:** hoy hubo hasta 4 agentes a la vez; la regla sigue siendo 2 salvo que Aarón
-pida más.
+**Cómo se prueba en pantalla:** `npm run dev` → http://localhost:3000 (Docker abierto y `npx supabase
+start`). Usuarios `ana`, `carla` (Comercial), `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
+`Prueba-Cotiza-2026` (Negocio Demo 1 y 2). Correos de prueba: http://127.0.0.1:56324. En `.env.local` hacen
+falta también `INTAKE_RENDER_SECRET` (32+ caracteres), `ANTIBOT_PROVIDER=memory` y `ANTIBOT_ALLOW_MEMORY=1`
+(solo desarrollo). `db reset` y `test:db:rollbacks` vacían la base local: después, `npm run db:seed`.
 
-**Trampas de Windows:** `npm install` puede borrar de `package-lock.json` las entradas `node_modules/@emnapi/core`
-y `@emnapi/runtime` (revisar antes de subir; `npm run lint` lo comprueba). Nunca enlazar `node_modules` de una
-copia con un acceso directo a la carpeta principal: borrar la copia podría arrastrar los archivos reales
-(si ocurre, quitar el enlace con `[System.IO.Directory]::Delete(ruta, $false)` antes de borrar). Los subagentes
-dejan servidores abiertos que bloquean archivos: cerrarlos al integrar.
+**Aarón pidió:** que se avance solo y subiendo a `main`; él revisa **en un bloque grande**, no historia por
+historia. Mirar siempre el CI tras cada subida.
+
+**Trampas de Windows:** `npm install` puede borrar de `package-lock.json` las entradas
+`node_modules/@emnapi/core` y `@emnapi/runtime` (`npm run lint` lo comprueba). Nunca enlazar `node_modules`
+de una copia con un acceso directo a otra carpeta. Playwright no corre con `npm run dev` abierto en la misma
+carpeta.
 
 **Repositorio:** `github.com/avronygg/cotiza-prime`, privado, rama `main`.
 

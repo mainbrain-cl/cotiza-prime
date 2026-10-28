@@ -62,6 +62,7 @@ const FORM_ROW = {
   success_message: "",
   fields: {},
   privacy_policy_url: null,
+  daily_cap: 50,
 };
 
 describe("loadForm", () => {
@@ -109,6 +110,7 @@ describe("loadForm", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.loaded.revision).toBe(3);
+      expect(result.loaded.dailyCap).toBe(50);
       expect(result.loaded.form.items).toHaveLength(1);
       expect(result.loaded.publicUrl).toBeNull();
     }

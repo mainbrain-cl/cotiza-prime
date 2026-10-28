@@ -95,6 +95,8 @@ export type LoadedForm = {
   id: string;
   status: FormStatus;
   revision: number;
+  /** Tope diario de solicitudes del formulario (H-092); no depende de los contadores. */
+  dailyCap: number;
   publicUrl: string | null;
   /** Sitios autorizados para incrustar el formulario (H-093). */
   embedOrigins: string[];
@@ -142,7 +144,7 @@ export async function loadForm(active: ActiveTenant, formId: string): Promise<Lo
   const { data: row, error: formError } = await active.supabase
     .from("intake_forms")
     .select(
-      "id, public_id, status, revision, name, title, intro, success_message, fields, privacy_policy_url, embed_origins",
+      "id, public_id, status, revision, name, title, intro, success_message, fields, privacy_policy_url, embed_origins, daily_cap",
     )
     .eq("id", formId)
     .maybeSingle();
@@ -165,6 +167,7 @@ export async function loadForm(active: ActiveTenant, formId: string): Promise<Lo
       id: row.id as string,
       status,
       revision: row.revision as number,
+      dailyCap: Number(row.daily_cap),
       publicUrl: isLive(status) ? publicFormUrl(getAppOrigin(), row.public_id as string) : null,
       embedOrigins: ((row.embed_origins as string[] | null) ?? []).slice(),
       embedSnippet: isLive(status)

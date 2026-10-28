@@ -125,6 +125,7 @@ export default async function IntakeFormEditorPage({
                 dataPromise={protection}
                 tenantId={active.tenantId}
                 formId={loaded.id}
+                dailyCap={loaded.dailyCap}
                 archived={loaded.status === "archived"}
               />
             </Suspense>

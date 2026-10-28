@@ -17,7 +17,6 @@ const ROW: CounterRow = {
   blocked_captcha: 2,
   blocked_rate: 1,
   blocked_cap: 0,
-  blocked_paused: 0,
   blocked_invalid: 4,
 };
 
@@ -30,7 +29,7 @@ describe("ProtectionCounters (H-092)", () => {
     expect(markup).not.toContain("protection-today-accepted");
   });
 
-  it("con movimiento muestra las tres franjas y las seis cifras, solo números", () => {
+  it("con movimiento muestra las tres franjas y las cinco cifras, solo números", () => {
     const markup = renderToStaticMarkup(
       <ProtectionCounters summary={summarize([ROW], NOW)} emptyText="vacío" />,
     );
@@ -42,6 +41,8 @@ describe("ProtectionCounters (H-092)", () => {
     expect(markup).toContain("Últimos 7 días");
     expect(markup).toContain("Últimos 30 días");
     expect(markup).toContain("Bloqueadas por robot");
+    expect(markup).toContain("Conexiones frenadas por enviar seguido");
+    expect(markup).not.toContain("en pausa");
     expect(markup).toContain(">7</span> bloqueados");
     expect(markup).not.toMatch(/@|form_id|11111111/);
   });
@@ -77,7 +78,9 @@ describe("CapReachedAlert", () => {
         href="/o/t/formularios/f#tope-diario"
       />,
     );
-    expect(markup).toContain("Este formulario llegó a su tope de hoy: 2 solicitudes");
+    expect(markup).toContain(
+      "Este formulario llegó a su tope de hoy: recibió 2 solicitudes y su tope es 2",
+    );
     expect(markup).toContain('href="/o/t/formularios/f#tope-diario"');
   });
 
@@ -89,7 +92,7 @@ describe("CapReachedAlert", () => {
     expect(markup).toContain("máximo permitido");
   });
 
-  it("el tope de la organización no se puede subir desde aquí", () => {
+  it("el tope de la organización es fijo y no se ofrece subirlo", () => {
     const markup = renderToStaticMarkup(
       <CapReachedAlert state={{ reached: true, kind: "org", accepted: 300, cap: 300 }} href="#" />,
     );

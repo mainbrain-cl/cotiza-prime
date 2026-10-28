@@ -23,7 +23,6 @@ function row(day: string, partial: Partial<CounterRow> = {}, form = FORM_A): Cou
     blocked_captcha: 0,
     blocked_rate: 0,
     blocked_cap: 0,
-    blocked_paused: 0,
     blocked_invalid: 0,
     ...partial,
   };
@@ -53,7 +52,7 @@ describe("contadores de hoy, 7 y 30 días", () => {
     row("2026-10-07", { accepted: 3, blocked_captcha: 2, blocked_invalid: 1 }),
     row("2026-10-07", { accepted: 1, blocked_rate: 4 }, FORM_B),
     row("2026-10-01", { blocked_cap: 5 }), // dentro de 7 días (hoy y 6 antes)
-    row("2026-09-30", { blocked_paused: 7 }), // fuera de 7, dentro de 30
+    row("2026-09-30", { blocked_invalid: 7 }), // fuera de 7, dentro de 30
     row("2026-09-08", { accepted: 10 }), // 29 días antes: dentro de 30
     row("2026-09-07", { accepted: 100 }), // 30 días antes: fuera
   ];
@@ -68,8 +67,8 @@ describe("contadores de hoy, 7 y 30 días", () => {
       blockedTotal: 7,
     });
     expect(summary.last7.blockedCap).toBe(5);
-    expect(summary.last7.blockedPaused).toBe(0);
-    expect(summary.last30.blockedPaused).toBe(7);
+    expect(summary.last7.blockedInvalid).toBe(1);
+    expect(summary.last30.blockedInvalid).toBe(8);
     expect(summary.last30.accepted).toBe(14);
     expect(summary.last30.blockedTotal).toBe(2 + 4 + 5 + 7 + 1);
   });
@@ -93,13 +92,12 @@ describe("contadores de hoy, 7 y 30 días", () => {
     });
   });
 
-  it("las seis cifras de la pantalla cubren todas las columnas", () => {
+  it("las cinco cifras de la pantalla (sin la de pausa, que no se cuenta) salen de las columnas leídas", () => {
     expect(COUNTER_LABELS.map((c) => c.key)).toEqual([
       "accepted",
       "blockedCaptcha",
       "blockedRate",
       "blockedCap",
-      "blockedPaused",
       "blockedInvalid",
     ]);
   });
@@ -112,7 +110,24 @@ describe("tope alcanzado hoy", () => {
       kind: "form",
       accepted: 2,
       cap: 2,
+      orgAlsoReached: true,
     });
+  });
+  it("avisa cuando la organización también llegó al suyo, porque subir el del formulario no serviría", () => {
+    expect(capStateOf({ formAccepted: 2, dailyCap: 2, orgAccepted: 100 })).toMatchObject({
+      kind: "form",
+      orgAlsoReached: false,
+    });
+  });
+  it("si se bajó el tope bajo lo ya recibido, el texto dice las dos cifras", () => {
+    expect(capStateOf({ formAccepted: 10, dailyCap: 5, orgAccepted: 10 })).toMatchObject({
+      reached: true,
+      accepted: 10,
+      cap: 5,
+    });
+    expect(formCapReachedText(10, 5)).toBe(
+      "Este formulario llegó a su tope de hoy: recibió 10 solicitudes y su tope es 5",
+    );
   });
   it("llega al tope de la organización aunque el formulario tenga cupo", () => {
     expect(capStateOf({ formAccepted: 10, dailyCap: 50, orgAccepted: 300 })).toMatchObject({
@@ -126,8 +141,12 @@ describe("tope alcanzado hoy", () => {
     });
   });
   it("el texto cuenta en singular y plural", () => {
-    expect(formCapReachedText(1)).toBe("Este formulario llegó a su tope de hoy: 1 solicitud");
-    expect(formCapReachedText(2)).toBe("Este formulario llegó a su tope de hoy: 2 solicitudes");
+    expect(formCapReachedText(1, 1)).toBe(
+      "Este formulario llegó a su tope de hoy: recibió 1 solicitud y su tope es 1",
+    );
+    expect(formCapReachedText(2, 2)).toBe(
+      "Este formulario llegó a su tope de hoy: recibió 2 solicitudes y su tope es 2",
+    );
   });
 });
 

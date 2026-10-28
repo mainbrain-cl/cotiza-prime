@@ -319,11 +319,13 @@ export async function saveDailyCapAction(
   // Desde el navegador llega un número: un texto ("50") no se acepta.
   const parsed = parseDailyCap(typeof dailyCap === "number" ? dailyCap : null);
   if (!parsed.ok) return { status: "error", kind: "invalid", message: parsed.message };
-  const { data: row } = await active.supabase
+  const { data: row, error: readError } = await active.supabase
     .from("intake_forms")
     .select("revision")
     .eq("id", formId)
     .maybeSingle();
+  // Una falla de la base no es «no existe»: se dice que no se pudo, no que el formulario se perdió.
+  if (readError) return failure(active, readError, "intake_form_daily_cap_read_failed");
   if (!row) return ID_INVALID;
   const { error } = await active.supabase.rpc("save_intake_form", {
     p_form_id: formId,

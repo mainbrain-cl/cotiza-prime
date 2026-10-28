@@ -15,7 +15,8 @@ const TENANT = "11111111-1111-4111-8111-111111111111";
 const FORM = "22222222-2222-4222-8222-222222222222";
 
 const rpc = vi.fn();
-function active(role: string) {
+const FOUND = { data: { revision: 4 }, error: null };
+function active(role: string, read: { data: unknown; error: unknown } = FOUND) {
   return {
     tenantId: TENANT,
     role,
@@ -23,7 +24,7 @@ function active(role: string) {
       rpc,
       from: () => ({
         select: () => ({
-          eq: () => ({ maybeSingle: async () => ({ data: { revision: 4 }, error: null }) }),
+          eq: () => ({ maybeSingle: async () => read }),
         }),
       }),
     },
@@ -160,5 +161,35 @@ describe("saveDailyCapAction (H-092)", () => {
     expect((invalid as { message: string }).message).toContain("entre 1 y 200");
     rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "forbidden" } });
     expect(await saveDailyCapAction(TENANT, FORM, 10)).toMatchObject({ kind: "forbidden" });
+  });
+
+  it("un formulario que no existe o es de otra organización responde «no encontrado» sin llamar a la base", async () => {
+    requireActiveTenant.mockResolvedValue(active("owner", { data: null, error: null }));
+    expect(await saveDailyCapAction(TENANT, FORM, 10)).toMatchObject({
+      status: "error",
+      kind: "not_found",
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("si la base falla al leer, no dice que el formulario no existe", async () => {
+    requireActiveTenant.mockResolvedValue(
+      active("owner", { data: null, error: { code: "XX000", message: "boom" } }),
+    );
+    const result = await saveDailyCapAction(TENANT, FORM, 10);
+    expect(result).toMatchObject({ status: "error", kind: "other" });
+    expect((result as { message: string }).message).not.toMatch(/No encontramos/);
+    expect(JSON.stringify(result)).not.toContain("boom");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("choque de revisión (CP409) y formulario archivado (CP423) tienen su propio mensaje", async () => {
+    requireActiveTenant.mockResolvedValue(active("owner"));
+    rpc.mockResolvedValue({ data: null, error: { code: "CP409", message: "revision_conflict" } });
+    expect(await saveDailyCapAction(TENANT, FORM, 10)).toMatchObject({ kind: "conflict" });
+    rpc.mockResolvedValue({ data: null, error: { code: "CP423", message: "form_archived" } });
+    const archived = await saveDailyCapAction(TENANT, FORM, 10);
+    expect(archived).toMatchObject({ status: "error" });
+    expect(JSON.stringify(archived)).not.toContain("form_archived");
   });
 });

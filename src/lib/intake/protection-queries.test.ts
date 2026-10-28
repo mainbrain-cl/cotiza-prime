@@ -37,7 +37,6 @@ const counters = (rows: Record<string, unknown>[]) => ({
     blocked_captcha: 0,
     blocked_rate: 0,
     blocked_cap: 0,
-    blocked_paused: 0,
     blocked_invalid: 0,
     ...row,
   })),

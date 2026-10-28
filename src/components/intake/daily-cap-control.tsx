@@ -77,13 +77,13 @@ export function DailyCapControl({
       noValidate
       className="flex min-w-0 scroll-mt-24 flex-col gap-3"
     >
-      <p className="text-sm font-semibold text-fg">Tope de solicitudes por día</p>
+      <h3 className="text-sm font-semibold text-fg">Tope de solicitudes por día</h3>
       <p className="text-sm text-fg-muted">
         Es el máximo de solicitudes que este formulario recibe cada día (día de Chile). Al llegar,
-        quien abra el formulario verá «este formulario no recibe más solicitudes hoy» y el Dueño y
-        los Administradores reciben un aviso por correo, una sola vez al día. Al día siguiente
-        vuelve a recibir. Además, toda tu organización tiene un tope de {ORGANIZATION_DAILY_CAP}{" "}
-        solicitudes al día entre todos sus formularios, que no se puede subir desde aquí.
+        quien intente enviarlo verá «este formulario no recibe más solicitudes hoy». Con el primer
+        envío rechazado, el Dueño y los Administradores reciben un aviso por correo, una sola vez al
+        día. Al día siguiente vuelve a recibir. Además, toda tu organización tiene un tope de{" "}
+        {ORGANIZATION_DAILY_CAP} solicitudes al día entre todos sus formularios, que es fijo.
       </p>
       <Field
         label="Solicitudes por día"

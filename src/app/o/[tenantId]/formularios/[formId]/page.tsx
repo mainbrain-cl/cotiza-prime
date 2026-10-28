@@ -94,7 +94,11 @@ export default async function IntakeFormEditorPage({
       </div>
 
       <Suspense fallback={null}>
-        <ProtectionAlert dataPromise={protection} formId={loaded.id} />
+        <ProtectionAlert
+          dataPromise={protection}
+          formId={loaded.id}
+          archived={loaded.status === "archived"}
+        />
       </Suspense>
 
       <FormEditor

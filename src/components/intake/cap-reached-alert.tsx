@@ -21,7 +21,7 @@ export function CapReachedAlert({
   compact?: boolean;
 }) {
   if (!state.reached) return null;
-  const canRaise = state.kind === "form" && state.cap < DAILY_CAP_MAX;
+  const canRaise = state.kind === "form" && state.cap < DAILY_CAP_MAX && !state.orgAlsoReached;
   return (
     <div
       role="status"
@@ -35,15 +35,19 @@ export function CapReachedAlert({
       <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
       <p className="min-w-0">
         {state.kind === "form"
-          ? formCapReachedText(state.accepted)
+          ? formCapReachedText(state.accepted, state.cap)
           : organizationCapReachedText(state.cap)}
         .{" "}
-        {state.kind === "org" ? (
+        {state.kind === "org" || state.orgAlsoReached ? (
           <span className="font-normal">
-            Mañana (hora de Chile) vuelve a recibir. Este tope no se puede subir desde aquí.
+            Mañana (hora de Chile) vuelve a recibir. El tope de la organización es fijo.
           </span>
         ) : canRaise ? (
-          <Link href={href} className="font-semibold underline" data-testid="cap-raise-link">
+          <Link
+            href={href}
+            className="inline-flex min-h-11 items-center font-semibold underline md:min-h-0"
+            data-testid="cap-raise-link"
+          >
             Subir el tope
           </Link>
         ) : (

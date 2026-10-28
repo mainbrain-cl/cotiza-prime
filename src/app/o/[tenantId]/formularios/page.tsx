@@ -212,7 +212,7 @@ export default async function IntakeFormsPage({
           {canEdit && protection ? (
             <ProtectionShell
               id="list-protection"
-              description="Cuántos envíos llegaron y cuántos se bloquearon en todos tus formularios. Solo cuentas: no se guarda quién intentó enviar. El tope de cada formulario se ajusta dentro de él."
+              description="Cuántos envíos llegaron y cuántos se bloquearon en todos tus formularios. Son solo cuentas: no muestran quién intentó enviar. El tope de cada formulario se ajusta dentro de él."
             >
               {protection.ok ? (
                 <>

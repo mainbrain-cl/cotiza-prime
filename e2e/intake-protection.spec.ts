@@ -30,14 +30,7 @@ const STAMP_IN_HTML =
 /** El sello de tiempo del formulario pide al menos 3 segundos entre mostrarlo y enviarlo. */
 const AFTER_MIN_FILL_MS = 3_500;
 
-const KEYS = [
-  "accepted",
-  "blockedCaptcha",
-  "blockedRate",
-  "blockedCap",
-  "blockedPaused",
-  "blockedInvalid",
-] as const;
+const KEYS = ["accepted", "blockedCaptcha", "blockedRate", "blockedCap", "blockedInvalid"] as const;
 type Key = (typeof KEYS)[number];
 type Counts = Record<Key, number>;
 const PERIODS = [
@@ -63,7 +56,7 @@ async function dbCounts(org: Org, days: number): Promise<Counts> {
     const { rows } = await db.query<Record<string, number>>(
       `select coalesce(sum(accepted),0)::int as "accepted", coalesce(sum(blocked_captcha),0)::int as "blockedCaptcha",
               coalesce(sum(blocked_rate),0)::int as "blockedRate", coalesce(sum(blocked_cap),0)::int as "blockedCap",
-              coalesce(sum(blocked_paused),0)::int as "blockedPaused", coalesce(sum(blocked_invalid),0)::int as "blockedInvalid"
+              coalesce(sum(blocked_invalid),0)::int as "blockedInvalid"
          from public.intake_daily_counters
         where form_id = $1 and day > (now() at time zone 'America/Santiago')::date - $2::int`,
       [org.formId, days],
@@ -71,6 +64,16 @@ async function dbCounts(org: Org, days: number): Promise<Counts> {
     return rows[0] as unknown as Counts;
   });
 }
+
+/** Cuántas solicitudes hay guardadas de verdad para el formulario. */
+const savedRequests = (org: Org) =>
+  withDb(async (db) => {
+    const { rows } = await db.query<{ n: number }>(
+      "select count(*)::int as n from public.intake_requests where form_id = $1",
+      [org.formId],
+    );
+    return rows[0].n;
+  });
 
 const dbForm = (org: Org) =>
   withDb(async (db) => {
@@ -218,14 +221,7 @@ test.describe("H-092 · que el formulario no se llene de basura", () => {
     expect(invalid.status()).toBeGreaterThanOrEqual(400);
     expect(invalid.status()).toBeLessThan(500);
     // el bloqueo por robot no guarda nada: ni una solicitud
-    const saved = await withDb(async (db) => {
-      const { rows } = await db.query<{ n: number }>(
-        "select count(*)::int as n from public.intake_requests where form_id = $1",
-        [ctx.a.formId],
-      );
-      return rows[0].n;
-    });
-    expect(saved).toBe(0);
+    expect(await savedRequests(ctx.a)).toBe(0);
     await visitorsSubmit(page, ctx.a, [
       { name: "Primera Persona", email: "primera@cliente.test", items: { [SERVICE]: "4" } },
     ]);
@@ -243,7 +239,6 @@ test.describe("H-092 · que el formulario no se llene de basura", () => {
       blockedCaptcha: 1,
       blockedRate: 0,
       blockedCap: 0,
-      blockedPaused: 0,
       blockedInvalid: 1,
     });
     await expectPanelMatchesDb(owner, ctx.a);
@@ -273,7 +268,7 @@ test.describe("H-092 · que el formulario no se llene de basura", () => {
         expect(res.status(), `intento ${attempt}`).not.toBe(429);
       }
       const before = await dbCounts(ctx.a, 1);
-      const savedBefore = (await dbForm(ctx.a)).revision;
+      const requestsBefore = await savedRequests(ctx.a);
       await page.setViewportSize(MOBILE);
       await submitInScreen(page, ctx.a, "Persona Apurada", "apurada@cliente.test");
       await expect(page.getByTestId("intake-banner")).toContainText(/espera unos minutos/i, {
@@ -283,7 +278,8 @@ test.describe("H-092 · que el formulario no se llene de basura", () => {
       const after = await dbCounts(ctx.a, 1);
       expect(after.accepted).toBe(before.accepted);
       expect(after.blockedRate).toBeGreaterThan(before.blockedRate);
-      expect((await dbForm(ctx.a)).revision).toBe(savedBefore);
+      // lo bloqueado no se guarda: ni una solicitud más en la base
+      expect(await savedRequests(ctx.a)).toBe(requestsBefore);
     } finally {
       await context.close();
     }
@@ -367,13 +363,13 @@ test.describe("H-092 · que el formulario no se llene de basura", () => {
     await owner.goto(listUrl(ctx.a));
     const row = owner.getByTestId("intake-form-row").first();
     await expect(row.getByTestId("cap-reached")).toContainText(
-      "Este formulario llegó a su tope de hoy: 2 solicitudes",
+      "Este formulario llegó a su tope de hoy: recibió 2 solicitudes y su tope es 2",
     );
     await expectPanelMatchesDb(owner, ctx.a);
     // editor, con enlace para subirlo
     await owner.goto(editorUrl(ctx.a));
     await expect(owner.getByTestId("cap-reached")).toContainText(
-      "Este formulario llegó a su tope de hoy: 2 solicitudes",
+      "Este formulario llegó a su tope de hoy: recibió 2 solicitudes y su tope es 2",
     );
     await expect(owner.getByTestId("protection-today-blockedCap")).toHaveText(
       String(after.blockedCap),
@@ -502,7 +498,10 @@ test.describe("H-092 · que el formulario no se llene de basura", () => {
     }
     // los campos del panel son tocables en el teléfono (44 px)
     await owner.goto(editorUrl(ctx.a));
-    const box = await owner.getByTestId("daily-cap-save").boundingBox();
-    expect(box?.height ?? 0).toBeGreaterThanOrEqual(40);
+    const save = owner.getByTestId("daily-cap-save");
+    // el panel llega por partes (Suspense): se espera a que esté antes de medirlo
+    await expect(save).toBeVisible();
+    const box = await save.boundingBox();
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
   });
 });

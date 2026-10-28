@@ -614,3 +614,52 @@ solo restaura funciones y no toca datos). Se aplicó con `npx supabase migration
   que la página termine de cargar pierde el texto al hidratarse (el envío vacío da «Escribe al menos 2 caracteres»).
   No es de H-093 (pasa también en la página normal); anotado como posible mejora de H-087.
 - **6 · anotado** aquí; no se cambió nada más.
+
+---
+
+## 15. H-092 · cómo quedó construido y correcciones de la revisión
+
+Sin migraciones nuevas: usa `intake_daily_counters`, `intake_forms.daily_cap` y la función `save_intake_form` que ya
+existían. El borrador lo dejó a medias una sesión cortada (rama `wip/h-092-bloqueos-y-tope`, commit `357560d`); el
+2026-10-27 José lo verificó (tipos, lint, unitarias, base de datos, aislamiento y punta a punta, con la app compilada) y
+Opus lo revisó (H-092 es 🔒).
+
+**Qué hace**
+
+- **Panel «Protección contra abusos»**, solo Dueño y Administrador: aceptadas y bloqueadas de hoy, de los últimos 7 y de
+  los últimos 30 días (día de Chile), en el editor de cada formulario y, sumado, en la lista. Solo cuentas: ni IP, ni
+  nombres, ni correos.
+- **Tope diario** de cada formulario (1 a 200) ajustable desde el editor (`saveDailyCapAction`). Guarda solo esa clave
+  con `save_intake_form`, así que no mueve la revisión del formulario ni choca con quien lo esté editando. El tope de la
+  organización (300 al día) es fijo.
+- **Aviso de tope alcanzado**, arriba del editor y en la fila de la lista (con enlace «Subir el tope»). No se ofrece
+  subirlo en el máximo de 200, si la organización también llegó a su tope, ni en un formulario archivado.
+- Guardias estáticas 10e y 10f ampliadas a toda la superficie pública y a las solicitudes.
+
+**Correcciones de la revisión (todas aplicadas)**
+
+| # | Hallazgo | Qué se hizo |
+|---|---|---|
+| 1 | Etiquetas de los contadores con contraste 4,14:1 (piden 4,5:1) | Pasan a `text-fg-muted` (6,70:1) |
+| 2 | **«Con el formulario en pausa» casi siempre en 0**: con el formulario en pausa el servidor responde antes de contar y `intake_record_block` no acepta ese motivo | La cifra **se quitó** del panel y del total de bloqueados. La columna `blocked_paused` sigue en la base y no se lee. Si algún día se quiere contar, `intake_record_block` debe aceptar `paused` y el servidor llamarla en `submit-service.ts` (migración) |
+| 2 | «Por envíos seguidos» cuenta las veces que una conexión llegó al límite, no cada intento (decisión de H-087) | Se renombró «Conexiones frenadas por enviar seguido» y la explicación lo dice |
+| 3 | El panel quedaba entre el estado y la vista previa, y la columna derecha es fija | Pasó al final de la columna, después de la vista previa |
+| m1 | Textos que decían algo distinto de lo que pasa | El mensaje de tope se ve al **intentar enviar** (no al abrir) y el correo sale con el primer envío rechazado; el tope de la organización «es fijo»; «no muestran quién intentó enviar» (el límite por conexión sí guarda una huella de la IP) |
+| m2 | Aviso con «Subir el tope» en un formulario archivado | `ProtectionAlert` recibe `archived` y no pinta nada |
+| m3 | Si se baja el tope bajo lo ya recibido, el aviso decía «llegó a su tope: 10» | Dice «recibió 10 solicitudes y su tope es 5» |
+| m5 | Falla de lectura sin registro, y `saveDailyCapAction` confundía una falla con «no existe» | `loadProtection` registra el código; la acción distingue la falla (mensaje general) de «no encontrado» |
+| m6 | Explicaciones (`hint`) que nunca se mostraban | Se borraron |
+| m7 | «Tope de solicitudes por día» era un `<p>`; el enlace medía ~20 px | Pasó a `<h3>`; el enlace mide 44 px en teléfono |
+| m9 | Pruebas débiles | Unitarias nuevas de `saveDailyCapAction` (no existe, falla de lectura, `CP409`, `CP423`); la e2e de envíos seguidos cuenta solicitudes guardadas (antes miraba la revisión) y el botón se mide a 44 px y espera a que el panel cargue |
+
+**Pendiente (anotado, no bloquea)**
+
+- **m4:** `loadProtection` lee como máximo 3.000 filas de contadores y 500 formularios. Con los 20 formularios activos
+  que admite una organización no se alcanza; si algún día se acerca, mostrar «al menos» o el estado de error.
+- **m8:** la guardia 10e revisa los nombres de las claves, no los valores (`{ code: row.contact_email_enc }` pasaría).
+  Hoy el código está limpio; endurecerla para aceptar como valor solo textos fijos, `error.code` y `.length`.
+- **m10:** `chileDay` y `addDays` (`protection-model.ts`) repiten `todayInChile`/`addDaysIso` (`src/lib/quotes/validity.ts`).
+- **11:** cualquier miembro puede leer `daily_cap` por la API directa (la migración da lectura de todas las columnas de
+  `intake_forms`); el plan §6 dice «solo Dueño y Administrador». Poco sensible; decidir si se acepta o se limita la columna.
+- **12:** un cambio de tope queda en la auditoría como `changed: ['daily_cap']`, sin el valor anterior ni el nuevo.
+  Requiere migración.

@@ -1,4 +1,5 @@
 import "server-only";
+import { serverLog } from "@/lib/log/server-log";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
 import {
   ORGANIZATION_DAILY_CAP,
@@ -43,15 +44,17 @@ export async function loadProtection(active: ActiveTenant): Promise<ProtectionDa
   const [counters, forms] = await Promise.all([
     active.supabase
       .from("intake_daily_counters")
-      .select(
-        "form_id, day, accepted, blocked_captcha, blocked_rate, blocked_cap, blocked_paused, blocked_invalid",
-      )
+      .select("form_id, day, accepted, blocked_captcha, blocked_rate, blocked_cap, blocked_invalid")
       .gte("day", since)
       .order("day", { ascending: false })
       .limit(MAX_COUNTER_ROWS),
     active.supabase.from("intake_forms").select("id, daily_cap").limit(500),
   ]);
   if (counters.error || !counters.data || forms.error || !forms.data) {
+    // Solo el código: nunca el mensaje de la base ni datos de nadie.
+    void serverLog("error", "intake_protection_load_failed", {
+      code: counters.error?.code ?? forms.error?.code ?? "unknown",
+    });
     return { ok: false, reason: "error" };
   }
   const caps = new Map<string, number>();

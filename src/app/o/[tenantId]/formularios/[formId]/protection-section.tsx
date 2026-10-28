@@ -22,12 +22,15 @@ import {
 export async function ProtectionAlert({
   dataPromise,
   formId,
+  archived,
 }: {
   dataPromise: Promise<ProtectionData>;
   formId: string;
+  archived: boolean;
 }) {
   const data = await dataPromise;
-  if (!data.ok) return null;
+  // Un formulario archivado ya no recibe ni se edita: no tiene sentido avisar ni ofrecer subir el tope.
+  if (!data.ok || archived) return null;
   return <CapReachedAlert state={capStateOfForm(data, formId)} href="#tope-diario" />;
 }
 
@@ -54,7 +57,7 @@ export async function ProtectionSection({
   }
   const cap = data.caps.get(formId);
   return (
-    <ProtectionShell description="Cuántos envíos llegaron y cuántos se bloquearon en este formulario. Solo cuentas: no se guarda quién intentó enviar.">
+    <ProtectionShell description="Cuántos envíos llegaron y cuántos se bloquearon en este formulario. Son solo cuentas: no muestran quién intentó enviar.">
       <ProtectionCounters
         summary={summaryOfForm(data, formId)}
         emptyText="Todavía no hay movimiento: en los últimos 30 días no llegó ni se bloqueó ningún envío."

@@ -22,7 +22,7 @@ function Stats({ period, totals }: { period: string; totals: CounterTotals }) {
     <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
       {COUNTER_LABELS.map((counter) => (
         <div key={counter.key} className="flex min-w-0 flex-col gap-0.5">
-          <dt className="text-xs font-semibold text-fg-subtle">{counter.label}</dt>
+          <dt className="text-xs font-semibold text-fg-muted">{counter.label}</dt>
           <dd
             data-testid={`protection-${period}-${counter.key}`}
             className="text-lg font-semibold text-fg tabular-nums"
@@ -98,7 +98,8 @@ export function ProtectionExplainer() {
         <li>
           <span className="font-semibold text-fg">Límite de envíos seguidos.</span> Desde una misma
           conexión no se aceptan muchos envíos en poco tiempo. Quien llega al límite ve un mensaje
-          para esperar unos minutos.
+          para esperar unos minutos. El panel cuenta cada conexión frenada, no cada intento
+          siguiente.
         </li>
         <li>
           <span className="font-semibold text-fg">Tope diario.</span> Cada formulario recibe como
@@ -121,16 +122,19 @@ export function ProtectionExplainer() {
 /** Marco de la sección, con su título. */
 export function ProtectionShell({
   id = "protection",
+  testId = "protection-panel",
   description,
   children,
 }: {
   id?: string;
+  /** El esqueleto de carga usa otro, para que no se confunda con el panel real mientras la página se arma. */
+  testId?: string;
   description: string;
   children: ReactNode;
 }) {
   return (
     <section
-      data-testid="protection-panel"
+      data-testid={testId}
       aria-labelledby={`${id}-title`}
       className="flex min-w-0 flex-col gap-4 rounded-lg border border-border bg-surface p-4 shadow-1 md:p-5"
     >
@@ -161,7 +165,7 @@ export function ProtectionError() {
 /** Estado de carga mientras se leen los contadores. */
 export function ProtectionSkeleton() {
   return (
-    <ProtectionShell description="Cargando los contadores…">
+    <ProtectionShell testId="protection-skeleton" description="Cargando los contadores…">
       <div role="status" aria-label="Cargando protección" className="flex flex-col gap-3">
         {[0, 1, 2].map((n) => (
           <div key={n} className="h-20 animate-pulse rounded-md bg-surface-2" />

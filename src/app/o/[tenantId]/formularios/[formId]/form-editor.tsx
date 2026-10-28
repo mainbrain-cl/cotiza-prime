@@ -873,8 +873,6 @@ export function FormEditor({
           ) : null}
         </section>
 
-        {protectionSlot}
-
         {canEdit && live ? (
           <EmbedPanel
             tenantId={tenantId}
@@ -947,6 +945,9 @@ export function FormEditor({
             />
           )}
         </section>
+
+        {/* Al final: así no empuja la vista previa fuera de la pantalla en escritorio. */}
+        {protectionSlot}
       </aside>
     </div>
   );

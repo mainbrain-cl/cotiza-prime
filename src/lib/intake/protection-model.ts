@@ -35,7 +35,11 @@ export function addDays(day: string, delta: number): string {
   return moved.toISOString().slice(0, 10);
 }
 
-/** Lo que cuenta la base por formulario y día (columnas de `intake_daily_counters`). */
+/**
+ * Lo que cuenta la base por formulario y día (columnas de `intake_daily_counters`). La columna
+ * `blocked_paused` existe pero no se lee: con el formulario en pausa el servidor responde antes de contar, así
+ * que casi siempre estaría en cero y mostrarla engañaría (revisión de H-092).
+ */
 export type CounterRow = {
   form_id: string;
   day: string;
@@ -43,7 +47,6 @@ export type CounterRow = {
   blocked_captcha: number;
   blocked_rate: number;
   blocked_cap: number;
-  blocked_paused: number;
   blocked_invalid: number;
 };
 
@@ -52,7 +55,6 @@ export type CounterTotals = {
   blockedCaptcha: number;
   blockedRate: number;
   blockedCap: number;
-  blockedPaused: number;
   blockedInvalid: number;
   /** Todos los envíos que se bloquearon, por el motivo que sea. */
   blockedTotal: number;
@@ -63,7 +65,6 @@ export const EMPTY_TOTALS: CounterTotals = {
   blockedCaptcha: 0,
   blockedRate: 0,
   blockedCap: 0,
-  blockedPaused: 0,
   blockedInvalid: 0,
   blockedTotal: 0,
 };
@@ -82,15 +83,10 @@ export function sumCounters(rows: readonly CounterRow[], from: string, to: strin
     total.blockedCaptcha += num(row.blocked_captcha);
     total.blockedRate += num(row.blocked_rate);
     total.blockedCap += num(row.blocked_cap);
-    total.blockedPaused += num(row.blocked_paused);
     total.blockedInvalid += num(row.blocked_invalid);
   }
   total.blockedTotal =
-    total.blockedCaptcha +
-    total.blockedRate +
-    total.blockedCap +
-    total.blockedPaused +
-    total.blockedInvalid;
+    total.blockedCaptcha + total.blockedRate + total.blockedCap + total.blockedInvalid;
   return total;
 }
 
@@ -110,43 +106,29 @@ export function summarize(rows: readonly CounterRow[], now: Date): ProtectionSum
   };
 }
 
-/** Las seis cifras que se muestran, en el orden de la pantalla. */
+/** Las cinco cifras que se muestran, en el orden de la pantalla. */
 export const COUNTER_LABELS: readonly {
   key: keyof Omit<CounterTotals, "blockedTotal">;
   label: string;
-  hint: string;
 }[] = [
-  { key: "accepted", label: "Aceptadas", hint: "Solicitudes que llegaron a tu equipo." },
-  {
-    key: "blockedCaptcha",
-    label: "Bloqueadas por robot",
-    hint: "No pasaron la verificación de que son personas.",
-  },
-  {
-    key: "blockedRate",
-    label: "Por envíos seguidos",
-    hint: "Desde una misma conexión se envió demasiado en poco tiempo.",
-  },
-  {
-    key: "blockedCap",
-    label: "Por tope diario",
-    hint: "Llegaron cuando el formulario ya había recibido su máximo del día.",
-  },
-  {
-    key: "blockedPaused",
-    label: "Con el formulario en pausa",
-    hint: "Intentaron enviar mientras estaba en pausa.",
-  },
-  {
-    key: "blockedInvalid",
-    label: "Con datos inválidos",
-    hint: "Envíos con datos que no se pueden aceptar.",
-  },
+  { key: "accepted", label: "Aceptadas" },
+  { key: "blockedCaptcha", label: "Bloqueadas por robot" },
+  // Cuenta cada vez que una conexión llegó al límite; sus intentos siguientes no se suman (decisión de H-087).
+  { key: "blockedRate", label: "Conexiones frenadas por enviar seguido" },
+  { key: "blockedCap", label: "Por tope diario" },
+  { key: "blockedInvalid", label: "Con datos inválidos" },
 ];
 
 export type CapState =
   | { reached: false }
-  | { reached: true; kind: "form"; accepted: number; cap: number }
+  | {
+      reached: true;
+      kind: "form";
+      accepted: number;
+      cap: number;
+      /** La organización también llegó a su tope: subir el del formulario no serviría. */
+      orgAlsoReached?: boolean;
+    }
   | { reached: true; kind: "org"; accepted: number; cap: number };
 
 /**
@@ -159,7 +141,13 @@ export function capStateOf(args: {
   orgAccepted: number;
 }): CapState {
   if (args.formAccepted >= args.dailyCap) {
-    return { reached: true, kind: "form", accepted: args.formAccepted, cap: args.dailyCap };
+    return {
+      reached: true,
+      kind: "form",
+      accepted: args.formAccepted,
+      cap: args.dailyCap,
+      orgAlsoReached: args.orgAccepted >= ORGANIZATION_DAILY_CAP,
+    };
   }
   if (args.orgAccepted >= ORGANIZATION_DAILY_CAP) {
     return { reached: true, kind: "org", accepted: args.orgAccepted, cap: ORGANIZATION_DAILY_CAP };
@@ -167,8 +155,8 @@ export function capStateOf(args: {
   return { reached: false };
 }
 
-export function formCapReachedText(accepted: number): string {
-  return `Este formulario llegó a su tope de hoy: ${accepted} ${accepted === 1 ? "solicitud" : "solicitudes"}`;
+export function formCapReachedText(accepted: number, cap: number): string {
+  return `Este formulario llegó a su tope de hoy: recibió ${accepted} ${accepted === 1 ? "solicitud" : "solicitudes"} y su tope es ${cap}`;
 }
 
 export function organizationCapReachedText(cap: number): string {

@@ -377,7 +377,7 @@ test.describe("H-092 · que el formulario no se llene de basura", () => {
     await expectPanelMatchesDb(owner, ctx.a);
     await owner.getByTestId("cap-raise-link").click();
     await expect(owner).toHaveURL(/#tope-diario$/);
-    await expect(owner.getByTestId("daily-cap-input")).toBeVisible();
+    await expect(owner.getByTestId("daily-cap-input")).toBeInViewport();
   });
 
   test("el Comercial no ve el panel ni los bloqueos, y no puede cambiar el tope (42501)", async () => {

@@ -729,7 +729,8 @@ export function FormEditor({
         ) : null}
       </div>
 
-      <aside className="flex min-w-0 flex-col gap-6 xl:sticky xl:top-6">
+      {/* Columna fija: si es más alta que la pantalla, se desplaza por dentro y el salto a «Tope diario» (#tope-diario) deja el campo a la vista. */}
+      <aside className="-m-1 flex min-w-0 flex-col gap-6 p-1 xl:sticky xl:top-6 xl:max-h-[calc(100dvh-3rem)] xl:overflow-y-auto xl:overscroll-contain">
         <section
           data-testid="status-panel"
           aria-labelledby="status-title"

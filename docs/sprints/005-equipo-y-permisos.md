@@ -1,8 +1,8 @@
 ---
 document_id: CP-SPRINT-005
 title: Sprint 5 — Equipo y permisos
-version: 0.2 (borrador con diseño del planificador)
-status: BORRADOR — falta la confirmación (Compuerta 3). No se construye nada hasta tenerla
+version: 1.0 (confirmado)
+status: CONFIRMADO por José el 2026-10-28 (Compuerta 3 cruzada). Aarón queda avisado y puede objetar
 basado_en: PROYECTO.md §5 · HISTORIAS.md · sprint 1 (orden de los 12 sprints) · docs/arquitectura/sprint-5-equipo-y-permisos.md
 language: es-CL
 ---
@@ -62,7 +62,7 @@ El diseño propone partir H-004 en **tres historias** (a, b y c) en `HISTORIAS.m
 
 | # | Qué | Quién | Supuesto actual |
 |---|---|---|---|
-| 1 | **Confirmar este sprint** (Compuerta 3) | Aarón | — |
+| 1 | **Confirmar este sprint** (Compuerta 3) | Aarón | ✅ Confirmado por José el 2026-10-28, con el orden de construcción de arriba y los supuestos de esta tabla. No se partió el sprint: el orden ya deja cortes naturales (después del paso 5 y después del paso 7) por si hay que cerrar antes |
 | 2 | **¿Una o varias cuentas bancarias por organización?** (decisión pendiente 6). La tabla de preparación la ubica antes del sprint 5, pero **ninguna historia de este sprint toca cuentas bancarias**: la necesita el sprint 6 (H-050 en adelante). Se propone pedirla igual ahora | Aarón | Una sola |
 | 3 | **Quién puede enviar directo, sin aprobación** (decisión pendiente 15): define cómo se guarda la regla de H-040 (por organización, por rol o por persona) | Aarón | Por organización, con excepción por persona |
 | 3b | **Canal de los avisos internos** (decisión pendiente 5: dentro de la app, por correo o ambos). **No bloquea este sprint**: lo necesita el sprint 6, cuando el aprobador recibe el aviso | Aarón | Ambos |

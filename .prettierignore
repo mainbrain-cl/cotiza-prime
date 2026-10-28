@@ -13,3 +13,4 @@ supabase
 next-env.d.ts
 CLAUDE.md
 README.md
+src/app/shadcn-tailwind.css

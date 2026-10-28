@@ -90,7 +90,7 @@ Licencia y última versión revisadas en npm y en el repositorio de cada una.
 
 | Librería | Para qué | Licencia | Versión revisada | Peso aprox. | Veredicto |
 |---|---|---|---|---|---|
-| **shadcn/ui** | Base de componentes (se copian al proyecto, no se instalan) | MIT | — | Solo lo que se usa | ✅ |
+| **shadcn/ui** | Base de componentes (se copian al proyecto, no se instalan). Sus estilos base están copiados en `src/app/shadcn-tailwind.css` (2026-10-28); el paquete `shadcn` ya no es dependencia. Para agregar un componente: `npx shadcn@4.23.0 add <componente>` | MIT | 4.23.0 | Solo lo que se usa | ✅ |
 | **Radix UI** (`radix-ui`) | Lo que hay debajo de shadcn: menús, diálogos, accesibilidad | MIT | 1.6.7 | Por componente | ✅ |
 | **Motion** (`motion`) | Animaciones y transiciones. Hoy lo usan el menú flotante (resorte de la magnificación) y los contadores del inicio, solo con sus valores de movimiento (sin componentes `motion.*`, para no cargar el motor completo). Dependencias que trae: `framer-motion`, `motion-dom` y `motion-utils`, las tres MIT | MIT | **14.0.0** (fija; verificada 2026-10-06) | Solo se incluye lo que se importa (`animate`, `useSpring`, `useTransform`, `useInView`) | ✅ |
 | **Dock** (de React Bits, copiado a `src/components/react-bits/dock.tsx`) | Menú flotante vertical de la aplicación (escritorio y tableta). Adaptado: vertical, enlaces reales, vidrio y colores del sistema, sin magnificación con "reducir movimiento" ni con dedo | MIT + Commons Clause (React Bits) | Código de la rama principal, 2026-10-06 | Sin dependencias propias (usa Motion) | ✅ 2026-10-06 |

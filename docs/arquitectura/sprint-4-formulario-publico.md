@@ -656,10 +656,16 @@ Opus lo revisó (H-092 es 🔒).
 
 - **m4:** `loadProtection` lee como máximo 3.000 filas de contadores y 500 formularios. Con los 20 formularios activos
   que admite una organización no se alcanza; si algún día se acerca, mostrar «al menos» o el estado de error.
-- **m8:** la guardia 10e revisa los nombres de las claves, no los valores (`{ code: row.contact_email_enc }` pasaría).
-  Hoy el código está limpio; endurecerla para aceptar como valor solo textos fijos, `error.code` y `.length`.
-- **m10:** `chileDay` y `addDays` (`protection-model.ts`) repiten `todayInChile`/`addDaysIso` (`src/lib/quotes/validity.ts`).
 - **11:** cualquier miembro puede leer `daily_cap` por la API directa (la migración da lectura de todas las columnas de
   `intake_forms`); el plan §6 dice «solo Dueño y Administrador». Poco sensible; decidir si se acepta o se limita la columna.
 - **12:** un cambio de tope queda en la auditoría como `changed: ['daily_cap']`, sin el valor anterior ni el nuevo.
   Requiere migración.
+
+**Hecho después (2026-10-28, rama `fix/h-092-menores`, sin migración)**
+
+- **m8:** la guardia 10e ahora también revisa los **valores** de lo que se registra, no solo las claves. Un valor solo
+  puede ser un texto fijo, un número o una ruta que termine en `code`, `reason`, `status`, `length` o `limited`
+  (o `.message` de un error propio); `{ code: row.contact_email_enc }`, `{ code: row }` y `{ count: items }` fallan.
+  Probado en la 10f con casos que deben fallar y casos reales del código que deben pasar.
+- **m10:** `chileDay` y `addDays` se quitaron de `protection-model.ts`; usa `todayInChile` y `addDaysIso` de
+  `src/lib/quotes/validity.ts`. Las pruebas del cambio de día a medianoche de Chile se mantienen apuntando a esas.

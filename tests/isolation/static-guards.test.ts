@@ -71,6 +71,86 @@ const INTAKE_LOG_KEYS = new Set([
   "limit",
 ]);
 
+/** Cómo puede terminar una ruta que se registra (`error.code`, `registration.reason`, `lista.length`…): solo códigos y cuentas. */
+const INTAKE_LOG_VALUE_TAILS = new Set(["code", "reason", "status", "length", "limited"]);
+/** Nombres sueltos permitidos en un valor: códigos ya calculados, el error propio y las constantes de límite. */
+const INTAKE_LOG_VALUE_NAMES = new Set([
+  "code",
+  "failureCode",
+  "codeOf",
+  "String",
+  "cause",
+  "error",
+  "err",
+  "IntakeGatewayError",
+  "instanceof",
+  "MAX_NOTICE_RECIPIENTS",
+  "null",
+  "undefined",
+  "true",
+  "false",
+]);
+
+/** Los pares `clave: valor` de un objeto escrito en la llamada (`{ code }` vale como `code: code`). */
+function logObjectEntries(object: string): { key: string; value: string }[] {
+  const body = object.trim().slice(1, -1);
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (quote) {
+      if (char === "\\") index += 1;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'" || char === "`") quote = char;
+    else if ("([{".includes(char)) depth += 1;
+    else if (")]}".includes(char)) depth -= 1;
+    else if (char === "," && depth === 0) {
+      parts.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(body.slice(start));
+  return parts
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const match = /^([A-Za-z_]\w*)\s*(?::([\s\S]*))?$/.exec(part);
+      return match
+        ? { key: match[1], value: (match[2] ?? match[1]).trim() }
+        : { key: "?", value: part };
+    });
+}
+
+/**
+ * ¿Por qué el valor de un dato del registro no sirve? `null` si está bien. Solo se aceptan textos fijos, números y
+ * rutas que terminan en un código, un motivo, un estado o una cuenta: `{ code: row.contact_email_enc }` no pasa
+ * aunque la clave sea `code`.
+ */
+function intakeLogValueProblem(value: string): string | null {
+  // De un texto con `${…}` solo importan las expresiones de adentro.
+  const expressions = value.replace(
+    /`([^`]*)`/g,
+    (_, inner: string) => ` ${[...inner.matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1]).join(" ")} `,
+  );
+  const code = expressions.replace(/"[^"]*"|'[^']*'/g, '""');
+  for (const route of code.match(/[A-Za-z_]\w*(?:\??\.[A-Za-z_]\w*)*/g) ?? []) {
+    const parts = route.split(/\??\./);
+    const last = parts[parts.length - 1];
+    if (parts.length === 1) {
+      if (!INTAKE_LOG_VALUE_NAMES.has(last)) return `valor no permitido (${route})`;
+    } else if (INTAKE_LOG_VALUE_TAILS.has(last)) {
+      continue;
+    } else if (last === "message" && ["cause", "error", "err"].includes(parts[0])) {
+      continue;
+    } else {
+      return `valor no permitido (${route})`;
+    }
+  }
+  return null;
+}
+
 /**
  * ¿Por qué una llamada `serverLog(...)` no sirve? `null` si está bien. Debe ser nivel + nombre + (opcional) un objeto
  * escrito ahí mismo, con claves de una lista corta, y sin nombres de datos personales en los valores.
@@ -89,7 +169,12 @@ function intakeLogProblem(call: string): string | null {
   if (/\.\.\./.test(flat)) return "esparce un objeto armado afuera";
   const keys = [...flat.matchAll(/(?:^|[{,])\s*([A-Za-z_]\w*)\s*(?::|(?=[,}]))/g)].map((m) => m[1]);
   const unknown = keys.filter((key) => !INTAKE_LOG_KEYS.has(key));
-  return unknown.length > 0 ? `clave no permitida (${unknown.join(", ")})` : null;
+  if (unknown.length > 0) return `clave no permitida (${unknown.join(", ")})`;
+  for (const { key, value } of logObjectEntries(object)) {
+    const problem = intakeLogValueProblem(value);
+    if (problem) return `${problem} en «${key}»`;
+  }
+  return null;
 }
 
 describe("guardias estáticas del aislamiento", () => {
@@ -490,6 +575,12 @@ describe("guardias estáticas del aislamiento", () => {
       'serverLog("warn", "x", context)',
       'serverLog("warn", "x", { ...context })',
       'serverLog("warn", "x", { detail: row })',
+      // la clave es de las permitidas, pero el valor es un dato guardado: no se acepta (m8 de H-092)
+      'serverLog("warn", "x", { code: row.contact_email_enc })',
+      'serverLog("warn", "x", { code: row })',
+      'serverLog("warn", "x", { code: `x_${row.contact_email_enc}` })',
+      'serverLog("warn", "x", { count: items })',
+      'serverLog("warn", "x", { reason: input.value, code: "ok" })',
     ];
     for (const violation of violations) {
       const [call] = serverLogCalls(violation);
@@ -501,6 +592,13 @@ describe("guardias estáticas del aislamiento", () => {
       'serverLog("warn", `intake_request_${action}_failed`, { code: error.code ?? "unknown" })',
       'serverLog("warn", "x", { reason: "honeypot" })',
       'serverLog("warn", "x", { count: recipients.length })',
+      'serverLog("warn", "x", { code })',
+      'serverLog("warn", "x", { code: failureCode, status: saved.status })',
+      'serverLog("warn", "x", { reason: `render_${stamp.reason}` })',
+      'serverLog("warn", "x", { code: error?.code ?? "unknown" })',
+      'serverLog("warn", "x", { code: info.limited ? "daily_limit" : "no_recipients" })',
+      'serverLog("warn", "x", { code: cause instanceof IntakeGatewayError ? cause.message : "unexpected" })',
+      'serverLog("warn", "x", { code: "recipients_over_limit", recipients: info.recipients.length, limit: MAX_NOTICE_RECIPIENTS })',
     ];
     for (const ok of fine) expect(intakeLogProblem(serverLogCalls(ok)[0]), ok).toBeNull();
     const balanced = 'serverLog("warn", "x", { code: String(cause) }); const other = (1)';

@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { addDaysIso, todayInChile } from "@/lib/quotes/validity";
 import {
   COUNTER_LABELS,
   DAILY_CAP_MAX,
-  addDays,
   capStateOf,
-  chileDay,
   formCapReachedText,
   parseDailyCap,
   summarize,
@@ -31,18 +30,18 @@ function row(day: string, partial: Partial<CounterRow> = {}, form = FORM_A): Cou
 describe("el día de Chile (H-092)", () => {
   it("el cambio de día es a medianoche de Chile, no de UTC", () => {
     // 2026-10-07 02:30 UTC es 2026-10-06 23:30 en Chile (verano: UTC-3; invierno: UTC-4)
-    expect(chileDay(new Date("2026-10-07T02:30:00Z"))).toBe("2026-10-06");
-    expect(chileDay(new Date("2026-10-07T04:30:00Z"))).toBe("2026-10-07");
+    expect(todayInChile(new Date("2026-10-07T02:30:00Z"))).toBe("2026-10-06");
+    expect(todayInChile(new Date("2026-10-07T04:30:00Z"))).toBe("2026-10-07");
     // en invierno (UTC-4) la medianoche de Chile es a las 04:00 UTC
-    expect(chileDay(new Date("2026-07-15T03:59:00Z"))).toBe("2026-07-14");
-    expect(chileDay(new Date("2026-07-15T04:00:00Z"))).toBe("2026-07-15");
+    expect(todayInChile(new Date("2026-07-15T03:59:00Z"))).toBe("2026-07-14");
+    expect(todayInChile(new Date("2026-07-15T04:00:00Z"))).toBe("2026-07-15");
   });
 
   it("suma y resta días de calendario, también cruzando mes y año", () => {
-    expect(addDays("2026-10-07", -6)).toBe("2026-10-01");
-    expect(addDays("2026-03-02", -3)).toBe("2026-02-27");
-    expect(addDays("2027-01-02", -29)).toBe("2026-12-04");
-    expect(addDays("2026-12-31", 1)).toBe("2027-01-01");
+    expect(addDaysIso("2026-10-07", -6)).toBe("2026-10-01");
+    expect(addDaysIso("2026-03-02", -3)).toBe("2026-02-27");
+    expect(addDaysIso("2027-01-02", -29)).toBe("2026-12-04");
+    expect(addDaysIso("2026-12-31", 1)).toBe("2027-01-01");
   });
 });
 

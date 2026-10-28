@@ -89,7 +89,8 @@ async function panelCounts(page: Page, period: string): Promise<Counts> {
   const out = {} as Counts;
   for (const key of KEYS) {
     const text = await page.getByTestId(`protection-${period}-${key}`).first().innerText();
-    out[key] = Number(text.trim());
+    // el panel escribe «1.500» (punto de miles)
+    out[key] = Number(text.replace(/\./g, "").trim());
   }
   return out;
 }

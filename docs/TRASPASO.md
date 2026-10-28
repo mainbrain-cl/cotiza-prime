@@ -58,11 +58,11 @@ días sin moverse; no se perdió nada).
 
 | | |
 |---|---|
-| **Historias construidas** | **34 de 92 (37 %)** |
-| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 con 7 de 8 · 5 a 12 sin partir |
-| **Pruebas, la última vez** | 1.352 unitarias · 645 de base de datos · 1.061 de aislamiento entre organizaciones · unas 130 de punta a punta (todas en verde) |
+| **Historias construidas** | **35 de 92 (38 %)** |
+| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 cerrada el 2026-10-28, en el PR #1) · 5 a 12 sin partir |
+| **Pruebas, la última vez** | 1.388 unitarias · 645 de base de datos · 1.061 de aislamiento entre organizaciones · unas 130 de punta a punta (todas en verde) |
 | **Base de datos** | 35 migraciones, cada una con su deshacer |
-| **Rama** | `main`, limpia y al día con GitHub (último commit `1085ef1`) |
+| **Rama** | `main` estaba limpia y al día con GitHub en `1085ef1` (2026-10-27); desde entonces el trabajo va por ramas y PR, no directo a `main` |
 
 ### Lo que funciona hoy (en local)
 
@@ -75,8 +75,6 @@ descartar, anonimizar, convertir en cotización).
 
 ### Lo que falta
 
-- **H-092** (sprint 4): pantalla de envíos bloqueados y ajuste del tope diario del formulario. **Quedó
-  a medias**: ver §5.
 - **H-076** (sprint 3): las tres plantillas de PDF con selector. Las plantillas 2 y 3 están
   **diseñadas** (`docs/diseno/plantillas-2-y-3-pdf-vista-previa.html`) pero esperan la aprobación de Aarón.
 - **Sprints 5 a 12:** equipo y permisos (invitaciones), aprobaciones, cobro y datos de pago, **piloto
@@ -86,22 +84,17 @@ descartar, anonimizar, convertir en cotización).
   auditoría se puede falsificar), correr el envío en Firefox, y que `/c/[token]` responda 404 y 429 reales.
   Detalle en `docs/arquitectura/sprint-3-envio-y-enlace.md` §12–§13 y `sprint-4-formulario-publico.md` §11–§14.
 
-## 5. El trabajo a medias: H-092
+## 5. H-092: cerrada el 2026-10-28
 
-La sesión anterior se cortó con un agente construyendo H-092. Su trabajo quedó **sin guardar** en la
-carpeta de Aarón, y el 2026-10-27 se subió a GitHub como borrador, en la rama
-**`wip/h-092-bloqueos-y-tope`** (17 archivos, un solo commit `357560d`, hecho sobre `main` en `1085ef1`).
-Contenido: panel de protección, control del tope diario, aviso de tope alcanzado y
-`e2e/intake-protection.spec.ts`. **Está sin verificar: no se sabe si compila ni si las pruebas pasan.**
+El borrador de la rama `wip/h-092-bloqueos-y-tope` (commit `357560d`) se **aprovechó**: se verificó entero
+(typecheck, lint, 1.388 unitarias, `test:db`, `test:isolation` y 130 de punta a punta), lo revisó el
+`revisor` sin bloqueantes y se aplicaron sus correcciones en la rama local `h-092` (commit `9418838`).
+Contenido: panel de protección (contadores de hoy, 7 y 30 días; solo Dueño y Administrador), control del tope
+diario (1 a 200) y aviso de tope alcanzado en la lista y en el editor.
 
-- Para usarla: `git fetch`, `git switch -c h-092 origin/wip/h-092-bloqueos-y-tope`, y revisar con
-  `npm run typecheck` y las pruebas antes de confiar en ella.
-- Si no sirve, **rehacer H-092 desde cero es barato** (es la última historia del sprint 4, de tamaño
-  mediano): el encargo está en `docs/HISTORIAS.md` (H-092) y en
-  `docs/arquitectura/sprint-4-formulario-publico.md`. Lo que ya existe del lado del servidor: contadores
-  en `intake_daily_counters`, tope por formulario (`daily_cap`, 1 a 200) y aviso por correo al llegar al
-  tope. Falta lo que se ve en pantalla.
-- Cuando H-092 esté integrada en `main`, se puede borrar esa rama.
+- **Pendiente:** subir `h-092` a `main` cuando José lo decida; después se puede borrar
+  `wip/h-092-bloqueos-y-tope`.
+- Los 5 menores que quedaron abiertos están en `docs/arquitectura/sprint-4-formulario-publico.md` §15.
 
 ## 6. Cómo se ha trabajado (decisión 013) y cómo seguir
 
@@ -188,11 +181,11 @@ Están todas esperando respuesta suya. Mientras tanto el código aplica el supue
 
 ## 11. Primeros pasos recomendados
 
-1. Pedirle a Aarón: acceso al repositorio y, si existe, la copia de H-092.
+1. ~~Pedirle a Aarón el acceso y la copia de H-092~~ (hecho: ya se tiene el repositorio y H-092 está cerrada).
 2. Clonar, levantar el entorno (§2) y **recorrer la app** como Ana y como Carla: es la mejor forma de
    entender el producto.
 3. Correr toda la batería de pruebas para confirmar que el entorno funciona.
-4. Cerrar H-092, correr la suite completa y dejar cerrado el sprint 4.
+4. ~~Cerrar H-092 y el sprint 4~~ (hecho el 2026-10-28; entra a `main` con el PR #1).
 5. Con Aarón: su revisión grande del recorrido, y sus respuestas a las decisiones de §9.
 6. Seguir con el sprint 5 (equipo y permisos), que habilita aprobaciones y cobro.
 

@@ -2,15 +2,19 @@ import { ChevronLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { loadBrand } from "@/lib/brand/service";
 import { logoUrl } from "@/lib/brand/logo";
 import { loadCatalogChoices, loadForm } from "@/lib/intake/builder-queries";
 import { isFormId } from "@/lib/intake/builder-schema";
 import { buildConsentNotice } from "@/lib/intake/consent-notice";
+import { loadProtection } from "@/lib/intake/protection-queries";
+import { ProtectionSkeleton } from "@/components/intake/protection-panel";
 import { resolvePdfBrand } from "@/lib/pdf/brand-colors";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { FormEditor } from "./form-editor";
+import { ProtectionAlert, ProtectionSection } from "./protection-section";
 
 export const metadata: Metadata = { title: "Formulario público · Cotiza Prime" };
 
@@ -69,6 +73,9 @@ export default async function IntakeFormEditorPage({
     }
   }
 
+  // Una sola lectura de los contadores (Dueño y Administrador; para los demás ni se consulta) que usan el aviso
+  // de tope y el panel, cada uno dentro de su <Suspense>.
+  const protection = loadProtection(active);
   const listPath = tenantPath(active.tenantId, "formularios");
   return (
     <div className="flex flex-col gap-6">
@@ -85,6 +92,14 @@ export default async function IntakeFormEditorPage({
           Arma lo que verá quien pida una cotización. Los precios nunca se muestran aquí.
         </p>
       </div>
+
+      <Suspense fallback={null}>
+        <ProtectionAlert
+          dataPromise={protection}
+          formId={loaded.id}
+          archived={loaded.status === "archived"}
+        />
+      </Suspense>
 
       <FormEditor
         tenantId={active.tenantId}
@@ -103,6 +118,18 @@ export default async function IntakeFormEditorPage({
         consentText={consentText}
         hasContactEmail={contactEmail !== ""}
         contactSettingsHref={tenantPath(active.tenantId, "configuracion/empresa")}
+        protectionSlot={
+          canEdit ? (
+            <Suspense fallback={<ProtectionSkeleton />}>
+              <ProtectionSection
+                dataPromise={protection}
+                tenantId={active.tenantId}
+                formId={loaded.id}
+                archived={loaded.status === "archived"}
+              />
+            </Suspense>
+          ) : null
+        }
       />
     </div>
   );

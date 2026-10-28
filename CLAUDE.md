@@ -43,7 +43,7 @@ Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por sepa
 hallazgos corregidos. Pruebas: `npm test`, `test:db`, `test:isolation` (504 ataques entre
 organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHub Actions.
 
-- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 14 migraciones. Datos de
+- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 35 migraciones. Datos de
   prueba: `npm run db:seed` (`ana`, `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
   `Prueba-Cotiza-2026`; Negocio Demo 1 y 2). Cómo levantarlo: `README.md`.
 - **Documentos de arquitectura:** `docs/arquitectura/modelo-datos.md` (aprobado) y
@@ -59,13 +59,13 @@ la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con
 **Lee primero `docs/TRASPASO.md`**: es la guía para ponerse al día (cómo levantarlo, qué leer, dónde
 quedó todo, trampas, qué decide Aarón y cómo trabaja). Este bloque es solo el resumen.
 
-**Dónde está:** 34 de 92 historias construidas (37 %). Sprint 1 cerrado; sprint 2 construido (falta que
+**Dónde está:** 35 de 92 historias construidas (38 %). Sprint 1 cerrado; sprint 2 construido (falta que
 Aarón lo pruebe y apruebe la plantilla 1); sprint 3 con 8 de 9 (falta **H-076**, las tres plantillas de
-PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3); sprint 4 con 7 de 8
-(falta **H-092**, pantalla de envíos bloqueados y ajuste del tope diario). Sprints 5 a 12 sin partir.
-Último trabajo: 2026-10-07 (el proyecto estuvo 20 días parado; no se perdió nada). `main` limpia y al día
-con GitHub (`1085ef1`). 35 migraciones. Última batería: 1.352 unitarias, 645 de base de datos, 1.061 de
-aislamiento y unas 130 de punta a punta, todas en verde.
+PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3); sprint 4 completo
+(H-092, pantalla de envíos bloqueados y ajuste del tope diario, cerrada el 2026-10-28 en la rama `h-092`,
+**entra a `main` con el PR #1, en revisión de Aarón**). Sprints 5 a 12 sin partir. 35 migraciones. Última
+batería (2026-10-28, local): 1.388 unitarias, 645 de base de datos, 1.061 de aislamiento y 130 de punta a
+punta, todas en verde.
 
 **Lo que ya funciona (en local):** registro y organizaciones, catálogo y clientes, cotizador con PDF,
 enviar por correo, enlace del cliente (aceptar o rechazar con motivo obligatorio), rebotes, vencimiento,
@@ -73,9 +73,10 @@ revocar enlace, registro de actividad, formulario público (constructor, página
 resumen en vivo sin precios, incrustable, QR) y solicitudes (asignar, descartar, anonimizar, convertir en
 cotización). Menú flotante vertical, tarjetas, contadores y fondos animados (React Bits, decisión 018).
 
-**Trabajo a medias: H-092.** Una sesión se cortó con un agente construyendo H-092. Su borrador (17 archivos,
-SIN verificar) está en GitHub, en la rama `wip/h-092-bloqueos-y-tope`. Si no sirve, rehacerlo es barato (ver
-`docs/TRASPASO.md` §5).
+**H-092 cerrada (2026-10-28).** Se aprovechó el borrador de la rama `wip/h-092-bloqueos-y-tope`, se verificó
+completo, lo revisó el `revisor` (sin bloqueantes) y se aplicaron sus correcciones; quedan 5 menores anotados
+en `docs/arquitectura/sprint-4-formulario-publico.md` §15. La rama `wip/h-092-bloqueos-y-tope` ya se puede
+borrar cuando `h-092` esté en `main`.
 
 **El CI de GitHub no corre por la facturación de la cuenta** (las corridas fallan en 2 s con «recent
 account payments have failed…»). Aarón debe regularizarlo. Mientras tanto se verifica todo en local y,
@@ -88,7 +89,7 @@ proveedor y dominio de correo (decisión 016, propuesta Resend); anti-robot real
 Turnstile o ALTCHA); dominio y marca; facturación de GitHub; antes del piloto, abogado, datos de Main Brain
 para los términos (29 marcadores), custodia de claves de cifrado y quién responde un incidente.
 
-**Qué sigue:** cerrar H-092 y el sprint 4 → revisión grande de Aarón (decirle qué está listo, el link
+**Qué sigue:** subir `h-092` a `main` (con el visto bueno de José) → revisión grande de Aarón (decirle qué está listo, el link
 `http://localhost:3000` y los accesos) → sprint 5 (equipo y permisos) → 6 aprobación y datos de pago → 7
 cobro → piloto privado. Estimación: unas 2 a 3 semanas hasta el piloto y 4 a 6 hasta el lanzamiento.
 

@@ -78,6 +78,8 @@ type FormEditorProps = {
   consentText: string | null;
   hasContactEmail: boolean;
   contactSettingsHref: string;
+  /** «Protección contra abusos» (H-092): la pinta el servidor y solo existe para Dueño y Administrador. */
+  protectionSlot?: React.ReactNode;
 };
 
 const SAVED_TOAST_ID = "intake-form-saved";
@@ -143,6 +145,7 @@ export function FormEditor({
   consentText,
   hasContactEmail,
   contactSettingsHref,
+  protectionSlot,
 }: FormEditorProps) {
   const [form, setForm] = useState<EditorForm>(initialForm);
   const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify(initialForm));
@@ -942,6 +945,9 @@ export function FormEditor({
             />
           )}
         </section>
+
+        {/* Al final: así no empuja la vista previa fuera de la pantalla en escritorio. */}
+        {protectionSlot}
       </aside>
     </div>
   );

@@ -53,6 +53,45 @@ function serverLogCalls(text: string): string[] {
   return calls;
 }
 
+/** Carpetas del formulario público y de las solicitudes donde `serverLog` no puede recibir datos de una persona. */
+const INTAKE_LOG_SCOPE =
+  /^src\/(lib\/intake\/|app\/f\/|app\/api\/v1\/public\/forms\/|components\/intake\/|app\/o\/\[tenantId\]\/(formularios|solicitudes)\/)/;
+const INTAKE_LOG_FORBIDDEN =
+  /\b(name|email|phone|message|ip|clientIp|publicId|antibotToken|renderToken|token|contactName|contactEmail|address|rut|company|comuna|headers|forwarded)\b/i;
+/** Claves permitidas en los datos de un registro: solo códigos y cuentas. */
+const INTAKE_LOG_KEYS = new Set([
+  "code",
+  "reason",
+  "status",
+  "count",
+  "kind",
+  "capKind",
+  "total",
+  "recipients",
+  "limit",
+]);
+
+/**
+ * ¿Por qué una llamada `serverLog(...)` no sirve? `null` si está bien. Debe ser nivel + nombre + (opcional) un objeto
+ * escrito ahí mismo, con claves de una lista corta, y sin nombres de datos personales en los valores.
+ */
+function intakeLogProblem(call: string): string | null {
+  // Se ignoran los textos y el `.message` de un error propio (solo trae un código, nunca datos).
+  const code = call.replace(/"[^"]*"/g, '""').replace(/\b(cause|error|err)\.message\b/g, "");
+  if (INTAKE_LOG_FORBIDDEN.test(code)) return "nombra un dato personal";
+  const shape = call.match(
+    /^serverLog\(\s*"[^"]*"\s*,\s*(?:"[^"]*"|`[^`]*`|[A-Za-z_]\w*)\s*(?:,\s*(\{[\s\S]*\}))?\s*\)$/,
+  );
+  if (!shape) return "los datos no son un objeto escrito en la misma llamada";
+  const object = shape[1];
+  if (object === undefined) return null;
+  const flat = object.replace(/"[^"]*"|`[^`]*`/g, '""');
+  if (/\.\.\./.test(flat)) return "esparce un objeto armado afuera";
+  const keys = [...flat.matchAll(/(?:^|[{,])\s*([A-Za-z_]\w*)\s*(?::|(?=[,}]))/g)].map((m) => m[1]);
+  const unknown = keys.filter((key) => !INTAKE_LOG_KEYS.has(key));
+  return unknown.length > 0 ? `clave no permitida (${unknown.join(", ")})` : null;
+}
+
 describe("guardias estáticas del aislamiento", () => {
   it("1. el nombre de la cabecera de la organización solo está en constants.ts", () => {
     const offenders = sourceFiles
@@ -371,17 +410,20 @@ describe("guardias estáticas del aislamiento", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("10e. serverLog en lo de solicitudes nunca recibe nombre, correo, teléfono, mensaje, IP ni el identificador del formulario", () => {
-    const FORBIDDEN =
-      /\b(name|email|phone|message|ip|clientIp|publicId|antibotToken|renderToken|token|contactName|contactEmail)\b/i;
+  it("10e. serverLog en todo lo del formulario público y las solicitudes nunca recibe nombre, correo, teléfono, mensaje, IP ni el identificador del formulario", () => {
+    const scoped = sourceFiles.filter((f) => INTAKE_LOG_SCOPE.test(rel(f)));
+    // la guardia mira de verdad las carpetas de la superficie pública, no solo `src/lib/intake`
+    expect(scoped.some((f) => rel(f).startsWith("src/lib/intake/"))).toBe(true);
+    expect(scoped.some((f) => rel(f).startsWith("src/app/f/"))).toBe(true);
+    expect(scoped.some((f) => rel(f).startsWith("src/app/api/v1/public/forms/"))).toBe(true);
+    expect(scoped.some((f) => rel(f).startsWith("src/components/intake/"))).toBe(true);
     const offenders: string[] = [];
     let calls = 0;
-    for (const file of sourceFiles.filter((f) => rel(f).startsWith("src/lib/intake/"))) {
+    for (const file of scoped) {
       for (const call of serverLogCalls(stripComments(read(file)))) {
         calls += 1;
-        // Se ignoran los textos y el `.message` de un error propio (solo trae un código, nunca datos).
-        const code = call.replace(/"[^"]*"/g, '""').replace(/\b(cause|error|err)\.message\b/g, "");
-        if (FORBIDDEN.test(code)) offenders.push(`${rel(file)}: ${call}`);
+        const problem = intakeLogProblem(call);
+        if (problem) offenders.push(`${rel(file)}: ${problem}: ${call}`);
       }
     }
     expect(calls).toBeGreaterThan(5);
@@ -433,10 +475,34 @@ describe("guardias estáticas del aislamiento", () => {
     expect(resizer).toContain("buildScrollMessage(");
   });
 
-  it("10f. la guardia 10e detecta de verdad una violación", () => {
+  it("10f. la guardia 10e detecta de verdad una violación (nombre, correo, IP, identificador, variables sueltas)", () => {
     const sample = 'serverLog("warn", "x", { email: data.email, ip: clientIp })';
     expect(serverLogCalls(sample)).toHaveLength(1);
-    expect(/\b(email|ip)\b/i.test(serverLogCalls(sample)[0])).toBe(true);
+    expect(intakeLogProblem(serverLogCalls(sample)[0])).not.toBeNull();
+    const violations = [
+      'serverLog("warn", "x", { publicId })',
+      'serverLog("warn", "x", { code: input.publicId })',
+      'serverLog("warn", "x", { name: parsed.name })',
+      'serverLog("warn", "x", { phone: row.phone })',
+      'serverLog("warn", "x", { clientIp })',
+      'serverLog("warn", "x", { code: request.headers.get("x-forwarded-for") })',
+      // un objeto armado afuera puede esconder cualquier cosa: no se acepta
+      'serverLog("warn", "x", context)',
+      'serverLog("warn", "x", { ...context })',
+      'serverLog("warn", "x", { detail: row })',
+    ];
+    for (const violation of violations) {
+      const [call] = serverLogCalls(violation);
+      expect(intakeLogProblem(call), violation).not.toBeNull();
+    }
+    const fine = [
+      'serverLog("warn", "x", { code: String(cause) })',
+      'serverLog("error", "intake_form_save_bad_response")',
+      'serverLog("warn", `intake_request_${action}_failed`, { code: error.code ?? "unknown" })',
+      'serverLog("warn", "x", { reason: "honeypot" })',
+      'serverLog("warn", "x", { count: recipients.length })',
+    ];
+    for (const ok of fine) expect(intakeLogProblem(serverLogCalls(ok)[0]), ok).toBeNull();
     const balanced = 'serverLog("warn", "x", { code: String(cause) }); const other = (1)';
     expect(serverLogCalls(balanced)[0]).toBe('serverLog("warn", "x", { code: String(cause) })');
   });

@@ -3,16 +3,35 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CopyLinkButton } from "@/components/intake/copy-link-button";
 import { FormStatusBadge } from "@/components/intake/form-status-badge";
+import { CapReachedAlert } from "@/components/intake/cap-reached-alert";
+import {
+  ProtectionCounters,
+  ProtectionError,
+  ProtectionExplainer,
+  ProtectionShell,
+} from "@/components/intake/protection-panel";
 import { QrDownloads } from "@/components/intake/qr-downloads";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FORMS_PER_ORGANIZATION_MAX } from "@/lib/intake/builder-model";
 import { loadFormList } from "@/lib/intake/builder-queries";
+import type { CapState } from "@/lib/intake/protection-model";
+import {
+  capStateOfForm,
+  loadProtection,
+  organizationCapState,
+  summaryOfOrganization,
+} from "@/lib/intake/protection-queries";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Formularios · Cotiza Prime" };
+
+/** En la lista, el tope de la organización se avisa una sola vez arriba; en cada fila solo el del formulario. */
+function formCapOnly(state: CapState): CapState {
+  return state.reached && state.kind === "form" ? state : { reached: false };
+}
 
 function requestsLabel(count: number, lowerBound: boolean): string {
   // Si la lectura llegó al tope, son «al menos» esas: no se afirma un número exacto.
@@ -28,7 +47,11 @@ export default async function IntakeFormsPage({
   const active = await requireActiveTenant((await params).tenantId);
   const showArchived = (await searchParams).estado === "archivados";
   const canEdit = active.role === "owner" || active.role === "admin";
-  const result = await loadFormList(active, showArchived);
+  const [result, protection] = await Promise.all([
+    loadFormList(active, showArchived),
+    // Solo Dueño y Administrador: para los demás `loadProtection` no consulta nada.
+    canEdit ? loadProtection(active) : Promise.resolve(null),
+  ]);
   const base = tenantPath(active.tenantId, "formularios");
   const atLimit =
     result.ok && result.totalActive !== null && result.totalActive >= FORMS_PER_ORGANIZATION_MAX;
@@ -99,6 +122,10 @@ export default async function IntakeFormsPage({
             ))}
           </nav>
 
+          {protection?.ok ? (
+            <CapReachedAlert state={organizationCapState(protection)} href="#" />
+          ) : null}
+
           {result.rows.length === 0 ? (
             showArchived ? (
               <p className="rounded-lg border border-border bg-surface px-6 py-10 text-center text-fg-muted">
@@ -151,6 +178,13 @@ export default async function IntakeFormsPage({
                       )}
                     </div>
                   </div>
+                  {protection?.ok && row.status !== "archived" ? (
+                    <CapReachedAlert
+                      compact
+                      state={formCapOnly(capStateOfForm(protection, row.id))}
+                      href={`${base}/${row.id}#tope-diario`}
+                    />
+                  ) : null}
                   {row.status === "published" && row.publicUrl ? (
                     <div className="flex min-w-0 flex-col gap-2 md:max-w-md md:items-end">
                       <p
@@ -174,6 +208,25 @@ export default async function IntakeFormsPage({
               ))}
             </ul>
           )}
+
+          {canEdit && protection ? (
+            <ProtectionShell
+              id="list-protection"
+              description="Cuántos envíos llegaron y cuántos se bloquearon en todos tus formularios. Son solo cuentas: no muestran quién intentó enviar. El tope de cada formulario se ajusta dentro de él."
+            >
+              {protection.ok ? (
+                <>
+                  <ProtectionCounters
+                    summary={summaryOfOrganization(protection)}
+                    emptyText="Todavía no hay movimiento: en los últimos 30 días no llegó ni se bloqueó ningún envío."
+                  />
+                  <ProtectionExplainer />
+                </>
+              ) : (
+                <ProtectionError />
+              )}
+            </ProtectionShell>
+          ) : null}
         </>
       )}
     </div>

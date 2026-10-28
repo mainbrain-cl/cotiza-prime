@@ -43,7 +43,7 @@ Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por sepa
 hallazgos corregidos. Pruebas: `npm test`, `test:db`, `test:isolation` (504 ataques entre
 organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHub Actions.
 
-- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 14 migraciones. Datos de
+- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 35 migraciones. Datos de
   prueba: `npm run db:seed` (`ana`, `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
   `Prueba-Cotiza-2026`; Negocio Demo 1 y 2). Cómo levantarlo: `README.md`.
 - **Documentos de arquitectura:** `docs/arquitectura/modelo-datos.md` (aprobado) y
@@ -63,7 +63,7 @@ quedó todo, trampas, qué decide Aarón y cómo trabaja). Este bloque es solo e
 Aarón lo pruebe y apruebe la plantilla 1); sprint 3 con 8 de 9 (falta **H-076**, las tres plantillas de
 PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3); sprint 4 completo
 (H-092, pantalla de envíos bloqueados y ajuste del tope diario, cerrada el 2026-10-28 en la rama `h-092`,
-**pendiente de subir a `main` cuando José lo diga**). Sprints 5 a 12 sin partir. 35 migraciones. Última
+**entra a `main` con el PR #1, en revisión de Aarón**). Sprints 5 a 12 sin partir. 35 migraciones. Última
 batería (2026-10-28, local): 1.388 unitarias, 645 de base de datos, 1.061 de aislamiento y 130 de punta a
 punta, todas en verde.
 

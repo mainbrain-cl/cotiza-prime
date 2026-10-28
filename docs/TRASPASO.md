@@ -58,11 +58,11 @@ días sin moverse; no se perdió nada).
 
 | | |
 |---|---|
-| **Historias construidas** | **34 de 92 (37 %)** |
-| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 con 7 de 8 · 5 a 12 sin partir |
-| **Pruebas, la última vez** | 1.352 unitarias · 645 de base de datos · 1.061 de aislamiento entre organizaciones · unas 130 de punta a punta (todas en verde) |
+| **Historias construidas** | **35 de 92 (38 %)** |
+| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 cerrada el 2026-10-28, en el PR #1) · 5 a 12 sin partir |
+| **Pruebas, la última vez** | 1.388 unitarias · 645 de base de datos · 1.061 de aislamiento entre organizaciones · unas 130 de punta a punta (todas en verde) |
 | **Base de datos** | 35 migraciones, cada una con su deshacer |
-| **Rama** | `main`, limpia y al día con GitHub (último commit `1085ef1`) |
+| **Rama** | `main` estaba limpia y al día con GitHub en `1085ef1` (2026-10-27); desde entonces el trabajo va por ramas y PR, no directo a `main` |
 
 ### Lo que funciona hoy (en local)
 
@@ -185,7 +185,7 @@ Están todas esperando respuesta suya. Mientras tanto el código aplica el supue
 2. Clonar, levantar el entorno (§2) y **recorrer la app** como Ana y como Carla: es la mejor forma de
    entender el producto.
 3. Correr toda la batería de pruebas para confirmar que el entorno funciona.
-4. ~~Cerrar H-092 y el sprint 4~~ (hecho el 2026-10-28; falta subir `h-092` a `main`).
+4. ~~Cerrar H-092 y el sprint 4~~ (hecho el 2026-10-28; entra a `main` con el PR #1).
 5. Con Aarón: su revisión grande del recorrido, y sus respuestas a las decisiones de §9.
 6. Seguir con el sprint 5 (equipo y permisos), que habilita aprobaciones y cobro.
 

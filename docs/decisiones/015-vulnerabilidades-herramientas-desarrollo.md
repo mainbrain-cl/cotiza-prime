@@ -46,3 +46,16 @@ limpio— se mantiene intacta.
 
 Si una herramienta de desarrollo llega a procesar entradas externas (por ejemplo, patrones que vengan
 de usuarios), esta decisión deja de aplicar y se revisa.
+
+## Actualización 2026-10-28
+
+- Next.js 16.4.3, zod 4.6.7 y shadcn 4.23.0 corrigieron las vulnerabilidades crítica y altas que había
+  (PR #2). Hoy `npm audit` no reporta altas ni críticas.
+- Quedaban 3 de severidad baja en `deepmerge` (todas sus versiones están afectadas), que llegaba solo a
+  través de `shadcn`. Como la aplicación usaba de `shadcn` únicamente un archivo de estilos, ese archivo
+  se copió a `src/app/shadcn-tailwind.css` (MIT, con su aviso) y el paquete se quitó de las dependencias.
+  El CSS compilado salió idéntico byte por byte. Con eso `npm audit` da **0 vulnerabilidades**.
+- Para agregar componentes de shadcn/ui se usa `npx shadcn@4.23.0 add <componente>` (se ejecuta una vez,
+  no queda instalado).
+- La regla de esta decisión sigue vigente por si vuelve a aparecer una falla sin corrección en una
+  herramienta de desarrollo.

@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import "./shadcn-tailwind.css";
 
 /* Sistema de diseño de Cotiza Prime: los valores salen de docs/DISENO.md (aprobado 2026-10-01).
    Ninguna pantalla escribe un color, tamaño o espacio fuera de estos tokens.

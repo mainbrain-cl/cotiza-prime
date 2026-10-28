@@ -1,12 +1,11 @@
 import "server-only";
 import { serverLog } from "@/lib/log/server-log";
+import { addDaysIso, todayInChile } from "@/lib/quotes/validity";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
 import {
   ORGANIZATION_DAILY_CAP,
   PROTECTION_WINDOW_DAYS,
-  addDays,
   capStateOf,
-  chileDay,
   sumCounters,
   summarize,
   type CapState,
@@ -40,7 +39,7 @@ export function canSeeProtection(role: string): boolean {
 export async function loadProtection(active: ActiveTenant): Promise<ProtectionData> {
   if (!canSeeProtection(active.role)) return { ok: false, reason: "forbidden" };
   const now = new Date();
-  const since = addDays(chileDay(now), -(PROTECTION_WINDOW_DAYS - 1));
+  const since = addDaysIso(todayInChile(now), -(PROTECTION_WINDOW_DAYS - 1));
   const [counters, forms] = await Promise.all([
     active.supabase
       .from("intake_daily_counters")
@@ -87,7 +86,7 @@ export function capStateOfForm(
   data: Extract<ProtectionData, { ok: true }>,
   formId: string,
 ): CapState {
-  const today = chileDay(data.now);
+  const today = todayInChile(data.now);
   const formAccepted = sumCounters(
     data.rows.filter((row) => row.form_id === formId),
     today,
@@ -101,7 +100,7 @@ export function capStateOfForm(
 
 /** ¿La organización completa llegó hoy a su tope diario (entre todos sus formularios)? */
 export function organizationCapState(data: Extract<ProtectionData, { ok: true }>): CapState {
-  const today = chileDay(data.now);
+  const today = todayInChile(data.now);
   const accepted = sumCounters(data.rows, today, today).accepted;
   return accepted >= ORGANIZATION_DAILY_CAP
     ? { reached: true, kind: "org", accepted, cap: ORGANIZATION_DAILY_CAP }

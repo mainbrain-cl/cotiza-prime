@@ -4,6 +4,8 @@
  * y usarlo también en el navegador.
  */
 
+import { addDaysIso, todayInChile } from "@/lib/quotes/validity";
+
 /** Mismos límites que la base (`daily_cap between 1 and 200`, 50 por defecto, 300 por organización). */
 export const DAILY_CAP_MIN = 1;
 export const DAILY_CAP_MAX = 200;
@@ -13,27 +15,6 @@ export const ORGANIZATION_DAILY_CAP = 300;
 /** Cuántos días hacia atrás se leen los contadores (hoy cuenta como el primero). */
 export const PROTECTION_WINDOW_DAYS = 30;
 export const PROTECTION_SHORT_WINDOW_DAYS = 7;
-
-const CHILE_TIME_ZONE = "America/Santiago";
-
-const dayFormatter = new Intl.DateTimeFormat("en-CA", {
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  timeZone: CHILE_TIME_ZONE,
-});
-
-/** El día de Chile (`aaaa-mm-dd`) de un instante: el cambio de día es a medianoche de Chile, no de UTC. */
-export function chileDay(at: Date): string {
-  return dayFormatter.format(at);
-}
-
-/** Suma (o resta) días a un `aaaa-mm-dd`. Trabaja con calendario puro: sin horas, sin zonas. */
-export function addDays(day: string, delta: number): string {
-  const [year, month, date] = day.split("-").map(Number);
-  const moved = new Date(Date.UTC(year, month - 1, date + delta));
-  return moved.toISOString().slice(0, 10);
-}
 
 /**
  * Lo que cuenta la base por formulario y día (columnas de `intake_daily_counters`). La columna
@@ -98,11 +79,11 @@ export type ProtectionSummary = {
 
 /** Hoy, los últimos 7 días y los últimos 30 (contando hoy), según el día de Chile de `now`. */
 export function summarize(rows: readonly CounterRow[], now: Date): ProtectionSummary {
-  const today = chileDay(now);
+  const today = todayInChile(now);
   return {
     today: sumCounters(rows, today, today),
-    last7: sumCounters(rows, addDays(today, -(PROTECTION_SHORT_WINDOW_DAYS - 1)), today),
-    last30: sumCounters(rows, addDays(today, -(PROTECTION_WINDOW_DAYS - 1)), today),
+    last7: sumCounters(rows, addDaysIso(today, -(PROTECTION_SHORT_WINDOW_DAYS - 1)), today),
+    last30: sumCounters(rows, addDaysIso(today, -(PROTECTION_WINDOW_DAYS - 1)), today),
   };
 }
 

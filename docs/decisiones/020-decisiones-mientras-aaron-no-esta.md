@@ -1,6 +1,6 @@
 # 020 · Quién decide mientras Aarón no esté disponible
 
-**Estado:** propuesta, **pendiente de aprobación escrita de José** · **Fecha:** 2026-10-28 · **Relacionada con:**
+**Estado:** propuesta con los ajustes que José pidió el 2026-10-28, **pendiente de su aprobación escrita final** · **Fecha:** 2026-10-28 · **Relacionada con:**
 013 (forma de desarrollo), `docs/00-base/PROCESO.md` (compuertas), `docs/TRASPASO.md` §9
 
 ## Contexto
@@ -44,9 +44,14 @@ conversación o en el documento del sprint.
 ### 2. Aviso y plazo
 
 Antes de usar esta autorización, José le manda a Aarón un mensaje con los PR abiertos, los supuestos y un
-plazo para responder: **48 horas**, que José puede alargar. Pasado el plazo sin respuesta se procede según
+plazo para responder: **24 horas**, que José puede alargar. Pasado el plazo sin respuesta se procede según
 esta decisión. Si Aarón responde después y no está de acuerdo, **se revierte** lo que corresponda, y los
 cambios de este periodo son fáciles de encontrar porque cada uno está en su PR.
+
+**Lo anterior al aviso.** El 2026-10-28, antes de que existiera este aviso, José confirmó el sprint 5
+(Compuerta 3) y ordenó mezclar los PR #1 al #6 con una revisión del agente `revisor` en los de código.
+Eso queda vigente, pero Aarón puede ratificarlo o pedir que se revierta dentro del plazo. Esas mezclas se
+apoyan en la orden explícita de José de ese día, no en esta decisión.
 
 ### 3. Lo que NO se decide sin Aarón
 
@@ -85,6 +90,12 @@ Para mezclar un PR a `main` sin que Aarón lo haya revisado, antes se cumple tod
    que se verificó.
 5. Después de mezclar, se corren de nuevo las pruebas en `main`.
 
+**Lo delicado no se mezcla sin Aarón.** Un PR que toque **permisos o roles, aislamiento entre
+organizaciones, dinero o superficie pública** (o que sea de una historia 🔒) queda abierto, aunque pase todo
+lo anterior, hasta que Aarón lo revise. Ante la duda, se trata como delicado. Mientras espera se puede
+seguir construyendo encima en una rama apilada, pero esa rama tampoco se mezcla antes. El PR dice en su
+descripción si es delicado y por qué.
+
 ### 6. Registro de lo decidido
 
 Cada decisión tomada bajo esta autorización se anota en el documento del sprint o en `docs/decisiones/`, con
@@ -113,6 +124,9 @@ accesos. Eso se deja fuera y sigue siendo de Aarón.
 
 ## Consecuencias y riesgos
 
+- **El sprint 5 casi entero es delicado** (roles, invitaciones, dos pasos, precios bloqueados): se puede
+  construir y probar en ramas, pero **mezclarlo a `main` espera a Aarón**. Lo que no es delicado
+  (por ejemplo textos listos, H-048) sí puede mezclarse según el punto 5.
 - **La revisión es más débil:** una persona y un agente en vez de dos personas, y sin CI. Se compensa con las
   condiciones del punto 5, pero no es lo mismo.
 - **Aarón sigue siendo el único administrador del repositorio:** si tarda mucho, no se puede arreglar la

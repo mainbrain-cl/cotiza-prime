@@ -12,6 +12,51 @@ const ANON_POLICY_TABLES = new Set(["legal_documents"]); // los términos vigent
 const ANON_EXECUTABLE_PUBLIC_FUNCTIONS = new Set<string>(); // ninguna RPC es pública
 const REALTIME_ALLOWED_TABLES = new Set<string>(); // Realtime apagado para todas las tablas
 
+// H-011a: las funciones que TODAVÍA llaman a `app.has_role(...)` con su lista de roles escrita a mano
+// (heredan el rol efectivo, así que funcionan, pero la matriz vive en `app.role_can`). La lista está
+// congelada: SOLO PUEDE ACHICARSE. Una función nueva decide con `app.can('acción')`; si una de estas pasa a
+// `app.can(...)`, se quita de aquí (la prueba falla mientras siga la entrada vieja, para que no quede
+// basura). Las que quedan se convierten cuando se toque cada una (docs/arquitectura/sprint-5-*.md §3).
+const FROZEN_HAS_ROLE_FUNCTIONS = [
+  "public.anonymize_intake_request",
+  "public.assign_intake_request",
+  "public.attach_quote_package_document",
+  "public.confirm_email_dispatch",
+  "public.convert_intake_request",
+  "public.create_intake_form",
+  "public.create_quote",
+  "public.discard_intake_request",
+  "public.fail_email_dispatch",
+  "public.prepare_quote_resend",
+  "public.prepare_quote_send",
+  "public.regenerate_intake_form_public_id",
+  "public.restore_intake_request",
+  "public.revoke_quote_links",
+  "public.save_intake_form",
+  "public.save_quote_draft",
+  "public.save_tenant_brand",
+  "public.set_intake_form_status",
+  "public.set_numbering",
+];
+
+// H-011a: lo MISMO pero para las otras formas de decidir por rol sin pasar por `app.can(...)`:
+// `app.current_member_role()`, comparar `app.effective_role()` y escribir un rol entre comillas
+// ('owner', 'admin', 'approver', 'sales', 'viewer'). Las llamadas a `has_role(...)` ya las vigila la lista
+// de arriba y aquí se ignoran. Lista congelada PROPIA: solo puede achicarse. Cada una se queda por esto:
+const FROZEN_ROLE_LITERAL_FUNCTIONS = [
+  // Aviso de correo a quienes gestionan solicitudes: el rol es el DESTINO del correo, no un permiso.
+  "app.intake_managers",
+  // Valida que la persona a quien se asigna la solicitud sea Dueño, Administrador o Comercial activo:
+  // son los roles destino de una asignación (quién puede recibirla), no quién puede asignar.
+  "public.assign_intake_request",
+  // Crea la organización y deja a quien la crea como Dueño (`role = 'owner'`): es un dato que se
+  // escribe, no un permiso que se revisa, y además cuenta cuántas organizaciones tiene como Dueño.
+  "public.create_tenant",
+  // Aviso de cotización vista o respondida: el rol elige los destinatarios (Dueño y Administradores
+  // cuando el autor ya no puede recibirlo), no autoriza ninguna acción.
+  "public.share_notice_recipients",
+];
+
 let db: Client;
 beforeAll(async () => {
   db = await connect();
@@ -207,5 +252,41 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
     const schemas = config.match(/^schemas\s*=\s*\[([^\]]*)\]/m);
     expect(schemas, "falta `schemas` en [api] de supabase/config.toml").not.toBeNull();
     expect(schemas?.[1]).not.toContain("graphql_public");
+  });
+
+  it("12. H-011a: las funciones que usan has_role(...) directo son solo las congeladas, y la lista solo se achica", async () => {
+    const { rows } = await db.query<{ name: string }>(
+      `select n.nspname || '.' || p.proname as name
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname in ('public', 'app') and p.prokind = 'f'
+         and p.proname <> 'has_role'
+         and p.prosrc ~ 'has_role[[:space:]]*\\('
+       order by 1`,
+    );
+    expect(rows.map((r) => r.name)).toEqual([...FROZEN_HAS_ROLE_FUNCTIONS].sort());
+  });
+
+  it("13. H-011a: ninguna política de la base escribe una lista de roles a mano: todas usan app.can(...)", async () => {
+    const { rows } = await db.query<{ name: string }>(
+      `select schemaname || '.' || tablename || '.' || policyname as name
+       from pg_policies
+       where coalesce(qual, '') || coalesce(with_check, '')
+             ~ 'has_role|current_member_role|''(owner|admin|approver|sales|viewer)'''
+       order by 1`,
+    );
+    expect(rows.map((r) => r.name)).toEqual([]);
+  });
+
+  it("14. H-011a: las funciones que deciden por rol sin app.can(...) (current_member_role, effective_role o un rol entre comillas) son solo las congeladas", async () => {
+    const { rows } = await db.query<{ name: string }>(
+      `select n.nspname || '.' || p.proname as name
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname in ('public', 'app') and p.prokind = 'f'
+         and p.proname not in ('has_role', 'role_can', 'can', 'effective_role', 'current_member_role')
+         and regexp_replace(p.prosrc, 'has_role[[:space:]]*\\([^)]*\\)', '', 'g')
+             ~ 'current_member_role[[:space:]]*\\(|effective_role[[:space:]]*\\([[:space:]]*\\)[[:space:]]*(=|<>|!=|in[[:space:]]|not[[:space:]]+in)|''(owner|admin|approver|sales|viewer)'''
+       order by 1`,
+    );
+    expect(rows.map((r) => r.name)).toEqual([...FROZEN_ROLE_LITERAL_FUNCTIONS].sort());
   });
 });

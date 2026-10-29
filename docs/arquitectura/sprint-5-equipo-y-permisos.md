@@ -241,7 +241,7 @@ excepción de borrado por plazo de `app.email_messages_guard`.
 | Configuración (empresa, marca, numeración, plantillas, textos, reglas) | sí | sí | – | – | – |
 | Equipo (invitar, cambiar rol, quitar) | sí | sí | – | – | – |
 | Formularios; asignar y anonimizar solicitudes | sí | sí | – | – | – |
-| Descartar, restaurar y convertir solicitudes | todas | todas | – | asignadas a él o sin asignar | – |
+| Descartar, restaurar y convertir solicitudes | todas | todas | – | descartar y restaurar: las asignadas a él; convertir: las asignadas a él o sin asignar | – |
 | Registro de actividad | sí | pregunta 13 | – | – | – |
 | Plan, eliminar y transferir la organización | sí | – | – | – | – |
 

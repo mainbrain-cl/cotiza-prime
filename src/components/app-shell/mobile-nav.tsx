@@ -9,10 +9,10 @@ import { signOutAction } from "@/lib/auth/actions";
 import { cn } from "@/lib/utils";
 import {
   MOBILE_PRIMARY_SEGMENTS,
-  NAV_ITEMS,
   badgeText,
   isActive,
   labelWithBadge,
+  visibleNavItems,
   type NavBadges,
 } from "./nav-items";
 
@@ -20,13 +20,22 @@ const TAB_CLASS =
   "flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-xs font-semibold outline-none transition-[background-color,color,transform] duration-(--dur-fast) ease-ios active:scale-[0.97] focus-visible:ring-3 focus-visible:ring-ring/40";
 
 /** Barra inferior flotante del teléfono: tres destinos y "Más". Cada uno mide al menos 44 px. */
-export function MobileNav({ basePath, badges }: { basePath: string; badges: NavBadges }) {
+export function MobileNav({
+  basePath,
+  role,
+  badges,
+}: {
+  basePath: string;
+  role: string;
+  badges: NavBadges;
+}) {
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
-  const primary = NAV_ITEMS.filter((item) =>
+  const navItems = visibleNavItems(role);
+  const primary = navItems.filter((item) =>
     (MOBILE_PRIMARY_SEGMENTS as readonly string[]).includes(item.segment),
   );
-  const secondary = NAV_ITEMS.filter((item) => !primary.includes(item));
+  const secondary = navItems.filter((item) => !primary.includes(item));
   const moreActive = secondary.some((item) => isActive(pathname, basePath, item.segment));
   // Lo que espera a la persona dentro de «Más»: se avisa en el propio botón para que no pase inadvertido.
   const morePending = secondary.reduce((sum, item) => sum + (badges[item.segment] ?? 0), 0);

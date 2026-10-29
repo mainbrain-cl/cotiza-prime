@@ -458,9 +458,9 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await expect(carla.getByLabel("Título del formulario")).toBeDisabled();
   await expect(carla.getByTestId("form-view")).toBeVisible();
   await expectNoPrices(carla);
-  // crear formularios no está a su alcance: la pantalla no existe para ella
+  // crear formularios no está a su alcance: la pantalla le dice que no tiene permiso
   await carla.goto(`/o/${tenantId}/formularios/nuevo`);
-  await expect(carla.getByRole("heading", { name: "No encontrado" })).toBeVisible();
+  await expect(carla.getByText("No tienes permiso para esto.")).toBeVisible();
   await expect(carla.getByLabel(/^Nombre interno/)).toHaveCount(0);
 
   // y el servidor rechaza su intento directo, sin pasar por la pantalla

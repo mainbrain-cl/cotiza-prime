@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import type { FormState } from "@/lib/auth/form-state";
 import { getAppOrigin } from "@/lib/http/request-context";
 import { serverLog } from "@/lib/log/server-log";
+import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant, type ActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import {
@@ -47,10 +48,6 @@ export type BuilderResult =
 
 const NOT_FOUND_MESSAGE = "No encontramos este formulario. Puede que ya no exista.";
 const ID_INVALID = { status: "error", kind: "not_found", message: NOT_FOUND_MESSAGE } as const;
-
-function canManageForms(role: string): boolean {
-  return role === "owner" || role === "admin";
-}
 
 const FORBIDDEN = { status: "error", kind: "forbidden", message: NO_PERMISSION } as const;
 
@@ -118,7 +115,7 @@ export async function createIntakeFormAction(
   const rawName = formData.get("name");
   const rawId = formData.get("formId");
   const name = typeof rawName === "string" ? rawName : "";
-  if (!canManageForms(active.role)) {
+  if (requirePermission(active, "intake.forms.manage")) {
     return { status: "error", message: NO_PERMISSION, values: { name } };
   }
   const parsed = editorFormSchema.shape.name.safeParse(name);
@@ -152,7 +149,7 @@ export async function saveIntakeFormAction(
   input: EditorForm,
 ): Promise<BuilderResult> {
   const active = await requireActiveTenant(tenantId);
-  if (!canManageForms(active.role)) return FORBIDDEN;
+  if (requirePermission(active, "intake.forms.manage")) return FORBIDDEN;
   if (!isFormId(formId) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
     return ID_INVALID;
   }
@@ -207,7 +204,7 @@ export async function setIntakeFormStatusAction(
   resumed = false,
 ): Promise<BuilderResult> {
   const active = await requireActiveTenant(tenantId);
-  if (!canManageForms(active.role)) return FORBIDDEN;
+  if (requirePermission(active, "intake.forms.manage")) return FORBIDDEN;
   if (!isFormId(formId) || !["published", "paused", "archived"].includes(status)) {
     return ID_INVALID;
   }
@@ -233,7 +230,7 @@ export async function regenerateIntakeFormLinkAction(
   formId: string,
 ): Promise<BuilderResult> {
   const active = await requireActiveTenant(tenantId);
-  if (!canManageForms(active.role)) return FORBIDDEN;
+  if (requirePermission(active, "intake.forms.manage")) return FORBIDDEN;
   if (!isFormId(formId)) return ID_INVALID;
   const { error } = await active.supabase.rpc("regenerate_intake_form_public_id", {
     p_form_id: formId,
@@ -262,7 +259,7 @@ export async function saveEmbedOriginsAction(
   origins: readonly string[],
 ): Promise<BuilderResult> {
   const active = await requireActiveTenant(tenantId);
-  if (!canManageForms(active.role)) return FORBIDDEN;
+  if (requirePermission(active, "intake.forms.manage")) return FORBIDDEN;
   if (!isFormId(formId)) return ID_INVALID;
   if (!Array.isArray(origins) || origins.some((origin) => typeof origin !== "string")) {
     return { status: "error", kind: "invalid", message: GENERIC_FAILURE };
@@ -314,7 +311,7 @@ export async function saveDailyCapAction(
   dailyCap: number,
 ): Promise<BuilderResult> {
   const active = await requireActiveTenant(tenantId);
-  if (!canManageForms(active.role)) return FORBIDDEN;
+  if (requirePermission(active, "intake.forms.manage")) return FORBIDDEN;
   if (!isFormId(formId)) return ID_INVALID;
   // Desde el navegador llega un número: un texto ("50") no se acepta.
   const parsed = parseDailyCap(typeof dailyCap === "number" ? dailyCap : null);

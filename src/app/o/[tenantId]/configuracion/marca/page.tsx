@@ -5,6 +5,7 @@ import { FormAlert } from "@/components/ui/form-controls";
 import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from "@/lib/brand/colors";
 import { logoUrl } from "@/lib/brand/logo";
 import { loadBrand } from "@/lib/brand/service";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { BrandForm } from "./brand-form";
@@ -15,7 +16,9 @@ export default async function BrandPage({
   params,
 }: PageProps<"/o/[tenantId]/configuracion/marca">) {
   const active = await requireActiveTenant((await params).tenantId);
-  const canEdit = active.role === "owner" || active.role === "admin";
+  // Solo quien maneja la organización (supuesto 12): los demás roles no ven «Configuración».
+  const denied = pagePermission(active, "settings.manage");
+  if (denied) return denied;
   const brand = await loadBrand(active);
 
   return (
@@ -37,7 +40,6 @@ export default async function BrandPage({
       {brand ? (
         <BrandForm
           tenantId={active.tenantId}
-          canEdit={canEdit}
           initial={{
             companyName: brand.name,
             primaryColor: brand.primaryColor ?? DEFAULT_PRIMARY_COLOR,

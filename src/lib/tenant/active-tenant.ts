@@ -20,6 +20,7 @@ import { cache } from "react";
 import { logAuditEvent } from "@/lib/audit/log";
 import { requireUser, type SessionUser } from "@/lib/auth/session";
 import { getRequestContext } from "@/lib/http/request-context";
+import type { MemberRole } from "@/lib/permissions/matrix";
 import { shouldLogTenantDenied } from "@/lib/security/login-rate-limit";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -30,7 +31,8 @@ import {
   isUuid,
 } from "./constants";
 
-export type MemberRole = "owner" | "admin" | "approver" | "sales" | "viewer";
+// Los roles viven en la matriz de permisos (`src/lib/permissions/matrix.ts`); aquí solo se reexporta el tipo.
+export type { MemberRole };
 
 export type Membership = {
   tenantId: string;

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { FormAlert } from "@/components/ui/form-controls";
 import { minimumFor, loadNumberingState } from "@/lib/numbering/service";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { NumberingForm } from "./numbering-form";
@@ -13,8 +14,10 @@ export default async function NumberingPage({
   params,
 }: PageProps<"/o/[tenantId]/configuracion/numeracion">) {
   const active = await requireActiveTenant((await params).tenantId);
+  // Solo quien maneja la organización (supuesto 12): los demás roles no ven «Configuración».
+  const denied = pagePermission(active, "settings.manage");
+  if (denied) return denied;
   const state = await loadNumberingState(active);
-  const canEdit = active.role === "owner" || active.role === "admin";
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -36,7 +39,6 @@ export default async function NumberingPage({
       {state ? (
         <NumberingForm
           tenantId={active.tenantId}
-          canEdit={canEdit}
           initial={{
             prefix: state.settings.prefix,
             mode: state.settings.mode,

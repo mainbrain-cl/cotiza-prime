@@ -545,8 +545,10 @@ grant update (full_name, last_tenant_id) on public.profiles to authenticated;
 -- audit_log ---------------------------------------------------------------
 alter table public.audit_log enable row level security;
 create policy audit_select on public.audit_log for select to authenticated
-  using (tenant_id = (select app.current_tenant_id()) and (select app.has_role('owner','admin')));
+  using (tenant_id = (select app.current_tenant_id()) and (select app.can('audit.read')));
 grant select on public.audit_log to authenticated;     -- nada más
+-- H-011a (supuesto 13, migración role_matrix): el registro de actividad lo lee solo el Dueño;
+-- antes lo leían también los Administradores.
 ```
 
 **Por qué la política de `update` tiene `using` y `with check`:** `using` decide qué filas se pueden tocar; `with check` decide cómo pueden quedar después del cambio. Sin el segundo, alguien podría editar una fila de su organización y "mudarla" a otra. El trigger `forbid_tenant_change` es la segunda capa contra eso.

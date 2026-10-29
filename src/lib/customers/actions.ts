@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import type { FormState } from "@/lib/auth/form-state";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
 import { serverLog } from "@/lib/log/server-log";
+import { NO_PERMISSION_MESSAGE } from "@/lib/permissions/matrix";
+import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { findDuplicates, getCustomer, type DuplicateMatch } from "./queries";
@@ -15,9 +17,7 @@ import { SEARCH_ACTIVE_PARAM, clearCustomerSearch, saveCustomerSearch } from "./
 export type CustomerFormState = FormState & { duplicates?: DuplicateMatch[] };
 
 const SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
-const ROLES_THAT_CAN_WRITE: readonly string[] = ["owner", "admin", "sales"];
 const FIELDS = ["kind", "displayName", "rut", "email", "phone", "address"] as const;
-const NO_PERMISSION = "Tu rol no permite registrar clientes.";
 
 function readText(formData: FormData, name: string): string {
   const value = formData.get(name);
@@ -36,9 +36,8 @@ export async function createCustomerAction(
   const active = await requireActiveTenant(tenantId);
 
   const raw = Object.fromEntries(FIELDS.map((name) => [name, readText(formData, name)]));
-  if (!ROLES_THAT_CAN_WRITE.includes(active.role)) {
-    return { status: "error", message: NO_PERMISSION, values: raw };
-  }
+  const denied = requirePermission(active, "customer.write");
+  if (denied) return { status: "error", message: denied, values: raw };
 
   const parsed = customerSchema.safeParse(raw);
   if (!parsed.success) {
@@ -61,8 +60,6 @@ export async function createCustomerAction(
   redirect(`${tenantPath(active.tenantId, `clientes/${customerId}`)}?creado=1`);
 }
 
-const NO_PERMISSION_EDIT = "Tu rol no permite editar clientes.";
-
 /**
  * H-023: guarda los cambios de un cliente. Vuelve a validar, a cifrar (con el mismo contexto) y a
  * calcular las huellas; si cambió el RUT o el correo, revisa de nuevo si ya existe otro cliente igual.
@@ -77,9 +74,8 @@ export async function updateCustomerAction(
   const active = await requireActiveTenant(tenantId);
 
   const raw = Object.fromEntries(FIELDS.map((name) => [name, readText(formData, name)]));
-  if (!ROLES_THAT_CAN_WRITE.includes(active.role)) {
-    return { status: "error", message: NO_PERMISSION_EDIT, values: raw };
-  }
+  const denied = requirePermission(active, "customer.write");
+  if (denied) return { status: "error", message: denied, values: raw };
   if (!isUuid(customerId)) {
     return { status: "error", message: "No encontramos a este cliente.", values: raw };
   }
@@ -125,13 +121,13 @@ export async function updateCustomerAction(
       status: "error",
       message:
         error.code === SQLSTATE_INSUFFICIENT_PRIVILEGE
-          ? NO_PERMISSION_EDIT
+          ? NO_PERMISSION_MESSAGE
           : "No pudimos guardar los cambios. Intenta de nuevo en unos minutos.",
       values: raw,
     };
   }
   if (!data || data.length === 0) {
-    return { status: "error", message: NO_PERMISSION_EDIT, values: raw };
+    return { status: "error", message: NO_PERMISSION_MESSAGE, values: raw };
   }
 
   redirect(`${tenantPath(active.tenantId, `clientes/${customerId}`)}?editado=1`);
@@ -143,6 +139,7 @@ export async function updateCustomerAction(
  */
 export async function searchCustomersAction(tenantId: string, formData: FormData): Promise<void> {
   const active = await requireActiveTenant(tenantId);
+  if (requirePermission(active, "org.view")) return;
   const term = readText(formData, "q");
   const base = tenantPath(active.tenantId, "clientes");
   if (term.trim() === "") {
@@ -156,6 +153,7 @@ export async function searchCustomersAction(tenantId: string, formData: FormData
 /** "Limpiar búsqueda": borra el término guardado y vuelve a la lista completa. */
 export async function clearCustomerSearchAction(tenantId: string): Promise<void> {
   const active = await requireActiveTenant(tenantId);
+  if (requirePermission(active, "org.view")) return;
   await clearCustomerSearch(active.tenantId);
   redirect(tenantPath(active.tenantId, "clientes"));
 }

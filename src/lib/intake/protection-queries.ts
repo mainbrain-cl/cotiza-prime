@@ -1,5 +1,6 @@
 import "server-only";
 import { serverLog } from "@/lib/log/server-log";
+import { can } from "@/lib/permissions/matrix";
 import { addDaysIso, todayInChile } from "@/lib/quotes/validity";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
 import {
@@ -26,9 +27,9 @@ export type ProtectionData =
     }
   | { ok: false; reason: "forbidden" | "error" };
 
-/** Solo el Dueño y los Administradores ven bloqueos y topes (plan §6). */
+/** Quién ve bloqueos y topes (plan §6): lo decide la matriz (`intake.protection.read`). */
 export function canSeeProtection(role: string): boolean {
-  return role === "owner" || role === "admin";
+  return can(role, "intake.protection.read");
 }
 
 /**

@@ -1,21 +1,20 @@
 import { ChevronLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { CustomerForm } from "../customer-form";
 
 export const metadata: Metadata = { title: "Nuevo cliente · Cotiza Prime" };
 
-const WRITER_ROLES = ["owner", "admin", "sales"];
-
 export default async function NewCustomerPage({
   params,
 }: PageProps<"/o/[tenantId]/clientes/nuevo">) {
   const active = await requireActiveTenant((await params).tenantId);
   // Quien solo puede mirar no tiene nada que hacer aquí.
-  if (!WRITER_ROLES.includes(active.role)) notFound();
+  const denied = pagePermission(active, "customer.write");
+  if (denied) return denied;
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">

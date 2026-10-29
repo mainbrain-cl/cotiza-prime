@@ -1,23 +1,22 @@
 import { ChevronLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { listCustomers } from "@/lib/customers/queries";
 import { toCustomerChoices } from "@/lib/quotes/customer-choice";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { CustomerPicker } from "./customer-picker";
 
 export const metadata: Metadata = { title: "Nueva cotización · Cotiza Prime" };
 
-const WRITER_ROLES = ["owner", "admin", "sales"];
-
 export default async function NewQuotePage({
   params,
 }: PageProps<"/o/[tenantId]/cotizaciones/nueva">) {
   const active = await requireActiveTenant((await params).tenantId);
-  // Quien solo puede mirar no tiene nada que hacer aquí.
-  if (!WRITER_ROLES.includes(active.role)) notFound();
+  // Quien solo puede mirar no tiene nada que hacer aquí; antes de leer cualquier dato.
+  const denied = pagePermission(active, "quote.create");
+  if (denied) return denied;
 
   const page = await listCustomers(active, { page: 1 });
   const initial = toCustomerChoices(page?.items ?? []);

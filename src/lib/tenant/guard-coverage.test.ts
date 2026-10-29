@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 const SRC = path.resolve(import.meta.dirname, "..", "..");
 const TENANT_PAGES_DIR = path.join(SRC, "app", "o", "[tenantId]");
 const GUARD = "requireActiveTenant(";
+const PERMISSION_GUARD = "requirePermission(";
 
 /** Acciones que NO operan dentro de una organización, con la razón. Cada excepción debe justificarse. */
 const ACTIONS_WITHOUT_ACTIVE_TENANT: Record<string, string> = {
@@ -81,6 +82,25 @@ describe("toda acción de servidor que usa Supabase resuelve la organización ac
       expect(action.body).toContain(GUARD);
     },
   );
+
+  // H-011: además de resolver la organización, toda acción revisa el permiso del rol con la matriz
+  // (`src/lib/permissions/`). Hasta las de solo lectura (buscar, cambiar de organización) lo hacen con
+  // `org.view`, para que ninguna acción nueva se escriba sin pensar quién puede llamarla.
+  it.each(
+    actions
+      .filter((action) => action.body.includes(GUARD))
+      .map((action) => [action.id, action] as const),
+  )("%s llama a requirePermission", (_id, action) => {
+    expect(action.body).toContain(PERMISSION_GUARD);
+  });
+
+  it("las acciones sin organización activa son solo las justificadas", () => {
+    const withoutTenant = actions
+      .filter((action) => !action.body.includes(GUARD) && action.usesSupabase)
+      .map((action) => action.id)
+      .filter((id) => !(id in ACTIONS_WITHOUT_ACTIVE_TENANT));
+    expect(withoutTenant).toEqual([]);
+  });
 
   it("la lista de excepciones no tiene acciones que ya no existen", () => {
     const existing = new Set(actions.map((action) => action.id));

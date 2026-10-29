@@ -11,6 +11,7 @@ import { buildConsentNotice } from "@/lib/intake/consent-notice";
 import { loadProtection } from "@/lib/intake/protection-queries";
 import { ProtectionSkeleton } from "@/components/intake/protection-panel";
 import { resolvePdfBrand } from "@/lib/pdf/brand-colors";
+import { can } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { FormEditor } from "./form-editor";
@@ -56,7 +57,7 @@ export default async function IntakeFormEditorPage({
   }
   const loaded = result.loaded;
 
-  const canEdit = active.role === "owner" || active.role === "admin";
+  const canEdit = can(active.role, "intake.forms.manage");
   const [brand, catalog, contact] = await Promise.all([
     loadBrand(active),
     canEdit ? loadCatalogChoices(active) : Promise.resolve([]),

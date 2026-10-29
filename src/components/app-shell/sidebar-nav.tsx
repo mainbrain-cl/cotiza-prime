@@ -2,14 +2,22 @@
 
 import { usePathname } from "next/navigation";
 import { DockItem } from "@/components/react-bits/dock";
-import { NAV_ITEMS, badgeText, isActive, labelWithBadge, type NavBadges } from "./nav-items";
+import { badgeText, isActive, labelWithBadge, visibleNavItems, type NavBadges } from "./nav-items";
 
 /** Destinos del menú flotante vertical (tableta y escritorio). Cada uno es un enlace real. */
-export function SidebarNav({ basePath, badges }: { basePath: string; badges: NavBadges }) {
+export function SidebarNav({
+  basePath,
+  role,
+  badges,
+}: {
+  basePath: string;
+  role: string;
+  badges: NavBadges;
+}) {
   const pathname = usePathname();
   return (
     <nav aria-label="Principal" className="flex flex-col items-center gap-1">
-      {NAV_ITEMS.map(({ segment, label, icon: Icon }) => (
+      {visibleNavItems(role).map(({ segment, label, icon: Icon }) => (
         <DockItem
           key={segment || "inicio"}
           href={segment ? `${basePath}/${segment}` : basePath}

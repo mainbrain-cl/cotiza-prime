@@ -376,8 +376,29 @@ describe("X2 · lo embebido respeta la misma regla", () => {
       const isActive = tenant.tenant_id === fx.orgs.A.tenantId;
       expect(tenant.customers.length > 0).toBe(isActive);
       expect(tenant.catalog_items.length > 0).toBe(isActive);
-      expect(tenant.audit_log.length > 0).toBe(isActive);
+      // Mixta es Administradora en A y en B, y el registro de actividad es solo del Dueño (H-011a, supuesto
+      // 13): ni en la organización activa ve filas. Lo que importa es que tampoco ve las de la otra.
+      expect(tenant.audit_log.length).toBe(0);
     }
+  });
+
+  it("Ana (Dueña) con A activa: el registro de actividad incrustado SÍ trae filas de A y ninguna de B (control positivo de X2)", async () => {
+    const fx = fixture();
+    const res = await rest(await tokenOf("ana"), "tenants?select=tenant_id,audit_log(tenant_id)", {
+      headers: tenantHeader(fx.orgs.A.tenantId),
+    });
+    expect(res.status).toBe(200);
+    const tenants = res.json as { tenant_id: string; audit_log: { tenant_id: string }[] }[];
+    const orgA = tenants.find((t) => t.tenant_id === fx.orgs.A.tenantId);
+    expect(orgA, "Ana ve su organización A").toBeDefined();
+    expect(orgA?.audit_log.length, "la Dueña sí lee el registro de actividad de A").toBeGreaterThan(
+      0,
+    );
+    for (const tenant of tenants) {
+      for (const row of tenant.audit_log) expect(row.tenant_id).toBe(fx.orgs.A.tenantId);
+    }
+    expect(res.text).not.toContain(fx.orgs.B.tenantId);
+    expect(res.text).not.toContain(fx.orgs.B.canary);
   });
 });
 
@@ -394,7 +415,13 @@ describe("A10 · quien está en dos organizaciones no mezcla datos", () => {
           headers: tenantHeader(mine),
         });
         const rows = res.json as Row[];
-        expect(rows.length, `${spec.name} con ${mine}`).toBeGreaterThan(0);
+        // Mixta es Administradora en las dos: de las tablas que el Administrador no lee (p. ej. el registro de
+        // actividad, solo del Dueño) no debe ver ninguna fila, ni de la organización activa ni de la otra.
+        if (canReadRole(spec, "admin")) {
+          expect(rows.length, `${spec.name} con ${mine}`).toBeGreaterThan(0);
+        } else {
+          expect(rows.length, `${spec.name} con ${mine}`).toBe(0);
+        }
         expect(
           rows.every((r) => r.tenant_id === mine),
           spec.name,

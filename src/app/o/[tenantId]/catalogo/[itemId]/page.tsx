@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { FormAlert } from "@/components/ui/form-controls";
 import { unitLabel } from "@/lib/catalog/schemas";
 import { formatClp } from "@/lib/money/clp";
+import { can } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { EditCatalogItemForm, ToggleActiveForm } from "./edit-forms";
@@ -38,7 +39,7 @@ export default async function CatalogItemPage({
     .maybeSingle();
   if (!data) notFound();
   const item = data as ItemRow;
-  const canEdit = active.role === "owner" || active.role === "admin";
+  const canEdit = can(active.role, "catalog.manage");
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">

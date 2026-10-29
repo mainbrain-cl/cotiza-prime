@@ -2,6 +2,8 @@
 
 import { fieldErrorsOf } from "@/lib/auth/schemas";
 import { serverLog } from "@/lib/log/server-log";
+import { NO_PERMISSION_MESSAGE } from "@/lib/permissions/matrix";
+import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tooLowMessage } from "./format";
 import type { NumberingSaveState } from "./form-state";
@@ -26,6 +28,8 @@ export async function previewNumberingAction(
   raw: { prefix: string; mode: string; startNumber: string },
 ): Promise<NumberingPreview> {
   const active = await requireActiveTenant(tenantId);
+  const denied = requirePermission(active, "settings.manage");
+  if (denied) return { ok: false, fieldErrors: { _form: denied } };
   const parsed = numberingSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, fieldErrors: fieldErrorsOf(parsed.error) };
 
@@ -60,13 +64,8 @@ export async function saveNumberingAction(
     startNumber: readText(formData, "startNumber"),
   };
 
-  if (active.role !== "owner" && active.role !== "admin") {
-    return {
-      status: "error",
-      message: "Solo el Dueño o un Administrador puede cambiar la numeración.",
-      values: raw,
-    };
-  }
+  const denied = requirePermission(active, "settings.manage");
+  if (denied) return { status: "error", message: denied, values: raw };
 
   const parsed = numberingSchema.safeParse(raw);
   if (!parsed.success) {
@@ -95,7 +94,7 @@ export async function saveNumberingAction(
     if (error?.code === SQLSTATE_INSUFFICIENT_PRIVILEGE) {
       return {
         status: "error",
-        message: "Solo el Dueño o un Administrador puede cambiar la numeración.",
+        message: NO_PERMISSION_MESSAGE,
         values: raw,
       };
     }

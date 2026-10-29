@@ -2,6 +2,7 @@ import { ChevronLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { FormAlert } from "@/components/ui/form-controls";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { formatRut } from "@/lib/rut";
@@ -13,7 +14,9 @@ export default async function CompanyPage({
   params,
 }: PageProps<"/o/[tenantId]/configuracion/empresa">) {
   const active = await requireActiveTenant((await params).tenantId);
-  const canEdit = active.role === "owner" || active.role === "admin";
+  // Solo quien maneja la organización (supuesto 12): los demás roles no ven «Configuración».
+  const denied = pagePermission(active, "settings.manage");
+  if (denied) return denied;
 
   const { data, error } = await active.supabase
     .from("tenants")
@@ -45,7 +48,6 @@ export default async function CompanyPage({
       ) : (
         <CompanyForm
           tenantId={active.tenantId}
-          canEdit={canEdit}
           initial={{
             name: data.name as string,
             rut: formatRut((data.rut as string | null) ?? ""),

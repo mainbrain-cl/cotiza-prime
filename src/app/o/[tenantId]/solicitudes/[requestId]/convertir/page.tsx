@@ -13,20 +13,20 @@ import {
 import { findRequestCustomerDuplicates } from "@/lib/intake/convert-queries";
 import { requestPermissions, formatRequestQuantity } from "@/lib/intake/requests-model";
 import { loadRequest } from "@/lib/intake/requests-queries";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 
 export const metadata: Metadata = { title: "Crear cotización desde una solicitud · Cotiza Prime" };
-
-const WRITER_ROLES = ["owner", "admin", "sales"];
 
 export default async function ConvertRequestPage({
   params,
 }: PageProps<"/o/[tenantId]/solicitudes/[requestId]/convertir">) {
   const { tenantId, requestId } = await params;
   const active = await requireActiveTenant(tenantId);
-  // Quien solo puede mirar no tiene nada que hacer aquí.
-  if (!WRITER_ROLES.includes(active.role)) notFound();
+  // Quien solo puede mirar no tiene nada que hacer aquí; antes de leer la solicitud.
+  const denied = pagePermission(active, "intake.requests.convert");
+  if (denied) return denied;
   const result = await loadRequest(active, requestId);
   if (!result.ok && result.reason === "not_found") notFound();
 

@@ -1,5 +1,6 @@
 import "server-only";
 import { serverLog } from "@/lib/log/server-log";
+import { can } from "@/lib/permissions/matrix";
 import type { ActiveTenant, MemberRole } from "@/lib/tenant/active-tenant";
 import { isUuid } from "@/lib/tenant/constants";
 import { isKnownAuditAction } from "./labels";
@@ -9,13 +10,11 @@ export const AUDIT_PAGE_SIZE = 25;
 const PGRST_RANGE_NOT_SATISFIABLE = "PGRST103";
 
 /**
- * Quién ve el registro de actividad: solo el Dueño (H-014). La base de datos también deja leerlo al
- * Administrador (política de la migración 3); esta pantalla es más estricta a propósito.
+ * Quién ve el registro de actividad: solo el Dueño (H-014, supuesto 13 del sprint 5). Lo decide la
+ * matriz (`audit.read`) y la base de datos lo exige igual en la política `audit_select`.
  */
-const AUDIT_VIEWER_ROLES: readonly MemberRole[] = ["owner"];
-
 export function canViewAuditLog(role: MemberRole): boolean {
-  return AUDIT_VIEWER_ROLES.includes(role);
+  return can(role, "audit.read");
 }
 
 export type AuditEntry = {

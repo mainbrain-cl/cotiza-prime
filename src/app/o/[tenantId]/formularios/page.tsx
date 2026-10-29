@@ -22,6 +22,7 @@ import {
   organizationCapState,
   summaryOfOrganization,
 } from "@/lib/intake/protection-queries";
+import { can } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
@@ -46,7 +47,7 @@ export default async function IntakeFormsPage({
 }: PageProps<"/o/[tenantId]/formularios">) {
   const active = await requireActiveTenant((await params).tenantId);
   const showArchived = (await searchParams).estado === "archivados";
-  const canEdit = active.role === "owner" || active.role === "admin";
+  const canEdit = can(active.role, "intake.forms.manage");
   const [result, protection] = await Promise.all([
     loadFormList(active, showArchived),
     // Solo Dueño y Administrador: para los demás `loadProtection` no consulta nada.

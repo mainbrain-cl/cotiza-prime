@@ -1,7 +1,7 @@
 import { ChevronLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { CreateIntakeForm } from "./create-form";
@@ -12,8 +12,9 @@ export default async function NewIntakeFormPage({
   params,
 }: PageProps<"/o/[tenantId]/formularios/nuevo">) {
   const active = await requireActiveTenant((await params).tenantId);
-  // Solo el Dueño y los Administradores crean formularios: los demás no tienen nada que hacer aquí.
-  if (active.role !== "owner" && active.role !== "admin") notFound();
+  // Crear formularios es de quien maneja la organización; antes de leer cualquier dato.
+  const denied = pagePermission(active, "intake.forms.manage");
+  if (denied) return denied;
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">

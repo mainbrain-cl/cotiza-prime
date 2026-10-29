@@ -27,11 +27,9 @@ type PreviewEntry = { key: string; result: NumberingPreview };
 export function NumberingForm({
   tenantId,
   initial,
-  canEdit,
 }: {
   tenantId: string;
   initial: { prefix: string; mode: NumberingMode; startNumber: number };
-  canEdit: boolean;
 }) {
   const [state, formAction] = useActionState(
     saveNumberingAction.bind(null, tenantId),
@@ -108,13 +106,12 @@ export function NumberingForm({
             autoComplete="off"
             autoCapitalize="characters"
             spellCheck={false}
-            disabled={!canEdit}
             required
           />
         )}
       </Field>
 
-      <fieldset className="flex flex-col gap-2" disabled={!canEdit}>
+      <fieldset className="flex flex-col gap-2">
         <legend className="mb-1.5 text-sm font-semibold text-fg">Formato del correlativo</legend>
         <div className="grid gap-3 sm:grid-cols-2">
           {MODE_OPTIONS.map((option) => (
@@ -170,7 +167,6 @@ export function NumberingForm({
             onChange={(event) => setStartNumber(event.target.value)}
             inputMode="numeric"
             autoComplete="off"
-            disabled={!canEdit}
             required
           />
         )}
@@ -207,15 +203,9 @@ export function NumberingForm({
         </p>
       </section>
 
-      {canEdit ? (
-        <div>
-          <SubmitButton pendingLabel="Guardando…">Guardar numeración</SubmitButton>
-        </div>
-      ) : (
-        <FormAlert tone="warning">
-          Solo el Dueño o un Administrador puede cambiar la numeración.
-        </FormAlert>
-      )}
+      <div>
+        <SubmitButton pendingLabel="Guardando…">Guardar numeración</SubmitButton>
+      </div>
     </form>
   );
 }

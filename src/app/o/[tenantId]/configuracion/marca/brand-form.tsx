@@ -28,15 +28,7 @@ export type BrandFormInitial = {
 /** Tres decimales no aportan: 2,3:1 se lee mejor que 2,28:1. */
 const formatRatio = (ratio: number) => ratio.toFixed(1).replace(".", ",");
 
-export function BrandForm({
-  tenantId,
-  initial,
-  canEdit,
-}: {
-  tenantId: string;
-  initial: BrandFormInitial;
-  canEdit: boolean;
-}) {
+export function BrandForm({ tenantId, initial }: { tenantId: string; initial: BrandFormInitial }) {
   const [state, formAction] = useActionState(
     saveBrandAction.bind(null, tenantId),
     INITIAL_BRAND_STATE,
@@ -49,35 +41,16 @@ export function BrandForm({
       {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
 
       {/* Al cambiar el logo guardado, los campos se arman de nuevo con lo recién guardado. */}
-      <BrandFields
-        key={initial.logoUrl ?? "sin-logo"}
-        initial={initial}
-        canEdit={canEdit}
-        state={state}
-      />
+      <BrandFields key={initial.logoUrl ?? "sin-logo"} initial={initial} state={state} />
 
-      {canEdit ? (
-        <div>
-          <SubmitButton pendingLabel="Guardando…">Guardar marca</SubmitButton>
-        </div>
-      ) : (
-        <FormAlert tone="warning">
-          Solo el Dueño o un Administrador puede cambiar la marca.
-        </FormAlert>
-      )}
+      <div>
+        <SubmitButton pendingLabel="Guardando…">Guardar marca</SubmitButton>
+      </div>
     </form>
   );
 }
 
-function BrandFields({
-  initial,
-  canEdit,
-  state,
-}: {
-  initial: BrandFormInitial;
-  canEdit: boolean;
-  state: BrandSaveState;
-}) {
+function BrandFields({ initial, state }: { initial: BrandFormInitial; state: BrandSaveState }) {
   const [primary, setPrimary] = useState(state.values?.primaryColor ?? initial.primaryColor);
   const [secondary, setSecondary] = useState(
     state.values?.secondaryColor ?? initial.secondaryColor,
@@ -114,7 +87,7 @@ function BrandFields({
 
   return (
     <>
-      <fieldset className="flex flex-col gap-4" disabled={!canEdit}>
+      <fieldset className="flex flex-col gap-4">
         <legend className="mb-1 text-sm font-semibold text-fg">Logo</legend>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
           <div
@@ -166,7 +139,7 @@ function BrandFields({
         </div>
       </fieldset>
 
-      <fieldset className="grid gap-4 sm:grid-cols-2" disabled={!canEdit}>
+      <fieldset className="grid gap-4 sm:grid-cols-2">
         <legend className="mb-1 text-sm font-semibold text-fg">Colores</legend>
         <ColorField
           label="Color principal"

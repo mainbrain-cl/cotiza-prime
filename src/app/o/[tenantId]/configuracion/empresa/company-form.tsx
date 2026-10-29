@@ -20,15 +20,7 @@ export type CompanyValues = {
   defaultValidityDays: string;
 };
 
-export function CompanyForm({
-  tenantId,
-  initial,
-  canEdit,
-}: {
-  tenantId: string;
-  initial: CompanyValues;
-  canEdit: boolean;
-}) {
+export function CompanyForm({ tenantId, initial }: { tenantId: string; initial: CompanyValues }) {
   const [state, formAction] = useActionState(
     updateCompanyAction.bind(null, tenantId),
     INITIAL_FORM_STATE,
@@ -65,7 +57,6 @@ export function CompanyForm({
             value={values.name}
             onChange={(event) => set("name")(event.target.value)}
             maxLength={TENANT_NAME_MAX_LENGTH}
-            disabled={!canEdit}
             required
           />
         )}
@@ -89,7 +80,6 @@ export function CompanyForm({
               setRutError(undefined);
             }}
             onBlur={(event) => checkRut(event.target.value)}
-            disabled={!canEdit}
             required
           />
         )}
@@ -102,7 +92,6 @@ export function CompanyForm({
             name="industry"
             value={values.industry}
             onChange={(event) => set("industry")(event.target.value)}
-            disabled={!canEdit}
             required
           >
             <option value="" disabled>
@@ -127,7 +116,6 @@ export function CompanyForm({
             autoComplete="off"
             value={values.contactEmail}
             onChange={(event) => set("contactEmail")(event.target.value)}
-            disabled={!canEdit}
           />
         )}
       </Field>
@@ -143,7 +131,6 @@ export function CompanyForm({
             value={values.contactPhone}
             onChange={(event) => set("contactPhone")(event.target.value)}
             maxLength={CONTACT_PHONE_MAX_LENGTH}
-            disabled={!canEdit}
           />
         )}
       </Field>
@@ -163,22 +150,15 @@ export function CompanyForm({
             value={values.defaultValidityDays}
             onChange={(event) => set("defaultValidityDays")(event.target.value)}
             maxLength={3}
-            disabled={!canEdit}
             className="tabular-nums"
             required
           />
         )}
       </Field>
 
-      {canEdit ? (
-        <div>
-          <SubmitButton pendingLabel="Guardando…">Guardar datos</SubmitButton>
-        </div>
-      ) : (
-        <FormAlert tone="warning">
-          Solo el Dueño o un Administrador puede cambiar los datos de la empresa.
-        </FormAlert>
-      )}
+      <div>
+        <SubmitButton pendingLabel="Guardando…">Guardar datos</SubmitButton>
+      </div>
     </form>
   );
 }

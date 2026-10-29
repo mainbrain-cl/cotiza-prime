@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { FormAlert } from "@/components/ui/form-controls";
 import { minimumFor, loadNumberingState } from "@/lib/numbering/service";
-import { can } from "@/lib/permissions/matrix";
 import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
@@ -19,7 +18,6 @@ export default async function NumberingPage({
   const denied = pagePermission(active, "settings.manage");
   if (denied) return denied;
   const state = await loadNumberingState(active);
-  const canEdit = can(active.role, "settings.manage");
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -41,7 +39,6 @@ export default async function NumberingPage({
       {state ? (
         <NumberingForm
           tenantId={active.tenantId}
-          canEdit={canEdit}
           initial={{
             prefix: state.settings.prefix,
             mode: state.settings.mode,

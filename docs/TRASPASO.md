@@ -45,7 +45,7 @@ plataforma), no es un CRM ni un sistema de operación logística.
 4. `docs/DISENO.md` — el sistema de diseño aprobado (colores, tipografía, vidrio, movimiento).
 5. `docs/HISTORIAS.md` — las 92 historias de usuario, con criterios de aceptación.
 6. `docs/sprints/001-base-segura.md` — la tabla de los 12 sprints.
-7. `docs/decisiones/` — 19 decisiones en `main` (la 020, PR #7, está abierta). Las 016, 017, 018 y 019 son las recientes.
+7. `docs/decisiones/` — 20 decisiones en `main` (la 020, ratificada por Aarón el 2026-10-29). Las 016, 017, 018 y 019 son las recientes.
 8. `docs/arquitectura/` — `modelo-datos.md`, y los planes detallados de los sprints 3, 4 y 5.
 
 **Precedencia:** `PROYECTO.md` puede ser más exigente que la base, nunca menos. Relajar un control
@@ -59,9 +59,9 @@ días sin moverse; no se perdió nada).
 | | |
 |---|---|
 | **Historias construidas** | **35 de 92 (38 %)** |
-| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 construida y en `main` desde el 2026-10-28) · **5 (equipo y permisos) confirmado por José el 2026-10-28 y en construcción** (primera historia H-011a, rama `feat/h-011a-matriz-de-permisos`, en curso) · 6 a 12 sin partir |
+| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 construida y en `main` desde el 2026-10-28) · **5 (equipo y permisos) confirmado por José el 2026-10-28 y en construcción** (H-011a en `main` desde el 2026-10-29; sigue H-011b) · 6 a 12 sin partir |
 | **Pruebas, la última vez** | En `main` (2026-10-28): 1.388 unitarias (1 omitida) · 22 guardias estáticas · e2e de H-092: 9 de 9. De la última batería completa, sin recontar tras las mezclas: 645 de base de datos · 1.061 de aislamiento entre organizaciones · unas 130 de punta a punta (todas en verde) |
-| **Base de datos** | 35 migraciones, cada una con su deshacer |
+| **Base de datos** | 36 migraciones, cada una con su deshacer |
 | **Rama** | `main` estaba limpia en `1085ef1` (2026-10-27). El 2026-10-28 se mezclaron los PR #2, #8, #1, #6, #4 y #5 (ver §5). **Desde ahora el trabajo va por ramas y PR: nada directo a `main`** |
 
 ### Lo que funciona hoy (en local)
@@ -101,10 +101,10 @@ hoy, 7 y 30 días; solo Dueño y Administrador), control del tope diario (1 a 20
 - La rama remota `wip/h-092-bloqueos-y-tope` ya no hace falta, pero **no se ha borrado**: borrable cuando José lo ordene.
 
 **Sprint 5 (equipo y permisos).** Confirmado por José el 2026-10-28 (Compuerta 3; Aarón queda avisado y puede
-objetar). En construcción: primera historia H-011a en la rama `feat/h-011a-matriz-de-permisos` (en curso, no
-terminada). Documentos: `docs/sprints/005-equipo-y-permisos.md` y `docs/arquitectura/sprint-5-equipo-y-permisos.md`.
+objetar). En construcción: H-011a (matriz única de permisos) en `main` desde el 2026-10-29 (PR #12, revisada y mezclada
+por Aarón); sigue H-011b. Documentos: `docs/sprints/005-equipo-y-permisos.md` y `docs/arquitectura/sprint-5-equipo-y-permisos.md`.
 
-**Decisión 020** (PR #7, abierto): aprobada por José el 2026-10-28, pendiente de ratificación de Aarón; plazo de
+**Decisión 020** (en `main`): aprobada por José el 2026-10-28 y ratificada por Aarón el 2026-10-29; plazo de
 aviso 24 h. En corto: qué decide José mientras Aarón no esté; qué sigue siendo de Aarón (producto, dinero,
 proveedores, lo que ve el cliente final); y lo delicado (permisos, aislamiento, dinero, superficie pública) no se
 mezcla sin Aarón.

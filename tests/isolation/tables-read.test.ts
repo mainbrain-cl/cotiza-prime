@@ -381,6 +381,25 @@ describe("X2 · lo embebido respeta la misma regla", () => {
       expect(tenant.audit_log.length).toBe(0);
     }
   });
+
+  it("Ana (Dueña) con A activa: el registro de actividad incrustado SÍ trae filas de A y ninguna de B (control positivo de X2)", async () => {
+    const fx = fixture();
+    const res = await rest(await tokenOf("ana"), "tenants?select=tenant_id,audit_log(tenant_id)", {
+      headers: tenantHeader(fx.orgs.A.tenantId),
+    });
+    expect(res.status).toBe(200);
+    const tenants = res.json as { tenant_id: string; audit_log: { tenant_id: string }[] }[];
+    const orgA = tenants.find((t) => t.tenant_id === fx.orgs.A.tenantId);
+    expect(orgA, "Ana ve su organización A").toBeDefined();
+    expect(orgA?.audit_log.length, "la Dueña sí lee el registro de actividad de A").toBeGreaterThan(
+      0,
+    );
+    for (const tenant of tenants) {
+      for (const row of tenant.audit_log) expect(row.tenant_id).toBe(fx.orgs.A.tenantId);
+    }
+    expect(res.text).not.toContain(fx.orgs.B.tenantId);
+    expect(res.text).not.toContain(fx.orgs.B.canary);
+  });
 });
 
 describe("A10 · quien está en dos organizaciones no mezcla datos", () => {

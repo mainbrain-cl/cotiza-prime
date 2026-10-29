@@ -1,6 +1,6 @@
 # 020 · Quién decide mientras Aarón no esté disponible
 
-**Estado:** aprobada por José el 2026-10-28, **pendiente de la ratificación de Aarón** · **Fecha:** 2026-10-28 · **Relacionada con:**
+**Estado:** aprobada por José el 2026-10-28 y **ratificada por Aarón el 2026-10-29** · **Fecha:** 2026-10-28 · **Relacionada con:**
 013 (forma de desarrollo), `docs/00-base/PROCESO.md` (compuertas), `docs/TRASPASO.md` §9
 
 ## Contexto

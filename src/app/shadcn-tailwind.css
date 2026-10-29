@@ -3,7 +3,9 @@
  * Se copian en vez de instalar el paquete `shadcn`: es lo único que la aplicación usaba de él, y el
  * paquete trae más de 100 dependencias de herramientas, una de ellas con una vulnerabilidad sin
  * corrección (deepmerge). Ver docs/decisiones/015-vulnerabilidades-herramientas-desarrollo.md.
- * Para agregar componentes sigue sirviendo `npx shadcn@4.23.0 add <componente>`.
+ * Para agregar componentes sigue sirviendo `npx shadcn@4.23.0 add <componente>`, pero después de cada
+ * `add` se revisa que `package.json` no gane `shadcn` ni paquetes nuevos y que `globals.css` siga
+ * importando esta copia (regla en docs/DISENO.md).
  *
  * MIT License
  *

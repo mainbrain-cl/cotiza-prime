@@ -54,29 +54,40 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Estado al 2026-10-27 — empezar por aquí (traspaso a José)
+### Estado al 2026-10-28 — empezar por aquí (traspaso a José)
 
 **Lee primero `docs/TRASPASO.md`**: es la guía para ponerse al día (cómo levantarlo, qué leer, dónde
 quedó todo, trampas, qué decide Aarón y cómo trabaja). Este bloque es solo el resumen.
 
 **Dónde está:** 35 de 92 historias construidas (38 %). Sprint 1 cerrado; sprint 2 construido (falta que
 Aarón lo pruebe y apruebe la plantilla 1); sprint 3 con 8 de 9 (falta **H-076**, las tres plantillas de
-PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3); sprint 4 completo
-(H-092, pantalla de envíos bloqueados y ajuste del tope diario, cerrada el 2026-10-28 en la rama `h-092`,
-**entra a `main` con el PR #1, en revisión de Aarón**). Sprints 5 a 12 sin partir. 35 migraciones. Última
-batería (2026-10-28, local): 1.388 unitarias, 645 de base de datos, 1.061 de aislamiento y 130 de punta a
-punta, todas en verde.
+PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3); **sprint 4 completo**
+(H-092 construida y en `main`). **Sprint 5 (equipo y permisos) confirmado por José el 2026-10-28**
+(Compuerta 3) y en construcción: primera historia H-011a, en la rama `feat/h-011a-matriz-de-permisos`
+(en curso, no terminada); documentos: `docs/sprints/005-equipo-y-permisos.md` y
+`docs/arquitectura/sprint-5-equipo-y-permisos.md`. Sprints 6 a 12 sin partir. 35 migraciones. Pruebas en
+`main`: 1.388 unitarias (1 omitida), 22 guardias estáticas y la e2e de H-092 en 9 de 9; las de base de datos
+(645), aislamiento (1.061) y el total de punta a punta (unas 130) son las de la última batería completa
+(2026-10-28, local), sin recontar tras las mezclas.
 
 **Lo que ya funciona (en local):** registro y organizaciones, catálogo y clientes, cotizador con PDF,
 enviar por correo, enlace del cliente (aceptar o rechazar con motivo obligatorio), rebotes, vencimiento,
 revocar enlace, registro de actividad, formulario público (constructor, página pública con anti-robot,
-resumen en vivo sin precios, incrustable, QR) y solicitudes (asignar, descartar, anonimizar, convertir en
-cotización). Menú flotante vertical, tarjetas, contadores y fondos animados (React Bits, decisión 018).
+resumen en vivo sin precios, incrustable, QR), solicitudes (asignar, descartar, anonimizar, convertir en
+cotización) y panel de protección con tope diario (H-092). Menú flotante vertical, tarjetas, contadores y
+fondos animados (React Bits, decisión 018).
 
-**H-092 cerrada (2026-10-28).** Se aprovechó el borrador de la rama `wip/h-092-bloqueos-y-tope`, se verificó
-completo, lo revisó el `revisor` (sin bloqueantes) y se aplicaron sus correcciones; quedan 5 menores anotados
-en `docs/arquitectura/sprint-4-formulario-publico.md` §15. La rama `wip/h-092-bloqueos-y-tope` ya se puede
-borrar cuando `h-092` esté en `main`.
+**Mezclas del 2026-10-28.** Por orden explícita de José y **sin revisión de Aarón** se mezclaron en `main`
+los PR #2 (Next 16.4.3, zod 4.6.7, shadcn 4.23.0), #8 (quita el paquete `shadcn`; reemplaza al #3, que
+GitHub cerró solo al borrarse su rama base), #1 (H-092), #6 (menores de H-092), #4 (guía de orientación) y
+#5 (diseño del sprint 5). Los de código pasaron por el agente `revisor` (Opus). **Desde ahora el trabajo va
+por ramas y PR: nada directo a `main`.** La rama remota `wip/h-092-bloqueos-y-tope` ya no hace falta, pero
+sigue ahí: se puede borrar cuando José lo ordene.
+
+**Decisión 020** (PR #7, abierto): quién decide mientras Aarón no esté disponible. Aprobada por José el
+2026-10-28, **pendiente de ratificación de Aarón**; plazo de aviso 24 h. José decide lo corriente; Aarón
+sigue decidiendo producto, dinero, proveedores y lo que ve el cliente final; y lo delicado (permisos,
+aislamiento entre organizaciones, dinero, superficie pública) **no se mezcla sin Aarón**.
 
 **El CI de GitHub no corre por la facturación de la cuenta** (las corridas fallan en 2 s con «recent
 account payments have failed…»). Aarón debe regularizarlo. Mientras tanto se verifica todo en local y,
@@ -89,9 +100,8 @@ proveedor y dominio de correo (decisión 016, propuesta Resend); anti-robot real
 Turnstile o ALTCHA); dominio y marca; facturación de GitHub; antes del piloto, abogado, datos de Main Brain
 para los términos (29 marcadores), custodia de claves de cifrado y quién responde un incidente.
 
-**Qué sigue:** subir `h-092` a `main` (con el visto bueno de José) → revisión grande de Aarón (decirle qué está listo, el link
-`http://localhost:3000` y los accesos) → sprint 5 (equipo y permisos) → 6 aprobación y datos de pago → 7
-cobro → piloto privado. Estimación: unas 2 a 3 semanas hasta el piloto y 4 a 6 hasta el lanzamiento.
+**Qué sigue:** terminar el sprint 5 → revisión grande de Aarón (decirle qué está listo, el link
+`http://localhost:3000` y los accesos) → 6 aprobación y datos de pago → 7 cobro → piloto privado. Estimación: unas 2 a 3 semanas hasta el piloto y 4 a 6 hasta el lanzamiento.
 
 **Cómo se prueba en pantalla:** `npm run dev` → http://localhost:3000 (Docker abierto y `npx supabase
 start`). Usuarios `ana`, `carla` (Comercial), `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
@@ -99,7 +109,7 @@ start`). Usuarios `ana`, `carla` (Comercial), `beto`, `mixta`, `ex` `@ejemplo.te
 falta también `INTAKE_RENDER_SECRET` (32+ caracteres), `ANTIBOT_PROVIDER=memory` y `ANTIBOT_ALLOW_MEMORY=1`
 (solo desarrollo). `db reset` y `test:db:rollbacks` vacían la base local: después, `npm run db:seed`.
 
-**Aarón pidió:** que se avance solo y subiendo a `main`; él revisa **en un bloque grande**, no historia por
+**Aarón pidió:** que se avance solo y se integre a `main` (desde el 2026-10-28, por rama y PR); él revisa **en un bloque grande**, no historia por
 historia. Mirar siempre el CI tras cada subida.
 
 **Trampas de Windows:** `npm install` puede borrar de `package-lock.json` las entradas

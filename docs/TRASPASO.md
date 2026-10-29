@@ -45,24 +45,24 @@ plataforma), no es un CRM ni un sistema de operación logística.
 4. `docs/DISENO.md` — el sistema de diseño aprobado (colores, tipografía, vidrio, movimiento).
 5. `docs/HISTORIAS.md` — las 92 historias de usuario, con criterios de aceptación.
 6. `docs/sprints/001-base-segura.md` — la tabla de los 12 sprints.
-7. `docs/decisiones/` — 19 decisiones. Las 016, 017, 018 y 019 son las recientes.
-8. `docs/arquitectura/` — `modelo-datos.md`, y los planes detallados de los sprints 3 y 4.
+7. `docs/decisiones/` — 19 decisiones en `main` (la 020, PR #7, está abierta). Las 016, 017, 018 y 019 son las recientes.
+8. `docs/arquitectura/` — `modelo-datos.md`, y los planes detallados de los sprints 3, 4 y 5.
 
 **Precedencia:** `PROYECTO.md` puede ser más exigente que la base, nunca menos. Relajar un control
 de seguridad exige una decisión escrita en `docs/decisiones/`.
 
 ## 4. Dónde está el proyecto
 
-Fecha de este traspaso: **2026-10-27**. El último trabajo fue el **2026-10-07** (el proyecto estuvo 20
+Fecha de este traspaso: **2026-10-27** (puesto al día el **2026-10-28**). El último trabajo fue el **2026-10-07** (el proyecto estuvo 20
 días sin moverse; no se perdió nada).
 
 | | |
 |---|---|
 | **Historias construidas** | **35 de 92 (38 %)** |
-| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 cerrada el 2026-10-28, en el PR #1) · 5 a 12 sin partir |
-| **Pruebas, la última vez** | 1.388 unitarias · 645 de base de datos · 1.061 de aislamiento entre organizaciones · unas 130 de punta a punta (todas en verde) |
+| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 construida y en `main` desde el 2026-10-28) · **5 (equipo y permisos) confirmado por José el 2026-10-28 y en construcción** (primera historia H-011a, rama `feat/h-011a-matriz-de-permisos`, en curso) · 6 a 12 sin partir |
+| **Pruebas, la última vez** | En `main` (2026-10-28): 1.388 unitarias (1 omitida) · 22 guardias estáticas · e2e de H-092: 9 de 9. De la última batería completa, sin recontar tras las mezclas: 645 de base de datos · 1.061 de aislamiento entre organizaciones · unas 130 de punta a punta (todas en verde) |
 | **Base de datos** | 35 migraciones, cada una con su deshacer |
-| **Rama** | `main` estaba limpia y al día con GitHub en `1085ef1` (2026-10-27); desde entonces el trabajo va por ramas y PR, no directo a `main` |
+| **Rama** | `main` estaba limpia en `1085ef1` (2026-10-27). El 2026-10-28 se mezclaron los PR #2, #8, #1, #6, #4 y #5 (ver §5). **Desde ahora el trabajo va por ramas y PR: nada directo a `main`** |
 
 ### Lo que funciona hoy (en local)
 
@@ -84,17 +84,30 @@ descartar, anonimizar, convertir en cotización).
   auditoría se puede falsificar), correr el envío en Firefox, y que `/c/[token]` responda 404 y 429 reales.
   Detalle en `docs/arquitectura/sprint-3-envio-y-enlace.md` §12–§13 y `sprint-4-formulario-publico.md` §11–§14.
 
-## 5. H-092: cerrada el 2026-10-28
+## 5. Lo que pasó el 2026-10-28
 
-El borrador de la rama `wip/h-092-bloqueos-y-tope` (commit `357560d`) se **aprovechó**: se verificó entero
-(typecheck, lint, 1.388 unitarias, `test:db`, `test:isolation` y 130 de punta a punta), lo revisó el
-`revisor` sin bloqueantes y se aplicaron sus correcciones en la rama local `h-092` (commit `9418838`).
-Contenido: panel de protección (contadores de hoy, 7 y 30 días; solo Dueño y Administrador), control del tope
-diario (1 a 200) y aviso de tope alcanzado en la lista y en el editor.
+**Mezclas.** Por orden explícita de José y **sin revisión de Aarón** entraron a `main` los PR #2 (Next 16.4.3,
+zod 4.6.7, shadcn 4.23.0), #8 (quita el paquete `shadcn`; reemplaza al #3, que GitHub cerró solo al borrarse su
+rama base), #1 (H-092), #6 (menores de H-092), #4 (esta guía) y #5 (diseño y borrador del sprint 5). Los de
+código pasaron por el agente `revisor` (Opus). Desde ahora, todo por rama y PR.
 
-- **Pendiente:** subir `h-092` a `main` cuando José lo decida; después se puede borrar
-  `wip/h-092-bloqueos-y-tope`.
-- Los 5 menores que quedaron abiertos están en `docs/arquitectura/sprint-4-formulario-publico.md` §15.
+**H-092 construida y en `main`; sprint 4 completo** (35 de 92 historias, 38 %). El borrador de la rama
+`wip/h-092-bloqueos-y-tope` (commit `357560d`) se aprovechó: se verificó entero (tipos, lint, 1.388 unitarias,
+`test:db`, `test:isolation` y 130 de punta a punta). La revisión independiente del `revisor` (Opus) se hizo el
+2026-10-28 sobre los PR #1 y #6, sin hallazgos graves y con 6 menores (corregidos en el PR #6 los m8 y m10;
+el resto en `docs/arquitectura/sprint-4-formulario-publico.md` §15). Contenido: panel de protección (contadores de
+hoy, 7 y 30 días; solo Dueño y Administrador), control del tope diario (1 a 200) y aviso de tope alcanzado.
+
+- La rama remota `wip/h-092-bloqueos-y-tope` ya no hace falta, pero **no se ha borrado**: borrable cuando José lo ordene.
+
+**Sprint 5 (equipo y permisos).** Confirmado por José el 2026-10-28 (Compuerta 3; Aarón queda avisado y puede
+objetar). En construcción: primera historia H-011a en la rama `feat/h-011a-matriz-de-permisos` (en curso, no
+terminada). Documentos: `docs/sprints/005-equipo-y-permisos.md` y `docs/arquitectura/sprint-5-equipo-y-permisos.md`.
+
+**Decisión 020** (PR #7, abierto): aprobada por José el 2026-10-28, pendiente de ratificación de Aarón; plazo de
+aviso 24 h. En corto: qué decide José mientras Aarón no esté; qué sigue siendo de Aarón (producto, dinero,
+proveedores, lo que ve el cliente final); y lo delicado (permisos, aislamiento, dinero, superficie pública) no se
+mezcla sin Aarón.
 
 ## 6. Cómo se ha trabajado (decisión 013) y cómo seguir
 
@@ -181,13 +194,13 @@ Están todas esperando respuesta suya. Mientras tanto el código aplica el supue
 
 ## 11. Primeros pasos recomendados
 
-1. ~~Pedirle a Aarón el acceso y la copia de H-092~~ (hecho: ya se tiene el repositorio y H-092 está cerrada).
+1. ~~Pedirle a Aarón el acceso y la copia de H-092~~ (hecho: ya se tiene el repositorio y H-092 está en `main`).
 2. Clonar, levantar el entorno (§2) y **recorrer la app** como Ana y como Carla: es la mejor forma de
    entender el producto.
 3. Correr toda la batería de pruebas para confirmar que el entorno funciona.
-4. ~~Cerrar H-092 y el sprint 4~~ (hecho el 2026-10-28; entra a `main` con el PR #1).
+4. ~~Cerrar H-092 y el sprint 4~~ (hecho el 2026-10-28; mezclado en `main` con el PR #1).
 5. Con Aarón: su revisión grande del recorrido, y sus respuestas a las decisiones de §9.
-6. Seguir con el sprint 5 (equipo y permisos), que habilita aprobaciones y cobro.
+6. Terminar el sprint 5 (equipo y permisos, en construcción), que habilita aprobaciones y cobro.
 
 Estimación de lo que falta, con el ritmo de las primeras semanas: unas **2 a 3 semanas hasta el piloto
 privado** y **4 a 6 hasta el lanzamiento**, sin contar los plazos de las decisiones de Aarón ni la

@@ -617,12 +617,13 @@ solo restaura funciones y no toca datos). Se aplicó con `npx supabase migration
 
 ---
 
-## 15. H-092 · cómo quedó construido y correcciones de la revisión
+## 15. H-092 · cómo quedó construido y correcciones
 
 Sin migraciones nuevas: usa `intake_daily_counters`, `intake_forms.daily_cap` y la función `save_intake_form` que ya
 existían. El borrador lo dejó a medias una sesión cortada (rama `wip/h-092-bloqueos-y-tope`, commit `357560d`); el
-2026-10-27 José lo verificó (tipos, lint, unitarias, base de datos, aislamiento y punta a punta, con la app compilada) y
-Opus lo revisó (H-092 es 🔒).
+2026-10-27 José lo verificó (tipos, lint, unitarias, base de datos, aislamiento y punta a punta, con la app compilada).
+La revisión independiente del `revisor` (Opus; H-092 es 🔒) se hizo el 2026-10-28 sobre los PR #1 y #6, sin hallazgos
+graves y con 6 menores (los m8 y m10 se corrigieron en el PR #6; ver más abajo).
 
 **Qué hace**
 
@@ -636,7 +637,7 @@ Opus lo revisó (H-092 es 🔒).
   subirlo en el máximo de 200, si la organización también llegó a su tope, ni en un formulario archivado.
 - Guardias estáticas 10e y 10f ampliadas a toda la superficie pública y a las solicitudes.
 
-**Correcciones de la revisión (todas aplicadas)**
+**Correcciones aplicadas al cerrar la historia (hallazgos de la verificación, antes de la revisión independiente del 2026-10-28)**
 
 | # | Hallazgo | Qué se hizo |
 |---|---|---|

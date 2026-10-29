@@ -22,6 +22,7 @@ llega ahí.
 
 1. `shadcn` pasa a **dependencia de desarrollo**: solo se usa para compilar los estilos
    (`@import "shadcn/tailwind.css"`), no en la aplicación en ejecución.
+   *(Superado el 2026-10-28: el paquete `shadcn` ya no es dependencia; ver la actualización al final.)*
 2. **Dependencias de producción** (lo que llega a la aplicación): se mantiene la regla completa. La
    integración en GitHub **bloquea** cualquier vulnerabilidad alta o crítica
    (`npm audit --omit=dev --audit-level=high`). Hoy: **0 vulnerabilidades**.
@@ -56,6 +57,7 @@ de usuarios), esta decisión deja de aplicar y se revisa.
   se copió a `src/app/shadcn-tailwind.css` (MIT, con su aviso) y el paquete se quitó de las dependencias.
   El CSS compilado salió idéntico byte por byte. Con eso `npm audit` da **0 vulnerabilidades**.
 - Para agregar componentes de shadcn/ui se usa `npx shadcn@4.23.0 add <componente>` (se ejecuta una vez,
-  no queda instalado).
+  no queda instalado). Después de cada `add` se aplica la regla de revisión de `docs/DISENO.md` (el paquete `shadcn` y
+  paquetes nuevos como `cn` no deben aparecer en `package.json` sin verificar su licencia).
 - La regla de esta decisión sigue vigente por si vuelve a aparecer una falla sin corrección en una
   herramienta de desarrollo.

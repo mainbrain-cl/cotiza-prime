@@ -35,7 +35,7 @@ export const ROLE_DESCRIPTIONS: Readonly<Record<MemberRole, string>> = {
   admin: "Configura la organización, maneja el equipo, aprueba cotizaciones y confirma pagos.",
   approver: "Revisa y aprueba las cotizaciones antes de que salgan. No configura ni toca pagos.",
   sales:
-    "Arma y envía sus propias cotizaciones y atiende solicitudes. Ve todo, sin cambiar lo demás.",
+    "Arma y envía sus propias cotizaciones, registra clientes y atiende solicitudes. Lo demás lo ve sin cambiarlo.",
   viewer: "Ve todo lo de la organización, pero no cambia nada.",
 };
 

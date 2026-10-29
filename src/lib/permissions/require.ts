@@ -10,8 +10,10 @@
  * Quien no es miembro de la organización nunca llega aquí: `requireActiveTenant` ya le respondió
  * «No encontrado». «No tienes permiso» es solo para quien SÍ es miembro pero su rol no alcanza.
  *
- * Si no se pasa `ctx.isOwn`, la revisión es la gruesa: el rol alcanza si puede hacerlo sobre
- * cualquier recurso o sobre uno suyo. El detalle «¿es suyo?» lo exige después la base de datos.
+ * Si NO se pasa `ctx`, la revisión es la gruesa: el rol alcanza si puede hacerlo sobre cualquier
+ * recurso o sobre uno suyo. El detalle «¿es suyo?» lo exige después la base de datos. Si SÍ se pasa
+ * `ctx`, la revisión es exacta, y un `isOwn` ausente o `undefined` cuenta como `false` (nunca se cae
+ * a la revisión más amplia por un descuido).
  * Que la pantalla oculte un botón no es seguridad (PROYECTO.md §5.2).
  */
 import "server-only";
@@ -33,7 +35,9 @@ function allowed(
   action: PermissionAction,
   ctx: PermissionContext | undefined,
 ): boolean {
-  return ctx?.isOwn === undefined ? canEver(role, action) : can(role, action, ctx);
+  return ctx === undefined
+    ? canEver(role, action)
+    : can(role, action, { isOwn: ctx.isOwn === true });
 }
 
 /** `null` si puede; si no, el mensaje único para devolver en el resultado de la acción. */

@@ -27,12 +27,35 @@ describe("requirePermission", () => {
     );
   });
 
+  it("con ctx sin isOwn definido se trata como isOwn false (nunca cae a la revisión gruesa)", () => {
+    expect(requirePermission({ role: "sales" }, "quote.edit", {})).toBe(NO_PERMISSION_MESSAGE);
+    expect(requirePermission({ role: "sales" }, "quote.edit", { isOwn: undefined })).toBe(
+      NO_PERMISSION_MESSAGE,
+    );
+    expect(requirePermission({ role: "sales" }, "quote.resend", { isOwn: undefined })).toBe(
+      NO_PERMISSION_MESSAGE,
+    );
+    expect(requirePermission({ role: "owner" }, "quote.resend", { isOwn: undefined })).toBeNull();
+  });
+
   it("un rol desconocido nunca pasa", () => {
     expect(requirePermission({ role: "superadmin" }, "org.view")).toBe(NO_PERMISSION_MESSAGE);
   });
 });
 
 describe("pagePermission", () => {
+  it("sin ctx es gruesa; con ctx es exacta y un isOwn ausente cuenta como false", () => {
+    const tenant = { tenantId: TENANT_ID };
+    expect(pagePermission({ role: "sales", ...tenant }, "quote.edit")).toBeNull();
+    expect(pagePermission({ role: "sales", ...tenant }, "quote.edit", { isOwn: true })).toBeNull();
+    expect(
+      pagePermission({ role: "sales", ...tenant }, "quote.edit", { isOwn: false }),
+    ).not.toBeNull();
+    expect(
+      pagePermission({ role: "sales", ...tenant }, "quote.edit", { isOwn: undefined }),
+    ).not.toBeNull();
+  });
+
   it("devuelve null a quien puede", () => {
     for (const role of MEMBER_ROLES) {
       expect(pagePermission({ role, tenantId: TENANT_ID }, "org.view")).toBeNull();

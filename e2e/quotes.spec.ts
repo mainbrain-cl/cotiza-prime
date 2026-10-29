@@ -310,7 +310,7 @@ test("dos pestañas: la segunda recibe el aviso y no sobrescribe; un Observador 
     await expect(viewerPage.getByTestId("save-quote")).toHaveCount(0);
     await expect(viewerPage.getByTestId("total-total")).toHaveText("$2.380");
     await viewerPage.goto(`/o/${tenantId}/cotizaciones/nueva`);
-    await expect(viewerPage.getByRole("heading", { name: "No encontrado" })).toBeVisible();
+    await expect(viewerPage.getByText("No tienes permiso para esto.")).toBeVisible();
   } finally {
     await viewerContext.close();
   }

@@ -7,6 +7,7 @@ import { buildCustomerInsertRow } from "@/lib/customers/record";
 import { findDuplicates, type DuplicateMatch } from "@/lib/customers/queries";
 import { CUSTOMER_NO_PERMISSION, CUSTOMER_SAVE_FAILED } from "@/lib/customers/service";
 import { serverLog } from "@/lib/log/server-log";
+import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant, type ActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { deriveConvertCustomerId } from "./convert-ids";
@@ -41,7 +42,6 @@ export type ConvertResult = {
   duplicates?: DuplicateMatch[];
 };
 
-const WRITER_ROLES: readonly string[] = ["owner", "admin", "sales"];
 const UNIQUE_VIOLATION = "23505";
 
 function fail(
@@ -105,7 +105,9 @@ export async function convertIntakeRequestAction(
   rawInput: unknown,
 ): Promise<ConvertResult> {
   const active = await requireActiveTenant(tenantId);
-  if (!WRITER_ROLES.includes(active.role)) return fail("forbidden", CONVERT_FORBIDDEN);
+  // Revisión gruesa por rol; que la solicitud sea suya o de nadie lo revisa `requestPermissions` más abajo.
+  const denied = requirePermission(active, "intake.requests.convert");
+  if (denied) return fail("forbidden", denied);
   if (!isUuid(requestId)) return fail("not_found", CONVERT_NOT_FOUND);
   const input = convertInputSchema.safeParse(rawInput);
   if (!input.success) {

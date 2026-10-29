@@ -10,6 +10,7 @@ import { maskEmail, maskPhone, maskRut } from "@/lib/customers/mask";
 import { listCustomers } from "@/lib/customers/queries";
 import { CUSTOMER_SEARCH_MAX_LENGTH } from "@/lib/customers/search";
 import { CUSTOMER_KINDS } from "@/lib/customers/schemas";
+import { can } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 
@@ -19,7 +20,6 @@ const KIND_LABEL: Record<string, string> = Object.fromEntries(
   CUSTOMER_KINDS.map((kind) => [kind.value, kind.label]),
 );
 const EMPTY = "—";
-const WRITER_ROLES = ["owner", "admin", "sales"];
 
 function firstValue(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value) ?? "";
@@ -40,7 +40,7 @@ export default async function CustomersPage({
   const result = await listCustomers(active, { search, page: requestedPage });
   const items = result?.items ?? null;
   const searching = search.trim() !== "";
-  const canCreate = WRITER_ROLES.includes(active.role);
+  const canCreate = can(active.role, "customer.write");
   const newPath = tenantPath(active.tenantId, "clientes/nuevo");
 
   return (

@@ -3,6 +3,7 @@
  * detalle técnico. `fixPath` indica a qué parte de la aplicación ir para corregirlo.
  */
 
+import { NO_PERMISSION_MESSAGE } from "@/lib/permissions/matrix";
 import { FORM_ITEMS_MAX, FORMS_PER_ORGANIZATION_MAX } from "./builder-model";
 import { DAILY_CAP_MAX, DAILY_CAP_MIN } from "./protection-model";
 
@@ -24,7 +25,7 @@ export const SQLSTATE_STATE = "CP423";
 
 export const GENERIC_FAILURE =
   "No pudimos completar la acción. Intenta de nuevo en unos minutos; si sigue igual, avísanos.";
-export const NO_PERMISSION = "Solo el Dueño y los Administradores pueden cambiar los formularios.";
+export const NO_PERMISSION = NO_PERMISSION_MESSAGE;
 export const CONFLICT_MESSAGE =
   "Otra persona guardó cambios en este formulario. Recarga la página para verlos; lo que escribiste sigue en pantalla y no se perdió.";
 

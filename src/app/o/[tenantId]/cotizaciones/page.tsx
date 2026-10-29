@@ -18,13 +18,12 @@ import {
   type QuoteListScope,
 } from "@/lib/quotes/list-scope";
 import { listRecentQuotes, QUOTES_LIST_LIMIT } from "@/lib/quotes/queries";
+import { can } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Cotizaciones · Cotiza Prime" };
-
-const WRITER_ROLES = ["owner", "admin", "sales"];
 
 /** Estado de la cotización; si su correo rebotó, además el aviso (solo lo que pide atención). */
 function StatusCell({ status, delivery }: { status: string; delivery: QuoteDelivery | undefined }) {
@@ -54,7 +53,7 @@ export default async function QuotesPage({
   const quotes = await listRecentQuotes(active, scope);
   const deliveries = await getDeliveryByQuote(active, quotes?.map((quote) => quote.id) ?? []);
   const listPath = tenantPath(active.tenantId, "cotizaciones");
-  const canCreate = WRITER_ROLES.includes(active.role);
+  const canCreate = can(active.role, "quote.create");
   const newPath = tenantPath(active.tenantId, "cotizaciones/nueva");
   const quotePath = (id: string) => tenantPath(active.tenantId, `cotizaciones/${id}`);
 

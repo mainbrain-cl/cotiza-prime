@@ -2,6 +2,7 @@
  * Solicitudes que llegan por el formulario público (H-089): lo que es puro (filtros, textos, permisos
  * por rol, «hace cuánto llegó»). Sin acceso a la base ni a dinero: una solicitud nunca lleva precios.
  */
+import { can } from "@/lib/permissions/matrix";
 import type { MemberRole } from "@/lib/tenant/active-tenant";
 import { itemUnitShort } from "./builder-model";
 
@@ -61,9 +62,6 @@ export function isAnonymizeReason(value: unknown): value is AnonymizeReason {
   return ANONYMIZE_REASONS.some((r) => r.value === value);
 }
 
-/** Roles a los que se les puede asignar una solicitud (la base lo vuelve a exigir). */
-export const ASSIGNABLE_ROLES: readonly MemberRole[] = ["owner", "admin", "sales"];
-
 export type RequestPermissions = {
   canAssign: boolean;
   canDiscard: boolean;
@@ -74,25 +72,28 @@ export type RequestPermissions = {
 };
 
 /**
- * Permisos de la matriz del plan (sprint 4, §6). Es solo para decidir qué botones se muestran: la
- * base de datos vuelve a verificar cada acción.
+ * Permisos de la matriz del plan (`src/lib/permissions/matrix.ts`). Es solo para decidir qué botones
+ * se muestran: la base de datos vuelve a verificar cada acción. El Comercial descarta y restaura solo
+ * las solicitudes asignadas a él, y convierte las asignadas a él o las que nadie tiene.
  */
 export function requestPermissions(
   role: MemberRole,
   userId: string,
   request: { status: RequestStatus; assignedTo: string | null; anonymized: boolean },
 ): RequestPermissions {
-  const manager = role === "owner" || role === "admin";
-  const mine = role === "sales" && request.assignedTo === userId;
+  const mine = request.assignedTo === userId;
   const open = request.status === "new" || request.status === "assigned";
   const live = !request.anonymized;
   return {
-    canAssign: manager && open && live,
-    canDiscard: (manager || mine) && open,
-    canRestore: (manager || mine) && request.status === "discarded",
-    canAnonymize: manager && live,
+    canAssign: can(role, "intake.requests.assign") && open && live,
+    canDiscard: can(role, "intake.requests.discard", { isOwn: mine }) && open,
+    canRestore:
+      can(role, "intake.requests.restore", { isOwn: mine }) && request.status === "discarded",
+    canAnonymize: can(role, "intake.requests.anonymize") && live,
     canConvert:
-      live && open && (manager || (role === "sales" && (request.assignedTo === null || mine))),
+      live &&
+      open &&
+      can(role, "intake.requests.convert", { isOwn: request.assignedTo === null || mine }),
   };
 }
 

@@ -5,6 +5,7 @@ import { isFormId } from "@/lib/intake/builder-schema";
 import { publicFormUrl } from "@/lib/intake/builder-model";
 import { buildQrPng, buildQrSvg, QrError } from "@/lib/intake/qr";
 import { parseQrFormat, qrFileName } from "@/lib/intake/qr-download";
+import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 
 export const runtime = "nodejs";
@@ -19,9 +20,10 @@ const QR_HEADERS = {
 const notFound = () => new Response(null, { status: 404 });
 
 /**
- * Código QR de un formulario público (H-091), como descarga. Solo Dueño y Administrador; quien no
- * lo es, o un formulario que no existe en la organización activa, o uno archivado o en borrador,
- * recibe el mismo 404. El contenido es siempre `${origen de la aplicación}/f/${publicId}`: el origen
+ * Código QR de un formulario público (H-091), como descarga. Solo quien maneja los formularios
+ * (matriz: `intake.forms.manage`): un miembro sin ese permiso recibe 403; quien no es miembro de la
+ * organización, o un formulario que no existe en la organización activa, o uno archivado o en
+ * borrador, recibe 404. El contenido es siempre `${origen de la aplicación}/f/${publicId}`: el origen
  * sale de la configuración, nunca de las cabeceras de la petición.
  */
 export async function GET(
@@ -33,7 +35,7 @@ export async function GET(
   if (!(await getOptionalUser())) return new Response(null, { status: 401 });
 
   const active = await requireActiveTenant(tenantId);
-  if (active.role !== "owner" && active.role !== "admin") return notFound();
+  if (requirePermission(active, "intake.forms.manage")) return new Response(null, { status: 403 });
 
   const format = parseQrFormat(new URL(request.url).searchParams.get("format"));
   if (!format) return new Response(null, { status: 400 });

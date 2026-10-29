@@ -3,6 +3,8 @@
  * Puro, sin base de datos. Las acciones nuevas que aún no tengan nombre se muestran con su código.
  */
 
+import { roleLabel } from "@/lib/permissions/matrix";
+
 /** Acciones que el registro de la organización sabe nombrar, en el orden del selector. */
 export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "session.login": "Ingresó a la plataforma",
@@ -33,14 +35,6 @@ const RESOURCE_LABELS: Readonly<Record<string, string>> = {
   catalog_item: "Catálogo",
   customer: "Cliente",
   quote: "Cotización",
-};
-
-const ROLE_LABELS: Readonly<Record<string, string>> = {
-  owner: "Dueño",
-  admin: "Administrador",
-  approver: "Aprobador",
-  sales: "Comercial",
-  viewer: "Observador",
 };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
@@ -96,8 +90,8 @@ export function describeAuditDetails(details: unknown): string | null {
   const oldValues = isRecord(details.old) ? details.old : null;
   const newValues = isRecord(details.new) ? details.new : null;
   if (oldValues && newValues && "role" in newValues) {
-    const before = ROLE_LABELS[String(oldValues.role)] ?? String(oldValues.role);
-    const after = ROLE_LABELS[String(newValues.role)] ?? String(newValues.role);
+    const before = roleLabel(String(oldValues.role));
+    const after = roleLabel(String(newValues.role));
     return `Rol: ${before} → ${after}`;
   }
 

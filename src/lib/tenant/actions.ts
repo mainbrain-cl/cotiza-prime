@@ -6,6 +6,8 @@ import type { FormState } from "@/lib/auth/form-state";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
 import { requireUser } from "@/lib/auth/session";
 import { serverLog } from "@/lib/log/server-log";
+import { NO_PERMISSION_MESSAGE } from "@/lib/permissions/matrix";
+import { requirePermission } from "@/lib/permissions/require";
 import { normalizeRut } from "@/lib/rut";
 import { createClient } from "@/lib/supabase/server";
 import { rememberLastTenant, requireActiveTenant } from "./active-tenant";
@@ -83,9 +85,6 @@ export async function createTenantAction(
   redirect(tenantPath(data));
 }
 
-const COMPANY_NOT_ALLOWED_MESSAGE =
-  "Solo el Dueño o un Administrador puede cambiar los datos de la empresa.";
-
 /** H-007: edita nombre, RUT, rubro y contacto; H-027: vigencia por defecto de las cotizaciones. La base de datos vuelve a verificar el rol (RLS) y el RUT. */
 export async function updateCompanyAction(
   tenantId: string,
@@ -102,9 +101,8 @@ export async function updateCompanyAction(
     defaultValidityDays: readText(formData, "defaultValidityDays"),
   };
 
-  if (active.role !== "owner" && active.role !== "admin") {
-    return { status: "error", message: COMPANY_NOT_ALLOWED_MESSAGE, values: raw };
-  }
+  const denied = requirePermission(active, "settings.manage");
+  if (denied) return { status: "error", message: denied, values: raw };
 
   const parsed = updateCompanySchema.safeParse(raw);
   if (!parsed.success) {
@@ -126,7 +124,7 @@ export async function updateCompanyAction(
 
   if (error || !data || data.length === 0) {
     if (error?.code === SQLSTATE_INSUFFICIENT_PRIVILEGE || (!error && data?.length === 0)) {
-      return { status: "error", message: COMPANY_NOT_ALLOWED_MESSAGE, values: raw };
+      return { status: "error", message: NO_PERMISSION_MESSAGE, values: raw };
     }
     await serverLog("error", "update_company_failed", { code: error?.code });
     return {
@@ -143,6 +141,7 @@ export async function updateCompanyAction(
 /** H-006: cambiar de organización. Verifica la membresía y recuerda la elección para el próximo ingreso. */
 export async function switchTenantAction(tenantId: string): Promise<void> {
   const active = await requireActiveTenant(tenantId);
+  if (requirePermission(active, "org.view")) return;
   await rememberLastTenant(active);
   redirect(tenantPath(active.tenantId));
 }

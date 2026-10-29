@@ -11,6 +11,7 @@ import {
   unitLabel,
 } from "@/lib/catalog/schemas";
 import { formatClp } from "@/lib/money/clp";
+import { can } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
@@ -57,7 +58,7 @@ export default async function CatalogPage({
   if (status === "inactivos") query = query.eq("is_active", false);
   const { data, error } = await query;
   const items = (data ?? []) as CatalogRow[];
-  const canEdit = active.role === "owner" || active.role === "admin";
+  const canEdit = can(active.role, "catalog.manage");
   const hasNoFilters = search === "" && status === "activos";
   // Catálogo realmente vacío: sin servicios de ningún tipo (ni siquiera desactivados).
   let isCatalogEmpty = false;

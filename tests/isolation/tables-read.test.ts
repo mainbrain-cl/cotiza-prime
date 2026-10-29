@@ -376,7 +376,9 @@ describe("X2 · lo embebido respeta la misma regla", () => {
       const isActive = tenant.tenant_id === fx.orgs.A.tenantId;
       expect(tenant.customers.length > 0).toBe(isActive);
       expect(tenant.catalog_items.length > 0).toBe(isActive);
-      expect(tenant.audit_log.length > 0).toBe(isActive);
+      // Mixta es Administradora en A y en B, y el registro de actividad es solo del Dueño (H-011a, supuesto
+      // 13): ni en la organización activa ve filas. Lo que importa es que tampoco ve las de la otra.
+      expect(tenant.audit_log.length).toBe(0);
     }
   });
 });
@@ -394,7 +396,13 @@ describe("A10 · quien está en dos organizaciones no mezcla datos", () => {
           headers: tenantHeader(mine),
         });
         const rows = res.json as Row[];
-        expect(rows.length, `${spec.name} con ${mine}`).toBeGreaterThan(0);
+        // Mixta es Administradora en las dos: de las tablas que el Administrador no lee (p. ej. el registro de
+        // actividad, solo del Dueño) no debe ver ninguna fila, ni de la organización activa ni de la otra.
+        if (canReadRole(spec, "admin")) {
+          expect(rows.length, `${spec.name} con ${mine}`).toBeGreaterThan(0);
+        } else {
+          expect(rows.length, `${spec.name} con ${mine}`).toBe(0);
+        }
         expect(
           rows.every((r) => r.tenant_id === mine),
           spec.name,

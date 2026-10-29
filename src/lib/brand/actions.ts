@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
 import { serverLog } from "@/lib/log/server-log";
+import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import type { BrandSaveState } from "./form-state";
@@ -11,7 +12,6 @@ import { removeUploadedLogo, uploadCleanedLogo } from "./logo-storage";
 import { brandColorsSchema } from "./schemas";
 import { loadBrand, LOGO_BUCKET } from "./service";
 
-const NOT_ALLOWED_MESSAGE = "Solo el Dueño o un Administrador puede cambiar la marca.";
 const SAVE_FAILED_MESSAGE = "No pudimos guardar la marca. Intenta de nuevo en unos minutos.";
 
 function readText(formData: FormData, name: string): string {
@@ -34,9 +34,8 @@ export async function saveBrandAction(
     secondaryColor: readText(formData, "secondaryColor"),
   };
 
-  if (active.role !== "owner" && active.role !== "admin") {
-    return { status: "error", message: NOT_ALLOWED_MESSAGE, values };
-  }
+  const denied = requirePermission(active, "settings.manage");
+  if (denied) return { status: "error", message: denied, values };
 
   const parsed = brandColorsSchema.safeParse(values);
   if (!parsed.success) {

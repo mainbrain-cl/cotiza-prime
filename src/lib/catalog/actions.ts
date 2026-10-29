@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import type { FormState } from "@/lib/auth/form-state";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
 import { serverLog } from "@/lib/log/server-log";
+import { NO_PERMISSION_MESSAGE } from "@/lib/permissions/matrix";
+import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { createCatalogItemSchema } from "./schemas";
@@ -35,13 +37,8 @@ export async function createCatalogItemAction(
     taxTreatment: readText(formData, "taxTreatment"),
   };
 
-  if (active.role !== "owner" && active.role !== "admin") {
-    return {
-      status: "error",
-      message: "Solo el Dueño y los Administradores pueden agregar servicios al catálogo.",
-      values: raw,
-    };
-  }
+  const denied = requirePermission(active, "catalog.manage");
+  if (denied) return { status: "error", message: denied, values: raw };
 
   const parsed = createCatalogItemSchema.safeParse(raw);
   if (!parsed.success) {
@@ -60,7 +57,7 @@ export async function createCatalogItemAction(
     if (error.code === SQLSTATE_INSUFFICIENT_PRIVILEGE) {
       return {
         status: "error",
-        message: "No tienes permiso para agregar servicios en esta organización.",
+        message: NO_PERMISSION_MESSAGE,
         values: raw,
       };
     }
@@ -84,10 +81,6 @@ export async function createCatalogItemAction(
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NOT_FOUND_MESSAGE = "No encontramos este servicio. Puede que ya no exista en tu catálogo.";
 
-function canManageCatalog(role: string): boolean {
-  return role === "owner" || role === "admin";
-}
-
 /**
  * H-021: edita cualquier campo de un servicio. El servidor comprueba el rol y la base (RLS)
  * lo vuelve a comprobar. Un cambio de precio queda en la auditoría con el valor anterior y el nuevo.
@@ -108,13 +101,8 @@ export async function updateCatalogItemAction(
     taxTreatment: readText(formData, "taxTreatment"),
   };
 
-  if (!canManageCatalog(active.role)) {
-    return {
-      status: "error",
-      message: "Solo el Dueño y los Administradores pueden editar servicios del catálogo.",
-      values: raw,
-    };
-  }
+  const denied = requirePermission(active, "catalog.manage");
+  if (denied) return { status: "error", message: denied, values: raw };
   if (!UUID_PATTERN.test(itemId)) {
     return { status: "error", message: NOT_FOUND_MESSAGE, values: raw };
   }
@@ -140,7 +128,7 @@ export async function updateCatalogItemAction(
     if (error.code === SQLSTATE_INSUFFICIENT_PRIVILEGE) {
       return {
         status: "error",
-        message: "No tienes permiso para editar servicios en esta organización.",
+        message: NO_PERMISSION_MESSAGE,
         values: raw,
       };
     }
@@ -171,12 +159,8 @@ export async function setCatalogItemActiveAction(
 ): Promise<FormState> {
   const active = await requireActiveTenant(tenantId);
 
-  if (!canManageCatalog(active.role)) {
-    return {
-      status: "error",
-      message: "Solo el Dueño y los Administradores pueden activar o desactivar servicios.",
-    };
-  }
+  const denied = requirePermission(active, "catalog.manage");
+  if (denied) return { status: "error", message: denied };
   if (!UUID_PATTERN.test(itemId)) return { status: "error", message: NOT_FOUND_MESSAGE };
 
   const { data, error } = await active.supabase
@@ -187,7 +171,7 @@ export async function setCatalogItemActiveAction(
 
   if (error) {
     if (error.code === SQLSTATE_INSUFFICIENT_PRIVILEGE) {
-      return { status: "error", message: "No tienes permiso para cambiar este servicio." };
+      return { status: "error", message: NO_PERMISSION_MESSAGE };
     }
     await serverLog("error", "catalog_toggle_failed", { code: error.code });
     return {

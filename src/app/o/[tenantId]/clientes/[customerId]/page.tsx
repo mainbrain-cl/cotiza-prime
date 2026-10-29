@@ -9,13 +9,13 @@ import { formatRut } from "@/lib/chile/rut";
 import { getCustomer } from "@/lib/customers/queries";
 import { CUSTOMER_KINDS } from "@/lib/customers/schemas";
 import { formatDate } from "@/lib/format-date";
+import { can } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 
 export const metadata: Metadata = { title: "Cliente · Cotiza Prime" };
 
 const EMPTY = "Sin registrar";
-const WRITER_ROLES = ["owner", "admin", "sales"];
 
 export default async function CustomerDetailPage({
   params,
@@ -28,7 +28,7 @@ export default async function CustomerDetailPage({
   const query = await searchParams;
   const justCreated = query.creado === "1";
   const justEdited = query.editado === "1";
-  const canEdit = WRITER_ROLES.includes(active.role);
+  const canEdit = can(active.role, "customer.write");
   const listPath = tenantPath(active.tenantId, "clientes");
 
   return (

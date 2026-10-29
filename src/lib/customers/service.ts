@@ -1,6 +1,8 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { serverLog } from "@/lib/log/server-log";
+import { NO_PERMISSION_MESSAGE } from "@/lib/permissions/matrix";
+import { requirePermission } from "@/lib/permissions/require";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
 import { findDuplicates, type DuplicateMatch } from "./queries";
 import { buildCustomerInsertRow } from "./record";
@@ -8,8 +10,7 @@ import type { CustomerInput } from "./schemas";
 
 const SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
 
-export const CUSTOMER_WRITER_ROLES: readonly string[] = ["owner", "admin", "sales"];
-export const CUSTOMER_NO_PERMISSION = "Tu rol no permite registrar clientes.";
+export const CUSTOMER_NO_PERMISSION = NO_PERMISSION_MESSAGE;
 export const CUSTOMER_SAVE_FAILED =
   "No pudimos guardar el cliente. Intenta de nuevo en unos minutos.";
 
@@ -28,9 +29,8 @@ export async function createCustomer(
   input: CustomerInput,
   confirmDuplicate: boolean,
 ): Promise<CreateCustomerResult> {
-  if (!CUSTOMER_WRITER_ROLES.includes(active.role)) {
-    return { ok: false, reason: "forbidden", message: CUSTOMER_NO_PERMISSION };
-  }
+  const denied = requirePermission(active, "customer.write");
+  if (denied) return { ok: false, reason: "forbidden", message: denied };
   if (!confirmDuplicate) {
     const duplicates = await findDuplicates(active, input);
     if (duplicates.length > 0) return { ok: false, reason: "duplicates", duplicates };

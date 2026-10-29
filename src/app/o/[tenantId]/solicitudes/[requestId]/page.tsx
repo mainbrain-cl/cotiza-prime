@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
-import { ROLE_LABELS } from "@/components/app-shell/app-shell";
 import { RequestSummary } from "@/components/intake/request-summary";
 import { RequestActions } from "@/components/intake/request-actions";
 import { RequestStatusBadge } from "@/components/intake/request-status-badge";
@@ -16,6 +15,7 @@ import {
   timeSince,
 } from "@/lib/intake/requests-model";
 import { buildStoredRequestSummary } from "@/lib/intake/stored-summary";
+import { ROLE_LABELS } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 

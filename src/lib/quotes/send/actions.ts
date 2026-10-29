@@ -15,6 +15,7 @@ import type { EmailMessage, EmailTransport } from "@/lib/email/types";
 import { serverLog } from "@/lib/log/server-log";
 import { getAppOrigin } from "@/lib/http/request-context";
 import { normalizeEmail } from "@/lib/normalize/email";
+import { requirePermission } from "@/lib/permissions/require";
 import { quotePdfFileName } from "@/lib/pdf/file-name";
 import { loadQuoteDocumentData } from "@/lib/pdf/quote-document-data";
 import { renderQuotePdf } from "@/lib/pdf/render";
@@ -57,8 +58,6 @@ export type SendQuoteResult =
   | { status: "in_progress" }
   | { status: "error"; message: string; fieldErrors?: Record<string, string> };
 
-const WRITER_ROLES: readonly string[] = ["owner", "admin", "sales"];
-const RESEND_ROLES: readonly string[] = ["owner", "admin", "sales"];
 const SECONDS_PER_MINUTE = 60;
 
 const SQLSTATE_FORBIDDEN = "42501";
@@ -70,7 +69,6 @@ const SQLSTATE_LIMIT = "CP429";
 
 const MSG_NOT_FOUND = "No encontramos esta cotización.";
 const MSG_FORBIDDEN_SEND = "Solo quien creó esta cotización puede enviarla.";
-const MSG_ROLE = "Tu rol no permite enviar cotizaciones.";
 const MSG_NOT_DRAFT =
   "Esta cotización ya no está en borrador, así que no se puede enviar de nuevo.";
 const MSG_NO_EMAIL =
@@ -270,7 +268,8 @@ export async function sendQuoteAction(
   const startedAtMs = Date.now();
   const active = await requireActiveTenant(tenantId);
   if (!isUuid(quoteId)) return failure(MSG_NOT_FOUND);
-  if (!WRITER_ROLES.includes(active.role)) return failure(MSG_ROLE);
+  const denied = requirePermission(active, "quote.send");
+  if (denied) return failure(denied);
 
   // 1-2. Forma de lo que llegó y formato básico del texto.
   const parsed = sendQuoteInputSchema.safeParse(input);
@@ -547,7 +546,8 @@ export async function resendQuoteAction(
   const startedAtMs = Date.now();
   const active = await requireActiveTenant(tenantId);
   if (!isUuid(quoteId)) return failure(MSG_NOT_FOUND);
-  if (!RESEND_ROLES.includes(active.role)) return failure(MSG_ROLE);
+  const denied = requirePermission(active, "quote.resend");
+  if (denied) return failure(denied);
   const parsed = resendQuoteInputSchema.safeParse(input);
   if (!parsed.success) return failure(MSG_UNEXPECTED);
 
@@ -688,7 +688,8 @@ export async function revokeQuoteLinksAction(
 ): Promise<RevokeLinksResult> {
   const active = await requireActiveTenant(tenantId);
   if (!isUuid(quoteId)) return { status: "error", message: MSG_NOT_FOUND };
-  if (!WRITER_ROLES.includes(active.role)) return { status: "error", message: MSG_ROLE };
+  const denied = requirePermission(active, "quote.link.revoke");
+  if (denied) return { status: "error", message: denied };
   const detail = await getQuote(active, quoteId);
   if (detail === null) return { status: "error", message: MSG_NOT_FOUND };
   if (

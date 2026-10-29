@@ -58,14 +58,16 @@ test("el Dueño ve y filtra el registro; no se puede editar; otros roles y otras
     await memberPage.getByRole("button", { name: "Ingresar" }).click();
     await expect(memberPage).toHaveURL(new RegExp(`/o/${tenantId}$`));
 
-    // El Administrador ve el índice de configuración sin el registro, y la pantalla no existe para él
+    // El Administrador ve el índice de configuración sin el registro; la pantalla le dice que no tiene permiso
+    // (es miembro de la organización: «No encontrado» es solo para quien no lo es)
     await memberPage.goto(`/o/${tenantId}/configuracion`);
     await expect(
       memberPage.getByRole("heading", { name: "Configuración", level: 1 }),
     ).toBeVisible();
     await expect(memberPage.getByRole("link", { name: /Registro de actividad/ })).toHaveCount(0);
     await memberPage.goto(`/o/${tenantId}/configuracion/actividad`);
-    await expect(memberPage.getByRole("heading", { name: "No encontrado" })).toBeVisible();
+    await expect(memberPage.getByText("No tienes permiso para esto.")).toBeVisible();
+    await expect(memberPage.getByRole("heading", { name: "No encontrado" })).toHaveCount(0);
   } finally {
     await memberContext.close();
   }

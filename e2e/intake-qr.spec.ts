@@ -232,7 +232,7 @@ test("Ana descarga el QR en PNG y SVG; apunta a su formulario, sigue igual en pa
   await expect(carla.getByTestId("qr-section")).toHaveCount(0);
   for (const format of ["png", "svg"]) {
     const res = await carla.request.get(qrUrl(tenantId, formId, `format=${format}`));
-    expect(res.status()).toBe(404);
+    expect(res.status()).toBe(403);
     expect((await res.body()).length).toBe(0);
   }
   await carlaCtx.close();

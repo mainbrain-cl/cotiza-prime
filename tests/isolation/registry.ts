@@ -370,7 +370,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
   {
     name: "audit_log",
     visibility: "business",
-    rolesThatRead: ["owner", "admin"],
+    rolesThatRead: ["owner"],
     idColumn: "id",
     ownedByB: byTenantB,
     readColumns: "id,tenant_id,action,resource_type",

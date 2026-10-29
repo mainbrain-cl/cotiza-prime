@@ -8,25 +8,39 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+import { can, type PermissionAction } from "@/lib/permissions/matrix";
 
 export type NavItem = {
   /** Parte de la dirección después de `/o/{tenantId}`; vacío es el inicio. */
   segment: string;
   label: string;
   icon: LucideIcon;
+  /** Permiso que pide el destino: el menú solo lo muestra a quien lo tiene (el servidor igual lo exige). */
+  permission: PermissionAction;
 };
 
 export const NAV_ITEMS: readonly NavItem[] = [
-  { segment: "", label: "Inicio", icon: House },
-  { segment: "cotizaciones", label: "Cotizaciones", icon: FileText },
+  { segment: "", label: "Inicio", icon: House, permission: "org.view" },
+  { segment: "cotizaciones", label: "Cotizaciones", icon: FileText, permission: "org.view" },
   // Lo que piden por el formulario público (H-089). La insignia cuenta las que esperan a esta persona.
-  { segment: "solicitudes", label: "Solicitudes", icon: Inbox },
-  { segment: "clientes", label: "Clientes", icon: Users },
-  { segment: "catalogo", label: "Catálogo", icon: Tags },
-  // Todos los roles pueden ver los formularios; solo el Dueño y los Administradores los cambian.
-  { segment: "formularios", label: "Formularios", icon: ClipboardList },
-  { segment: "configuracion", label: "Configuración", icon: Settings },
+  { segment: "solicitudes", label: "Solicitudes", icon: Inbox, permission: "org.view" },
+  { segment: "clientes", label: "Clientes", icon: Users, permission: "org.view" },
+  { segment: "catalogo", label: "Catálogo", icon: Tags, permission: "org.view" },
+  // Todos los roles pueden ver los formularios; solo quienes manejan la organización los cambian.
+  { segment: "formularios", label: "Formularios", icon: ClipboardList, permission: "org.view" },
+  // «Configuración» solo la ven el Dueño y los Administradores (supuesto 12 del sprint 5).
+  {
+    segment: "configuracion",
+    label: "Configuración",
+    icon: Settings,
+    permission: "settings.manage",
+  },
 ] as const;
+
+/** Los destinos del menú que corresponden a este rol. */
+export function visibleNavItems(role: string): readonly NavItem[] {
+  return NAV_ITEMS.filter((item) => can(role, item.permission));
+}
 
 /** Los cuatro destinos de la barra inferior del teléfono: el resto va en "Más". */
 export const MOBILE_PRIMARY_SEGMENTS = ["", "cotizaciones", "clientes"] as const;

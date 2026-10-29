@@ -7,6 +7,8 @@ import { listCustomers, type DuplicateMatch } from "@/lib/customers/queries";
 import { customerSchema } from "@/lib/customers/schemas";
 import { createCustomer } from "@/lib/customers/service";
 import { serverLog } from "@/lib/log/server-log";
+import { NO_PERMISSION_MESSAGE } from "@/lib/permissions/matrix";
+import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant, type ActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { calculateQuote } from "./calc";
@@ -19,7 +21,6 @@ import { toCustomerChoices, type CustomerChoice } from "./customer-choice";
 import { calcIssueFieldErrors, toCalcInput, toSaveRpcArgs } from "./payload";
 import { payloadFieldErrors, saveQuotePayloadSchema } from "./schemas";
 
-const QUOTE_WRITER_ROLES: readonly string[] = ["owner", "admin", "sales"];
 const SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
 const SQLSTATE_NOT_FOUND = "CP404";
 const SQLSTATE_REVISION_CONFLICT = "CP409";
@@ -27,7 +28,7 @@ const SQLSTATE_INVALID = "CP422";
 const SQLSTATE_NOT_EDITABLE = "CP423";
 const SQLSTATE_CALC_MISMATCH = "CP500";
 
-const NO_PERMISSION_CREATE = "Tu rol no permite crear cotizaciones.";
+const NO_PERMISSION_CREATE = NO_PERMISSION_MESSAGE;
 const CREATE_FAILED = "No pudimos crear la cotización. Intenta de nuevo en unos minutos.";
 const CONFLICT_MESSAGE =
   "Esta cotización cambió en otra pestaña. Recarga para ver la última versión.";
@@ -111,9 +112,9 @@ export async function saveQuoteDraftAction(
   if (!isUuid(quoteId)) {
     return { status: "not_found", message: "No encontramos esta cotización." };
   }
-  if (!QUOTE_WRITER_ROLES.includes(active.role)) {
-    return { status: "forbidden", message: "Tu rol no permite editar cotizaciones." };
-  }
+  // Revisión gruesa (¿puede editar cotizaciones?); que sea SU borrador lo exige la base de datos.
+  const denied = requirePermission(active, "quote.edit");
+  if (denied) return { status: "forbidden", message: denied };
 
   const parsed = saveQuotePayloadSchema.safeParse(payload);
   if (!parsed.success) {
@@ -174,9 +175,6 @@ async function callCreateQuote(
   customerId: string,
   creationKey: string,
 ): Promise<CreateOutcome> {
-  if (!QUOTE_WRITER_ROLES.includes(active.role)) {
-    return { ok: false, message: NO_PERMISSION_CREATE };
-  }
   if (!isUuid(customerId) || !isUuid(creationKey)) {
     return { ok: false, message: CREATE_FAILED };
   }
@@ -216,6 +214,8 @@ export async function createQuoteAction(
   creationKey: string,
 ): Promise<CreateQuoteResult> {
   const active = await requireActiveTenant(tenantId);
+  const denied = requirePermission(active, "quote.create");
+  if (denied) return { status: "error", message: denied };
   const outcome = await callCreateQuote(active, customerId, creationKey);
   if (!outcome.ok) return { status: "error", message: outcome.message };
   redirect(tenantPath(active.tenantId, `cotizaciones/${outcome.quoteId}`));
@@ -246,9 +246,8 @@ export async function createCustomerAndQuoteAction(
 ): Promise<QuoteCustomerFormState> {
   const active = await requireActiveTenant(tenantId);
   const raw = Object.fromEntries(CUSTOMER_FIELDS.map((name) => [name, readText(formData, name)]));
-  if (!QUOTE_WRITER_ROLES.includes(active.role)) {
-    return { status: "error", message: NO_PERMISSION_CREATE, values: raw };
-  }
+  const denied = requirePermission(active, "quote.create");
+  if (denied) return { status: "error", message: denied, values: raw };
   // Reintento: el cliente ya se había creado y solo falló la cotización. No se crea otro cliente
   // (ni se avisa de un "duplicado" de sí mismo): solo se vuelve a pedir la cotización.
   const alreadyCreated = readText(formData, "createdCustomerId");
@@ -298,7 +297,7 @@ export async function searchQuoteCustomersAction(
   term: string,
 ): Promise<CustomerChoice[]> {
   const active = await requireActiveTenant(tenantId);
-  if (!QUOTE_WRITER_ROLES.includes(active.role)) return [];
+  if (requirePermission(active, "quote.create")) return [];
   const page = await listCustomers(active, {
     search: typeof term === "string" ? term.slice(0, QUOTABLE_SEARCH_MAX_LENGTH) : "",
     page: 1,
@@ -313,6 +312,6 @@ export async function searchQuoteCatalogAction(
   term: string,
 ): Promise<QuotableCatalogItem[]> {
   const active = await requireActiveTenant(tenantId);
-  if (!QUOTE_WRITER_ROLES.includes(active.role)) return [];
+  if (requirePermission(active, "quote.edit")) return [];
   return listQuotableCatalogItems(active, typeof term === "string" ? term : "");
 }

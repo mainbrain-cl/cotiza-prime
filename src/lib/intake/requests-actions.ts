@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { serverLog } from "@/lib/log/server-log";
+import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant, type ActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { notifyRequestAssigned } from "./assignment-notice";
@@ -25,6 +26,10 @@ export type RequestActionResult =
   { status: "ok"; message: string } | { status: "error"; kind: RequestErrorKind; message: string };
 
 const NOT_FOUND = { status: "error", kind: "not_found", message: REQUEST_NOT_FOUND } as const;
+
+function forbidden(message: string): RequestActionResult {
+  return { status: "error", kind: "forbidden", message };
+}
 
 function failure(
   error: { code?: string | null; message?: string | null },
@@ -51,6 +56,8 @@ export async function assignRequestAction(
   assigneeUserId: string,
 ): Promise<RequestActionResult> {
   const active = await requireActiveTenant(tenantId);
+  const denied = requirePermission(active, "intake.requests.assign");
+  if (denied) return forbidden(denied);
   if (!isUuid(requestId)) return NOT_FOUND;
   if (!isUuid(assigneeUserId)) {
     return { status: "error", kind: "invalid", message: "Elige a quién asignar la solicitud." };
@@ -92,6 +99,9 @@ export async function discardRequestAction(
   note: string,
 ): Promise<RequestActionResult> {
   const active = await requireActiveTenant(tenantId);
+  // Revisión gruesa por rol: que la solicitud sea suya (Comercial) lo exige la base de datos.
+  const denied = requirePermission(active, "intake.requests.discard");
+  if (denied) return forbidden(denied);
   if (!isUuid(requestId)) return NOT_FOUND;
   if (!isDiscardReason(reason)) {
     return { status: "error", kind: "invalid", message: "Elige el motivo para descartarla." };
@@ -120,6 +130,8 @@ export async function restoreRequestAction(
   requestId: string,
 ): Promise<RequestActionResult> {
   const active = await requireActiveTenant(tenantId);
+  const denied = requirePermission(active, "intake.requests.restore");
+  if (denied) return forbidden(denied);
   if (!isUuid(requestId)) return NOT_FOUND;
   const { error } = await active.supabase.rpc("restore_intake_request", {
     p_request_id: requestId,
@@ -136,6 +148,8 @@ export async function anonymizeRequestAction(
   reason: string,
 ): Promise<RequestActionResult> {
   const active = await requireActiveTenant(tenantId);
+  const denied = requirePermission(active, "intake.requests.anonymize");
+  if (denied) return forbidden(denied);
   if (!isUuid(requestId)) return NOT_FOUND;
   if (!isAnonymizeReason(reason)) {
     return {

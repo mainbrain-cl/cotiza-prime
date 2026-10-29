@@ -1,7 +1,6 @@
 import { ChevronLeft, ChevronRight, ScrollText } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FormAlert, Select } from "@/components/ui/form-controls";
@@ -12,13 +11,13 @@ import {
   resourceLabel,
 } from "@/lib/audit/labels";
 import {
-  canViewAuditLog,
   listAuditActors,
   listAuditEntries,
   sanitizeAuditFilters,
   type AuditEntry,
 } from "@/lib/audit/queries";
 import { formatDateTime } from "@/lib/format-date";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 
@@ -49,8 +48,9 @@ export default async function ActivityLogPage({
   searchParams,
 }: PageProps<"/o/[tenantId]/configuracion/actividad">) {
   const active = await requireActiveTenant((await params).tenantId);
-  // Solo el Dueño. Para el resto la pantalla no existe, igual que una dirección que no es suya.
-  if (!canViewAuditLog(active.role)) notFound();
+  // Solo el Dueño (supuesto 13); antes de leer cualquier dato.
+  const denied = pagePermission(active, "audit.read");
+  if (denied) return denied;
 
   const query = await searchParams;
   const filters = sanitizeAuditFilters({

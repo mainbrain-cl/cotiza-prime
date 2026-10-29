@@ -20,6 +20,7 @@ export default async function TenantLayout({ children, params }: LayoutProps<"/o
   return (
     <AppShell
       activeTenantId={active.tenantId}
+      role={active.role}
       memberships={memberships}
       userName={(profile?.full_name as string | undefined) ?? active.user.email}
       badges={requestBadge ? { solicitudes: requestBadge } : {}}

@@ -5,21 +5,21 @@ import { notFound } from "next/navigation";
 import { FormAlert } from "@/components/ui/form-controls";
 import { formatRut } from "@/lib/chile/rut";
 import { getCustomer } from "@/lib/customers/queries";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { CustomerForm } from "../../customer-form";
 
 export const metadata: Metadata = { title: "Editar cliente · Cotiza Prime" };
 
-const WRITER_ROLES = ["owner", "admin", "sales"];
-
 export default async function EditCustomerPage({
   params,
 }: PageProps<"/o/[tenantId]/clientes/[customerId]/editar">) {
   const { tenantId, customerId } = await params;
   const active = await requireActiveTenant(tenantId);
-  // Quien solo puede mirar no tiene nada que hacer aquí.
-  if (!WRITER_ROLES.includes(active.role)) notFound();
+  // Quien solo puede mirar no tiene nada que hacer aquí; antes de leer al cliente.
+  const denied = pagePermission(active, "customer.write");
+  if (denied) return denied;
   const customer = await getCustomer(active, customerId);
   if (customer === null) notFound();
   const detailPath = tenantPath(active.tenantId, `clientes/${customerId}`);

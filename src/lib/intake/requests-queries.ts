@@ -1,9 +1,9 @@
 import "server-only";
 import { decryptPii } from "@/lib/crypto/pii";
+import { ASSIGNABLE_ROLES, can, canEver } from "@/lib/permissions/matrix";
 import type { ActiveTenant, MemberRole } from "@/lib/tenant/active-tenant";
 import { isUuid } from "@/lib/tenant/constants";
 import {
-  ASSIGNABLE_ROLES,
   REQUEST_LIST_LIMIT,
   isStale,
   parseRequestItems,
@@ -298,9 +298,9 @@ export async function loadAssignableMembers(
  */
 export async function loadRequestBadge(active: ActiveTenant): Promise<number | null> {
   let query = active.supabase.from("intake_requests").select("id", { count: "exact", head: true });
-  if (active.role === "owner" || active.role === "admin") {
+  if (can(active.role, "intake.requests.assign")) {
     query = query.eq("status", "new");
-  } else if (active.role === "sales") {
+  } else if (canEver(active.role, "intake.requests.convert")) {
     query = query.eq("status", "assigned").eq("assigned_to", active.userId);
   } else {
     return null;

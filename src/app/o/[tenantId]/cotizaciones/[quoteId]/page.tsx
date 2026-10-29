@@ -27,6 +27,7 @@ import { getQuote } from "@/lib/quotes/queries";
 import { getQuoteResponse } from "@/lib/quotes/response";
 import { listQuoteTimeline } from "@/lib/quotes/timeline";
 import { editorValidity } from "@/lib/quotes/editor-model";
+import { can, canEver } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,6 @@ import { RevokeLinkButton } from "./revoke-link-button";
 export const metadata: Metadata = { title: "Cotización · Cotiza Prime" };
 
 const DEFAULT_VALIDITY_DAYS_FALLBACK = 15;
-const WRITER_ROLES = ["owner", "admin", "sales"];
 const RESENDABLE_STATUSES = ["sent", "viewed"];
 
 export default async function QuotePage({
@@ -62,13 +62,13 @@ export default async function QuotePage({
 
   const isAuthor = quote.created_by === active.userId;
   const statusAllowsEdit = EDITABLE_STATUSES.includes(quote.status);
-  const editable = WRITER_ROLES.includes(active.role) && isAuthor && statusAllowsEdit;
+  const editable = can(active.role, "quote.edit", { isOwn: isAuthor }) && statusAllowsEdit;
   const listPath = tenantPath(active.tenantId, "cotizaciones");
   const sendPath = tenantPath(active.tenantId, `cotizaciones/${quote.id}/enviar`);
   // Reenvía el autor, el Dueño o un Administrador (la base lo vuelve a verificar).
   const canResend =
     RESENDABLE_STATUSES.includes(quote.status) &&
-    ((WRITER_ROLES.includes(active.role) && isAuthor) || ["owner", "admin"].includes(active.role));
+    can(active.role, "quote.resend", { isOwn: isAuthor });
   const timeline = await listQuoteTimeline(active, quote.id);
   const customerResponse = await getQuoteResponse(active, quote.id);
   // Entrega del último correo (H-033) y enlace del cliente (H-035): solo si la cotización ya salió.
@@ -87,7 +87,7 @@ export default async function QuotePage({
   let readOnlyReason: string | null = null;
   if (!editable) {
     if (!statusAllowsEdit) readOnlyReason = "Esta cotización ya no se puede editar.";
-    else if (!WRITER_ROLES.includes(active.role)) {
+    else if (!canEver(active.role, "quote.edit")) {
       readOnlyReason = "Tu rol solo permite ver las cotizaciones.";
     } else readOnlyReason = `Solo ${authorName} puede editar este borrador. Tú puedes verlo.`;
   }

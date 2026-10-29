@@ -11,6 +11,7 @@ import { formatQuoteNumber } from "@/lib/quotes/format";
 import { getQuote } from "@/lib/quotes/queries";
 import { defaultEmailBody, defaultEmailSubject } from "@/lib/quotes/send/content";
 import { loadSendContext } from "@/lib/quotes/send/context";
+import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
@@ -22,13 +23,14 @@ export const metadata: Metadata = { title: "Enviar cotización · Cotiza Prime" 
 // SEND_PAGE_MAX_DURATION_SECONDS y que, más un margen, quede bajo el candado de envío de la base.
 export const maxDuration = 60;
 
-const WRITER_ROLES = ["owner", "admin", "sales"];
-
 export default async function SendQuotePage({
   params,
 }: PageProps<"/o/[tenantId]/cotizaciones/[quoteId]/enviar">) {
   const { tenantId, quoteId } = await params;
   const active = await requireActiveTenant(tenantId);
+  // Antes de leer el paquete: quien no puede enviar cotizaciones no ve nada de esta pantalla.
+  const denied = pagePermission(active, "quote.send");
+  if (denied) return denied;
   const detail = await getQuote(active, quoteId);
   if (detail === null) notFound();
   const { quote, items, authorName } = detail;
@@ -46,8 +48,7 @@ export default async function SendQuotePage({
 
   // Lo que impide enviar, dicho con claridad (la acción de enviar lo vuelve a verificar).
   let blocker: string | null = null;
-  if (!WRITER_ROLES.includes(active.role)) blocker = "Tu rol no permite enviar cotizaciones.";
-  else if (quote.created_by !== active.userId) {
+  if (quote.created_by !== active.userId) {
     blocker = `Solo ${authorName} puede enviar este borrador. Tú puedes verlo.`;
   } else if (items.length === 0) {
     blocker = "Agrega al menos una línea a la cotización antes de enviarla.";

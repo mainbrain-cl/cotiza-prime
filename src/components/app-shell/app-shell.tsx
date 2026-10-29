@@ -6,21 +6,14 @@ import { Dock, DockItem } from "@/components/react-bits/dock";
 import { signOutAction } from "@/lib/auth/actions";
 import { logoUrl } from "@/lib/brand/logo";
 import { APP_ENV, isTestEnv } from "@/lib/env/app-env";
-import type { MemberRole, Membership } from "@/lib/tenant/active-tenant";
+import { ROLE_LABELS, type MemberRole } from "@/lib/permissions/matrix";
+import type { Membership } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { MobileNav } from "./mobile-nav";
 import type { NavBadges } from "./nav-items";
 import { PageTransition } from "./page-transition";
 import { SidebarNav } from "./sidebar-nav";
 import { TenantSwitcher } from "./tenant-switcher";
-
-export const ROLE_LABELS: Record<MemberRole, string> = {
-  owner: "Dueño",
-  admin: "Administrador",
-  approver: "Aprobador",
-  sales: "Comercial",
-  viewer: "Observador",
-};
 
 /**
  * Estructura de la aplicación (docs/DISENO.md, "Disposición"):
@@ -30,12 +23,15 @@ export const ROLE_LABELS: Record<MemberRole, string> = {
  */
 export function AppShell({
   activeTenantId,
+  role,
   memberships,
   userName,
   badges = {},
   children,
 }: {
   activeTenantId: string;
+  /** Rol de la persona en la organización activa: decide qué destinos del menú ve. */
+  role: MemberRole;
   memberships: Membership[];
   userName: string;
   /** Cuántas cosas esperan a la persona en cada destino del menú (hoy, solicitudes). */
@@ -71,7 +67,7 @@ export function AppShell({
         <Dock className="flex size-full flex-col items-center gap-4 rounded-xl p-2 glass">
           <BrandMark compact />
           <TenantSwitcher activeTenantId={activeTenantId} tenants={switcherTenants} collapsed />
-          <SidebarNav basePath={basePath} badges={badges} />
+          <SidebarNav basePath={basePath} role={role} badges={badges} />
           <div className="mt-auto flex flex-col items-center gap-2 border-t border-border pt-3">
             <form action={signOutAction}>
               <DockItem
@@ -95,7 +91,7 @@ export function AppShell({
         <LegalFooter className="pb-[calc(env(safe-area-inset-bottom)+5.5rem)] md:pb-3" />
       </div>
 
-      <MobileNav basePath={basePath} badges={badges} />
+      <MobileNav basePath={basePath} role={role} badges={badges} />
     </div>
   );
 }

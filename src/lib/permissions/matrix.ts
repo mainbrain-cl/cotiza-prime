@@ -8,7 +8,7 @@
  * que las dos respondan lo mismo para cada acción y cada rol. Cambiar esta tabla obliga a cambiar la
  * migración y la prueba de `matrix.test.ts`, a propósito.
  *
- * Una guardia (`src/lib/permissions/role-literals.test.ts`) falla si el nombre de un rol aparece
+ * Una guardia (`src/lib/permissions/guards.test.ts`) falla si el nombre de un rol aparece
  * escrito fuera de esta carpeta: nadie vuelve a copiar listas de roles en una pantalla.
  *
  * Dos formas de permiso por acción:

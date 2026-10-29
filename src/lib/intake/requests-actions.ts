@@ -17,9 +17,11 @@ import {
 import { DISCARD_NOTE_MAX, isAnonymizeReason, isDiscardReason } from "./requests-model";
 
 /**
- * Acciones del equipo sobre una solicitud (H-089). El permiso lo decide la base de datos en cada
- * función (42501); aquí solo se valida la forma de lo recibido y se traduce el error. Nada de lo que
- * escribió el visitante pasa por aquí ni se escribe en el registro.
+ * Acciones del equipo sobre una solicitud (H-089). El permiso por rol se revisa aquí con
+ * `requirePermission` (matriz única, H-011a) ANTES de tocar la base; la base lo vuelve a exigir en cada
+ * función (42501), incluido el detalle «¿es suya?» del Comercial. Además se valida la forma de lo
+ * recibido y se traduce el error. Nada de lo que escribió el visitante pasa por aquí ni se escribe en
+ * el registro.
  */
 
 export type RequestActionResult =

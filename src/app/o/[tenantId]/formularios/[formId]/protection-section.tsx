@@ -39,37 +39,42 @@ export async function ProtectionSection({
   dataPromise,
   tenantId,
   formId,
+  dailyCap,
   archived,
 }: {
   dataPromise: Promise<ProtectionData>;
   tenantId: string;
   formId: string;
+  /** Tope diario leído junto con el formulario: se muestra aunque fallen los contadores. */
+  dailyCap: number;
   archived: boolean;
 }) {
   const data = await dataPromise;
+  if (!data.ok && data.reason === "forbidden") return null;
+  const capControl = (
+    <DailyCapControl
+      tenantId={tenantId}
+      formId={formId}
+      initialCap={dailyCap}
+      editable={!archived}
+    />
+  );
   if (!data.ok) {
-    if (data.reason === "forbidden") return null;
+    // Los contadores fallaron, pero el tope no depende de ellos: el error se muestra aparte y el campo sigue.
     return (
       <ProtectionShell description="Cuántos envíos llegaron y cuántos se bloquearon.">
         <ProtectionError />
+        {capControl}
       </ProtectionShell>
     );
   }
-  const cap = data.caps.get(formId);
   return (
     <ProtectionShell description="Cuántos envíos llegaron y cuántos se bloquearon en este formulario. Son solo cuentas: no muestran quién intentó enviar.">
       <ProtectionCounters
         summary={summaryOfForm(data, formId)}
         emptyText="Todavía no hay movimiento: en los últimos 30 días no llegó ni se bloqueó ningún envío."
       />
-      {cap === undefined ? null : (
-        <DailyCapControl
-          tenantId={tenantId}
-          formId={formId}
-          initialCap={cap}
-          editable={!archived}
-        />
-      )}
+      {capControl}
       <ProtectionExplainer />
     </ProtectionShell>
   );

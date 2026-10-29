@@ -25,6 +25,12 @@ export default async function IntakeFormEditorPage({
   const active = await requireActiveTenant(tenantId);
   if (!isFormId(formId)) notFound();
 
+  // Los contadores (Dueño y Administrador; para los demás ni se consulta) parten junto con la lectura del formulario,
+  // no después de las otras: así el aviso de tope llega con la página y no la empuja al aparecer. Una sola lectura
+  // que usan el aviso y el panel, cada uno dentro de su <Suspense>.
+  const protection = loadProtection(active);
+  // Si el formulario no existe nadie espera esta promesa: que un fallo suyo no quede sin atender.
+  protection.catch(() => undefined);
   const result = await loadForm(active, formId);
   if (!result.ok && result.reason === "not_found") notFound();
   if (!result.ok) {
@@ -73,9 +79,6 @@ export default async function IntakeFormEditorPage({
     }
   }
 
-  // Una sola lectura de los contadores (Dueño y Administrador; para los demás ni se consulta) que usan el aviso
-  // de tope y el panel, cada uno dentro de su <Suspense>.
-  const protection = loadProtection(active);
   const listPath = tenantPath(active.tenantId, "formularios");
   return (
     <div className="flex flex-col gap-6">
@@ -125,6 +128,7 @@ export default async function IntakeFormEditorPage({
                 dataPromise={protection}
                 tenantId={active.tenantId}
                 formId={loaded.id}
+                dailyCap={loaded.dailyCap}
                 archived={loaded.status === "archived"}
               />
             </Suspense>

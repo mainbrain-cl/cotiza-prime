@@ -46,6 +46,16 @@ describe("ProtectionCounters (H-092)", () => {
     expect(markup).toContain(">7</span> bloqueados");
     expect(markup).not.toMatch(/@|form_id|11111111/);
   });
+
+  it("las cifras de miles llevan punto (1.500), no 1500", () => {
+    const big: CounterRow = { ...ROW, accepted: 1500, blocked_captcha: 1200, blocked_invalid: 300 };
+    const markup = renderToStaticMarkup(
+      <ProtectionCounters summary={summarize([big], NOW)} emptyText="vacío" />,
+    );
+    expect(markup).toMatch(/protection-today-accepted"[^>]*>1\.500</);
+    expect(markup).toMatch(/protection-today-blocked"[^>]*>1\.501</);
+    expect(markup).not.toContain(">1500<");
+  });
 });
 
 describe("estados de la protección", () => {

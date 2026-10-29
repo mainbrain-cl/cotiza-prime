@@ -670,3 +670,18 @@ graves y con 6 menores (los m8 y m10 se corrigieron en el PR #6; ver más abajo)
   Probado en la 10f con casos que deben fallar y casos reales del código que deben pasar.
 - **m10:** `chileDay` y `addDays` se quitaron de `protection-model.ts`; usa `todayInChile` y `addDaysIso` de
   `src/lib/quotes/validity.ts`. Las pruebas del cambio de día a medianoche de Chile se mantienen apuntando a esas.
+
+**Hecho después (2026-10-28, rama `fix/h-092-menores-revision`, sin migración; revisión independiente)**
+
+- **Tope visible al subirlo (escritorio ≥ 1.280 px):** la columna derecha del editor (fija) tiene altura máxima y se
+  desplaza por dentro, así el salto de «Subir el tope» deja `#tope-diario` a la vista. La e2e mira `toBeInViewport`.
+  *Sin correr en pantalla: falta la e2e.*
+- **El campo del tope ya no desaparece si fallan los contadores:** `loadForm` lee `daily_cap` y la sección muestra el
+  control del tope junto al error de los contadores. *La e2e queda sin correr.*
+- **Guardia 10e/10f más estricta:** el nombre del evento de `serverLog` también se revisa (solo `logName` y `action`
+  como nombres sueltos); un error entero o su mensaje (`String(error)`, `error.message`, `cause.message`, `err`) ya no
+  pasa: solo `x instanceof IntakeGatewayError ? x.message` y `codeOf(x)`. Se deja anotado que las terminaciones `code`,
+  `reason` y `status` se dan por confiables. Guardia 10i nueva: `console` no se usa en el ámbito público (solo
+  `server-log.ts`) y toda definición de `codeOf` solo devuelve el mensaje de un `IntakeGatewayError`.
+- **Cifras del panel con punto de miles** (`1.500`).
+- **Aviso de tope sin saltos:** `loadProtection` parte junto con `loadForm`, antes de las demás lecturas.

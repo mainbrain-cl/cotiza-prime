@@ -11,6 +11,9 @@ import {
  * nombre, un correo, una dirección de conexión ni el identificador público de un formulario.
  */
 
+/** Cifras con punto de miles (`1.500`), como pide PROYECTO.md §0. */
+const countFormat = new Intl.NumberFormat("es-CL");
+
 const PERIODS: readonly { id: "today" | "last7" | "last30"; label: string }[] = [
   { id: "today", label: "Hoy" },
   { id: "last7", label: "Últimos 7 días" },
@@ -27,7 +30,7 @@ function Stats({ period, totals }: { period: string; totals: CounterTotals }) {
             data-testid={`protection-${period}-${counter.key}`}
             className="text-lg font-semibold text-fg tabular-nums"
           >
-            {totals[counter.key]}
+            {countFormat.format(totals[counter.key])}
           </dd>
         </div>
       ))}
@@ -67,7 +70,7 @@ export function ProtectionCounters({
             <span className="font-normal text-fg-muted">
               ·{" "}
               <span data-testid={`protection-${period.id}-blocked`}>
-                {summary[period.id].blockedTotal}
+                {countFormat.format(summary[period.id].blockedTotal)}
               </span>{" "}
               {summary[period.id].blockedTotal === 1 ? "bloqueado" : "bloqueados"}
             </span>

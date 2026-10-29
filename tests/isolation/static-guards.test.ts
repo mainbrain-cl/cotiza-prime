@@ -71,25 +71,40 @@ const INTAKE_LOG_KEYS = new Set([
   "limit",
 ]);
 
-/** Cómo puede terminar una ruta que se registra (`error.code`, `registration.reason`, `lista.length`…): solo códigos y cuentas. */
+/**
+ * Cómo puede terminar una ruta que se registra (`error.code`, `registration.reason`, `lista.length`…): solo códigos y
+ * cuentas. SUPUESTO CONFIABLE: las terminaciones `code`, `reason` y `status` se dan por buenas, es decir, se confía en
+ * que lo que guardan esos campos es un código de error o un estado y no un dato de una persona. Esta guardia no lo
+ * puede comprobar: si algún día `reason` o `status` pasan a llevar texto libre, hay que quitarlos de aquí.
+ */
 const INTAKE_LOG_VALUE_TAILS = new Set(["code", "reason", "status", "length", "limited"]);
-/** Nombres sueltos permitidos en un valor: códigos ya calculados, el error propio y las constantes de límite. */
+/**
+ * Nombres sueltos permitidos en un valor: códigos ya calculados y las constantes de límite. Un error entero
+ * (`error`, `cause`, `err`) NO está: `String(error)` o `error.message` pueden traer datos de una persona. Lo único que se
+ * acepta de un error es lo que `vettedLogParts` retira (`x instanceof IntakeGatewayError ? x.message`, que solo trae
+ * un código, y `codeOf(x)`).
+ */
 const INTAKE_LOG_VALUE_NAMES = new Set([
   "code",
   "failureCode",
-  "codeOf",
-  "String",
-  "cause",
-  "error",
-  "err",
-  "IntakeGatewayError",
-  "instanceof",
   "MAX_NOTICE_RECIPIENTS",
   "null",
   "undefined",
   "true",
   "false",
 ]);
+/** Nombres sueltos permitidos en el NOMBRE del evento: el texto ya armado por la función que registra y la acción. */
+const INTAKE_LOG_EVENT_NAMES = new Set(["logName", "action"]);
+
+/**
+ * Retira de un valor lo único que se acepta de un error: el mensaje de un `IntakeGatewayError` (solo trae un código)
+ * y la llamada al ayudante `codeOf(x)` (su definición la vigila la guardia 10i). Todo lo demás de un error queda.
+ */
+function vettedLogParts(value: string): string {
+  return value
+    .replace(/\b([A-Za-z_]\w*)\s+instanceof\s+IntakeGatewayError\s*\?\s*\1\.message\b/g, "")
+    .replace(/\bcodeOf\(\s*[A-Za-z_]\w*\s*(?:,\s*"[^"]*"\s*)?\)/g, "");
+}
 
 /** Los pares `clave: valor` de un objeto escrito en la llamada (`{ code }` vale como `code: code`). */
 function logObjectEntries(object: string): { key: string; value: string }[] {
@@ -128,9 +143,12 @@ function logObjectEntries(object: string): { key: string; value: string }[] {
  * rutas que terminan en un código, un motivo, un estado o una cuenta: `{ code: row.contact_email_enc }` no pasa
  * aunque la clave sea `code`.
  */
-function intakeLogValueProblem(value: string): string | null {
+function intakeLogValueProblem(
+  value: string,
+  extraNames: ReadonlySet<string> = new Set(),
+): string | null {
   // De un texto con `${…}` solo importan las expresiones de adentro.
-  const expressions = value.replace(
+  const expressions = vettedLogParts(value).replace(
     /`([^`]*)`/g,
     (_, inner: string) => ` ${[...inner.matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1]).join(" ")} `,
   );
@@ -139,10 +157,10 @@ function intakeLogValueProblem(value: string): string | null {
     const parts = route.split(/\??\./);
     const last = parts[parts.length - 1];
     if (parts.length === 1) {
-      if (!INTAKE_LOG_VALUE_NAMES.has(last)) return `valor no permitido (${route})`;
+      if (!INTAKE_LOG_VALUE_NAMES.has(last) && !extraNames.has(last)) {
+        return `valor no permitido (${route})`;
+      }
     } else if (INTAKE_LOG_VALUE_TAILS.has(last)) {
-      continue;
-    } else if (last === "message" && ["cause", "error", "err"].includes(parts[0])) {
       continue;
     } else {
       return `valor no permitido (${route})`;
@@ -156,14 +174,17 @@ function intakeLogValueProblem(value: string): string | null {
  * escrito ahí mismo, con claves de una lista corta, y sin nombres de datos personales en los valores.
  */
 function intakeLogProblem(call: string): string | null {
-  // Se ignoran los textos y el `.message` de un error propio (solo trae un código, nunca datos).
-  const code = call.replace(/"[^"]*"/g, '""').replace(/\b(cause|error|err)\.message\b/g, "");
+  // Se ignoran los textos y lo único aceptado de un error (`vettedLogParts`: solo trae un código, nunca datos).
+  const code = vettedLogParts(call).replace(/"[^"]*"/g, '""');
   if (INTAKE_LOG_FORBIDDEN.test(code)) return "nombra un dato personal";
   const shape = call.match(
-    /^serverLog\(\s*"[^"]*"\s*,\s*(?:"[^"]*"|`[^`]*`|[A-Za-z_]\w*)\s*(?:,\s*(\{[\s\S]*\}))?\s*\)$/,
+    /^serverLog\(\s*"[^"]*"\s*,\s*("[^"]*"|`[^`]*`|[A-Za-z_]\w*)\s*(?:,\s*(\{[\s\S]*\}))?\s*\)$/,
   );
   if (!shape) return "los datos no son un objeto escrito en la misma llamada";
-  const object = shape[1];
+  // El NOMBRE del evento también puede colar un dato (`intake_${row.contact_email_enc}`): se revisa igual que un valor.
+  const eventProblem = intakeLogValueProblem(shape[1], INTAKE_LOG_EVENT_NAMES);
+  if (eventProblem) return `${eventProblem} en el nombre del evento`;
+  const object = shape[2];
   if (object === undefined) return null;
   const flat = object.replace(/"[^"]*"|`[^`]*`/g, '""');
   if (/\.\.\./.test(flat)) return "esparce un objeto armado afuera";
@@ -581,15 +602,33 @@ describe("guardias estáticas del aislamiento", () => {
       'serverLog("warn", "x", { code: `x_${row.contact_email_enc}` })',
       'serverLog("warn", "x", { count: items })',
       'serverLog("warn", "x", { reason: input.value, code: "ok" })',
+      // el NOMBRE del evento también cuenta: no puede llevar un dato guardado ni uno del visitante
+      'serverLog("warn", `intake_${row.contact_email_enc}`)',
+      'serverLog("warn", `intake_${input.contactPhone}_failed`)',
+      'serverLog("warn", contactEmailEnc)',
+      'serverLog("warn", `intake_${row}`, { code: "x" })',
+      // un error entero o su mensaje, sea cual sea su origen, no es un código
+      'serverLog("warn", "x", { code: String(error) })',
+      'serverLog("warn", "x", { code: String(cause) })',
+      'serverLog("warn", "x", { code: error.message })',
+      'serverLog("warn", "x", { code: cause.message })',
+      'serverLog("warn", "x", { code: err })',
+      // `.message` solo vale dentro de `x instanceof IntakeGatewayError ? x.message`: la otra rama no
+      'serverLog("warn", "x", { code: cause instanceof IntakeGatewayError ? cause.message : error.message })',
+      'serverLog("warn", "x", { code: other instanceof IntakeGatewayError ? cause.message : "x" })',
     ];
     for (const violation of violations) {
       const [call] = serverLogCalls(violation);
       expect(intakeLogProblem(call), violation).not.toBeNull();
     }
     const fine = [
-      'serverLog("warn", "x", { code: String(cause) })',
       'serverLog("error", "intake_form_save_bad_response")',
       'serverLog("warn", `intake_request_${action}_failed`, { code: error.code ?? "unknown" })',
+      'serverLog("error", logName, { code: error.code ?? "unknown" })',
+      'serverLog("warn", "x", { code: codeOf(cause) })',
+      'serverLog("warn", "x", { code: readError.code })',
+      'serverLog("warn", "x", { status: saved.status })',
+      'serverLog("warn", "x", { reason: `antibot_${verdict.reason}` })',
       'serverLog("warn", "x", { reason: "honeypot" })',
       'serverLog("warn", "x", { count: recipients.length })',
       'serverLog("warn", "x", { code })',
@@ -603,6 +642,33 @@ describe("guardias estáticas del aislamiento", () => {
     for (const ok of fine) expect(intakeLogProblem(serverLogCalls(ok)[0]), ok).toBeNull();
     const balanced = 'serverLog("warn", "x", { code: String(cause) }); const other = (1)';
     expect(serverLogCalls(balanced)[0]).toBe('serverLog("warn", "x", { code: String(cause) })');
+  });
+
+  it("10i. (H-092) en lo público solo server-log.ts escribe en la consola, y `codeOf` solo devuelve un código", () => {
+    const scoped = sourceFiles.filter((f) => INTAKE_LOG_SCOPE.test(rel(f)));
+    // Nada de `console` (ni alias) en la superficie pública: todo registro pasa por `serverLog`, que es lo que vigila la 10e.
+    const consoleUsers = scoped.filter((f) => /\bconsole\b/.test(stripComments(read(f)))).map(rel);
+    expect(consoleUsers).toEqual([]);
+    // La guardia no es vacía: `server-log.ts` (fuera de esas carpetas) es quien sí escribe.
+    expect(stripComments(read(path.join(SRC, "lib", "log", "server-log.ts")))).toMatch(
+      /\bconsole\./,
+    );
+    // `codeOf(x)` se acepta en un registro porque su definición solo devuelve el mensaje de un `IntakeGatewayError`
+    // (un código) o textos fijos; ninguna otra rama puede traer `.message` ni `String(`.
+    const definitions = scoped.flatMap((file) =>
+      [...stripComments(read(file)).matchAll(/const codeOf = ([\s\S]*?);\n/g)].map((m) => ({
+        file: rel(file),
+        body: m[1],
+      })),
+    );
+    expect(definitions.length).toBeGreaterThan(0);
+    for (const { file, body } of definitions) {
+      expect(body, file).toMatch(/(\w+) instanceof IntakeGatewayError\s*\?\s*\1\.message/);
+      const rest = body.replace(/(\w+) instanceof IntakeGatewayError\s*\?\s*\1\.message/, "");
+      expect(rest, file).not.toMatch(/\.message|String\(|JSON|toString/);
+    }
+    // y la regla de 10e no acepta `codeOf` como nombre suelto
+    expect(intakeLogProblem('serverLog("warn", "x", { code: codeOf })')).not.toBeNull();
   });
 
   it("7. la guardia detecta de verdad: el texto de una violación sí coincide con las reglas", () => {

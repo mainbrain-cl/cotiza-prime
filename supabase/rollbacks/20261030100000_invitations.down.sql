@@ -4,7 +4,7 @@
 do $$
 begin
   if exists (select 1 from public.invitations)
-     or exists (select 1 from public.email_messages where kind = 'invitation') then
+     or exists (select 1 from public.email_messages where kind in ('invitation', 'invitation_notice')) then
     raise exception 'no se puede deshacer: hay invitaciones o correos de invitacion';
   end if;
 end $$;
@@ -17,6 +17,9 @@ begin
   end if;
 end $$;
 drop function if exists app.purge_invitations();
+drop function if exists public.invitation_notice_register(uuid, uuid, uuid, text, text);
+drop function if exists public.invitation_notice_recipients(uuid);
+drop function if exists app.invitation_owner_notice_due(uuid);
 drop function if exists public.invitation_email_settle(uuid, text, text, text);
 drop function if exists public.revoke_invitation(uuid);
 drop function if exists public.resend_invitation(uuid, text, text, uuid, text);
@@ -26,6 +29,7 @@ drop function if exists public.create_invitation(uuid, text, text, text, text, t
 -- todos los miembros de la organización.
 alter policy email_messages_select on public.email_messages
   using (tenant_id = (select app.current_tenant_id()));
+drop index if exists public.email_messages_one_invitation_notice;
 drop index if exists public.email_messages_invitation;
 alter table public.email_messages drop constraint email_messages_target_shape;
 alter table public.email_messages
@@ -107,6 +111,7 @@ end $$;
 
 -- La tabla y lo que la acompaña
 drop table public.invitations;
+drop function if exists app.audit_invitation_change();
 drop domain app.invitation_role;
 drop function if exists app.invitation_binding(text, text);
 drop function if exists app.normalize_email(text);

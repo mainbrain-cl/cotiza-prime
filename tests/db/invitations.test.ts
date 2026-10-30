@@ -332,7 +332,7 @@ describe("ya es miembro / ya hay una invitación", () => {
       const { result } = await invite(w.owner, { email: rows[0].email });
       expect(result.result).toBe("created");
       expect(Object.keys(result).sort()).toEqual(
-        ["email_message_id", "expires_at", "invitation_id", "result"].sort(),
+        ["email_message_id", "expires_at", "invitation_id", "notify_owner", "result"].sort(),
       );
     });
   });
@@ -624,6 +624,45 @@ describe("reenviar", () => {
     });
   });
 
+  it("reenviar una invitación VENCIDA cuenta para el tope de 50 pendientes, como invitar (M1)", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.owner, { email: "vencida-tope@ejemplo.test" });
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.invitations set expires_at = now() - interval '2 days' where id = $1",
+        [p.id],
+      );
+      await backdateSend(p.id);
+      await seedInvitations(w.tenantA, w.admin, 25, { createdAgo: "3 days" });
+      await seedInvitations(w.tenantA, w.approver, 25, { createdAgo: "3 days" });
+      const error = await denied(w.owner, w.tenantA, RESEND, resendArgs(p.id).params);
+      expect(error.code).toBe(LIMIT);
+      expect(error.message).toContain("limit_pending");
+      expect((await row(p.id)).send_count).toBe(1);
+      // Con un cupo libre (49 vigentes) sí se puede.
+      await actAsPostgres(setup);
+      await setup.query(
+        "delete from public.invitations where id = (select id from public.invitations where tenant_id = $1 and invited_by = $2 limit 1)",
+        [w.tenantA, w.admin.id],
+      );
+      expect((await call(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).result).toBe(
+        "resent",
+      );
+    });
+  });
+
+  it("reenviar una invitación VIGENTE no se mira contra el tope de pendientes (ya cuenta como una de ellas)", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.owner, { email: "vigente-tope@ejemplo.test" });
+      await backdateSend(p.id);
+      await seedInvitations(w.tenantA, w.admin, 25, { createdAgo: "3 days" });
+      await seedInvitations(w.tenantA, w.approver, 24, { createdAgo: "3 days" });
+      expect((await call(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).result).toBe(
+        "resent",
+      );
+    });
+  });
+
   it("como máximo 5 reenvíos por invitación", async () => {
     await withTx(setup, async () => {
       const { p } = await invite(w.owner);
@@ -850,6 +889,8 @@ describe("auditoría", () => {
       expect(actions).toContain("invitation.created");
       expect(actions).toContain("invitation.resent");
       expect(actions).toContain("invitation.revoked");
+      const createdEvent = rows.find((r) => r.action === "invitation.created");
+      expect(JSON.parse(createdEvent.details)).toEqual({ role: "sales" });
       for (const r of rows) {
         expect(r.actor_user_id).toBe(w.owner.id);
         expect(r.occurred_at).not.toBeNull();
@@ -926,6 +967,218 @@ describe("cerrar el envío del correo (solo el servidor)", () => {
       expect((await expectSqlError(setup, SETTLE, [randomUUID(), "mailpit", "x", null])).code).toBe(
         NOT_FOUND,
       );
+    });
+  });
+});
+
+describe("aviso al Dueño cuando alguien que no lo es invita a un Administrador (I1)", () => {
+  const RECIPIENTS = "select public.invitation_notice_recipients($1) as r";
+  const REGISTER = "select public.invitation_notice_register($1, $2, $3, $4, $5) as r";
+  const asServer = async <T = Json>(sql: string, params: unknown[]): Promise<T> => {
+    await actAsService(setup);
+    const { rows } = await setup.query<{ r: T }>(sql, params);
+    await actAsPostgres(setup);
+    return rows[0].r;
+  };
+  const ownerEmail = async () => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query<{ email: string }>("select email from auth.users where id = $1", [
+        w.owner.id,
+      ])
+    ).rows[0].email;
+  };
+  type Recipients = {
+    recipients: { user_id: string; email: string }[];
+    inviter_name?: string;
+    role?: string;
+    tenant_name?: string;
+  };
+
+  it("el Administrador invita a un Administrador: la base pide avisar al Dueño", async () => {
+    await withTx(setup, async () => {
+      const { result, p } = await invite(w.admin, { role: "admin" });
+      expect(result.result).toBe("created");
+      expect(result.notify_owner).toBe(true);
+      const info = await asServer<Recipients>(RECIPIENTS, [p.id]);
+      expect(info.recipients).toEqual([{ user_id: w.owner.id, email: await ownerEmail() }]);
+      expect(info.role).toBe("admin");
+      expect(typeof info.tenant_name).toBe("string");
+    });
+  });
+
+  it("el Administrador invita a un Comercial, Aprobador u Observador: sin aviso", async () => {
+    await withTx(setup, async () => {
+      for (const role of ["sales", "approver", "viewer"]) {
+        const { result, p } = await invite(w.admin, { role });
+        expect(result.notify_owner, role).toBe(false);
+        expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients, role).toEqual([]);
+      }
+    });
+  });
+
+  it("el Dueño invita a un Administrador: sin aviso (él mismo lo hizo)", async () => {
+    await withTx(setup, async () => {
+      const { result, p } = await invite(w.owner, { role: "admin" });
+      expect(result.notify_owner).toBe(false);
+      expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
+    });
+  });
+
+  it("lo que entrega la base para el aviso no contiene el correo del invitado ni sus huellas", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.admin, { role: "admin", email: "secreto-aviso@ejemplo.test" });
+      const info = await asServer<Recipients>(RECIPIENTS, [p.id]);
+      const text = JSON.stringify(info).toLowerCase();
+      for (const secret of ["secreto-aviso", p.hash, p.tokenSha, `v1.cifrado.${p.id}`, "binding"]) {
+        expect(text).not.toContain(secret.toLowerCase());
+      }
+    });
+  });
+
+  it("se anota el aviso una sola vez, para el Dueño activo, y luego ya no hay a quién avisar", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.admin, { role: "admin" });
+      const mailId = randomUUID();
+      const args = [mailId, p.id, w.owner.id, "v1.cifrado.aviso", sha256Hex("aviso")];
+      expect(await asServer(REGISTER, args)).toEqual({ registered: true });
+      await actAsPostgres(setup);
+      const mail = (
+        await setup.query("select * from public.email_messages where id = $1", [mailId])
+      ).rows[0];
+      expect(mail.kind).toBe("invitation_notice");
+      expect(mail.status).toBe("pending");
+      expect(mail.invitation_id).toBe(p.id);
+      expect(mail.created_by).toBeNull();
+      // Repetir (otro id de correo) no crea un segundo aviso.
+      expect(
+        await asServer(REGISTER, [
+          randomUUID(),
+          p.id,
+          w.owner.id,
+          "v1.cifrado.aviso",
+          sha256Hex("aviso"),
+        ]),
+      ).toEqual({
+        registered: false,
+      });
+      expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
+      // Se cierra igual que el correo de la invitación.
+      expect(await asServer(SETTLE, [mailId, "mailpit", "n-1", null])).toEqual({ status: "sent" });
+    });
+  });
+
+  it("no se anota un aviso que no corresponde, ni para alguien que no es el Dueño", async () => {
+    await withTx(setup, async () => {
+      const notDue = (await invite(w.owner, { role: "admin", email: "sin-aviso@ejemplo.test" })).p;
+      expect(
+        await asServer(REGISTER, [randomUUID(), notDue.id, w.owner.id, "v1.x.y", sha256Hex("a")]),
+      ).toEqual({
+        registered: false,
+      });
+      const due = (await invite(w.admin, { role: "admin", email: "con-aviso@ejemplo.test" })).p;
+      await actAsService(setup);
+      expect(
+        (
+          await expectSqlError(setup, REGISTER, [
+            randomUUID(),
+            due.id,
+            w.admin.id,
+            "v1.x.y",
+            sha256Hex("a"),
+          ])
+        ).code,
+      ).toBe(INSUFFICIENT_PRIVILEGE);
+      expect(
+        (
+          await expectSqlError(setup, REGISTER, [
+            randomUUID(),
+            due.id,
+            w.owner.id,
+            "",
+            sha256Hex("a"),
+          ])
+        ).code,
+      ).toBe(INVALID);
+      await actAsPostgres(setup);
+      expect(
+        await count(
+          "select count(*) as n from public.email_messages where kind = 'invitation_notice'",
+        ),
+      ).toBe(0);
+    });
+  });
+
+  it("nadie con un pase ejecuta esas funciones", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.admin, { role: "admin" });
+      for (const user of [w.owner, w.admin]) {
+        await asUser(setup, user, w.tenantA);
+        expect((await expectSqlError(setup, RECIPIENTS, [p.id])).code).toBe(INSUFFICIENT_PRIVILEGE);
+        await actAsPostgres(setup);
+        await asUser(setup, user, w.tenantA);
+        expect(
+          (
+            await expectSqlError(setup, REGISTER, [
+              randomUUID(),
+              p.id,
+              w.owner.id,
+              "v1.x.y",
+              sha256Hex("a"),
+            ])
+          ).code,
+        ).toBe(INSUFFICIENT_PRIVILEGE);
+        await actAsPostgres(setup);
+      }
+    });
+  });
+
+  it("el registro del aviso lo leen quienes manejan el equipo; el Observador y el Comercial no", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.admin, { role: "admin" });
+      const mailId = randomUUID();
+      await asServer(REGISTER, [mailId, p.id, w.owner.id, "v1.cifrado.aviso", sha256Hex("aviso")]);
+      for (const [user, expected] of [
+        [w.owner, 1],
+        [w.admin, 1],
+        [w.sales, 0],
+        [w.viewer, 0],
+        [w.approver, 0],
+      ] as const) {
+        await asUser(setup, user, w.tenantA);
+        const { rows } = await setup.query("select id from public.email_messages where id = $1", [
+          mailId,
+        ]);
+        expect(rows.length, user.id).toBe(expected);
+        await actAsPostgres(setup);
+      }
+    });
+  });
+
+  it("el aviso se borra con su invitación por plazo", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.admin, { role: "admin" });
+      await asServer(REGISTER, [
+        randomUUID(),
+        p.id,
+        w.owner.id,
+        "v1.cifrado.aviso",
+        sha256Hex("aviso"),
+      ]);
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.invitations set expires_at = now() - interval '31 days' where id = $1",
+        [p.id],
+      );
+      await setup.query("select app.purge_invitations()");
+      expect(
+        await count("select count(*) as n from public.email_messages where invitation_id = $1", [
+          p.id,
+        ]),
+      ).toBe(0);
+      expect(
+        await count("select count(*) as n from public.invitations where id = $1", [p.id]),
+      ).toBe(0);
     });
   });
 });

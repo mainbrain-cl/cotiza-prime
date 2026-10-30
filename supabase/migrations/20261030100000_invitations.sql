@@ -13,6 +13,9 @@
 --   · `invitation_email_settle` (solo servidor): cierra el envío del correo, igual que `internal_notice_settle`.
 --   · `app.normalize_email` (gemela de `src/lib/normalize/email.ts`) y `app.invitation_binding`.
 --   · `email_messages` gana el tipo `invitation` y la columna `invitation_id`.
+--   · Aviso al Dueño cuando alguien que NO es el Dueño invita a un Administrador (kind `invitation_notice`): tres
+--     funciones solo del servidor (`invitation_notice_recipients`, `invitation_notice_register` y el mismo
+--     `invitation_email_settle`). El aviso no lleva el correo del invitado.
 --   · Tarea diaria `app.purge_invitations()`: nada se guarda indefinidamente (LEGAL.md §1.3).
 --
 -- `accept_invitation` e `invitation_preview` son de H-009: no existen todavía, pero la tabla ya trae las
@@ -130,9 +133,34 @@ create trigger invitations_meta before insert or update on public.invitations
   for each row execute function app.set_row_meta();
 create trigger invitations_forbid_tenant_change before update on public.invitations
   for each row execute function app.forbid_tenant_change();
--- Datos personales: la auditoría guarda solo los NOMBRES de los campos que cambiaron, nunca el correo.
+-- Datos personales: la auditoría guarda solo los NOMBRES de los campos que cambiaron, nunca el correo. Es el
+-- mismo criterio de `app.audit_row_change('keys_only', ...)`, con una diferencia: al crear una invitación
+-- queda también el rol (no es un dato personal), que es lo que importa saber de «invitation.created».
+create function app.audit_invitation_change() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_uid     uuid := auth.uid();
+  v_actor   text := case when auth.uid() is null then 'system' else 'user' end;
+  v_changed text[];
+begin
+  if tg_op = 'INSERT' then
+    perform app.write_audit(new.tenant_id, v_actor, v_uid, 'invitation.created', 'invitation', new.id,
+      'success', jsonb_build_object('role', new.role));
+    return null;
+  end if;
+  select array_agg(n.key order by n.key) into v_changed
+    from jsonb_each(to_jsonb(new)) n
+   where n.value is distinct from to_jsonb(old) -> n.key and n.key not in ('created_at', 'updated_at');
+  if v_changed is null then
+    return null;   -- no cambió nada relevante
+  end if;
+  perform app.write_audit(new.tenant_id, v_actor, v_uid, 'invitation.updated', 'invitation', new.id,
+    'success', jsonb_build_object('changed', to_jsonb(v_changed)));
+  return null;
+end $$;
+revoke all on function app.audit_invitation_change() from public, anon, authenticated;
 create trigger invitations_audit after insert or update on public.invitations
-  for each row execute function app.audit_row_change('keys_only', 'invitation');
+  for each row execute function app.audit_invitation_change();
 
 alter table public.invitations enable row level security;
 -- Solo quien maneja el equipo ve las invitaciones de SU organización.
@@ -148,7 +176,8 @@ grant select (id, tenant_id, email_enc, role, status, expires_at, invited_by, se
 alter table public.email_messages drop constraint email_messages_kind_check;
 alter table public.email_messages add constraint email_messages_kind_check
   check (kind in ('quote', 'quote_resend', 'internal_notice', 'payment_1', 'payment_2',
-                  'request_assigned', 'request_received', 'intake_cap_reached', 'invitation'));
+                  'request_assigned', 'request_received', 'intake_cap_reached', 'invitation',
+                  'invitation_notice'));
 alter table public.email_messages
   add column invitation_id uuid,
   add foreign key (tenant_id, invitation_id) references public.invitations (tenant_id, id);
@@ -163,16 +192,19 @@ alter table public.email_messages add constraint email_messages_target_shape che
   or (kind = 'intake_cap_reached'
       and intake_form_id is not null
       and quote_id is null and package_id is null and intake_request_id is null and invitation_id is null)
-  or (kind = 'invitation'
+  or (kind in ('invitation', 'invitation_notice')
       and invitation_id is not null
       and quote_id is null and package_id is null and intake_request_id is null and intake_form_id is null));
 create index email_messages_invitation on public.email_messages (tenant_id, invitation_id, created_at)
   where invitation_id is not null;
+-- Un solo aviso al Dueño por invitación, aunque el servidor lo intente dos veces.
+create unique index email_messages_one_invitation_notice on public.email_messages (tenant_id, invitation_id)
+  where kind = 'invitation_notice';
 
 -- El correo de una invitación lleva el correo del invitado (cifrado): solo lo ve quien maneja el equipo.
 alter policy email_messages_select on public.email_messages
   using (tenant_id = (select app.current_tenant_id())
-         and (kind <> 'invitation' or (select app.can('team.manage'))));
+         and (kind not in ('invitation', 'invitation_notice') or (select app.can('team.manage'))));
 
 -- Registro de correos de solo agregar. Salidas: la limpieza por plazo de los avisos de solicitud (como antes,
 -- amarrada al vencimiento de la solicitud) y ahora la de los correos de una invitación vencida, cancelada o
@@ -202,7 +234,7 @@ begin
         return old;
       end if;
       -- Solo el correo de una invitación vencida, cancelada o aceptada hace más del plazo.
-      if old.kind = 'invitation'
+      if old.kind in ('invitation', 'invitation_notice')
          and exists (
            select 1 from public.invitations i
             where i.tenant_id = old.tenant_id and i.id = old.invitation_id
@@ -344,8 +376,11 @@ begin
     end if;
     raise exception 'id_in_use' using errcode = 'CP422';
   end;
+  -- `notify_owner`: la aplicación avisará al Dueño (ver `invitation_notice_recipients`). Un fallo de ese aviso
+  -- nunca deshace la invitación: se envía DESPUÉS de confirmar esta transacción.
   return jsonb_build_object('result', 'created', 'invitation_id', p_invitation_id,
-                            'email_message_id', p_email_message_id, 'expires_at', v_expires);
+                            'email_message_id', p_email_message_id, 'expires_at', v_expires,
+                            'notify_owner', app.invitation_owner_notice_due(p_invitation_id));
 end $$;
 revoke all on function public.create_invitation(uuid, text, text, text, text, text, uuid, text)
   from public, anon, authenticated;
@@ -392,6 +427,13 @@ begin
   end if;
   if v_inv.send_count - 1 >= app.invitation_max_resends() then
     raise exception 'limit_resends' using errcode = 'CP429';
+  end if;
+  -- Reenviar una vencida la deja vigente otra vez: cuenta para el tope de pendientes igual que invitar.
+  if v_inv.expires_at <= now()
+     and (select count(*) from public.invitations i
+           where i.tenant_id = v_tenant and i.status = 'pending' and i.expires_at > now())
+         >= app.invitation_max_pending() then
+    raise exception 'limit_pending' using errcode = 'CP429';
   end if;
   select * into v_mail from public.email_messages e
    where e.tenant_id = v_tenant and e.invitation_id = v_inv.id and e.kind = 'invitation'
@@ -478,7 +520,7 @@ begin
     raise exception 'invalid_arguments' using errcode = 'CP422';
   end if;
   select * into v_mail from public.email_messages
-   where id = p_email_id and kind = 'invitation' for update;
+   where id = p_email_id and kind in ('invitation', 'invitation_notice') for update;
   if not found then
     raise exception 'email_not_found' using errcode = 'CP404';
   end if;
@@ -506,6 +548,92 @@ end $$;
 revoke all on function public.invitation_email_settle(uuid, text, text, text) from public, anon, authenticated;
 grant execute on function public.invitation_email_settle(uuid, text, text, text) to service_role;
 
+-- 7b. Aviso al Dueño (solo el servidor) -----------------------------------------------------------------
+-- Cuando alguien que NO es el Dueño invita a un rol que puede manejar el equipo (hoy: Administrador), el Dueño
+-- recibe un correo: quién invitó, con qué rol, cuándo y un enlace a «Tu equipo». NUNCA lleva el correo del
+-- invitado. Se decide con la matriz y no con nombres de rol: «el rol puede manejar el equipo» y «el Dueño es
+-- quien puede transferir la organización» (`tenant.transfer`).
+create function app.invitation_owner_notice_due(p_invitation_id uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from public.invitations i
+     where i.id = p_invitation_id and i.status = 'pending'
+       and app.role_can(i.role, 'team.manage')
+       and not exists (
+         select 1 from public.members m
+          where m.tenant_id = i.tenant_id and m.user_id = i.invited_by and m.status = 'active'
+            and app.role_can(m.role, 'tenant.transfer')))
+$$;
+revoke all on function app.invitation_owner_notice_due(uuid) from public, anon, authenticated;
+
+-- A quién avisar y con qué datos (ya filtrados por la base). Si no corresponde avisar, o ya se avisó, la lista
+-- de destinatarios viene vacía: no se distingue «no corresponde» de «ya se hizo».
+create function public.invitation_notice_recipients(p_invitation_id uuid) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  i            public.invitations;
+  v_tenant_name text;
+  v_inviter    text;
+  v_recipients jsonb;
+begin
+  if p_invitation_id is null then
+    raise exception 'invalid_arguments' using errcode = 'CP422';
+  end if;
+  select * into i from public.invitations where id = p_invitation_id;
+  if not found or not app.invitation_owner_notice_due(i.id)
+     or exists (select 1 from public.email_messages e
+                 where e.tenant_id = i.tenant_id and e.invitation_id = i.id and e.kind = 'invitation_notice') then
+    return jsonb_build_object('recipients', '[]'::jsonb);
+  end if;
+  select t.name into v_tenant_name from public.tenants t where t.tenant_id = i.tenant_id;
+  select p.full_name into v_inviter from public.profiles p where p.user_id = i.invited_by;
+  select coalesce(jsonb_agg(jsonb_build_object('user_id', u.id, 'email', u.email::text) order by u.email), '[]'::jsonb)
+    into v_recipients
+    from public.members m join auth.users u on u.id = m.user_id
+   where m.tenant_id = i.tenant_id and m.status = 'active' and app.role_can(m.role, 'tenant.transfer')
+     and u.email is not null;
+  return jsonb_build_object(
+    'tenant_id', i.tenant_id, 'tenant_name', v_tenant_name, 'inviter_name', v_inviter,
+    'role', i.role, 'invited_at', i.created_at, 'recipients', v_recipients);
+end $$;
+revoke all on function public.invitation_notice_recipients(uuid) from public, anon, authenticated;
+grant execute on function public.invitation_notice_recipients(uuid) to service_role;
+
+-- Anota el aviso (antes de enviarlo). El destinatario tiene que seguir siendo el Dueño activo de la organización.
+create function public.invitation_notice_register(
+  p_email_id uuid, p_invitation_id uuid, p_to_user_id uuid, p_to_email_enc text, p_to_email_hash text
+) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare
+  i public.invitations;
+begin
+  if p_email_id is null or p_invitation_id is null or p_to_user_id is null
+     or p_to_email_enc is null or char_length(p_to_email_enc) not between 1 and 2000
+     or p_to_email_hash is null or p_to_email_hash !~ '^[0-9a-f]{64}$' then
+    raise exception 'invalid_arguments' using errcode = 'CP422';
+  end if;
+  select * into i from public.invitations where id = p_invitation_id;
+  if not found or not app.invitation_owner_notice_due(i.id) then
+    return jsonb_build_object('registered', false);
+  end if;
+  if not exists (select 1 from public.members m
+                  where m.tenant_id = i.tenant_id and m.user_id = p_to_user_id and m.status = 'active'
+                    and app.role_can(m.role, 'tenant.transfer')) then
+    raise exception 'recipient_not_owner' using errcode = '42501';
+  end if;
+  begin
+    insert into public.email_messages
+      (id, tenant_id, invitation_id, kind, to_email_enc, to_email_hash, provider, status)
+    values
+      (p_email_id, i.tenant_id, i.id, 'invitation_notice', p_to_email_enc, p_to_email_hash, 'pending', 'pending');
+  exception when unique_violation then
+    return jsonb_build_object('registered', false);
+  end;
+  return jsonb_build_object('registered', true);
+end $$;
+revoke all on function public.invitation_notice_register(uuid, uuid, uuid, text, text) from public, anon, authenticated;
+grant execute on function public.invitation_notice_register(uuid, uuid, uuid, text, text) to service_role;
+
 -- 8. Limpieza por plazo -----------------------------------------------------------------------------------
 -- Una vez al día, app.purge_invitations():
 --   * borra las invitaciones pendientes vencidas hace más de 30 días y las canceladas hace más de 30 días,
@@ -526,7 +654,7 @@ begin
 
   delete from public.email_messages e
    using public.invitations i
-   where e.tenant_id = i.tenant_id and e.invitation_id = i.id and e.kind = 'invitation'
+   where e.tenant_id = i.tenant_id and e.invitation_id = i.id and e.kind in ('invitation', 'invitation_notice')
      and ((i.status = 'pending' and i.expires_at <= v_cutoff)
           or (i.status = 'revoked' and i.revoked_at <= v_cutoff)
           or (i.status = 'accepted' and i.accepted_at <= v_cutoff));

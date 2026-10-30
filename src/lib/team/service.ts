@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { serverLog } from "@/lib/log/server-log";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
-import { deliverInvitationEmail } from "./delivery";
+import { deliverInvitationEmail, notifyOwnerOfInvitation } from "./delivery";
 import {
   INVITATION_NOT_FOUND,
   TEAM_GENERIC_FAILURE,
@@ -47,6 +47,8 @@ const createdSchema = z.object({
   invitation_id: z.uuid().optional(),
   email_message_id: z.uuid().optional(),
   expires_at: z.string().optional(),
+  /** La base dice si el Dueño debe enterarse (alguien que no es el Dueño invitó a un Administrador). */
+  notify_owner: z.boolean().optional(),
 });
 const resentSchema = z.object({
   result: z.literal("resent"),
@@ -113,6 +115,14 @@ export async function createInvitation(
     expiresAt: body.expires_at,
     token: invitation.token,
   });
+  // Un aviso que falla nunca deshace ni cambia el resultado de la invitación (ya está creada y enviada).
+  if (body.notify_owner === true) {
+    try {
+      await notifyOwnerOfInvitation(invitation.invitationId);
+    } catch {
+      void serverLog("warn", "invitation_notice_failed", { code: "unexpected" });
+    }
+  }
   return delivered
     ? { status: "ok", delivered: true, message: `Enviamos la invitación a ${invitation.email}.` }
     : { status: "ok", delivered: false, message: MAIL_NOT_SENT_MESSAGE };

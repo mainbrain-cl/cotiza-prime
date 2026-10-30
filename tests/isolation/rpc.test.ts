@@ -203,6 +203,14 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
         p_provider_message_id: "x",
         p_error_code: null,
       },
+      invitation_notice_recipients: { p_invitation_id: randomUUID() },
+      invitation_notice_register: {
+        p_email_id: randomUUID(),
+        p_invitation_id: randomUUID(),
+        p_to_user_id: randomUUID(),
+        p_to_email_enc: "x",
+        p_to_email_hash: "0".repeat(64),
+      },
     };
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {

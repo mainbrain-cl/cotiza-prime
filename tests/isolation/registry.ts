@@ -681,6 +681,9 @@ export const SERVER_ONLY_FUNCTIONS = [
   "intake_notice_settle",
   // Sprint 5: cerrar el envío del correo de una invitación (el servidor, con lo que informó el proveedor)
   "invitation_email_settle",
+  // Sprint 5: el aviso al Dueño cuando alguien que no lo es invita a un Administrador (destinatarios ya filtrados y registro)
+  "invitation_notice_recipients",
+  "invitation_notice_register",
 ];
 
 /**

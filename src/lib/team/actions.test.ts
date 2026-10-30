@@ -15,6 +15,7 @@ const EMAIL = "persona.nueva@ejemplo.test";
 const rpc = vi.fn();
 const from = vi.fn();
 const deliver = vi.fn();
+const notifyOwner = vi.fn();
 let role = "owner";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -27,7 +28,10 @@ vi.mock("@/lib/tenant/active-tenant", () => ({
     supabase: { rpc, from },
   })),
 }));
-vi.mock("./delivery", () => ({ deliverInvitationEmail: (input: unknown) => deliver(input) }));
+vi.mock("./delivery", () => ({
+  deliverInvitationEmail: (input: unknown) => deliver(input),
+  notifyOwnerOfInvitation: (id: string) => notifyOwner(id),
+}));
 
 const { inviteMemberAction, resendInvitationAction, revokeInvitationAction } =
   await import("./actions");
@@ -46,6 +50,8 @@ beforeEach(() => {
   from.mockReset();
   deliver.mockReset();
   deliver.mockResolvedValue(true);
+  notifyOwner.mockReset();
+  notifyOwner.mockResolvedValue(undefined);
   logged.length = 0;
   for (const level of ["info", "warn", "error"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
@@ -167,6 +173,56 @@ describe("invitar", () => {
       expect(sent).not.toContain(delivery.token);
     },
   );
+
+  it("si la base pide avisar al Dueño, se le avisa DESPUÉS de enviar la invitación, con el id de la invitación (nunca con el correo)", async () => {
+    rpc.mockResolvedValue({ data: { ...created, notify_owner: true }, error: null });
+    from.mockReturnValue({
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }),
+    });
+    const state = await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "admin"));
+    expect(state.status).toBe("sent");
+    expect(notifyOwner).toHaveBeenCalledTimes(1);
+    expect(notifyOwner).toHaveBeenCalledWith(
+      (rpc.mock.calls[0][1] as { p_invitation_id: string }).p_invitation_id,
+    );
+    expect(deliver.mock.invocationCallOrder[0]).toBeLessThan(
+      notifyOwner.mock.invocationCallOrder[0],
+    );
+    expect(JSON.stringify(notifyOwner.mock.calls).toLowerCase()).not.toContain("persona.nueva");
+  });
+
+  it("si la base no pide avisar (notify_owner falso o ausente), no se avisa a nadie", async () => {
+    from.mockReturnValue({
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }),
+    });
+    rpc.mockResolvedValue({ data: { ...created, notify_owner: false }, error: null });
+    await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "sales"));
+    rpc.mockResolvedValue({ data: created, error: null });
+    await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "sales"));
+    expect(notifyOwner).not.toHaveBeenCalled();
+  });
+
+  it("un aviso que falla no cambia el resultado: la invitación sigue creada y enviada", async () => {
+    from.mockReturnValue({
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }),
+    });
+    rpc.mockResolvedValue({ data: { ...created, notify_owner: true }, error: null });
+    notifyOwner.mockRejectedValue(new Error("boom: " + EMAIL));
+    const state = await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "admin"));
+    expect(state).toEqual({ status: "sent", message: `Enviamos la invitación a ${EMAIL}.` });
+    for (const line of logged) expect(line.toLowerCase()).not.toContain("persona.nueva");
+  });
+
+  it("no se avisa si la invitación nunca se creó (ya es miembro, ya hay una pendiente o la base falla)", async () => {
+    rpc.mockResolvedValueOnce({
+      data: { result: "already_member", notify_owner: true },
+      error: null,
+    });
+    await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "admin"));
+    rpc.mockResolvedValueOnce({ data: null, error: { code: "CP429", message: "limit_pending" } });
+    await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "admin"));
+    expect(notifyOwner).not.toHaveBeenCalled();
+  });
 
   it("valida en el borde: correo inválido, sin rol, y el Dueño no se puede invitar (la base no se consulta)", async () => {
     for (const [email, roleValue, field] of [

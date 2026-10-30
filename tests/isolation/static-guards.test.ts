@@ -672,13 +672,17 @@ describe("guardias estáticas del aislamiento", () => {
     expect(intakeLogProblem('serverLog("warn", "x", { code: codeOf })')).not.toBeNull();
   });
 
-  it("11. (H-008) el portero de invitaciones solo llama a invitation_email_settle y nunca lee ni escribe una tabla", () => {
+  it("11. (H-008) el portero de invitaciones solo llama a sus tres funciones y nunca lee ni escribe una tabla", () => {
     const gateway = stripComments(read(path.join(SRC, "lib", "team", "gateway.ts"))).replace(
       /\s+/g,
       " ",
     );
     const called = [...gateway.matchAll(/\.rpc\(\s*["'`]([a-z_0-9]+)["'`]/g)].map((m) => m[1]);
-    expect(sorted(new Set(called))).toEqual(["invitation_email_settle"]);
+    expect(sorted(new Set(called))).toEqual([
+      "invitation_email_settle",
+      "invitation_notice_recipients",
+      "invitation_notice_register",
+    ]);
     expect(gateway.match(/\.rpc\(/g)?.length).toBe(called.length);
     expect(/\.(insert|upsert|delete|select|update)\(/.test(gateway)).toBe(false);
     expect(/(?<!Buffer)\.from\(/.test(gateway)).toBe(false);

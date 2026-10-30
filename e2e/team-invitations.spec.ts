@@ -36,7 +36,7 @@ async function withDb<T>(fn: (db: import("pg").Client) => Promise<T>): Promise<T
 
 type MailDetail = { ID: string; HTML: string; Text: string; Subject: string };
 
-async function mailsTo(address: string): Promise<MailDetail[]> {
+async function mailsAll(address: string): Promise<MailDetail[]> {
   const search = await fetch(
     `${MAILBOX_URL}/api/v1/search?query=${encodeURIComponent(`to:${address}`)}`,
   );
@@ -45,8 +45,12 @@ async function mailsTo(address: string): Promise<MailDetail[]> {
   for (const { ID } of [...(messages ?? [])].reverse()) {
     details.push((await (await fetch(`${MAILBOX_URL}/api/v1/message/${ID}`)).json()) as MailDetail);
   }
-  // Solo las invitaciones: quien se registró en la prueba también recibió el correo de verificación.
-  return details.filter((mail) => mail.Subject.includes("te invitó a"));
+  return details;
+}
+
+/** Solo las invitaciones: quien se registró en la prueba también recibió el correo de verificación. */
+async function mailsTo(address: string): Promise<MailDetail[]> {
+  return (await mailsAll(address)).filter((mail) => mail.Subject.includes("te invitó a"));
 }
 
 /** Espera `count` correos a esa dirección y devuelve todos, del más viejo al más nuevo. */
@@ -173,6 +177,9 @@ test("el Dueño invita con un rol, la invitación queda pendiente, llega el corr
   const expectedExpiry = formatDate(new Date(Date.now() + INVITATION_DAYS * MS_PER_DAY));
   await expect(row.getByTestId("invitation-expiry")).toHaveText(`Vence el ${expectedExpiry}`);
   await expect(row).toContainText("Invitó Dueña Equipo");
+  await expect(row.getByTestId("invitation-created")).toHaveText(
+    `Invitada el ${formatDate(new Date())}`,
+  );
   // El formulario quedó limpio para la siguiente invitación.
   await expect(page.getByTestId("invite-email")).toHaveValue("");
 
@@ -430,4 +437,85 @@ test("el Observador y el Aprobador tampoco ven «Tu equipo»", async ({ page, br
       await context.close();
     }
   }
+});
+
+test("si alguien que no es el Dueño invita a un Administrador, el Dueño recibe un aviso sin el correo del invitado", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const ownerEmail = uniqueEmail("equipo-aviso-dueno");
+  const adminEmail = uniqueEmail("equipo-aviso-admin");
+  await signUpAndVerify(page, ownerEmail, "Dueña Aviso");
+  const tenantId = await createTenant(page, "Equipo Aviso Ltda", generateRut());
+  const setup = await newContext(browser, baseURL);
+  try {
+    await signUpAndVerify(await setup.newPage(), adminEmail, "Admin Aviso");
+  } finally {
+    await setup.close();
+  }
+  await withDb((db) =>
+    db.query(
+      `insert into public.members (tenant_id, user_id, role)
+       select $1, id, 'admin' from auth.users where email = $2`,
+      [tenantId, adminEmail],
+    ),
+  );
+
+  /** Los avisos al Dueño (no sus correos de verificación ni las invitaciones). */
+  const notices = async () =>
+    (await mailsAll(ownerEmail)).filter((mail) => mail.Subject.includes("invitó a una persona a"));
+
+  const adminContext = await newContext(browser, baseURL);
+  try {
+    const adminPage = await adminContext.newPage();
+    await login(adminPage, adminEmail, tenantId);
+    await adminPage.goto(`/o/${tenantId}/equipo`);
+
+    // Admin invita a un Comercial: sin aviso.
+    const salesInvitee = uniqueEmail("equipo-aviso-comercial");
+    await invite(adminPage, salesInvitee, "sales");
+    await expect(adminPage.getByText(`Enviamos la invitación a ${salesInvitee}.`)).toBeVisible();
+    await waitForMails(salesInvitee, 1);
+    expect(await notices()).toHaveLength(0);
+
+    // Admin invita a un Administrador: el Dueño recibe el aviso.
+    const adminInvitee = uniqueEmail("equipo-aviso-nuevo-admin");
+    await invite(adminPage, adminInvitee, "admin");
+    await expect(adminPage.getByText(`Enviamos la invitación a ${adminInvitee}.`)).toBeVisible();
+    await waitForMails(adminInvitee, 1);
+    await expect.poll(async () => (await notices()).length, { timeout: 30_000 }).toBe(1);
+    const [notice] = await notices();
+    expect(notice.Subject).toBe(
+      "Admin Aviso invitó a una persona a Equipo Aviso Ltda como Administrador",
+    );
+    for (const body of [notice.Text, notice.HTML]) {
+      expect(body).toContain("Admin Aviso invitó a una persona a Equipo Aviso Ltda");
+      expect(body).toContain("con el rol de Administrador");
+      expect(body).toContain(formatDate(new Date()));
+      // Nada del invitado: ni su correo ni la parte de antes de la arroba.
+      expect(body).not.toContain(adminInvitee);
+      expect(body).not.toContain(adminInvitee.split("@")[0]);
+    }
+    expect(notice.HTML).toContain(`href="${baseURL}/o/${tenantId}/equipo"`);
+  } finally {
+    await adminContext.close();
+  }
+
+  // El Dueño invita a un Administrador: sin aviso (ya lo sabe).
+  await page.goto(`/o/${tenantId}/equipo`);
+  const ownInvitee = uniqueEmail("equipo-aviso-del-dueno");
+  await invite(page, ownInvitee, "admin");
+  await expect(page.getByText(`Enviamos la invitación a ${ownInvitee}.`)).toBeVisible();
+  await waitForMails(ownInvitee, 1);
+  expect(await notices()).toHaveLength(1);
+  // El registro del aviso quedó anotado, una sola vez y enviado.
+  await withDb(async (db) => {
+    const { rows } = await db.query<{ status: string }>(
+      "select status from public.email_messages where tenant_id = $1 and kind = 'invitation_notice'",
+      [tenantId],
+    );
+    expect(rows).toEqual([{ status: "sent" }]);
+  });
 });

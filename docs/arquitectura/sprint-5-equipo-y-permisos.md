@@ -476,11 +476,13 @@ Si nadie responde, se aplica el supuesto indicado.
 3. ¿Un Dueño o Administrador puede desactivarla? **Supuesto:** sí, pero queda como Observador hasta activarla
    de nuevo.
 4. ¿Un Administrador puede invitar, cambiar y quitar a otros Administradores? **Supuesto:** sí (así lo dice
-   H-008), con aviso al Dueño. La alternativa más segura es que solo el Dueño maneje a los Administradores.
+   H-008), con aviso al Dueño. *(Decisión de José, 2026-10-30: el aviso sale **al invitar**, ahora; construido en H-008. Los
+   avisos de cambiar el rol y quitar llegan con H-010.)* La alternativa más segura es que solo el Dueño maneje a los Administradores.
 5. ¿Alguien puede cambiarse el rol o quitarse a sí mismo? **Supuesto:** no. «Salir de la organización» sería
    otra historia.
 6. Vigencia y topes de las invitaciones. **Supuesto:** 7 días; 20 por persona por hora; 50 por organización
-   por día; 50 pendientes; 5 reenvíos.
+   por día; 50 pendientes; 5 reenvíos. *(Decisión de José, 2026-10-30: el tope de 20 por hora se queda **por persona
+   dentro de cada organización**; ver el registro de construcción de H-008.)*
 7. Plazos de las invitaciones, que no están en `PROYECTO.md` §11.2. **Supuesto:** el correo se borra al
    aceptar; las no aceptadas se borran 30 días después de vencer o cancelarse.
 8. Al quitar a alguien, o bajarlo de Administrador, ¿se cancelan las invitaciones que envió? **Supuesto:** sí.
@@ -507,7 +509,7 @@ Si nadie responde, se aplica el supuesto indicado.
     experimental y exige activar `authInterrupts`.
 21. Los correos reales de invitación dependen de la decisión 016 (proveedor y dominio), y el correo del
     invitado tiene que aparecer en la política de privacidad (pasa por el abogado). **Supuesto:** mientras
-    tanto se usa Mailpit.
+    tanto se usa Mailpit. *(PENDIENTE antes de enviar correos reales: ver M3 en el registro de construcción de H-008.)*
 
 ---
 
@@ -542,4 +544,18 @@ Construida siguiendo este diseño (§2). Lo que se decidió donde el diseño no 
 - **`email_messages`:** el correo registrado de una invitación solo lo leen quienes manejan el equipo (política de lectura actualizada); un reenvío agrega otra fila. Los correos de una invitación aceptada se borran 30 días después de aceptarse (el diseño dice «al aceptar»: H-009 puede borrarlos en el acto si prefiere).
 - **Tarea de borrado:** `app.purge_invitations()`, `pg_cron` diario a las 03:40.
 - **Solo invitaciones, sin lista de miembros:** la pantalla «Tu equipo» lista únicamente las invitaciones pendientes; la lista de miembros con su rol es de H-010.
-- **Auditoría:** `invitation.created` y `invitation.updated` salen del disparador genérico (solo nombres de campos); `invitation.resent` e `invitation.revoked` son explícitos. Ninguno lleva el correo.
+- **Auditoría:** `invitation.created` (con el rol, que no es dato personal) e `invitation.updated` (solo nombres de campos) salen de un disparador propio de la tabla, `app.audit_invitation_change()`; `invitation.resent` e `invitation.revoked` son explícitos. Ninguno lleva el correo. **Ruido conocido:** cada reenvío y cada cancelación dejan además un `invitation.updated`. No se quitó porque habría que apagar la auditoría de los cambios de la tabla; H-009 deberá sumar su propio `invitation.accepted`.
+
+### Cambios tras la revisión de H-008 (2026-10-30)
+
+- **I1 · Aviso al Dueño al invitar (decisión de José).** Cuando quien invita NO es el Dueño y el rol invitado puede manejar el equipo (hoy, Administrador), el Dueño recibe un correo de Cotiza Prime: quién invitó, a qué organización, con qué rol, la fecha (dd-mm-aaaa) y un botón a «Tu equipo». **Nunca lleva el correo del invitado.** La base decide con la matriz, sin nombres de rol (`app.invitation_owner_notice_due`: el rol invitado tiene `team.manage` y quien invitó no tiene `tenant.transfer`) y devuelve `notify_owner` en `create_invitation`. El aviso se envía **después** de confirmar la invitación y del correo al invitado, por el portero (`invitation_notice_recipients` e `invitation_notice_register`, solo servidor): un fallo del aviso solo deja un código en el log y no cambia el resultado. Nuevo tipo `invitation_notice` en `email_messages` (con índice único: un aviso por invitación), misma guarda de borrado por plazo y misma restricción de lectura que el correo de la invitación.
+- **M1.** Reenviar una invitación **vencida** cuenta contra el tope de 50 pendientes, igual que invitar.
+- **M4/M5.** La lista muestra «Invitada el dd-mm-aaaa»; la vigencia sale de `INVITATION_TTL_DAYS` y «Vencida» se decide con el booleano `expired`.
+- **M7/M8.** Se quitaron `nextResendAt` e `invitationIdSchema` (no se usaban).
+
+### Decisiones y excepciones anotadas (sin cambio de código)
+
+- **M2 · Tope por hora (decisión de José, 2026-10-30).** Las 20 invitaciones por hora se quedan **por persona dentro de cada organización** (máximo real de 100 por hora con 5 organizaciones). El tope diario por organización (50) sigue limitando el daño. Revisable si hace falta.
+- **M3 · PENDIENTE antes de enviar correos reales (decisión de José, 2026-10-30).** El nombre de la organización y el de quien invita salen en el correo de Cotiza Prime; alguien podría escribir una dirección web engañosa en ese nombre y los programas de correo la volverían enlace. No se corrige ahora: se resuelve antes de enviar correos reales (decisión 016, proveedor de correo), porque hoy todo sale a Mailpit.
+- **M6 · Excepción conocida.** El valor de `email_hash` se copia a `email_messages.to_email_hash`, que puede leer quien maneja el equipo. Impacto nulo: ya ve el correo en claro y la huella usa una clave que solo tiene el servidor.
+- **La página `/invitacion/...` todavía no existe (es H-009).** Hoy el botón del correo lleva a «No encontrado». No es un error: quien pruebe H-008 debe esperarlo.

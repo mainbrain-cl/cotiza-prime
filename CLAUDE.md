@@ -66,9 +66,8 @@ PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3)
 (Compuerta 3) y en construcción: **H-011a (matriz única de permisos) en `main` desde el 2026-10-29**
 (PR #12, revisada y mezclada por Aarón); sigue H-011b (pruebas por rol). Documentos: `docs/sprints/005-equipo-y-permisos.md` y
 `docs/arquitectura/sprint-5-equipo-y-permisos.md`. Sprints 6 a 12 sin partir. 36 migraciones. Pruebas en
-`main`: 1.388 unitarias (1 omitida), 22 guardias estáticas y la e2e de H-092 en 9 de 9; las de base de datos
-(645), aislamiento (1.061) y el total de punta a punta (unas 130) son las de la última batería completa
-(2026-10-28, local), sin recontar tras las mezclas.
+`main` (recontadas el 2026-10-30, local): 1.593 unitarias (1 omitida), 665 de base de datos, 1.063 de
+aislamiento (3 pendientes), e2e `isolation` 18 de 18 y e2e `chromium` 111 de 112 con la app compilada.
 
 **Lo que ya funciona (en local):** registro y organizaciones, catálogo y clientes, cotizador con PDF,
 enviar por correo, enlace del cliente (aceptar o rechazar con motivo obligatorio), rebotes, vencimiento,
@@ -91,8 +90,11 @@ aislamiento entre organizaciones, dinero, superficie pública) **no se mezcla si
 
 **El CI de GitHub no corre por la facturación de la cuenta** (las corridas fallan en 2 s con «recent
 account payments have failed…»). Aarón debe regularizarlo. Mientras tanto se verifica todo en local y,
-**en cada integración grande, se corre la suite completa de punta a punta** (`npx playwright test
---project=chromium` y `--project=isolation`), no solo las pruebas de la zona tocada.
+**en cada integración grande, se corre la suite completa de punta a punta** (`E2E_PROD=1 npx playwright
+test --project=chromium` y `npx playwright test --project=isolation`), no solo las pruebas de la zona
+tocada. **El `chromium` se corre con `E2E_PROD=1`** (app compilada, unos 8 minutos): con el servidor de
+desarrollo cada pantalla se compila al abrirla y supera la espera de 5 s de las pruebas, y fallan 5 o más
+pruebas distintas en cada corrida (2026-10-30: 91 de 112 con el servidor de desarrollo, 111 de 112 compilada).
 
 **Mezclas del 2026-10-29.** Aarón revisó y mezcló los PR #7 (decisión 020), #9 (estado al día, `sharp`
 declarado), #10 (menores de H-092) y #12 (H-011a). Verificado en local con los cuatro juntos: 1.593
@@ -100,6 +102,12 @@ unitarias, 665 de base de datos, 1.063 de aislamiento, e2e `isolation` 18 de 18 
 inestables que pasan al repetirse. La única que se repite, `intake-embed.spec.ts:506` (incrustado a 375 px),
 falla igual en `main` sin los PR (sospecha: tope diario del formulario de prueba, sin confirmar). Además,
 `src/lib/permissions/guards.test.ts` a veces pasa el límite de 5 s con la máquina cargada.
+
+**Aclaración del 2026-10-30.** Esas fallas «inestables» eran en su mayoría el servidor de desarrollo (ver
+arriba). Con la app compilada queda 1 de 112: un salto de redirección del ingreso que una vez pasó los 5 s
+(`intake-form-builder.spec.ts:136`, pasa 3 de 3 sola); `intake-embed.spec.ts:506` no falló. La del botón
+«Guardando…» de `intake-protection.spec.ts` era un error real (el campo del tope diario pisaba lo que se
+escribía mientras se guardaba) y se corrige en el PR de `fix/tope-diario-pisa-lo-escrito`.
 
 **Decisiones de Aarón pendientes** (el código aplica un supuesto): aprobar las plantillas de PDF; regla de
 enlaces ya respondidos (rechazada: tras la vigencia solo aviso; aceptada: activo hasta pagada más un plazo);

@@ -124,7 +124,9 @@ Si trabajas de otra forma, no hay problema, pero la decisión 013 tendría que a
 1. Leer la historia y su plan; si es 🔒, diseñarla antes.
 2. Construir con pruebas. Antes de subir, correr **todo**: `npm run typecheck`, `npm run lint`,
    `npm run format:check`, `npm test`, `npm run test:db`, `npm run test:isolation` y las pruebas de
-   punta a punta (`npx playwright test --project=chromium` y `--project=isolation`).
+   punta a punta (`E2E_PROD=1 npx playwright test --project=chromium`, con la app compilada, y
+   `npx playwright test --project=isolation`). Sin `E2E_PROD=1` el servidor de desarrollo compila cada
+   pantalla al abrirla y fallan pruebas distintas en cada corrida.
 3. Revisión adversarial de las 🔒.
 4. Integrar a `main`, y **mirar el CI** (ver §8).
 

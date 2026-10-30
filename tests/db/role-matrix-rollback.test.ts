@@ -37,6 +37,20 @@ async function functionExists(signature: string): Promise<boolean> {
   return rows[0].found;
 }
 
+/**
+ * Las migraciones POSTERIORES a role_matrix que ya decidieron con `app.can(...)` (las invitaciones del sprint 5,
+ * H-008) dependen de esa función: aquí, dentro de la transacción de la prueba, se les quita esa dependencia para
+ * poder deshacer SOLO role_matrix. (El deshacer completo y en orden, que primero deshace las más nuevas, lo
+ * prueba `npm run test:db:rollbacks`.)
+ */
+async function releaseLaterMigrations(): Promise<void> {
+  await db.query("drop policy invitations_select on public.invitations");
+  await db.query(
+    `alter policy email_messages_select on public.email_messages
+       using (tenant_id = (select app.current_tenant_id()))`,
+  );
+}
+
 describe("el deshacer de role_matrix", () => {
   it("borra las funciones nuevas y deja las políticas con sus listas de roles", () =>
     withTx(db, async () => {
@@ -53,6 +67,7 @@ describe("el deshacer de role_matrix", () => {
       expect((await db.query("select 1 from public.audit_log")).rowCount).toBe(0);
 
       await actAsPostgres(db);
+      await releaseLaterMigrations();
       await db.query(sql("rollbacks", ".down"));
 
       expect(await functionExists("app.role_can(text,text,boolean)")).toBe(false);
@@ -71,6 +86,7 @@ describe("el deshacer de role_matrix", () => {
 
   it("se puede volver a aplicar la migración después de deshacerla", () =>
     withTx(db, async () => {
+      await releaseLaterMigrations();
       await db.query(sql("rollbacks", ".down"));
       await db.query(sql("migrations", ""));
       expect(await functionExists("app.role_can(text,text,boolean)")).toBe(true);

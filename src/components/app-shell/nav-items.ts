@@ -6,6 +6,7 @@ import {
   Settings,
   Tags,
   Users,
+  UsersRound,
   type LucideIcon,
 } from "lucide-react";
 import { can, type PermissionAction } from "@/lib/permissions/matrix";
@@ -28,6 +29,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { segment: "catalogo", label: "Catálogo", icon: Tags, permission: "org.view" },
   // Todos los roles pueden ver los formularios; solo quienes manejan la organización los cambian.
   { segment: "formularios", label: "Formularios", icon: ClipboardList, permission: "org.view" },
+  // Invitar y manejar al equipo: solo el Dueño y los Administradores (supuesto 14 del sprint 5).
+  { segment: "equipo", label: "Equipo", icon: UsersRound, permission: "team.manage" },
   // «Configuración» solo la ven el Dueño y los Administradores (supuesto 12 del sprint 5).
   {
     segment: "configuracion",

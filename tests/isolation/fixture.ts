@@ -11,6 +11,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { buildCustomerInsertRow } from "@/lib/customers/record";
 import { encryptPii } from "@/lib/crypto/pii";
+import { buildNewInvitation } from "@/lib/team/record";
 import { calculateQuote } from "@/lib/quotes/calc";
 import type { CustomerInput } from "@/lib/customers/schemas";
 import { PLATFORM_TENANT_ID, TENANT_HEADER } from "@/lib/tenant/constants";
@@ -81,6 +82,18 @@ export interface OrgData {
   share: ShareData | null;
   /** Formulario público publicado, con sus servicios y una solicitud recibida (A y B; C no tiene). */
   intake: IntakeData | null;
+  /** Una invitación pendiente al equipo, hecha por la dueña (A y B; C no tiene). */
+  invitation: InvitationData | null;
+}
+
+/** Una invitación pendiente: el correo en claro sirve para comprobar que nunca sale de su organización. */
+export interface InvitationData {
+  invitationId: string;
+  /** Correo en claro de la persona invitada (solo en la fixture; en la base va cifrado). */
+  email: string;
+  /** Huella del código secreto del enlace (el código mismo no se guarda en ningún lado). */
+  tokenSha256: string;
+  emailMessageId: string;
 }
 
 /** Un formulario público publicado y una solicitud ya recibida (solo A y B). */
@@ -229,6 +242,7 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       quoteIds: [],
       share: null,
       intake: null,
+      invitation: null,
     };
   }
 
@@ -412,6 +426,10 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
   for (const key of ["A", "B"] as const) {
     orgs[key].intake = await buildIntakeData(db, orgs[key], personas[owners[key]]);
   }
+  // Una invitación pendiente en A y en B, por el camino legítimo (la función con el pase de la dueña).
+  for (const key of ["A", "B"] as const) {
+    orgs[key].invitation = await buildInvitationData(orgs[key], personas[owners[key]], key);
+  }
   // C: un cliente, y luego se archiva
   {
     const id = randomUUID();
@@ -452,6 +470,26 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     orgs,
     platformAuditId: Number(audit.rows[0].id),
     rateLimitKeyHash,
+  };
+}
+
+async function buildInvitationData(
+  data: OrgData,
+  owner: Persona,
+  key: OrgKey,
+): Promise<InvitationData> {
+  const email = `invitada-${key.toLowerCase()}-${randomUUID().slice(0, 8)}@ejemplo.test`;
+  const invitation = buildNewInvitation(data.tenantId, email, "viewer");
+  const result = await mustOk<{ result: string }>(
+    rpc(owner.session.accessToken, "create_invitation", invitation.params, org(data.tenantId)),
+    `create_invitation ${key}`,
+  );
+  if (result.result !== "created") throw new Error(`Fixture: la invitación de ${key} no se creó`);
+  return {
+    invitationId: invitation.invitationId,
+    email,
+    tokenSha256: invitation.params.p_token_sha256,
+    emailMessageId: invitation.emailMessageId,
   };
 }
 

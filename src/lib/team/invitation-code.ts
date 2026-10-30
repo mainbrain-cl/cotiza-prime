@@ -34,7 +34,9 @@ export function hashInvitationToken(token: string): string {
  * ya es miembro (H-008). Es el gemelo de `app.invitation_binding` en SQL; hay una prueba de paridad.
  */
 export function invitationEmailBinding(tokenSha256: string, email: string): string {
-  return createHash("sha256").update(`${tokenSha256}|${normalizeEmail(email)}`, "utf8").digest("hex");
+  return createHash("sha256")
+    .update(`${tokenSha256}|${normalizeEmail(email)}`, "utf8")
+    .digest("hex");
 }
 
 /** La dirección completa que va en el correo: `{origen}/invitacion/{código}`. */

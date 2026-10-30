@@ -50,7 +50,9 @@ describe("correo normalizado: TypeScript y SQL coinciden", () => {
   it.each(CASES.map((input, index) => [index, input] as const))(
     "caso %i",
     async (_index, input) => {
-      const { rows } = await db.query<{ r: string }>("select app.normalize_email($1) as r", [input]);
+      const { rows } = await db.query<{ r: string }>("select app.normalize_email($1) as r", [
+        input,
+      ]);
       expect(rows[0].r).toBe(normalizeEmail(input));
     },
   );

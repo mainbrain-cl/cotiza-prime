@@ -346,6 +346,31 @@ export const ISOLATION_TABLES: TableSpec[] = [
     ownWriteAccepted: false,
   },
   {
+    name: "invitations",
+    visibility: "business",
+    // Las invitaciones (correo del invitado) solo las ven quienes manejan el equipo.
+    rolesThatRead: ["owner", "admin"],
+    idColumn: "id",
+    ownedByB: byTenantB,
+    // Sin `token_sha256`, `email_binding` ni `email_hash`: ningún pase los lee.
+    readColumns: "id,tenant_id,role,status",
+    starSelectRejected: true,
+    insertAttack: (fx, tenant) => ({
+      id: randomUUID(),
+      tenant_id: tenant,
+      email_enc: "ataque",
+      email_hash: "d".repeat(64),
+      email_binding: "d".repeat(64),
+      role: "viewer",
+      token_sha256: randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", ""),
+      expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      invited_by: fx.personas.ana.userId,
+    }),
+    updateAttack: () => ({ role: "admin", status: "revoked" }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
     name: "numbering_settings",
     visibility: "business",
     idColumn: "tenant_id",
@@ -605,6 +630,31 @@ export const RPC_CASES: Record<string, RpcCase> = {
     args: { p_request_id: randomUUID(), p_customer_id: randomUUID(), p_creation_key: randomUUID() },
     writesActiveTenant: true,
   },
+  // Sprint 5 · invitar a un miembro (H-008). Los argumentos son válidos en forma y apuntan a nada propio.
+  create_invitation: {
+    args: {
+      p_invitation_id: randomUUID(),
+      p_email_enc: "ataque",
+      p_email_hash: "e".repeat(64),
+      p_email_binding: "e".repeat(64),
+      p_token_sha256: "f".repeat(64),
+      p_role: "viewer",
+      p_email_message_id: randomUUID(),
+      p_to_email_enc: "ataque",
+    },
+    writesActiveTenant: true,
+  },
+  resend_invitation: {
+    args: {
+      p_invitation_id: randomUUID(),
+      p_email_binding: "e".repeat(64),
+      p_token_sha256: "f".repeat(64),
+      p_email_message_id: randomUUID(),
+      p_to_email_enc: "ataque",
+    },
+    writesActiveTenant: true,
+  },
+  revoke_invitation: { args: { p_invitation_id: randomUUID() }, writesActiveTenant: true },
 };
 
 /** Funciones de `public` que solo ejecuta el servidor con la llave maestra: nadie con pase las llama. */
@@ -629,6 +679,8 @@ export const SERVER_ONLY_FUNCTIONS = [
   "intake_notice_recipients",
   "intake_notice_register",
   "intake_notice_settle",
+  // Sprint 5: cerrar el envío del correo de una invitación (el servidor, con lo que informó el proveedor)
+  "invitation_email_settle",
 ];
 
 /**
@@ -726,6 +778,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/configuracion/marca", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/numeracion", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/equipo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones/nueva", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones/[quoteId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones/[quoteId]/enviar", kind: "page", scope: "tenant" },

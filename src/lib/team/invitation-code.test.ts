@@ -63,6 +63,8 @@ describe("código de la invitación", () => {
     expect(invitationUrl("https://app.ejemplo.test/", "abc")).toBe(
       "https://app.ejemplo.test/invitacion/abc",
     );
-    expect(invitationUrl("http://localhost:3000", "abc")).toBe("http://localhost:3000/invitacion/abc");
+    expect(invitationUrl("http://localhost:3000", "abc")).toBe(
+      "http://localhost:3000/invitacion/abc",
+    );
   });
 });

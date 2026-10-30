@@ -8,6 +8,16 @@ import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { invitationEmailBinding } from "../../src/lib/team/invitation-code";
 import {
+  INVITATION_MAX_PENDING,
+  INVITATION_MAX_PER_TENANT_DAY,
+  INVITATION_MAX_PER_USER_HOUR,
+  INVITATION_MAX_RESENDS,
+  INVITATION_RESEND_MIN_MINUTES,
+  INVITATION_RETENTION_DAYS,
+  INVITATION_TTL_DAYS,
+  MAIL_PENDING_GRACE_MINUTES,
+} from "../../src/lib/team/invitations-model";
+import {
   actAsPostgres,
   connect,
   createTenantAs,
@@ -180,7 +190,9 @@ describe("quién puede invitar", () => {
         const p = prepare();
         const error = await denied(user, w.tenantA, CREATE, p.params);
         expect(error.code).toBe(INSUFFICIENT_PRIVILEGE);
-        expect(await count("select count(*) as n from public.invitations where id = $1", [p.id])).toBe(0);
+        expect(
+          await count("select count(*) as n from public.invitations where id = $1", [p.id]),
+        ).toBe(0);
       }
     });
   });
@@ -193,7 +205,9 @@ describe("quién puede invitar", () => {
       await asUser(setup, w.owner, "");
       expect((await expectSqlError(setup, CREATE, prepare().params)).code).toBe(NOT_FOUND);
       await actAsPostgres(setup);
-      expect(await count("select count(*) as n from public.invitations where id = $1", [p.id])).toBe(0);
+      expect(
+        await count("select count(*) as n from public.invitations where id = $1", [p.id]),
+      ).toBe(0);
     });
   });
 
@@ -225,7 +239,9 @@ describe("el rol de la invitación", () => {
       for (const role of ["owner", "root", "ADMIN", "", "admin "]) {
         const p = prepare({ role });
         expect((await denied(w.owner, w.tenantA, CREATE, p.params)).code, role).toBe(INVALID);
-        expect(await count("select count(*) as n from public.invitations where id = $1", [p.id])).toBe(0);
+        expect(
+          await count("select count(*) as n from public.invitations where id = $1", [p.id]),
+        ).toBe(0);
       }
       const nullRole = prepare();
       nullRole.params[5] = null;
@@ -275,14 +291,19 @@ describe("ya es miembro / ya hay una invitación", () => {
   it("invitar a un miembro activo de esta organización responde «already_member» y no crea nada", async () => {
     await withTx(setup, async () => {
       await actAsPostgres(setup);
-      const { rows } = await setup.query<{ email: string }>("select email from auth.users where id = $1", [
-        w.sales.id,
-      ]);
+      const { rows } = await setup.query<{ email: string }>(
+        "select email from auth.users where id = $1",
+        [w.sales.id],
+      );
       // Con mayúsculas y espacios: la comparación normaliza igual que la aplicación.
       const { result, p } = await invite(w.owner, { email: `  ${rows[0].email.toUpperCase()} ` });
       expect(result.result).toBe("already_member");
-      expect(await count("select count(*) as n from public.invitations where id = $1", [p.id])).toBe(0);
-      expect(await count("select count(*) as n from public.email_messages where id = $1", [p.mailId])).toBe(0);
+      expect(
+        await count("select count(*) as n from public.invitations where id = $1", [p.id]),
+      ).toBe(0);
+      expect(
+        await count("select count(*) as n from public.email_messages where id = $1", [p.mailId]),
+      ).toBe(0);
     });
   });
 
@@ -293,9 +314,10 @@ describe("ya es miembro / ya hay una invitación", () => {
         "update public.members set status = 'removed', removed_at = now() where tenant_id = $1 and user_id = $2",
         [w.tenantA, w.sales2.id],
       );
-      const { rows } = await setup.query<{ email: string }>("select email from auth.users where id = $1", [
-        w.sales2.id,
-      ]);
+      const { rows } = await setup.query<{ email: string }>(
+        "select email from auth.users where id = $1",
+        [w.sales2.id],
+      );
       expect((await invite(w.owner, { email: rows[0].email })).result.result).toBe("created");
     });
   });
@@ -303,9 +325,10 @@ describe("ya es miembro / ya hay una invitación", () => {
   it("invitar a alguien que es miembro de OTRA organización se ve igual que invitar a cualquiera", async () => {
     await withTx(setup, async () => {
       await actAsPostgres(setup);
-      const { rows } = await setup.query<{ email: string }>("select email from auth.users where id = $1", [
-        w.ownerB.id,
-      ]);
+      const { rows } = await setup.query<{ email: string }>(
+        "select email from auth.users where id = $1",
+        [w.ownerB.id],
+      );
       const { result } = await invite(w.owner, { email: rows[0].email });
       expect(result.result).toBe("created");
       expect(Object.keys(result).sort()).toEqual(
@@ -323,12 +346,16 @@ describe("ya es miembro / ya hay una invitación", () => {
       const second = await call(w.admin, w.tenantA, CREATE, again.params);
       expect(second).toEqual({ result: "already_pending", invitation_id: first.p.id });
       expect(
-        await count("select count(*) as n from public.invitations where tenant_id = $1 and email_hash = $2", [
-          w.tenantA,
-          first.p.hash,
-        ]),
+        await count(
+          "select count(*) as n from public.invitations where tenant_id = $1 and email_hash = $2",
+          [w.tenantA, first.p.hash],
+        ),
       ).toBe(1);
-      expect(await count("select count(*) as n from public.email_messages where id = $1", [again.mailId])).toBe(0);
+      expect(
+        await count("select count(*) as n from public.email_messages where id = $1", [
+          again.mailId,
+        ]),
+      ).toBe(0);
     });
   });
 
@@ -336,10 +363,16 @@ describe("ya es miembro / ya hay una invitación", () => {
     await withTx(setup, async () => {
       const first = await invite(w.owner, { email: "vencida@ejemplo.test" });
       await actAsPostgres(setup);
-      await setup.query("update public.invitations set expires_at = now() - interval '1 day' where id = $1", [
-        first.p.id,
-      ]);
-      const second = await call(w.owner, w.tenantA, CREATE, prepare({ email: "vencida@ejemplo.test" }).params);
+      await setup.query(
+        "update public.invitations set expires_at = now() - interval '1 day' where id = $1",
+        [first.p.id],
+      );
+      const second = await call(
+        w.owner,
+        w.tenantA,
+        CREATE,
+        prepare({ email: "vencida@ejemplo.test" }).params,
+      );
       expect(second.result).toBe("already_pending");
     });
   });
@@ -392,9 +425,10 @@ describe("ya es miembro / ya hay una invitación", () => {
         await count("select count(*) as n from public.invitations where tenant_id = $1", [tenant]),
       ).toBe(1);
       expect(
-        await count("select count(*) as n from public.email_messages where tenant_id = $1 and kind = 'invitation'", [
-          tenant,
-        ]),
+        await count(
+          "select count(*) as n from public.email_messages where tenant_id = $1 and kind = 'invitation'",
+          [tenant],
+        ),
       ).toBe(1);
     } finally {
       await actAsPostgres(setup);
@@ -408,7 +442,9 @@ describe("topes", () => {
     await withTx(setup, async () => {
       await seedInvitations(w.tenantA, w.owner, 20);
       const p = prepare();
-      expect((await denied(w.owner, w.tenantA, CREATE, p.params)).message).toContain("limit_user_hour");
+      expect((await denied(w.owner, w.tenantA, CREATE, p.params)).message).toContain(
+        "limit_user_hour",
+      );
       expect((await denied(w.owner, w.tenantA, CREATE, p.params)).code).toBe(LIMIT);
       expect((await invite(w.admin)).result.result).toBe("created");
     });
@@ -426,7 +462,9 @@ describe("topes", () => {
       // Repartidas entre dos personas y hechas hace horas, para no chocar con el tope por persona.
       await seedInvitations(w.tenantA, w.owner, 25, { createdAgo: "3 hours" });
       await seedInvitations(w.tenantA, w.admin, 25, { createdAgo: "4 hours", status: "revoked" });
-      expect((await denied(w.owner, w.tenantA, CREATE, prepare().params)).message).toContain("limit_tenant_day");
+      expect((await denied(w.owner, w.tenantA, CREATE, prepare().params)).message).toContain(
+        "limit_tenant_day",
+      );
       // Otra organización no se ve afectada.
       expect((await invite(w.ownerB, {}, w.tenantB)).result.result).toBe("created");
     });
@@ -444,7 +482,9 @@ describe("topes", () => {
     await withTx(setup, async () => {
       await seedInvitations(w.tenantA, w.owner, 25, { createdAgo: "3 days" });
       await seedInvitations(w.tenantA, w.admin, 25, { createdAgo: "3 days" });
-      expect((await denied(w.owner, w.tenantA, CREATE, prepare().params)).message).toContain("limit_pending");
+      expect((await denied(w.owner, w.tenantA, CREATE, prepare().params)).message).toContain(
+        "limit_pending",
+      );
       // Cancelar una libera un cupo.
       await actAsPostgres(setup);
       const { rows } = await setup.query<{ id: string }>(
@@ -466,7 +506,11 @@ describe("reenviar", () => {
   const resendArgs = (id: string) => {
     const { sha } = newToken();
     const mailId = randomUUID();
-    return { sha, mailId, params: [id, invitationEmailBinding(sha, "x@ejemplo.test"), sha, mailId, `v1.re.${mailId}`] };
+    return {
+      sha,
+      mailId,
+      params: [id, invitationEmailBinding(sha, "x@ejemplo.test"), sha, mailId, `v1.re.${mailId}`],
+    };
   };
   const backdateSend = async (id: string, interval = "11 minutes") => {
     await actAsPostgres(setup);
@@ -480,7 +524,10 @@ describe("reenviar", () => {
     await withTx(setup, async () => {
       const { p } = await invite(w.owner, { email: "reenvio@ejemplo.test" });
       await actAsPostgres(setup);
-      await setup.query("update public.invitations set expires_at = now() + interval '1 hour' where id = $1", [p.id]);
+      await setup.query(
+        "update public.invitations set expires_at = now() + interval '1 hour' where id = $1",
+        [p.id],
+      );
       await backdateSend(p.id);
       const r = resendArgs(p.id);
       const result = await call(w.admin, w.tenantA, RESEND, r.params);
@@ -493,11 +540,16 @@ describe("reenviar", () => {
       expect(inv.send_count).toBe(2);
       expect(new Date(inv.expires_at).getTime() - Date.now()).toBeGreaterThan(6 * 24 * 3600 * 1000);
       // El código viejo ya no está en ninguna parte.
-      expect(await count("select count(*) as n from public.invitations where token_sha256 = $1", [p.tokenSha])).toBe(0);
       expect(
-        await count("select count(*) as n from public.email_messages where invitation_id = $1 and kind = 'invitation'", [
-          p.id,
+        await count("select count(*) as n from public.invitations where token_sha256 = $1", [
+          p.tokenSha,
         ]),
+      ).toBe(0);
+      expect(
+        await count(
+          "select count(*) as n from public.email_messages where invitation_id = $1 and kind = 'invitation'",
+          [p.id],
+        ),
       ).toBe(2);
       // Quedó anotado en la auditoría, sin el correo.
       const audit = await count(
@@ -512,9 +564,14 @@ describe("reenviar", () => {
     await withTx(setup, async () => {
       const { p } = await invite(w.owner, { email: "vencida2@ejemplo.test" });
       await actAsPostgres(setup);
-      await setup.query("update public.invitations set expires_at = now() - interval '2 days' where id = $1", [p.id]);
+      await setup.query(
+        "update public.invitations set expires_at = now() - interval '2 days' where id = $1",
+        [p.id],
+      );
       await backdateSend(p.id);
-      expect((await call(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).result).toBe("resent");
+      expect((await call(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).result).toBe(
+        "resent",
+      );
       expect(new Date((await row(p.id)).expires_at).getTime()).toBeGreaterThan(Date.now());
     });
   });
@@ -528,7 +585,42 @@ describe("reenviar", () => {
       await backdateSend(p.id, "9 minutes");
       expect((await denied(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).code).toBe(LIMIT);
       await backdateSend(p.id, "10 minutes 1 second");
-      expect((await call(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).result).toBe("resent");
+      expect((await call(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).result).toBe(
+        "resent",
+      );
+    });
+  });
+
+  it("si el último correo NUNCA salió (falló, o quedó pendiente más de 2 minutos) se puede reintentar de inmediato", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.owner, { email: "no-salio@ejemplo.test" });
+      // Recién creada: el correo sigue «pendiente de enviar» hace segundos -> hay que esperar.
+      expect((await denied(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).code).toBe(LIMIT);
+      // El envío falló: nadie recibió nada, no hay por qué esperar.
+      await actAsService(setup);
+      await setup.query(SETTLE, [p.mailId, null, null, "timeout"]);
+      const first = resendArgs(p.id);
+      expect((await call(w.owner, w.tenantA, RESEND, first.params)).result).toBe("resent");
+      // El nuevo correo quedó pendiente hace más de 2 minutos (el servidor se cayó): también se reintenta.
+      // (Dentro de una transacción todas las filas comparten la hora: se fecha cada correo a mano.)
+      const age = async (mailId: string, interval: string) => {
+        await actAsPostgres(setup);
+        await setup.query("alter table public.email_messages disable trigger email_messages_guard");
+        await setup.query(
+          "update public.email_messages set created_at = now() - $2::interval where id = $1",
+          [mailId, interval],
+        );
+        await setup.query("alter table public.email_messages enable trigger email_messages_guard");
+      };
+      await age(p.mailId, "1 hour");
+      await age(first.mailId, "3 minutes");
+      const second = resendArgs(p.id);
+      expect((await call(w.owner, w.tenantA, RESEND, second.params)).send_count).toBe(3);
+      // Un correo que SÍ salió respeta los 10 minutos.
+      await age(first.mailId, "1 hour");
+      await actAsService(setup);
+      await setup.query(SETTLE, [second.mailId, "mailpit", "ok-1", null]);
+      expect((await denied(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).code).toBe(LIMIT);
     });
   });
 
@@ -537,7 +629,9 @@ describe("reenviar", () => {
       const { p } = await invite(w.owner);
       for (let n = 1; n <= 5; n++) {
         await backdateSend(p.id);
-        expect((await call(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).send_count).toBe(n + 1);
+        expect((await call(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).send_count).toBe(
+          n + 1,
+        );
       }
       await backdateSend(p.id);
       const error = await denied(w.owner, w.tenantA, RESEND, resendArgs(p.id).params);
@@ -567,8 +661,12 @@ describe("reenviar", () => {
       // El Dueño de B apuntando a SU organización con el id de una invitación de A.
       const cross = await denied(w.ownerB, w.tenantB, RESEND, resendArgs(p.id).params);
       expect(cross.code).toBe(NOT_FOUND);
-      expect((await denied(w.ownerB, w.tenantA, RESEND, resendArgs(p.id).params)).code).toBe(NOT_FOUND);
-      expect((await denied(w.owner, w.tenantA, RESEND, resendArgs(randomUUID()).params)).code).toBe(NOT_FOUND);
+      expect((await denied(w.ownerB, w.tenantA, RESEND, resendArgs(p.id).params)).code).toBe(
+        NOT_FOUND,
+      );
+      expect((await denied(w.owner, w.tenantA, RESEND, resendArgs(randomUUID()).params)).code).toBe(
+        NOT_FOUND,
+      );
       expect((await row(p.id)).token_sha256).toBe(p.tokenSha);
     });
   });
@@ -578,7 +676,9 @@ describe("reenviar", () => {
       const a = await invite(w.owner, { email: "cancelada@ejemplo.test" });
       await call(w.owner, w.tenantA, REVOKE, [a.p.id]);
       await backdateSend(a.p.id);
-      expect((await denied(w.owner, w.tenantA, RESEND, resendArgs(a.p.id).params)).code).toBe(NOT_ALLOWED_STATE);
+      expect((await denied(w.owner, w.tenantA, RESEND, resendArgs(a.p.id).params)).code).toBe(
+        NOT_ALLOWED_STATE,
+      );
     });
   });
 });
@@ -646,7 +746,9 @@ describe("quién ve la tabla", () => {
       const own = "id, tenant_id, email_enc, role, status, expires_at, invited_by, send_count";
       for (const user of [w.owner, w.admin]) {
         await asUser(setup, user, w.tenantA);
-        const { rows } = await setup.query(`select ${own} from public.invitations where id = $1`, [p.id]);
+        const { rows } = await setup.query(`select ${own} from public.invitations where id = $1`, [
+          p.id,
+        ]);
         expect(rows).toHaveLength(1);
         expect(rows[0].role).toBe("approver");
         for (const column of ["token_sha256", "email_binding", "email_hash", "*"]) {
@@ -710,7 +812,9 @@ describe("quién ve la tabla", () => {
         [w.viewer, 0],
       ] as const) {
         await asUser(setup, user, w.tenantA);
-        const { rows } = await setup.query("select id from public.email_messages where id = $1", [p.mailId]);
+        const { rows } = await setup.query("select id from public.email_messages where id = $1", [
+          p.mailId,
+        ]);
         expect(rows.length, user.id).toBe(expected);
         await actAsPostgres(setup);
       }
@@ -724,9 +828,18 @@ describe("auditoría", () => {
       const email = "secreto-auditoria@ejemplo.test";
       const { p } = await invite(w.owner, { email });
       await actAsPostgres(setup);
-      await setup.query("update public.invitations set last_sent_at = now() - interval '11 minutes' where id = $1", [p.id]);
+      await setup.query(
+        "update public.invitations set last_sent_at = now() - interval '11 minutes' where id = $1",
+        [p.id],
+      );
       const { sha } = newToken();
-      await call(w.owner, w.tenantA, RESEND, [p.id, invitationEmailBinding(sha, email), sha, randomUUID(), "v1.x.y"]);
+      await call(w.owner, w.tenantA, RESEND, [
+        p.id,
+        invitationEmailBinding(sha, email),
+        sha,
+        randomUUID(),
+        "v1.x.y",
+      ]);
       await call(w.owner, w.tenantA, REVOKE, [p.id]);
       await actAsPostgres(setup);
       const { rows } = await setup.query(
@@ -758,7 +871,9 @@ describe("cerrar el envío del correo (solo el servidor)", () => {
       const again = await setup.query<{ r: Json }>(SETTLE, [p.mailId, "mailpit", "id-999", null]);
       expect(again.rows[0].r).toEqual({ status: "already_settled" });
       await actAsPostgres(setup);
-      const mail = (await setup.query("select * from public.email_messages where id = $1", [p.mailId])).rows[0];
+      const mail = (
+        await setup.query("select * from public.email_messages where id = $1", [p.mailId])
+      ).rows[0];
       expect(mail.status).toBe("sent");
       expect(mail.provider).toBe("mailpit");
       expect(mail.provider_message_id).toBe("id-123");
@@ -772,10 +887,17 @@ describe("cerrar el envío del correo (solo el servidor)", () => {
       await actAsService(setup);
       const failed = await setup.query<{ r: Json }>(SETTLE, [p.mailId, null, null, "timeout"]);
       expect(failed.rows[0].r).toEqual({ status: "failed" });
-      const bad = await expectSqlError(setup, SETTLE, [randomUUID(), null, null, "algo con espacios y @"]);
+      const bad = await expectSqlError(setup, SETTLE, [
+        randomUUID(),
+        null,
+        null,
+        "algo con espacios y @",
+      ]);
       expect(bad.code).toBe(NOT_FOUND);
       await actAsPostgres(setup);
-      const mail = (await setup.query("select * from public.email_messages where id = $1", [p.mailId])).rows[0];
+      const mail = (
+        await setup.query("select * from public.email_messages where id = $1", [p.mailId])
+      ).rows[0];
       expect(mail.status).toBe("failed");
       expect(mail.error_code).toBe("timeout");
     });
@@ -801,7 +923,9 @@ describe("cerrar el envío del correo (solo el servidor)", () => {
         await actAsPostgres(setup);
       }
       await actAsService(setup);
-      expect((await expectSqlError(setup, SETTLE, [randomUUID(), "mailpit", "x", null])).code).toBe(NOT_FOUND);
+      expect((await expectSqlError(setup, SETTLE, [randomUUID(), "mailpit", "x", null])).code).toBe(
+        NOT_FOUND,
+      );
     });
   });
 });
@@ -809,9 +933,11 @@ describe("cerrar el envío del correo (solo el servidor)", () => {
 describe("borrado por plazo", () => {
   const purge = async () => {
     await actAsPostgres(setup);
-    return (await setup.query<{ r: { invitations_deleted: number; emails_deleted: number } }>(
-      "select app.purge_invitations() as r",
-    )).rows[0].r;
+    return (
+      await setup.query<{ r: { invitations_deleted: number; emails_deleted: number } }>(
+        "select app.purge_invitations() as r",
+      )
+    ).rows[0].r;
   };
   const exists = async (id: string) =>
     (await count("select count(*) as n from public.invitations where id = $1", [id])) > 0;
@@ -822,15 +948,29 @@ describe("borrado por plazo", () => {
       const recent = (await invite(w.owner, { email: "reciente@ejemplo.test" })).p;
       const live = (await invite(w.owner, { email: "vigente@ejemplo.test" })).p;
       await actAsPostgres(setup);
-      await setup.query("update public.invitations set expires_at = now() - interval '31 days' where id = $1", [old.id]);
-      await setup.query("update public.invitations set expires_at = now() - interval '29 days' where id = $1", [recent.id]);
+      await setup.query(
+        "update public.invitations set expires_at = now() - interval '31 days' where id = $1",
+        [old.id],
+      );
+      await setup.query(
+        "update public.invitations set expires_at = now() - interval '29 days' where id = $1",
+        [recent.id],
+      );
       const result = await purge();
       expect(result.invitations_deleted).toBeGreaterThanOrEqual(1);
       expect(await exists(old.id)).toBe(false);
-      expect(await count("select count(*) as n from public.email_messages where invitation_id = $1", [old.id])).toBe(0);
+      expect(
+        await count("select count(*) as n from public.email_messages where invitation_id = $1", [
+          old.id,
+        ]),
+      ).toBe(0);
       expect(await exists(recent.id)).toBe(true);
       expect(await exists(live.id)).toBe(true);
-      expect(await count("select count(*) as n from public.email_messages where invitation_id = $1", [recent.id])).toBe(1);
+      expect(
+        await count("select count(*) as n from public.email_messages where invitation_id = $1", [
+          recent.id,
+        ]),
+      ).toBe(1);
     });
   });
 
@@ -841,8 +981,14 @@ describe("borrado por plazo", () => {
       await call(w.owner, w.tenantA, REVOKE, [old.id]);
       await call(w.owner, w.tenantA, REVOKE, [recent.id]);
       await actAsPostgres(setup);
-      await setup.query("update public.invitations set revoked_at = now() - interval '31 days' where id = $1", [old.id]);
-      await setup.query("update public.invitations set revoked_at = now() - interval '2 days' where id = $1", [recent.id]);
+      await setup.query(
+        "update public.invitations set revoked_at = now() - interval '31 days' where id = $1",
+        [old.id],
+      );
+      await setup.query(
+        "update public.invitations set revoked_at = now() - interval '2 days' where id = $1",
+        [recent.id],
+      );
       await purge();
       expect(await exists(old.id)).toBe(false);
       expect(await exists(recent.id)).toBe(true);
@@ -860,7 +1006,11 @@ describe("borrado por plazo", () => {
       );
       await purge();
       expect(await exists(p.id)).toBe(true);
-      expect(await count("select count(*) as n from public.email_messages where invitation_id = $1", [p.id])).toBe(0);
+      expect(
+        await count("select count(*) as n from public.email_messages where invitation_id = $1", [
+          p.id,
+        ]),
+      ).toBe(0);
     });
   });
 
@@ -869,24 +1019,41 @@ describe("borrado por plazo", () => {
       const { p } = await invite(w.owner);
       await actAsPostgres(setup);
       // Sin el interruptor de la tarea: no se borra ni siquiera uno vencido.
-      await setup.query("update public.invitations set expires_at = now() - interval '40 days' where id = $1", [p.id]);
-      expect((await expectSqlError(setup, "delete from public.email_messages where invitation_id = $1", [p.id])).code).toBe(
-        INSUFFICIENT_PRIVILEGE,
+      await setup.query(
+        "update public.invitations set expires_at = now() - interval '40 days' where id = $1",
+        [p.id],
       );
+      expect(
+        (
+          await expectSqlError(
+            setup,
+            "delete from public.email_messages where invitation_id = $1",
+            [p.id],
+          )
+        ).code,
+      ).toBe(INSUFFICIENT_PRIVILEGE);
       // Con el interruptor, pero sobre una invitación vigente: tampoco.
       const live = (await invite(w.owner, { email: "no-borrar@ejemplo.test" })).p;
       await actAsPostgres(setup);
       await setup.query("select set_config('app.retention_purge', 'on', true)");
-      expect((await expectSqlError(setup, "delete from public.email_messages where invitation_id = $1", [live.id])).code).toBe(
-        INSUFFICIENT_PRIVILEGE,
-      );
+      expect(
+        (
+          await expectSqlError(
+            setup,
+            "delete from public.email_messages where invitation_id = $1",
+            [live.id],
+          )
+        ).code,
+      ).toBe(INSUFFICIENT_PRIVILEGE);
     });
   });
 
   it("nadie con un pase puede ejecutar la tarea de borrado", async () => {
     await withTx(setup, async () => {
       await asUser(setup, w.owner, w.tenantA);
-      expect((await expectSqlError(setup, "select app.purge_invitations()")).code).toBe(INSUFFICIENT_PRIVILEGE);
+      expect((await expectSqlError(setup, "select app.purge_invitations()")).code).toBe(
+        INSUFFICIENT_PRIVILEGE,
+      );
     });
   });
 
@@ -900,6 +1067,28 @@ describe("borrado por plazo", () => {
   });
 });
 
+describe("los topes de la aplicación y los de la base son los mismos", () => {
+  it("las constantes de src/lib/team/invitations-model.ts calzan con app.invitation_*", async () => {
+    await actAsPostgres(setup);
+    const { rows } = await setup.query<Record<string, number>>(
+      `select app.invitation_ttl_days() as ttl, app.invitation_max_per_user_hour() as hour,
+              app.invitation_max_per_tenant_day() as day, app.invitation_max_pending() as pending,
+              app.invitation_max_resends() as resends, app.invitation_resend_min_minutes() as minutes,
+              app.invitation_mail_grace_minutes() as grace, app.invitation_retention_days() as retention`,
+    );
+    expect(rows[0]).toEqual({
+      ttl: INVITATION_TTL_DAYS,
+      hour: INVITATION_MAX_PER_USER_HOUR,
+      day: INVITATION_MAX_PER_TENANT_DAY,
+      pending: INVITATION_MAX_PENDING,
+      resends: INVITATION_MAX_RESENDS,
+      minutes: INVITATION_RESEND_MIN_MINUTES,
+      grace: MAIL_PENDING_GRACE_MINUTES,
+      retention: INVITATION_RETENTION_DAYS,
+    });
+  });
+});
+
 describe("restricciones de forma de la tabla", () => {
   it("el código secreto es único en toda la plataforma y debe tener 64 hexadecimales", async () => {
     await withTx(setup, async () => {
@@ -908,7 +1097,9 @@ describe("restricciones de forma de la tabla", () => {
       const clash = prepare({ email: "otro-correo@ejemplo.test" });
       clash.params[4] = p.tokenSha;
       expect((await denied(w.owner, w.tenantA, CREATE, clash.params)).code).toBe(INVALID);
-      expect(await count("select count(*) as n from public.invitations where id = $1", [clash.id])).toBe(0);
+      expect(
+        await count("select count(*) as n from public.invitations where id = $1", [clash.id]),
+      ).toBe(0);
     });
   });
 

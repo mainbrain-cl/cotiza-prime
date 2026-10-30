@@ -25,13 +25,13 @@ describe("visibleNavItems (el menú de cada rol)", () => {
     "formularios",
   ];
 
-  it("el Dueño y los Administradores ven todo, también «Configuración»", () => {
+  it("el Dueño y los Administradores ven todo, también «Equipo» y «Configuración»", () => {
     for (const role of ["owner", "admin"]) {
-      expect(segmentsOf(role)).toEqual([...EVERYTHING_BUT_SETTINGS, "configuracion"]);
+      expect(segmentsOf(role)).toEqual([...EVERYTHING_BUT_SETTINGS, "equipo", "configuracion"]);
     }
   });
 
-  it("el Aprobador, el Comercial y el Observador no ven «Configuración»", () => {
+  it("el Aprobador, el Comercial y el Observador no ven «Equipo» ni «Configuración»", () => {
     for (const role of ["approver", "sales", "viewer"]) {
       expect(segmentsOf(role)).toEqual(EVERYTHING_BUT_SETTINGS);
     }

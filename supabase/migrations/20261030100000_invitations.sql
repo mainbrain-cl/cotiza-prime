@@ -38,12 +38,14 @@ create function app.invitation_max_per_tenant_day()   returns integer language s
 create function app.invitation_max_pending()          returns integer language sql immutable as $$ select 50 $$;
 create function app.invitation_max_resends()          returns integer language sql immutable as $$ select 5 $$;
 create function app.invitation_resend_min_minutes()   returns integer language sql immutable as $$ select 10 $$;
+-- Un correo que lleva más de esto «pendiente de enviar» se da por no enviado (el servidor se cayó a medias).
+create function app.invitation_mail_grace_minutes()   returns integer language sql immutable as $$ select 2 $$;
 -- Una invitación no aceptada se borra 30 días después de vencer o cancelarse (supuesto 7 del sprint 5).
 create function app.invitation_retention_days()       returns integer language sql immutable as $$ select 30 $$;
 revoke all on function
   app.invitation_ttl_days(), app.invitation_max_per_user_hour(), app.invitation_max_per_tenant_day(),
   app.invitation_max_pending(), app.invitation_max_resends(), app.invitation_resend_min_minutes(),
-  app.invitation_retention_days()
+  app.invitation_mail_grace_minutes(), app.invitation_retention_days()
   from public, anon, authenticated;
 
 -- 1. Correo normalizado y vínculo ------------------------------------------------------------------
@@ -353,6 +355,8 @@ grant execute on function public.create_invitation(uuid, text, text, text, text,
 -- 5. resend_invitation ---------------------------------------------------------------------------------
 -- Reenvía una invitación pendiente (también una vencida: eso extiende su vigencia). Genera un código NUEVO:
 -- el enlace anterior deja de servir. Respeta el tope de reenvíos y el intervalo mínimo entre uno y otro.
+-- El intervalo mínimo existe para no llenarle el buzón a la persona invitada: si el último correo NUNCA salió
+-- (falló, o quedó «pendiente» más de 2 minutos), se puede reintentar de inmediato. El tope de reenvíos sigue valiendo.
 -- result: resent
 create function public.resend_invitation(
   p_invitation_id uuid, p_email_binding text, p_token_sha256 text, p_email_message_id uuid, p_to_email_enc text
@@ -362,6 +366,7 @@ declare
   v_tenant  uuid := app.current_tenant_id();
   v_uid     uuid := auth.uid();
   v_inv     public.invitations;
+  v_mail    public.email_messages;
   v_expires timestamptz := now() + make_interval(days => app.invitation_ttl_days());
 begin
   if v_tenant is null or v_uid is null then
@@ -388,7 +393,13 @@ begin
   if v_inv.send_count - 1 >= app.invitation_max_resends() then
     raise exception 'limit_resends' using errcode = 'CP429';
   end if;
-  if v_inv.last_sent_at > now() - make_interval(mins => app.invitation_resend_min_minutes()) then
+  select * into v_mail from public.email_messages e
+   where e.tenant_id = v_tenant and e.invitation_id = v_inv.id and e.kind = 'invitation'
+   order by e.created_at desc, e.id limit 1;
+  if v_inv.last_sent_at > now() - make_interval(mins => app.invitation_resend_min_minutes())
+     and not (found and (v_mail.status = 'failed'
+                         or (v_mail.status = 'pending'
+                             and v_mail.created_at < now() - make_interval(mins => app.invitation_mail_grace_minutes())))) then
     raise exception 'resend_too_soon' using errcode = 'CP429';
   end if;
 

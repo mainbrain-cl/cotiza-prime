@@ -113,4 +113,4 @@ drop function if exists app.normalize_email(text);
 drop function if exists
   app.invitation_ttl_days(), app.invitation_max_per_user_hour(), app.invitation_max_per_tenant_day(),
   app.invitation_max_pending(), app.invitation_max_resends(), app.invitation_resend_min_minutes(),
-  app.invitation_retention_days();
+  app.invitation_mail_grace_minutes(), app.invitation_retention_days();

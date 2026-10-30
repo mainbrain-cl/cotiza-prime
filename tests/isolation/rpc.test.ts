@@ -196,6 +196,13 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
         p_provider_message_id: "x",
         p_error_code: null,
       },
+      // Sprint 5 · invitaciones
+      invitation_email_settle: {
+        p_email_id: randomUUID(),
+        p_provider: "memory",
+        p_provider_message_id: "x",
+        p_error_code: null,
+      },
     };
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {

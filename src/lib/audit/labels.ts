@@ -25,6 +25,10 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "quote.accepted": "El cliente aceptó una cotización",
   "quote.rejected": "El cliente rechazó una cotización",
   "share_link.revoked": "Se revocó el enlace de una cotización",
+  "invitation.created": "Se invitó a una persona al equipo",
+  "invitation.updated": "Cambió una invitación",
+  "invitation.resent": "Se reenvió una invitación",
+  "invitation.revoked": "Se canceló una invitación",
 };
 
 const RESOURCE_LABELS: Readonly<Record<string, string>> = {
@@ -35,6 +39,7 @@ const RESOURCE_LABELS: Readonly<Record<string, string>> = {
   catalog_item: "Catálogo",
   customer: "Cliente",
   quote: "Cotización",
+  invitation: "Invitación",
 };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
@@ -60,6 +65,10 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   phone_enc: "teléfono",
   rut_enc: "RUT",
   address_enc: "dirección",
+  expires_at: "vencimiento",
+  send_count: "envíos",
+  last_sent_at: "último envío",
+  revoke_reason: "motivo de la cancelación",
 };
 
 export function actionLabel(action: string): string {

@@ -7,7 +7,7 @@ import { ConfirmAction } from "@/components/intake/confirm-action";
 import { Button } from "@/components/ui/button";
 import { TONE_CLASSES, type StatusTone } from "@/components/ui/status-badge";
 import { resendInvitationAction, revokeInvitationAction } from "@/lib/team/actions";
-import type { InvitationTone } from "@/lib/team/invitations-model";
+import { INVITATION_TTL_DAYS, type InvitationTone } from "@/lib/team/invitations-model";
 import { cn } from "@/lib/utils";
 
 /** Una invitación lista para mostrar: todo el texto ya viene armado desde el servidor. */
@@ -18,6 +18,9 @@ export type InvitationItem = {
   statusLabel: string;
   tone: InvitationTone;
   needsAttention: boolean;
+  /** La invitación ya venció (se decide con la fecha, no con el texto de la insignia). */
+  expired: boolean;
+  createdLabel: string;
   expiresLabel: string;
   sentLabel: string;
   invitedBy: string | null;
@@ -96,6 +99,10 @@ export function InvitationList({ tenantId, items }: { tenantId: string; items: I
                 <dd data-testid="invitation-expiry">{item.expiresLabel}</dd>
               </div>
               <div className="flex gap-1.5">
+                <dt className="sr-only">Creada</dt>
+                <dd data-testid="invitation-created">{item.createdLabel}</dd>
+              </div>
+              <div className="flex gap-1.5">
                 <dt className="sr-only">Último envío</dt>
                 <dd>{item.sentLabel}</dd>
               </div>
@@ -109,8 +116,8 @@ export function InvitationList({ tenantId, items }: { tenantId: string; items: I
 
             {item.needsAttention ? (
               <p className="text-sm text-fg-muted">
-                {item.statusLabel === "Vencida"
-                  ? "El enlace venció. Reenvíala para darle otros 7 días."
+                {item.expired
+                  ? `El enlace venció. Reenvíala para darle otros ${INVITATION_TTL_DAYS} días.`
                   : "El correo no llegó a salir o rebotó. Revisa que la dirección esté bien y reenvíala."}
               </p>
             ) : null}

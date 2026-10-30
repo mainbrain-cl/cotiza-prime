@@ -23,6 +23,3 @@ export const inviteSchema = z.object({
 });
 
 export type InviteInput = z.infer<typeof inviteSchema>;
-
-/** Un identificador de invitación que llega de la pantalla. */
-export const invitationIdSchema = z.uuid();

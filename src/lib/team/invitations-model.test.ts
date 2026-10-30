@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  INVITATION_MAX_RESENDS,
-  INVITATION_RESEND_MIN_MINUTES,
-  invitationDisplay,
-  nextResendAt,
-  resendsLeft,
-} from "./invitations-model";
+import { INVITATION_MAX_RESENDS, invitationDisplay, resendsLeft } from "./invitations-model";
 
 const NOW = new Date("2026-10-30T15:00:00.000Z");
 const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000);
@@ -84,12 +78,5 @@ describe("reenvíos", () => {
     expect(resendsLeft(2)).toBe(INVITATION_MAX_RESENDS - 1);
     expect(resendsLeft(1 + INVITATION_MAX_RESENDS)).toBe(0);
     expect(resendsLeft(99)).toBe(0);
-  });
-
-  it("dice cuándo se podrá reenviar, o null si ya se puede o no quedan", () => {
-    expect(nextResendAt(1, minutes(-3), NOW)).toEqual(minutes(INVITATION_RESEND_MIN_MINUTES - 3));
-    expect(nextResendAt(1, minutes(-INVITATION_RESEND_MIN_MINUTES), NOW)).toBeNull();
-    expect(nextResendAt(1, minutes(-30), NOW)).toBeNull();
-    expect(nextResendAt(6, minutes(-1), NOW)).toBeNull();
   });
 });

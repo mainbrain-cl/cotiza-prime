@@ -3,9 +3,11 @@
 import { MailPlus } from "lucide-react";
 import { useActionState } from "react";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
+import { OfflineNotice } from "@/components/ui/offline-notice";
 import { useResultToast } from "@/components/ui/use-result-toast";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 import { inviteMemberAction, type InviteFormState } from "@/lib/team/actions";
+import { INVITATION_TTL_DAYS } from "@/lib/team/invitations-model";
 import { cn } from "@/lib/utils";
 
 export type RoleChoice = { value: string; label: string; description: string };
@@ -37,10 +39,12 @@ export function InviteForm({ tenantId, roles }: { tenantId: string; roles: RoleC
       <div className="flex flex-col gap-1">
         <h2 className="text-lg">Invitar a alguien</h2>
         <p className="text-sm text-fg-muted">
-          Le enviamos un correo con un enlace para unirse. La invitación vale 7 días.
+          Le enviamos un correo con un enlace para unirse. La invitación vale {INVITATION_TTL_DAYS}{" "}
+          días.
         </p>
       </div>
 
+      <OfflineNotice />
       {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
 
       <Field label="Correo de la persona" error={emailError} required>

@@ -38,6 +38,8 @@ export default async function TeamPage({ params }: PageProps<"/o/[tenantId]/equi
         statusLabel: row.display.label,
         tone: row.display.tone,
         needsAttention: row.display.needsAttention,
+        expired: row.display.expired,
+        createdLabel: `Invitada el ${formatDate(row.createdAt)}`,
         expiresLabel: `${row.display.expired ? "Venció" : "Vence"} el ${formatDate(row.expiresAt)}`,
         sentLabel: `Último envío: ${formatDateTime(row.lastSentAt)}`,
         invitedBy: row.invitedByName,

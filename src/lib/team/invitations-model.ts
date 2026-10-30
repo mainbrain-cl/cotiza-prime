@@ -85,16 +85,3 @@ export function invitationDisplay(input: InvitationDisplayInput): InvitationDisp
 export function resendsLeft(sendCount: number): number {
   return Math.max(0, INVITATION_MAX_RESENDS - (sendCount - 1));
 }
-
-/** Cuándo se podrá reenviar de nuevo (o `null` si ya se puede, o si no quedan reenvíos). */
-export function nextResendAt(
-  sendCount: number,
-  lastSentAt: string | Date,
-  now = new Date(),
-): Date | null {
-  if (resendsLeft(sendCount) === 0) return null;
-  const at = new Date(
-    new Date(lastSentAt).getTime() + INVITATION_RESEND_MIN_MINUTES * MS_PER_MINUTE,
-  );
-  return at.getTime() > now.getTime() ? at : null;
-}

@@ -18,6 +18,7 @@ export const inviteSchema = z.object({
     .transform(normalizeEmail),
   role: z
     .string({ error: "Elige el rol." })
+    .min(1, "Elige el rol.")
     .refine(isGrantableRole, "Elige uno de los roles de la lista."),
 });
 

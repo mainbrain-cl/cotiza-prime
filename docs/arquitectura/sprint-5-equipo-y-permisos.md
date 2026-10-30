@@ -526,3 +526,20 @@ Si nadie responde, se aplica el supuesto indicado.
 - No reescribir las más de 40 funciones existentes solo para cambiar `has_role` por `can`: heredan el cambio
   a través del rol efectivo.
 - No validar el precio bloqueado solo en la pantalla.
+
+---
+
+## Registro de construcción — H-008 (2026-10-30)
+
+Construida siguiendo este diseño (§2). Lo que se decidió donde el diseño no era exacto, y lo que se apartó de él:
+
+- **Acción de la matriz:** el permiso de equipo se llama `team.manage` (así quedó en `matrix.ts` y en `app.role_can`).
+- **Rol permitido sin escribir roles en las funciones:** `app.invitation_role` es un dominio (`admin`, `approver`, `sales`, `viewer`); las funciones lo usan al validar `p_role`, así la guardia 14 de `schema-guards` no crece. La columna `role` de `invitations` es de ese tipo.
+- **`send_count`** cuenta los envíos en total (el primero más hasta 5 reenvíos, máximo 6).
+- **Reenvío tras un correo que nunca salió:** el intervalo mínimo de 10 minutos no se exige si el último correo de la invitación falló o lleva más de 2 minutos «pendiente» (si no, un fallo del proveedor dejaría a la persona 10 minutos sin poder reintentar). El tope de 5 reenvíos sigue valiendo.
+- **Topes por persona** cuentan solo dentro de la organización activa (como dice el diseño). Una persona con varias organizaciones tiene 20 por hora en cada una; ver riesgos del informe.
+- **Cierre del envío** (`invitation_email_settle`): solo `service_role`, a través de `src/lib/team/gateway.ts` (una sola función, vigilada por la guardia estática 11). Invitar, reenviar y cancelar corren con el pase de la persona.
+- **`email_messages`:** el correo registrado de una invitación solo lo leen quienes manejan el equipo (política de lectura actualizada); un reenvío agrega otra fila. Los correos de una invitación aceptada se borran 30 días después de aceptarse (el diseño dice «al aceptar»: H-009 puede borrarlos en el acto si prefiere).
+- **Tarea de borrado:** `app.purge_invitations()`, `pg_cron` diario a las 03:40.
+- **Solo invitaciones, sin lista de miembros:** la pantalla «Tu equipo» lista únicamente las invitaciones pendientes; la lista de miembros con su rol es de H-010.
+- **Auditoría:** `invitation.created` y `invitation.updated` salen del disparador genérico (solo nombres de campos); `invitation.resent` e `invitation.revoked` son explícitos. Ninguno lleva el correo.

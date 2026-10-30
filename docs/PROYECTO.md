@@ -796,6 +796,7 @@ emitir la cotización formal, no en el formulario.
 | Aperturas del enlace (IP, navegador) | 12 meses |
 | Cotizaciones, pagos y clientes de una organización activa | Mientras la organización esté activa |
 | Datos de una organización cancelada | 90 días archivados; después se borran o anonimizan |
+| Invitaciones no aceptadas (correo del invitado) | 30 días después de vencer o cancelarse; el correo se vacía al aceptar *(supuesto 7 del sprint 5, por confirmar)* |
 | Registro de auditoría | 24 meses |
 
 **Nunca datos reales en el entorno de pruebas.**

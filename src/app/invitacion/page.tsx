@@ -9,7 +9,11 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { signOutAction } from "@/lib/auth/actions";
 import { HOME_PATH, LOGIN_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
 import { getOptionalUser, requireUser } from "@/lib/auth/session";
-import { cleanName } from "@/lib/email/invitation-names";
+import {
+  FALLBACK_INVITER_NAME,
+  FALLBACK_ORGANIZATION_NAME,
+  cleanName,
+} from "@/lib/email/invitation-names";
 import { formatDate } from "@/lib/format-date";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "@/lib/permissions/matrix";
 import { previewInvitation } from "@/lib/team/accept-service";
@@ -29,9 +33,6 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false, nocache: true },
   referrer: "no-referrer",
 };
-
-const FALLBACK_INVITER = "Un miembro del equipo";
-const FALLBACK_ORGANIZATION = "una organización";
 
 /**
  * Aceptar una invitación (H-009). El código llega en una cookie (la dejó `/invitacion/[código]`); aquí nunca se ve
@@ -131,8 +132,8 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
 
   const role = invitedRole(preview.role);
   const sentence = invitationSentence({
-    inviterName: cleanName(preview.inviterName, FALLBACK_INVITER),
-    organizationName: cleanName(preview.organizationName, FALLBACK_ORGANIZATION),
+    inviterName: cleanName(preview.inviterName, FALLBACK_INVITER_NAME),
+    organizationName: cleanName(preview.organizationName, FALLBACK_ORGANIZATION_NAME),
     roleLabel: role ? ROLE_LABELS[role] : "miembro",
   });
 
@@ -168,12 +169,12 @@ function SignedOutView() {
       description="Te invitaron a una organización de Cotiza Prime. Ingresa o crea tu cuenta con el correo al que llegó la invitación."
     >
       <div className="flex flex-col gap-3 sm:flex-row" data-testid="invitation-signed-out">
-        <Link href={LOGIN_PATH} className={buttonVariants({ size: "lg", className: "flex-1" })}>
+        <Link href={LOGIN_PATH} className={buttonVariants({ size: "lg", className: "sm:flex-1" })}>
           Ingresar
         </Link>
         <Link
           href={SIGNUP_PATH}
-          className={buttonVariants({ size: "lg", variant: "secondary", className: "flex-1" })}
+          className={buttonVariants({ size: "lg", variant: "secondary", className: "sm:flex-1" })}
         >
           Crear mi cuenta
         </Link>

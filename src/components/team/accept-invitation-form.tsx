@@ -3,12 +3,8 @@
 import { useActionState } from "react";
 import { FormAlert, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
-import {
-  INITIAL_ACCEPT_STATE,
-  acceptInvitationAction,
-  leaveInvitationAction,
-  type AcceptState,
-} from "@/lib/team/accept-actions";
+import { acceptInvitationAction, leaveInvitationAction } from "@/lib/team/accept-actions";
+import { INITIAL_ACCEPT_STATE, type AcceptState } from "@/lib/team/accept-model";
 import { Button } from "@/components/ui/button";
 
 /**

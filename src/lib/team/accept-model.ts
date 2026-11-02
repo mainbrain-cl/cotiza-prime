@@ -131,3 +131,13 @@ export function invitationSentence(input: {
   const who = input.inviterName?.trim() ? input.inviterName.trim() : "Un miembro del equipo";
   return `${who} te invitó a ${input.organizationName} como ${input.roleLabel}.`;
 }
+
+/** Lo que devuelve «Unirme» a la pantalla. Vive aquí y no en el archivo de acciones: un archivo `"use server"` solo puede exportar funciones. */
+export type AcceptState = {
+  status: "idle" | "error";
+  message?: string;
+  /** El código ya no sirve para nada: la pantalla ofrece salir en vez de reintentar. */
+  dead?: boolean;
+};
+
+export const INITIAL_ACCEPT_STATE: AcceptState = { status: "idle" };

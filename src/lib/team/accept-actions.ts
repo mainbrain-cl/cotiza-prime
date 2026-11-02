@@ -8,6 +8,7 @@ import { tenantPath } from "@/lib/tenant/constants";
 import { acceptInvitation } from "./accept-service";
 import {
   DEAD_RESULTS,
+  type AcceptState,
   INVITATION_GENERIC_FAILURE,
   MISSING_CODE_MESSAGE,
   messageForResult,
@@ -20,15 +21,6 @@ import { clearInvitationCode, readInvitationCode } from "./invitation-cookie";
  * partir de la invitación, y la base vuelve a revisar sesión, correo verificado y que el correo de la cuenta sea
  * el de la invitación. La persona todavía no es miembro, así que estas acciones no tienen organización activa.
  */
-
-export type AcceptState = {
-  status: "idle" | "error";
-  message?: string;
-  /** El código ya no sirve para nada: la pantalla ofrece salir en vez de reintentar. */
-  dead?: boolean;
-};
-
-export const INITIAL_ACCEPT_STATE: AcceptState = { status: "idle" };
 
 /** «Unirme»: acepta la invitación y entra a la organización. */
 export async function acceptInvitationAction(): Promise<AcceptState> {

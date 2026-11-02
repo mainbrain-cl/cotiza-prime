@@ -133,3 +133,14 @@ describe("seguir sin unirme", () => {
     expect(clearCode).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("el archivo de acciones", () => {
+  it("solo exporta funciones (un archivo «use server» no admite otra cosa; Next lo rechaza al abrir la pantalla)", async () => {
+    const exported = await import("./accept-actions");
+    expect(Object.keys(exported).sort()).toEqual([
+      "acceptInvitationAction",
+      "leaveInvitationAction",
+    ]);
+    for (const value of Object.values(exported)) expect(typeof value).toBe("function");
+  });
+});

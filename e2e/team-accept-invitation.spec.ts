@@ -1,0 +1,676 @@
+import { createHash } from "node:crypto";
+import type { Browser, BrowserContext, Page } from "@playwright/test";
+import { generateRut } from "../src/lib/chile/rut";
+import { connect } from "../tests/db/helpers";
+import { expect, randomTestIp, test } from "./fixtures";
+import {
+  TEST_PASSWORD,
+  createTenant,
+  openVerificationLink,
+  signUpAndVerify,
+  uniqueEmail,
+  waitForVerificationLink,
+} from "./helpers";
+
+// H-009: aceptar una invitación. Invitar (como Dueño) → el correo llega a Mailpit → aceptar con una cuenta que ya
+// existe (la organización queda en el selector); registrarse desde la invitación y quedar unido al terminar;
+// abrirla con otro correo; invitación vencida y cancelada. Todo es ficticio (correos @ejemplo.test).
+
+// Con dos pruebas a la vez, el registro de cuentas supera los 5 s de espera: este archivo corre en orden.
+test.describe.configure({ mode: "serial" });
+
+const MAILBOX_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:56324";
+const MOBILE = { width: 375, height: 812 };
+const COOKIE_NAME = "cp_invitation";
+const ONE_HOUR_SECONDS = 3600;
+const ORG_NAME = "Aceptar Invitaciones Ltda";
+const OWNER_NAME = "Dueña Aceptar";
+
+async function withDb<T>(fn: (db: import("pg").Client) => Promise<T>): Promise<T> {
+  const db = await connect();
+  try {
+    return await fn(db);
+  } finally {
+    await db.end();
+  }
+}
+
+type MailDetail = { ID: string; HTML: string; Text: string; Subject: string };
+
+async function invitationMails(address: string): Promise<MailDetail[]> {
+  const search = await fetch(
+    `${MAILBOX_URL}/api/v1/search?query=${encodeURIComponent(`to:${address}`)}`,
+  );
+  const { messages } = (await search.json()) as { messages?: { ID: string }[] };
+  const details: MailDetail[] = [];
+  for (const { ID } of [...(messages ?? [])].reverse()) {
+    const mail = (await (await fetch(`${MAILBOX_URL}/api/v1/message/${ID}`)).json()) as MailDetail;
+    if (mail.Subject.includes("te invitó a")) details.push(mail);
+  }
+  return details;
+}
+
+/** Espera el correo de la invitación y devuelve el enlace tal como lo recibe la persona. */
+async function waitForInviteLink(address: string): Promise<{ link: string; token: string }> {
+  let found: MailDetail[] = [];
+  await expect
+    .poll(async () => (found = await invitationMails(address)).length, {
+      message: `Esperaba el correo de la invitación a ${address}`,
+      timeout: 30_000,
+    })
+    .toBe(1);
+  const match = /href="(https?:\/\/[^"]*\/invitacion\/([A-Za-z0-9_-]{43}))"/.exec(found[0].HTML);
+  if (!match) throw new Error("El correo no trae el enlace de la invitación");
+  return { link: match[1], token: match[2] };
+}
+
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+
+async function newContext(browser: Browser, baseURL: string | undefined): Promise<BrowserContext> {
+  return browser.newContext({ baseURL, extraHTTPHeaders: { "x-forwarded-for": randomTestIp() } });
+}
+
+async function login(page: Page, email: string) {
+  await page.getByLabel("Correo").fill(email);
+  await page.getByLabel("Contraseña").fill(TEST_PASSWORD);
+  await page.getByRole("button", { name: "Ingresar" }).click();
+}
+
+/** Una cuenta nueva, verificada, en su propio contexto (sin sesión compartida con nadie). */
+async function createAccount(
+  browser: Browser,
+  baseURL: string | undefined,
+  email: string,
+  name: string,
+) {
+  const context = await newContext(browser, baseURL);
+  try {
+    await signUpAndVerify(await context.newPage(), email, name);
+  } finally {
+    await context.close();
+  }
+}
+
+/** El Dueño invita desde «Tu equipo». */
+async function invite(ownerPage: Page, tenantId: string, email: string, role: string) {
+  await ownerPage.goto(`/o/${tenantId}/equipo`);
+  await ownerPage.getByTestId("invite-email").fill(email);
+  await ownerPage.getByTestId(`invite-role-${role}`).click();
+  await ownerPage.getByTestId("invite-submit").click();
+  await expect(ownerPage.getByText(`Enviamos la invitación a ${email}.`)).toBeVisible();
+}
+
+let ownerContext: BrowserContext;
+let ownerPage: Page;
+let tenantId: string;
+
+test.beforeAll(async ({ browser, baseURL }) => {
+  test.setTimeout(180_000);
+  ownerContext = await newContext(browser, baseURL);
+  ownerPage = await ownerContext.newPage();
+  await signUpAndVerify(ownerPage, uniqueEmail("acepta-dueno"), OWNER_NAME);
+  tenantId = await createTenant(ownerPage, ORG_NAME, generateRut());
+});
+test.afterAll(async () => {
+  await ownerContext?.close();
+});
+
+const noHorizontalScroll = (page: Page) =>
+  page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+
+test("con una cuenta que ya existe: abrir el enlace, ingresar, «Unirme», y la organización queda en el selector", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const email = uniqueEmail("acepta-existente");
+  await createAccount(browser, baseURL, email, "Ana Existente");
+  // La cuenta ya tiene su propia organización: así el selector muestra dos.
+  const setup = await newContext(browser, baseURL);
+  try {
+    const setupPage = await setup.newPage();
+    await setupPage.goto("/ingresar");
+    await login(setupPage, email);
+    await expect(setupPage).toHaveURL(/\/organizaciones\/nueva$/);
+    await createTenant(setupPage, "Negocio Propio SpA", generateRut());
+  } finally {
+    await setup.close();
+  }
+
+  await invite(ownerPage, tenantId, email, "sales");
+  const { link, token } = await waitForInviteLink(email);
+  expect(link.startsWith(`${baseURL}/invitacion/`)).toBe(true);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+
+    // --- el enlace guarda el código en una cookie y lo saca de la dirección ---
+    const response = await page.goto(link);
+    expect(response?.request().redirectedFrom()?.url()).toBe(link);
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+    expect(page.url()).not.toContain(token);
+    const cookie = (await context.cookies()).find((c) => c.name === COOKIE_NAME);
+    expect(cookie?.value).toBe(token);
+    expect(cookie?.httpOnly).toBe(true);
+    expect(cookie?.sameSite).toBe("Lax");
+    expect(cookie?.path).toBe("/");
+    const lifetime = (cookie?.expires ?? 0) - Date.now() / 1000;
+    expect(lifetime).toBeGreaterThan(ONE_HOUR_SECONDS - 120);
+    expect(lifetime).toBeLessThanOrEqual(ONE_HOUR_SECONDS);
+    // La página no puede leerla.
+    expect(await page.evaluate(() => document.cookie)).not.toContain(COOKIE_NAME);
+
+    // --- sin sesión: nada de la organización ni de si hay cuenta ---
+    const signedOut = page.getByTestId("invitation-signed-out");
+    await expect(signedOut).toBeVisible();
+    await expect(
+      page.getByText(
+        "Te invitaron a una organización de Cotiza Prime. Ingresa o crea tu cuenta con el correo al que llegó la invitación.",
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Ingresar", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Crear mi cuenta", exact: true })).toBeVisible();
+    const bodyText = await page.locator("body").innerText();
+    expect(bodyText).not.toContain(ORG_NAME);
+    expect(bodyText).not.toContain(OWNER_NAME);
+    expect(bodyText).not.toMatch(/ya tienes (una )?cuenta/i);
+
+    // --- ingresa y vuelve a la invitación ---
+    await page.getByRole("link", { name: "Ingresar", exact: true }).click();
+    await expect(page).toHaveURL(/\/ingresar$/);
+    await login(page, email);
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+
+    // --- la vista previa: quién invita, a qué organización, con qué rol ---
+    await expect(page.getByTestId("invitation-sentence")).toHaveText(
+      `${OWNER_NAME} te invitó a ${ORG_NAME} como Comercial.`,
+    );
+    await expect(
+      page.getByText("Arma y envía sus propias cotizaciones", { exact: false }),
+    ).toBeVisible();
+    await expect(page.getByText(`Ingresaste como ${email}.`)).toBeVisible();
+    // Abrir el enlace no aceptó nada: la membresía todavía no existe.
+    await withDb(async (db) => {
+      const { rows } = await db.query(
+        `select 1 from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email = $2`,
+        [tenantId, email],
+      );
+      expect(rows).toHaveLength(0);
+    });
+
+    // --- un clic: entra a la organización ---
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+    await expect(page.locator('[data-testid="tenant-switcher"]:visible')).toContainText(ORG_NAME);
+    expect((await context.cookies()).find((c) => c.name === COOKIE_NAME)).toBeUndefined();
+
+    // --- el selector tiene las dos, con el rol en cada una ---
+    await page.locator('[data-testid="tenant-switcher"]:visible').click();
+    await expect(page.getByRole("menuitem", { name: /Negocio Propio SpA.*Dueño/ })).toBeVisible();
+    await expect(
+      page.getByRole("menuitem", { name: new RegExp(`${ORG_NAME}.*Comercial`) }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    // --- la base: rol de la invitación, invitación aceptada y correo vaciado ---
+    await withDb(async (db) => {
+      const member = await db.query<{ role: string; status: string }>(
+        `select m.role, m.status from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email = $2`,
+        [tenantId, email],
+      );
+      expect(member.rows).toEqual([{ role: "sales", status: "active" }]);
+      const invitation = await db.query(
+        `select status, accepted_at, accepted_by, member_id, email_enc, email_hash, email_binding
+           from public.invitations where token_sha256 = $1`,
+        [sha256(token)],
+      );
+      expect(invitation.rows[0]).toMatchObject({
+        status: "accepted",
+        email_enc: null,
+        email_hash: null,
+        email_binding: null,
+      });
+      expect(invitation.rows[0].accepted_at).not.toBeNull();
+      expect(invitation.rows[0].member_id).not.toBeNull();
+      const audit = await db.query(
+        `select action from public.audit_log where tenant_id = $1
+            and action = 'invitation.accepted' and details::text not like '%' || $2 || '%'`,
+        [tenantId, token],
+      );
+      expect(audit.rowCount).toBe(1);
+    });
+
+    // --- volver a abrir el mismo enlace no rompe nada: ya eres parte, un clic te lleva dentro ---
+    await page.goto(link);
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+    await expect(
+      page.getByRole("heading", { name: "Ya eres parte de esta organización" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Entrar" }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+  } finally {
+    await context.close();
+  }
+});
+
+test("sin cuenta: se registra desde la invitación y queda unido al verificar su correo", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const email = uniqueEmail("acepta-nueva");
+  await invite(ownerPage, tenantId, email, "viewer");
+  const { link, token } = await waitForInviteLink(email);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.goto(link);
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+    await expect(page.getByTestId("invitation-signed-out")).toBeVisible();
+
+    // Crear la cuenta con el correo de la invitación.
+    await page.getByRole("link", { name: "Crear mi cuenta", exact: true }).click();
+    await expect(page).toHaveURL(/\/registro$/);
+    await page.getByLabel("Tu nombre").fill("Nueva Invitada");
+    await page.getByLabel("Correo").fill(email);
+    await page.getByLabel("Contraseña").fill(TEST_PASSWORD);
+    await page.getByRole("checkbox", { name: /Acepto los/ }).check();
+    await page.getByRole("button", { name: "Crear mi cuenta" }).click();
+    await expect(page.getByTestId("signup-sent")).toBeVisible();
+
+    // Verifica el correo en el mismo navegador: vuelve a la invitación (no a «Crea tu primera organización»).
+    await openVerificationLink(page, await waitForVerificationLink(email, "Confirm"));
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+    await expect(page.getByTestId("invitation-sentence")).toHaveText(
+      `${OWNER_NAME} te invitó a ${ORG_NAME} como Observador.`,
+    );
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+    await expect(page.locator('[data-testid="tenant-switcher"]:visible')).toContainText(ORG_NAME);
+
+    await withDb(async (db) => {
+      const { rows } = await db.query<{ role: string; status: string }>(
+        `select m.role, m.status from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email = $2`,
+        [tenantId, email],
+      );
+      expect(rows).toEqual([{ role: "viewer", status: "active" }]);
+      const invitation = await db.query<{ status: string }>(
+        "select status from public.invitations where token_sha256 = $1",
+        [sha256(token)],
+      );
+      expect(invitation.rows).toEqual([{ status: "accepted" }]);
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("si verifica el correo en otro dispositivo, el inicio le recuerda abrir de nuevo el enlace", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(180_000);
+  const email = uniqueEmail("acepta-otro-aparato");
+  await invite(ownerPage, tenantId, email, "approver");
+  const { link } = await waitForInviteLink(email);
+
+  // El teléfono se registra (sin la cookie de la invitación) y verifica el correo.
+  const phone = await newContext(browser, baseURL);
+  try {
+    const page = await phone.newPage();
+    await signUpAndVerify(page, email, "Otra Invitada");
+    await expect(page.getByTestId("invited-hint")).toHaveText(
+      "¿Te invitaron? Abre de nuevo el enlace del correo de la invitación.",
+    );
+    // Sin la cookie, la pantalla de invitación no inventa nada.
+    await page.goto("/invitacion");
+    await expect(page.getByRole("heading", { name: "Falta tu invitación" })).toBeVisible();
+    await expect(
+      page.getByText("Abre de nuevo el enlace del correo que te enviaron."),
+    ).toBeVisible();
+    // Abre el enlace del correo con la sesión que ya tiene y se une.
+    await page.goto(link);
+    await expect(page.getByTestId("invitation-sentence")).toContainText(
+      `te invitó a ${ORG_NAME} como Aprobador.`,
+    );
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+  } finally {
+    await phone.close();
+  }
+});
+
+test("con otro correo: se le dice sin mostrar nada de la organización, puede cerrar sesión e ingresar con el correcto", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(300_000);
+  const intended = uniqueEmail("acepta-destino");
+  const other = uniqueEmail("acepta-otra");
+  await createAccount(browser, baseURL, intended, "Persona Destino");
+  await invite(ownerPage, tenantId, intended, "admin");
+  const { link } = await waitForInviteLink(intended);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await signUpAndVerify(page, other, "Persona Equivocada");
+    await page.goto(link);
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+
+    const unavailable = page.getByTestId("invitation-unavailable");
+    await expect(unavailable).toBeVisible();
+    await expect(unavailable).toHaveAttribute("data-result", "wrong_email");
+    await expect(
+      page.getByText(
+        "Esta invitación es para otro correo. Ingresa con el correo al que llegó la invitación.",
+      ),
+    ).toBeVisible();
+    await expect(page.getByText(`Ingresaste como ${other}.`)).toBeVisible();
+    const bodyText = await page.locator("body").innerText();
+    expect(bodyText).not.toContain(ORG_NAME);
+    expect(bodyText).not.toContain(OWNER_NAME);
+    expect(bodyText).not.toContain("Administrador");
+    await expect(page.getByRole("button", { name: "Unirme", exact: true })).toHaveCount(0);
+
+    // La invitación sigue pendiente y la persona equivocada no es miembro.
+    await withDb(async (db) => {
+      const invitation = await db.query<{ status: string }>(
+        "select status from public.invitations where tenant_id = $1 and email_hash is not null and role = 'admin'",
+        [tenantId],
+      );
+      expect(invitation.rows).toEqual([{ status: "pending" }]);
+      const member = await db.query(
+        `select 1 from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email = $2`,
+        [tenantId, other],
+      );
+      expect(member.rowCount).toBe(0);
+    });
+
+    // Cierra sesión (el código se conserva) e ingresa con el correo al que llegó.
+    await page.getByRole("button", { name: "Cerrar sesión e ingresar con otro correo" }).click();
+    await expect(page).toHaveURL(/\/ingresar/);
+    await login(page, intended);
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+    await expect(page.getByTestId("invitation-sentence")).toHaveText(
+      `${OWNER_NAME} te invitó a ${ORG_NAME} como Administrador.`,
+    );
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+    await withDb(async (db) => {
+      const { rows } = await db.query<{ role: string }>(
+        `select m.role from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email = $2`,
+        [tenantId, intended],
+      );
+      expect(rows).toEqual([{ role: "admin" }]);
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("«Seguir sin unirme» borra el código y vuelve al inicio", async ({ browser, baseURL }) => {
+  test.setTimeout(240_000);
+  const email = uniqueEmail("acepta-no-gracias");
+  await invite(ownerPage, tenantId, email, "viewer");
+  const { link } = await waitForInviteLink(email);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await signUpAndVerify(page, email, "Sin Unirme");
+    await page.goto(link);
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
+    await page.getByRole("button", { name: "Seguir sin unirme" }).click();
+    // Sin organizaciones y sin invitación esperando, el inicio lleva a crear la primera.
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+    expect((await context.cookies()).find((c) => c.name === COOKIE_NAME)).toBeUndefined();
+    await withDb(async (db) => {
+      const { rows } = await db.query<{ status: string }>(
+        `select i.status from public.invitations i where i.tenant_id = $1 and i.role = 'viewer'
+            and i.email_hash is not null and i.status = 'pending'`,
+        [tenantId],
+      );
+      expect(rows.length).toBeGreaterThan(0);
+      const member = await db.query(
+        `select 1 from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email = $2`,
+        [tenantId, email],
+      );
+      expect(member.rowCount).toBe(0);
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("invitación vencida y cancelada: se explica con claridad y a quién pedir otra", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(300_000);
+  const late = uniqueEmail("acepta-vencida");
+  const cancelled = uniqueEmail("acepta-cancelada");
+  await createAccount(browser, baseURL, late, "Llegó Tarde");
+  await createAccount(browser, baseURL, cancelled, "Se Canceló");
+  await invite(ownerPage, tenantId, late, "sales");
+  const lateInvite = await waitForInviteLink(late);
+  await invite(ownerPage, tenantId, cancelled, "sales");
+  const cancelledInvite = await waitForInviteLink(cancelled);
+
+  // --- vencida ---
+  await withDb((db) =>
+    db.query(
+      "update public.invitations set expires_at = now() - interval '1 day' where token_sha256 = $1",
+      [sha256(lateInvite.token)],
+    ),
+  );
+  const lateContext = await newContext(browser, baseURL);
+  try {
+    const page = await lateContext.newPage();
+    await page.goto("/ingresar");
+    await login(page, late);
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+    await page.goto(lateInvite.link);
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+    const unavailable = page.getByTestId("invitation-unavailable");
+    await expect(unavailable).toHaveAttribute("data-result", "expired");
+    await expect(
+      page.getByText("Esta invitación venció. Pide a quien te invitó que te envíe una nueva."),
+    ).toBeVisible();
+    const bodyText = await page.locator("body").innerText();
+    expect(bodyText).not.toContain(ORG_NAME);
+    await expect(page.getByRole("button", { name: "Unirme", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Entendido" }).click();
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+  } finally {
+    await lateContext.close();
+  }
+
+  // --- cancelada por el Dueño desde «Tu equipo» ---
+  await ownerPage.goto(`/o/${tenantId}/equipo`);
+  const row = ownerPage.getByTestId("invitation-row").filter({ hasText: cancelled });
+  await row.getByTestId("invitation-revoke").click();
+  await ownerPage.getByRole("alertdialog").getByRole("button", { name: "Sí, cancelar" }).click();
+  await expect(row).toHaveCount(0);
+  const cancelledContext = await newContext(browser, baseURL);
+  try {
+    const page = await cancelledContext.newPage();
+    await page.goto("/ingresar");
+    await login(page, cancelled);
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+    await page.goto(cancelledInvite.link);
+    await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
+      "data-result",
+      "revoked",
+    );
+    await expect(
+      page.getByText(
+        "Esta invitación fue cancelada. Pide a quien te invitó que te envíe una nueva.",
+      ),
+    ).toBeVisible();
+    expect(await page.locator("body").innerText()).not.toContain(ORG_NAME);
+    await withDb(async (db) => {
+      const member = await db.query(
+        `select 1 from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email in ($2, $3)`,
+        [tenantId, late, cancelled],
+      );
+      expect(member.rowCount).toBe(0);
+    });
+  } finally {
+    await cancelledContext.close();
+  }
+});
+
+test("un enlace mal formado o inventado no abre nada: aviso claro y ninguna cookie", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(120_000);
+  const email = uniqueEmail("acepta-inventado");
+  await createAccount(browser, baseURL, email, "Probando Enlaces");
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+
+    // Mal formado: ni se guarda ni se consulta.
+    await page.goto("/invitacion/esto-no-es-un-codigo");
+    await expect(page).toHaveURL(`${baseURL}/invitacion?aviso=enlace-no-valido`);
+    await expect(
+      page.getByText(
+        "Este enlace de invitación no es válido. Revisa que lo hayas abierto completo desde el correo, o pide que te envíen otra invitación.",
+      ),
+    ).toBeVisible();
+    expect((await context.cookies()).find((c) => c.name === COOKIE_NAME)).toBeUndefined();
+
+    // Bien formado pero inventado: sin sesión no se sabe nada; con sesión, «no es válido».
+    const invented = "A".repeat(43);
+    await page.goto(`/invitacion/${invented}`);
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+    await expect(page.getByTestId("invitation-signed-out")).toBeVisible();
+    await page.getByRole("link", { name: "Ingresar", exact: true }).click();
+    await login(page, email);
+    await expect(page).toHaveURL(`${baseURL}/invitacion`);
+    await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
+      "data-result",
+      "not_found",
+    );
+    await expect(
+      page.getByText(
+        "Este enlace de invitación no es válido. Revisa que lo hayas abierto completo desde el correo, o pide a quien te invitó que te envíe otra.",
+      ),
+    ).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+test("teléfono (375 px): la invitación se lee sin desplazamiento horizontal y los botones miden 44 px", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const email = uniqueEmail("acepta-telefono");
+  await createAccount(browser, baseURL, email, "Desde El Teléfono");
+  await invite(ownerPage, tenantId, email, "sales");
+  const { link } = await waitForInviteLink(email);
+
+  const context = await browser.newContext({
+    baseURL,
+    viewport: MOBILE,
+    extraHTTPHeaders: { "x-forwarded-for": randomTestIp() },
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(link);
+    await expect(page.getByTestId("invitation-signed-out")).toBeVisible();
+    expect(await noHorizontalScroll(page)).toBeLessThanOrEqual(0);
+    for (const name of ["Ingresar", "Crear mi cuenta"]) {
+      const box = await page
+        .getByTestId("invitation-signed-out")
+        .getByRole("link", { name, exact: true })
+        .boundingBox();
+      expect(box?.height ?? 0, name).toBeGreaterThanOrEqual(44);
+    }
+    await page.getByRole("link", { name: "Ingresar", exact: true }).click();
+    await login(page, email);
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
+    expect(await noHorizontalScroll(page)).toBeLessThanOrEqual(0);
+    for (const name of ["Unirme", "Seguir sin unirme"]) {
+      const box = await page.getByRole("button", { name, exact: true }).boundingBox();
+      expect(box?.height ?? 0, name).toBeGreaterThanOrEqual(44);
+    }
+  } finally {
+    await context.close();
+  }
+});
+
+test("sin conexión: el formulario de «Unirme» avisa y la aceptación no se pierde al reintentar", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const email = uniqueEmail("acepta-sin-red");
+  await createAccount(browser, baseURL, email, "Sin Red");
+  await invite(ownerPage, tenantId, email, "viewer");
+  const { link } = await waitForInviteLink(email);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.goto("/ingresar");
+    await login(page, email);
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+    await page.goto(link);
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
+    await context.setOffline(true);
+    await expect(page.getByTestId("offline-notice")).toBeVisible();
+    await context.setOffline(false);
+    await expect(page.getByTestId("offline-notice")).toHaveCount(0);
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+  } finally {
+    await context.close();
+  }
+});
+
+test("el límite de aperturas por IP: pasado el tope, el enlace ya no guarda el código", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(120_000);
+  // Una IP propia para este contexto: no gasta el cupo de las demás pruebas.
+  const context = await newContext(browser, baseURL);
+  try {
+    const request = context.request;
+    const statuses: number[] = [];
+    let blockedAt = 0;
+    for (let n = 1; n <= 40; n++) {
+      const token = Buffer.from(`${n}`.padStart(32, "x")).toString("base64url").slice(0, 43);
+      const res = await request.get(`/invitacion/${token.padEnd(43, "A")}`, { maxRedirects: 0 });
+      statuses.push(res.status());
+      const location = res.headers()["location"] ?? "";
+      if (!blockedAt && location.includes("aviso=muchos-intentos")) blockedAt = n;
+    }
+    expect(statuses.every((s) => s === 303)).toBe(true);
+    // 30 aperturas por minuto: la 31 es la primera bloqueada.
+    expect(blockedAt).toBe(31);
+    // Las primeras 30 aperturas sí dejaron su cookie; la bloqueada no. Se vacía para ver solo el aviso.
+    await context.clearCookies();
+    const page = await context.newPage();
+    await page.goto("/invitacion?aviso=muchos-intentos");
+    await expect(
+      page.getByText("Se abrieron muchos enlaces de invitación", { exact: false }),
+    ).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});

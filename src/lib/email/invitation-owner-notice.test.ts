@@ -98,4 +98,16 @@ describe("aviso al Dueño por una invitación (H-008)", () => {
       );
     },
   );
+
+  it("un nombre con emojis nunca se corta a media unidad en el asunto y el correo sale igual", () => {
+    for (const count of [40, 60]) {
+      const emojis = "😀".repeat(count);
+      const message = build({ inviterName: emojis, organizationName: emojis });
+      // Un emoji partido por la mitad deja una unidad suelta: codificarlo fallaría.
+      expect(() => encodeURIComponent(message.subject)).not.toThrow();
+      expect(message.subject.length).toBeLessThanOrEqual(150);
+      expect(message.subject.endsWith("como Administrador")).toBe(true);
+      expect(message.subject).toContain("😀");
+    }
+  });
 });

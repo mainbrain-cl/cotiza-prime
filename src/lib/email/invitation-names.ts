@@ -22,3 +22,26 @@ export function cleanName(value: string | null | undefined, fallback: string): s
 export function cleanText(value: string): string {
   return value.replace(UNSAFE_GLOBAL, " ").replace(/\s+/g, " ").trim();
 }
+
+const MAX_SUBJECT_LENGTH = 150;
+/** Largos de nombre (en caracteres, no en unidades) que se prueban para que el asunto quepa. */
+const SUBJECT_NAME_LENGTHS = [50, 20, 10] as const;
+
+/** Corta por caracteres (no por unidades UTF-16: un emoji nunca queda partido a la mitad) y agrega «…». */
+export function shortenName(value: string, max: number): string {
+  const chars = Array.from(value);
+  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : value;
+}
+
+/**
+ * Arma el asunto con nombres recortados por caracteres. Si con 50 caracteres por nombre no cabe en 150 unidades
+ * (emojis y letras raras ocupan dos), se reintenta con nombres más cortos: un nombre raro NUNCA impide el correo.
+ */
+export function fitSubject(build: (shorten: (name: string) => string) => string): string {
+  let subject = "";
+  for (const max of SUBJECT_NAME_LENGTHS) {
+    subject = build((name) => shortenName(name, max));
+    if (subject.length <= MAX_SUBJECT_LENGTH) return subject;
+  }
+  return subject.slice(0, MAX_SUBJECT_LENGTH);
+}

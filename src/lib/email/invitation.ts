@@ -15,14 +15,12 @@ import {
   FALLBACK_INVITER_NAME,
   FALLBACK_ORGANIZATION_NAME,
   cleanName,
+  fitSubject,
   cleanText,
 } from "./invitation-names";
 
 export const INVITATION_SENDER_NAME = "Cotiza Prime";
 export const INVITATION_BUTTON_LABEL = "Aceptar la invitación";
-const MAX_SUBJECT_LENGTH = 150;
-/** Cuánto del nombre de la organización y de quien invita cabe en el asunto sin pasarse del límite. */
-const MAX_SUBJECT_NAME_LENGTH = 50;
 const emailSchema = z.email().max(254);
 
 export type InvitationEmailInput = {
@@ -45,11 +43,6 @@ export type InvitationEmailInput = {
 
 export type InvitationEmailResult =
   { ok: true; message: EmailMessage } | { ok: false; code: "invalid_input" };
-
-const shorten = (value: string) =>
-  value.length > MAX_SUBJECT_NAME_LENGTH
-    ? `${value.slice(0, MAX_SUBJECT_NAME_LENGTH - 1)}…`
-    : value;
 
 export function buildInvitationEmail(input: InvitationEmailInput): InvitationEmailResult {
   if (
@@ -74,8 +67,10 @@ export function buildInvitationEmail(input: InvitationEmailInput): InvitationEma
   const roleDescription = cleanText(input.roleDescription);
   if (!roleLabel) return { ok: false, code: "invalid_input" };
 
-  const subject = `${shorten(inviter)} te invitó a ${shorten(organization)} en Cotiza Prime`;
-  if (subject.length > MAX_SUBJECT_LENGTH) return { ok: false, code: "invalid_input" };
+  // Los nombres se recortan por caracteres hasta que el asunto cabe: un nombre largo o con emojis no impide el correo.
+  const subject = fitSubject(
+    (shorten) => `${shorten(inviter)} te invitó a ${shorten(organization)} en Cotiza Prime`,
+  );
 
   const lines: string[] = [
     `${inviter} te invitó a ${organization} en Cotiza Prime, con el rol de ${roleLabel}.`,

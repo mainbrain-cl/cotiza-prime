@@ -13,13 +13,12 @@ import {
   FALLBACK_INVITER_NAME,
   FALLBACK_ORGANIZATION_NAME,
   cleanName,
+  fitSubject,
   cleanText,
 } from "./invitation-names";
 
 export const OWNER_NOTICE_SENDER_NAME = "Cotiza Prime";
 export const OWNER_NOTICE_BUTTON_LABEL = "Ver tu equipo";
-const MAX_SUBJECT_LENGTH = 150;
-const MAX_SUBJECT_NAME_LENGTH = 50;
 const emailSchema = z.email().max(254);
 
 export type InvitationOwnerNoticeInput = {
@@ -37,11 +36,6 @@ export type InvitationOwnerNoticeInput = {
 
 export type InvitationOwnerNoticeResult =
   { ok: true; message: EmailMessage } | { ok: false; code: "invalid_input" };
-
-const shorten = (value: string) =>
-  value.length > MAX_SUBJECT_NAME_LENGTH
-    ? `${value.slice(0, MAX_SUBJECT_NAME_LENGTH - 1)}…`
-    : value;
 
 export function buildInvitationOwnerNotice(
   input: InvitationOwnerNoticeInput,
@@ -67,8 +61,11 @@ export function buildInvitationOwnerNotice(
   const roleLabel = cleanText(input.roleLabel);
   if (!roleLabel) return { ok: false, code: "invalid_input" };
 
-  const subject = `${shorten(inviter)} invitó a una persona a ${shorten(organization)} como ${roleLabel}`;
-  if (subject.length > MAX_SUBJECT_LENGTH) return { ok: false, code: "invalid_input" };
+  // Los nombres se recortan por caracteres hasta que el asunto cabe: un nombre largo o con emojis no silencia el aviso.
+  const subject = fitSubject(
+    (shorten) =>
+      `${shorten(inviter)} invitó a una persona a ${shorten(organization)} como ${roleLabel}`,
+  );
 
   const lines = [
     `${inviter} invitó a una persona a ${organization} con el rol de ${roleLabel}, el ${formatDate(invitedAt)}.`,

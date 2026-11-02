@@ -612,3 +612,25 @@ Construida siguiendo este diseño (§2, «Flujo de H-009», y §5). Migración `
 - No se probaron navegadores distintos de Chromium ni lectores de pantalla reales. El contraste y los tamaños siguen los tokens de `docs/DISENO.md`; 375 px y áreas táctiles de 44 px sí tienen prueba.
 - Verificación en dos pasos (H-004c): `app.invitation_state` decide con `app.role_can(...)` (rol guardado) y no con `app.effective_role()`; si H-004c cambia el criterio de quién puede invitar, hay que revisarlo ahí.
 - La tarea de avisos en producción sigue pendiente (decisión #17, ver H-008).
+
+### Requisito de salida a producción y de piloto (revisión de H-009, ronda 1)
+
+**H-009 exige en el proyecto de producción: Confirm email ON, Secure email change ON y sin proveedores externos (OAuth) ni ingreso anónimo, salvo decisión registrada.** La garantía «solo puede aceptarse con el mismo correo al que se envió» descansa en que `auth.users.email_confirmed_at` signifique que la persona es dueña de ese correo. Eso hoy solo está escrito en `supabase/config.toml` (líneas 228-230: `enable_confirmations`, `double_confirm_changes`), es decir, en la base local; el proyecto de producción de Supabase se configura aparte y hay que comprobarlo a mano antes de invitar a alguien real. Sin «Confirm email», cualquiera podría registrar una cuenta con el correo de otra persona y aceptar su invitación; sin «Secure email change», una cuenta podría cambiar su correo al de la invitación sin confirmar los dos lados. También está anotado en la migración (junto a la comprobación de `email_confirmed_at`) y en el `README.md` (sección «Despliegue: cuentas y correo verificado»).
+
+### Cambios tras la revisión de H-009, ronda 1 (2026-11-02)
+
+La migración `20261103100000_invitation_accept.sql` se editó en su lugar (aún no estaba en `main`) y su deshacer quedó al día.
+
+- **D1 · `inviter_inactive`.** Un resultado propio cuando quien invitó ya no está en la organización o ya no maneja el equipo, y también para una invitación cancelada con `revoke_reason = 'inviter_removed'` (la que H-010 dejará). Texto: «…Pide a otra persona de la organización que te invite de nuevo.». «Cancelada» (`revoked`) queda solo para las canceladas a mano. Es definitivo (borra el código).
+- **D2 · `invitation.accept_denied`.** Quien prueba un código REAL con otro correo deja un registro `denied` en la auditoría de la organización de la invitación (`{reason: 'wrong_email', step: 'accept' | 'preview'}`), sin el correo ni el código; se escribe tanto al aceptar como al ver la vista previa (con la cuenta equivocada la pantalla no ofrece «Unirme», así que la vista previa es el intento que de verdad ocurre). No se registra para `not_found` (no hay organización) ni cuando la cuenta ya está bloqueada. Por qué no inunda la auditoría: se escribe junto al conteo de fallos, así que no puede pasar de 10 cada 10 minutos por cuenta; para llegar ahí hay que conocer un código real; y crear cuentas para repartir los intentos tiene su tope por IP en el registro.
+- **M2 · solo lectura.** Las dos funciones se niegan (25006, `read_only`) en una transacción de solo lectura, que es como PostgREST ejecuta un GET: ahí no se podría contar un fallo. Probado con una transacción de solo lectura en la base y con un GET real (405 / `25006`, sin ningún `result`).
+- **M3.** La vista previa de quien ya es miembro activo trae `already_member` y `current_role`; la pantalla dice «Ya eres parte de X como <rol actual>. Esta invitación no cambia tu rol.», no describe el rol de la invitación y el botón dice «Entrar».
+- **M4.** `rate_limited` y `unverified` ofrecen «Intentar de nuevo» y no borran el código.
+- **M5.** `acceptLegalAction` vuelve a `/invitacion` si hay una invitación esperando.
+- **M6.** La ruta del enlace, al bloquear por tope de aperturas, borra también la cookie anterior.
+- **M7.** Etiquetas `invitation.accepted` y `invitation.accept_denied` en el registro de actividad (y elegibles en su filtro).
+- **M9.** La prueba A13 compara `auth_rate_limits` salvo el alcance `invite_accept_user` y solo lo de las últimas 23 horas; llama a `accept_invitation` / `invitation_preview` con Dante (no con Ana), y la prueba de H-009 gasta 2 de los 10 intentos de Ana (antes 8).
+- **M10.** La guardia 11b (`serverLog` sin datos de personas) revisa también `src/app/invitacion/`.
+- **M11.** «Falta tu invitación» ofrece un botón grande («Ir a mi cuenta» con sesión, «Ingresar» sin ella); cuando «Unirme» falla porque el código ya no sirve queda una sola salida («Entendido»).
+- **M12.** La fila `members` de `modelo-datos.md` nombra `accept_invitation` como función que escribe en `members`.
+- **Aviso en las pruebas de aislamiento:** el registro de `invitation.accept_denied` en la organización B es a propósito; la prueba de H-009 lo excluye de la huella de B y comprueba aparte que existe y qué contiene.

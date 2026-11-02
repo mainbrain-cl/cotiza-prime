@@ -1,4 +1,12 @@
-import { Building2, ChevronRight, Hash, Palette, ScrollText, type LucideIcon } from "lucide-react";
+import {
+  Building2,
+  ChevronRight,
+  Hash,
+  Palette,
+  ScrollText,
+  UsersRound,
+  type LucideIcon,
+} from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { can } from "@/lib/permissions/matrix";
@@ -27,6 +35,12 @@ const SECTIONS: { path: string; title: string; description: string; icon: Lucide
     description: "Prefijo, formato y desde qué número parten tus cotizaciones.",
     icon: Hash,
   },
+  {
+    path: "equipo",
+    title: "Tu equipo",
+    description: "Invita a personas por correo y elige qué puede hacer cada una.",
+    icon: UsersRound,
+  },
 ];
 
 const ACTIVITY_SECTION = {
@@ -36,7 +50,7 @@ const ACTIVITY_SECTION = {
   icon: ScrollText,
 };
 
-const UPCOMING = ["Tu equipo", "Cómo te pagan", "Tus reglas de aprobación"];
+const UPCOMING = ["Cómo te pagan", "Tus reglas de aprobación"];
 
 export default async function SettingsPage({ params }: PageProps<"/o/[tenantId]/configuracion">) {
   const active = await requireActiveTenant((await params).tenantId);

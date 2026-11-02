@@ -165,6 +165,11 @@ export const GRANTABLE_ROLES: readonly MemberRole[] = MEMBER_ROLES.filter(
   (role) => role !== "owner",
 );
 
+/** ¿Es un rol que se puede dar al invitar o al cambiar a un miembro? (Todos menos el Dueño.) */
+export function isGrantableRole(value: unknown): value is MemberRole {
+  return typeof value === "string" && (GRANTABLE_ROLES as readonly string[]).includes(value);
+}
+
 export function isMemberRole(value: unknown): value is MemberRole {
   return typeof value === "string" && (MEMBER_ROLES as readonly string[]).includes(value);
 }

@@ -14,6 +14,7 @@ import {
   ROLE_LABELS,
   can,
   canEver,
+  isGrantableRole,
   isMemberRole,
   roleLabel,
   rolesThatCanEver,
@@ -144,6 +145,14 @@ describe("roles que se pueden asignar o dar", () => {
 
   it("a un miembro se le puede dar cualquier rol menos Dueño (que es único)", () => {
     expect([...GRANTABLE_ROLES]).toEqual(["admin", "approver", "sales", "viewer"]);
+  });
+
+  it("isGrantableRole acepta esos cuatro y nada más (ni Dueño, ni otro texto, ni mayúsculas)", () => {
+    for (const role of ["admin", "approver", "sales", "viewer"])
+      expect(isGrantableRole(role)).toBe(true);
+    for (const value of ["owner", "ADMIN", "admin ", "", "root", null, undefined, 3, {}]) {
+      expect(isGrantableRole(value), String(value)).toBe(false);
+    }
   });
 });
 

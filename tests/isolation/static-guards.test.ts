@@ -215,6 +215,7 @@ describe("guardias estáticas del aislamiento", () => {
       "src/lib/quotes/send/document-storage.ts",
       "src/lib/share/gateway.ts",
       "src/lib/intake/gateway.ts",
+      "src/lib/team/gateway.ts",
       "src/lib/email/delivery-events-service.ts",
       "src/server/jobs/",
     ];
@@ -669,6 +670,65 @@ describe("guardias estáticas del aislamiento", () => {
     }
     // y la regla de 10e no acepta `codeOf` como nombre suelto
     expect(intakeLogProblem('serverLog("warn", "x", { code: codeOf })')).not.toBeNull();
+  });
+
+  it("11. (H-008) el portero de invitaciones solo llama a sus cuatro funciones y nunca lee ni escribe una tabla", () => {
+    const gateway = stripComments(read(path.join(SRC, "lib", "team", "gateway.ts"))).replace(
+      /\s+/g,
+      " ",
+    );
+    const called = [...gateway.matchAll(/\.rpc\(\s*["'`]([a-z_0-9]+)["'`]/g)].map((m) => m[1]);
+    expect(sorted(new Set(called))).toEqual([
+      "invitation_email_settle",
+      "invitation_notice_recipients",
+      "invitation_notice_register",
+      "invitation_notices_pending",
+    ]);
+    expect(gateway.match(/\.rpc\(/g)?.length).toBe(called.length);
+    expect(/\.(insert|upsert|delete|select|update)\(/.test(gateway)).toBe(false);
+    expect(/(?<!Buffer)\.from\(/.test(gateway)).toBe(false);
+    expect(/\.auth\b|\.storage\b/.test(gateway)).toBe(false);
+    // invitar, reenviar y cancelar corren con el pase de la persona: en el resto de `src/lib/team/` no hay llave maestra
+    const others = sourceFiles
+      .filter(
+        (f) => rel(f).startsWith("src/lib/team/") || rel(f).startsWith("src/components/team/"),
+      )
+      .filter((f) => rel(f) !== "src/lib/team/gateway.ts")
+      .filter((f) => /admin-client|createAdminClient/.test(stripComments(read(f))))
+      .map(rel);
+    expect(others).toEqual([]);
+  });
+
+  it("11b. (H-008) serverLog en lo de invitaciones nunca recibe el correo, el nombre ni el código del enlace", () => {
+    const scoped = sourceFiles.filter(
+      (f) =>
+        rel(f).startsWith("src/lib/team/") ||
+        rel(f).startsWith("src/components/team/") ||
+        rel(f).startsWith("src/app/o/[tenantId]/equipo/") ||
+        rel(f) === "src/lib/email/invitation.ts" ||
+        rel(f) === "src/lib/email/invitation-owner-notice.ts" ||
+        rel(f) === "src/lib/email/invitation-names.ts" ||
+        rel(f).startsWith("src/server/jobs/"),
+    );
+    expect(scoped.length).toBeGreaterThan(8);
+    const offenders: string[] = [];
+    let calls = 0;
+    for (const file of scoped) {
+      const code = stripComments(read(file));
+      for (const call of serverLogCalls(code)) {
+        calls += 1;
+        const problem = intakeLogProblem(call);
+        if (problem) offenders.push(`${rel(file)}: ${problem}: ${call}`);
+      }
+      // el código y el correo tampoco van a la consola ni a la auditoría por otro camino
+      expect(/console\./.test(code), `${rel(file)} escribe en la consola`).toBe(false);
+      expect(
+        /logAuditEvent\(/.test(code),
+        `${rel(file)} escribe en la auditoría de la aplicación`,
+      ).toBe(false);
+    }
+    expect(calls).toBeGreaterThan(5);
+    expect(offenders).toEqual([]);
   });
 
   it("7. la guardia detecta de verdad: el texto de una violación sí coincide con las reglas", () => {

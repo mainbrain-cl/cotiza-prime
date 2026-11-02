@@ -123,7 +123,7 @@ async function seedInvitations(
 ) {
   await actAsPostgres(setup);
   // El disparador de metadatos fija `created_at = now()`: se apaga solo dentro de esta transacción.
-  await setup.query("alter table public.invitations disable trigger invitations_meta");
+  await setup.query("set local session_replication_role = replica"); // sin bloquear la tabla
   for (let i = 0; i < n; i++) {
     await setup.query(
       `insert into public.invitations
@@ -144,7 +144,7 @@ async function seedInvitations(
       ],
     );
   }
-  await setup.query("alter table public.invitations enable trigger invitations_meta");
+  await setup.query("set local session_replication_role = origin");
 }
 
 describe("quién puede invitar", () => {
@@ -605,12 +605,12 @@ describe("reenviar", () => {
       // (Dentro de una transacción todas las filas comparten la hora: se fecha cada correo a mano.)
       const age = async (mailId: string, interval: string) => {
         await actAsPostgres(setup);
-        await setup.query("alter table public.email_messages disable trigger email_messages_guard");
+        await setup.query("set local session_replication_role = replica"); // sin bloquear la tabla
         await setup.query(
           "update public.email_messages set created_at = now() - $2::interval where id = $1",
           [mailId, interval],
         );
-        await setup.query("alter table public.email_messages enable trigger email_messages_guard");
+        await setup.query("set local session_replication_role = origin");
       };
       await age(p.mailId, "1 hour");
       await age(first.mailId, "3 minutes");
@@ -971,226 +971,21 @@ describe("cerrar el envío del correo (solo el servidor)", () => {
   });
 });
 
-describe("aviso al Dueño cuando alguien que no lo es invita a un Administrador (I1)", () => {
-  const RECIPIENTS = "select public.invitation_notice_recipients($1) as r";
-  const REGISTER = "select public.invitation_notice_register($1, $2, $3, $4, $5) as r";
-  const asServer = async <T = Json>(sql: string, params: unknown[]): Promise<T> => {
-    await actAsService(setup);
-    const { rows } = await setup.query<{ r: T }>(sql, params);
-    await actAsPostgres(setup);
-    return rows[0].r;
-  };
-  const ownerEmail = async () => {
-    await actAsPostgres(setup);
-    return (
-      await setup.query<{ email: string }>("select email from auth.users where id = $1", [
-        w.owner.id,
-      ])
-    ).rows[0].email;
-  };
-  type Recipients = {
-    recipients: { user_id: string; email: string }[];
-    inviter_name?: string;
-    role?: string;
-    tenant_name?: string;
-  };
-
-  it("el Administrador invita a un Administrador: la base pide avisar al Dueño", async () => {
-    await withTx(setup, async () => {
-      const { result, p } = await invite(w.admin, { role: "admin" });
-      expect(result.result).toBe("created");
-      expect(result.notify_owner).toBe(true);
-      const info = await asServer<Recipients>(RECIPIENTS, [p.id]);
-      expect(info.recipients).toEqual([{ user_id: w.owner.id, email: await ownerEmail() }]);
-      expect(info.role).toBe("admin");
-      expect(typeof info.tenant_name).toBe("string");
-    });
-  });
-
-  it("el Administrador invita a un Comercial, Aprobador u Observador: sin aviso", async () => {
-    await withTx(setup, async () => {
-      for (const role of ["sales", "approver", "viewer"]) {
-        const { result, p } = await invite(w.admin, { role });
-        expect(result.notify_owner, role).toBe(false);
-        expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients, role).toEqual([]);
-      }
-    });
-  });
-
-  it("el Dueño invita a un Administrador: sin aviso (él mismo lo hizo)", async () => {
-    await withTx(setup, async () => {
-      const { result, p } = await invite(w.owner, { role: "admin" });
-      expect(result.notify_owner).toBe(false);
-      expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
-    });
-  });
-
-  it("lo que entrega la base para el aviso no contiene el correo del invitado ni sus huellas", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin", email: "secreto-aviso@ejemplo.test" });
-      const info = await asServer<Recipients>(RECIPIENTS, [p.id]);
-      const text = JSON.stringify(info).toLowerCase();
-      for (const secret of ["secreto-aviso", p.hash, p.tokenSha, `v1.cifrado.${p.id}`, "binding"]) {
-        expect(text).not.toContain(secret.toLowerCase());
-      }
-    });
-  });
-
-  it("se anota el aviso una sola vez, para el Dueño activo, y luego ya no hay a quién avisar", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      const mailId = randomUUID();
-      const args = [mailId, p.id, w.owner.id, "v1.cifrado.aviso", sha256Hex("aviso")];
-      expect(await asServer(REGISTER, args)).toEqual({ registered: true });
-      await actAsPostgres(setup);
-      const mail = (
-        await setup.query("select * from public.email_messages where id = $1", [mailId])
-      ).rows[0];
-      expect(mail.kind).toBe("invitation_notice");
-      expect(mail.status).toBe("pending");
-      expect(mail.invitation_id).toBe(p.id);
-      expect(mail.created_by).toBeNull();
-      // Repetir (otro id de correo) no crea un segundo aviso.
-      expect(
-        await asServer(REGISTER, [
-          randomUUID(),
-          p.id,
-          w.owner.id,
-          "v1.cifrado.aviso",
-          sha256Hex("aviso"),
-        ]),
-      ).toEqual({
-        registered: false,
-      });
-      expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
-      // Se cierra igual que el correo de la invitación.
-      expect(await asServer(SETTLE, [mailId, "mailpit", "n-1", null])).toEqual({ status: "sent" });
-    });
-  });
-
-  it("no se anota un aviso que no corresponde, ni para alguien que no es el Dueño", async () => {
-    await withTx(setup, async () => {
-      const notDue = (await invite(w.owner, { role: "admin", email: "sin-aviso@ejemplo.test" })).p;
-      expect(
-        await asServer(REGISTER, [randomUUID(), notDue.id, w.owner.id, "v1.x.y", sha256Hex("a")]),
-      ).toEqual({
-        registered: false,
-      });
-      const due = (await invite(w.admin, { role: "admin", email: "con-aviso@ejemplo.test" })).p;
-      await actAsService(setup);
-      expect(
-        (
-          await expectSqlError(setup, REGISTER, [
-            randomUUID(),
-            due.id,
-            w.admin.id,
-            "v1.x.y",
-            sha256Hex("a"),
-          ])
-        ).code,
-      ).toBe(INSUFFICIENT_PRIVILEGE);
-      expect(
-        (
-          await expectSqlError(setup, REGISTER, [
-            randomUUID(),
-            due.id,
-            w.owner.id,
-            "",
-            sha256Hex("a"),
-          ])
-        ).code,
-      ).toBe(INVALID);
-      await actAsPostgres(setup);
-      expect(
-        await count(
-          "select count(*) as n from public.email_messages where kind = 'invitation_notice' and tenant_id = $1",
-          [w.tenantA],
-        ),
-      ).toBe(0);
-    });
-  });
-
-  it("nadie con un pase ejecuta esas funciones", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      for (const user of [w.owner, w.admin]) {
-        await asUser(setup, user, w.tenantA);
-        expect((await expectSqlError(setup, RECIPIENTS, [p.id])).code).toBe(INSUFFICIENT_PRIVILEGE);
-        await actAsPostgres(setup);
-        await asUser(setup, user, w.tenantA);
-        expect(
-          (
-            await expectSqlError(setup, REGISTER, [
-              randomUUID(),
-              p.id,
-              w.owner.id,
-              "v1.x.y",
-              sha256Hex("a"),
-            ])
-          ).code,
-        ).toBe(INSUFFICIENT_PRIVILEGE);
-        await actAsPostgres(setup);
-      }
-    });
-  });
-
-  it("el registro del aviso lo leen quienes manejan el equipo; el Observador y el Comercial no", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      const mailId = randomUUID();
-      await asServer(REGISTER, [mailId, p.id, w.owner.id, "v1.cifrado.aviso", sha256Hex("aviso")]);
-      for (const [user, expected] of [
-        [w.owner, 1],
-        [w.admin, 1],
-        [w.sales, 0],
-        [w.viewer, 0],
-        [w.approver, 0],
-      ] as const) {
-        await asUser(setup, user, w.tenantA);
-        const { rows } = await setup.query("select id from public.email_messages where id = $1", [
-          mailId,
-        ]);
-        expect(rows.length, user.id).toBe(expected);
-        await actAsPostgres(setup);
-      }
-    });
-  });
-
-  it("el aviso se borra con su invitación por plazo", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      await asServer(REGISTER, [
-        randomUUID(),
-        p.id,
-        w.owner.id,
-        "v1.cifrado.aviso",
-        sha256Hex("aviso"),
-      ]);
-      await actAsPostgres(setup);
-      await setup.query(
-        "update public.invitations set expires_at = now() - interval '31 days' where id = $1",
-        [p.id],
-      );
-      await setup.query("select app.purge_invitations()");
-      expect(
-        await count("select count(*) as n from public.email_messages where invitation_id = $1", [
-          p.id,
-        ]),
-      ).toBe(0);
-      expect(
-        await count("select count(*) as n from public.invitations where id = $1", [p.id]),
-      ).toBe(0);
-    });
-  });
-});
-
-describe("aviso al Dueño robusto: anotado al invitar, enviado y reintentado por la tarea", () => {
-  const PENDING = "select public.invitation_notices_pending($1) as r";
+describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado por la tarea", () => {
+  const PENDING = "select public.invitation_notices_pending($1, $2) as r";
   const RECIPIENTS = "select public.invitation_notice_recipients($1) as r";
   const REGISTER = "select public.invitation_notice_register($1, $2, $3, $4, $5) as r";
   const MAX_ATTEMPTS = 5;
   type Pending = { invitation_ids: string[]; exhausted: number };
   type Settled = { status: string; exhausted?: boolean };
+  type Recipients = {
+    recipients: { user_id: string; email: string }[];
+    inviter_name?: string | null;
+    role?: string;
+    tenant_id?: string;
+    tenant_name?: string;
+    exhausted?: string;
+  };
 
   const asServer = async <T = Json>(sql: string, params: unknown[]): Promise<T> => {
     await actAsService(setup);
@@ -1198,8 +993,17 @@ describe("aviso al Dueño robusto: anotado al invitar, enviado y reintentado por
     await actAsPostgres(setup);
     return rows[0].r;
   };
-  const listed = async (id: string) =>
-    (await asServer<Pending>(PENDING, [100])).invitation_ids.includes(id);
+  /** ¿Se puede reservar un intento de este aviso ahora? (No mira la lista: otras corridas pueden dejar avisos listos.) */
+  const ready = async (id: string) => {
+    await actAsPostgres(setup);
+    return (await setup.query<{ r: boolean }>("select app.invitation_notice_ready($1) as r", [id]))
+      .rows[0].r;
+  };
+  /** Reserva un intento de ESTE aviso (lo que hace el intento inmediato). */
+  const reserve = async (id: string) =>
+    (await asServer<Pending>(PENDING, [10, id])).invitation_ids.includes(id);
+  /** Reserva una tanda (lo que hace la tarea). */
+  const reserveBatch = (limit = 100) => asServer<Pending>(PENDING, [limit, null]);
   const state = async (id: string) => {
     const inv = await row(id);
     return {
@@ -1207,8 +1011,9 @@ describe("aviso al Dueño robusto: anotado al invitar, enviado y reintentado por
       attempts: inv.owner_notice_attempts as number,
     };
   };
-  /** Un intento: lo anota (como la tarea) y devuelve el id del correo, o null si la base no lo anotó. */
+  /** Un intento completo: reserva y anota el correo (como la tarea). `null` si la base no lo permitió. */
   const attempt = async (invitationId: string, to = w.owner.id) => {
+    if (!(await reserve(invitationId))) return null;
     const mailId = randomUUID();
     const result = await asServer<{ registered: boolean }>(REGISTER, [
       mailId,
@@ -1219,7 +1024,7 @@ describe("aviso al Dueño robusto: anotado al invitar, enviado y reintentado por
     ]);
     return result.registered ? mailId : null;
   };
-  const settleFailed = async (mailId: string, code = "provider_rejected") =>
+  const settleFailed = (mailId: string, code = "provider_rejected") =>
     asServer<Settled>(SETTLE, [mailId, null, null, code]);
   /** Deja pasar el intervalo entre intentos (sin esperar 10 minutos de verdad). */
   const waitRetryInterval = async (invitationId: string) => {
@@ -1229,260 +1034,644 @@ describe("aviso al Dueño robusto: anotado al invitar, enviado y reintentado por
       [invitationId],
     );
   };
-
-  it("llamar a create_invitation DIRECTO como Administrador, invitando a un Administrador, deja el aviso anotado como pendiente", async () => {
-    await withTx(setup, async () => {
-      // `invite` llama a la función de la base tal cual: no pasa por la aplicación ni por la pantalla.
-      const { result, p } = await invite(w.admin, { role: "admin" });
-      expect(result.notify_owner).toBe(true);
-      expect(await state(p.id)).toEqual({ state: "pending", attempts: 0 });
-      expect(await listed(p.id)).toBe(true);
-    });
-  });
-
-  it("si no corresponde avisar, no queda nada anotado", async () => {
-    await withTx(setup, async () => {
-      const cases: [TestUser, string][] = [
-        [w.owner, "admin"], // el Dueño invita a un Administrador
-        [w.admin, "sales"],
-        [w.admin, "approver"],
-        [w.admin, "viewer"],
-      ];
-      for (const [user, role] of cases) {
-        const { p } = await invite(user, { role });
-        expect(await state(p.id), `${role}`).toEqual({ state: "none", attempts: 0 });
-        expect(await listed(p.id)).toBe(false);
-        expect(await attempt(p.id)).toBeNull();
-      }
-    });
-  });
-
-  it("la tarea envía el pendiente: anota el intento, y mientras está vivo no se anota otro (sin duplicados)", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      const first = await attempt(p.id);
-      expect(first).not.toBeNull();
-      expect(await state(p.id)).toEqual({ state: "pending", attempts: 1 });
-      // Con el intento vivo (pendiente de enviar) no se lista ni se anota otro, aunque pase el intervalo.
-      await waitRetryInterval(p.id);
-      expect(await listed(p.id)).toBe(false);
-      expect(await attempt(p.id)).toBeNull();
-      // Se envió: queda como enviado y nunca más se lista ni se anota.
-      expect(await asServer(SETTLE, [first, "mailpit", "n-1", null])).toEqual({ status: "sent" });
-      expect(await state(p.id)).toEqual({ state: "sent", attempts: 1 });
-      await waitRetryInterval(p.id);
-      expect(await listed(p.id)).toBe(false);
-      expect(await attempt(p.id)).toBeNull();
-      expect(
-        await count(
-          "select count(*) as n from public.email_messages where invitation_id = $1 and kind = 'invitation_notice'",
-          [p.id],
-        ),
-      ).toBe(1);
-    });
-  });
-
-  it("reintenta los fallidos: espera el intervalo mínimo y se detiene en el tope de intentos", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      for (let n = 1; n <= MAX_ATTEMPTS; n++) {
-        const mailId = await attempt(p.id);
-        expect(mailId, `intento ${n}`).not.toBeNull();
-        const settled = await settleFailed(mailId!);
-        expect(settled.status).toBe("failed");
-        if (n < MAX_ATTEMPTS) {
-          expect(settled.exhausted, `intento ${n}`).toBe(false);
-          expect(await state(p.id)).toEqual({ state: "pending", attempts: n });
-          // Recién fallado: todavía no toca (intervalo mínimo); pasado el intervalo, vuelve a la lista.
-          expect(await listed(p.id)).toBe(false);
-          expect(await attempt(p.id)).toBeNull();
-          await waitRetryInterval(p.id);
-          expect(await listed(p.id)).toBe(true);
-        } else {
-          // El último intento permitido: el aviso queda agotado y a la vista.
-          expect(settled.exhausted).toBe(true);
-        }
-      }
-      expect(await state(p.id)).toEqual({ state: "exhausted", attempts: MAX_ATTEMPTS });
-      await waitRetryInterval(p.id);
-      expect(await listed(p.id)).toBe(false);
-      expect(await attempt(p.id)).toBeNull();
-      expect((await asServer<{ recipients: unknown[] }>(RECIPIENTS, [p.id])).recipients).toEqual(
-        [],
-      );
-      expect(
-        await count(
-          "select count(*) as n from public.email_messages where invitation_id = $1 and kind = 'invitation_notice' and status = 'failed'",
-          [p.id],
-        ),
-      ).toBe(MAX_ATTEMPTS);
-    });
-  });
-
-  it("un intento que nunca se cerró (el servidor se cayó) se da por fallido y se reintenta", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      const first = await attempt(p.id);
-      // Pasan 6 minutos sin que nadie lo cierre (las filas de correo no se pueden fechar: se apaga la guarda en la prueba).
-      await actAsPostgres(setup);
-      await setup.query("alter table public.email_messages disable trigger email_messages_guard");
-      await setup.query(
-        "update public.email_messages set created_at = now() - interval '6 minutes' where id = $1",
-        [first],
-      );
-      await setup.query("alter table public.email_messages enable trigger email_messages_guard");
-      await waitRetryInterval(p.id);
-      expect(await listed(p.id)).toBe(true);
-      const mail = (
-        await setup.query("select status, error_code from public.email_messages where id = $1", [
-          first,
-        ])
-      ).rows[0];
-      expect(mail).toEqual({ status: "failed", error_code: "abandoned" });
-      expect(await attempt(p.id)).not.toBeNull();
-    });
-  });
-
-  it("si el último intento permitido se abandona, el aviso se da por agotado y la tarea lo cuenta", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      let last: string | null = null;
-      for (let n = 1; n <= MAX_ATTEMPTS; n++) {
-        if (last) await settleFailed(last).catch(() => undefined);
-        await waitRetryInterval(p.id);
-        last = await attempt(p.id);
-        expect(last, `intento ${n}`).not.toBeNull();
-      }
-      await actAsPostgres(setup);
-      await setup.query("alter table public.email_messages disable trigger email_messages_guard");
-      await setup.query(
-        "update public.email_messages set created_at = now() - interval '6 minutes' where id = $1",
-        [last],
-      );
-      await setup.query("alter table public.email_messages enable trigger email_messages_guard");
-      const result = await asServer<Pending>(PENDING, [100]);
-      expect(result.exhausted).toBeGreaterThanOrEqual(1);
-      expect(result.invitation_ids).not.toContain(p.id);
-      expect(await state(p.id)).toEqual({ state: "exhausted", attempts: MAX_ATTEMPTS });
-    });
-  });
-
-  it("el destinatario es siempre el Dueño de ESA organización: el Dueño de otra, o un Administrador, se rechazan", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      await actAsService(setup);
-      for (const to of [w.ownerB.id, w.admin.id, w.sales.id, randomUUID()]) {
-        const error = await expectSqlError(setup, REGISTER, [
-          randomUUID(),
-          p.id,
-          to,
-          "v1.cifrado.aviso",
-          sha256Hex("aviso"),
-        ]);
-        expect(error.code, to).toBe(INSUFFICIENT_PRIVILEGE);
-        expect(error.message).toContain("recipient_not_owner");
-      }
-      await actAsPostgres(setup);
-      expect(await state(p.id)).toEqual({ state: "pending", attempts: 0 });
-    });
-  });
-
-  it("los destinatarios salen de la fila de la invitación: el Dueño de la organización de ella, nunca otro", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      const info = await asServer<{ recipients: { user_id: string }[]; tenant_id: string }>(
-        RECIPIENTS,
-        [p.id],
-      );
-      expect(info.tenant_id).toBe(w.tenantA);
-      expect(info.recipients.map((r) => r.user_id)).toEqual([w.owner.id]);
-    });
-  });
-
-  it("una invitación cancelada (o vencida) no genera aviso", async () => {
-    await withTx(setup, async () => {
-      const cancelled = (
-        await invite(w.admin, { role: "admin", email: "cancelada-aviso@ejemplo.test" })
-      ).p;
-      await call(w.admin, w.tenantA, REVOKE, [cancelled.id]);
-      expect(await listed(cancelled.id)).toBe(false);
-      expect(await attempt(cancelled.id)).toBeNull();
-      expect(
-        (await asServer<{ recipients: unknown[] }>(RECIPIENTS, [cancelled.id])).recipients,
-      ).toEqual([]);
-
-      const expired = (
-        await invite(w.admin, { role: "admin", email: "vencida-aviso@ejemplo.test" })
-      ).p;
-      await actAsPostgres(setup);
-      await setup.query(
-        "update public.invitations set expires_at = now() - interval '1 hour' where id = $1",
-        [expired.id],
-      );
-      expect(await listed(expired.id)).toBe(false);
-      expect(await attempt(expired.id)).toBeNull();
-    });
-  });
-
-  it("anotar o cerrar un intento no ensucia la auditoría con «invitation.updated»", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      const before = await count(
-        "select count(*) as n from public.audit_log where resource_id = $1 and action = 'invitation.updated'",
-        [p.id],
-      );
-      const mailId = await attempt(p.id);
-      await settleFailed(mailId!);
-      expect(
-        await count(
-          "select count(*) as n from public.audit_log where resource_id = $1 and action = 'invitation.updated'",
-          [p.id],
-        ),
-      ).toBe(before);
-    });
-  });
-
-  it("el aviso de una invitación cancelada se borra por plazo, con su invitación", async () => {
-    await withTx(setup, async () => {
-      const { p } = await invite(w.admin, { role: "admin" });
-      const mailId = await attempt(p.id);
-      await settleFailed(mailId!);
-      await call(w.admin, w.tenantA, REVOKE, [p.id]);
-      await actAsPostgres(setup);
-      await setup.query(
-        "update public.invitations set revoked_at = now() - interval '31 days' where id = $1",
-        [p.id],
-      );
-      await setup.query("select app.purge_invitations()");
-      expect(
-        await count("select count(*) as n from public.email_messages where invitation_id = $1", [
-          p.id,
-        ]),
-      ).toBe(0);
-      expect(
-        await count("select count(*) as n from public.invitations where id = $1", [p.id]),
-      ).toBe(0);
-    });
-  });
-
-  it("solo el servidor ejecuta la lista de avisos pendientes", async () => {
-    await withTx(setup, async () => {
-      for (const user of [w.owner, w.admin]) {
-        await asUser(setup, user, w.tenantA);
-        expect((await expectSqlError(setup, PENDING, [10])).code).toBe(INSUFFICIENT_PRIVILEGE);
-        await actAsPostgres(setup);
-      }
-    });
-  });
-
-  it("las constantes del aviso quedan declaradas con nombre (5 intentos, 10 minutos, 5 minutos)", async () => {
+  /** Fecha un correo hacia atrás (las filas de correo no se pueden editar: sin tocar la tabla, solo esta sesión). */
+  const ageEmail = async (mailId: string, interval: string) => {
     await actAsPostgres(setup);
-    const { rows } = await setup.query(
-      `select app.invitation_notice_max_attempts() as a, app.invitation_notice_retry_minutes() as r,
-              app.invitation_notice_stale_minutes() as s`,
+    await setup.query("set local session_replication_role = replica");
+    await setup.query(
+      "update public.email_messages set created_at = now() - $2::interval where id = $1",
+      [mailId, interval],
     );
-    expect(rows[0]).toEqual({ a: MAX_ATTEMPTS, r: 10, s: 5 });
+    await setup.query("set local session_replication_role = origin");
+  };
+  const accept = async (id: string) => {
+    await actAsPostgres(setup);
+    await setup.query(
+      `update public.invitations set status = 'accepted', accepted_at = now(), accepted_by = $2,
+         email_enc = null, email_hash = null, email_binding = null where id = $1`,
+      [id, w.sales.id],
+    );
+  };
+  const noticeMails = async (id: string) =>
+    count(
+      "select count(*) as n from public.email_messages where invitation_id = $1 and kind = 'invitation_notice'",
+      [id],
+    );
+
+  describe("qué se anota al invitar", () => {
+    it("llamar a create_invitation DIRECTO como Administrador, invitando a un Administrador, deja el aviso anotado como pendiente", async () => {
+      await withTx(setup, async () => {
+        // `invite` llama a la función de la base tal cual: no pasa por la aplicación ni por la pantalla.
+        const { result, p } = await invite(w.admin, { role: "admin" });
+        expect(result.notify_owner).toBe(true);
+        expect(await state(p.id)).toEqual({ state: "pending", attempts: 0 });
+        expect(await ready(p.id)).toBe(true);
+      });
+    });
+
+    it("si no corresponde avisar, no queda nada anotado", async () => {
+      await withTx(setup, async () => {
+        const cases: [TestUser, string][] = [
+          [w.owner, "admin"], // el Dueño invita a un Administrador
+          [w.admin, "sales"],
+          [w.admin, "approver"],
+          [w.admin, "viewer"],
+        ];
+        for (const [user, role] of cases) {
+          const { p } = await invite(user, { role });
+          expect(await state(p.id), role).toEqual({ state: "none", attempts: 0 });
+          expect(await ready(p.id)).toBe(false);
+          expect(await attempt(p.id)).toBeNull();
+        }
+      });
+    });
+
+    it("el Administrador no lee ni escribe las columnas del aviso (owner_notice_*)", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        for (const user of [w.admin, w.owner]) {
+          await asUser(setup, user, w.tenantA);
+          for (const column of [
+            "owner_notice_state",
+            "owner_notice_attempts",
+            "owner_notice_last_attempt_at",
+          ]) {
+            expect(
+              (await expectSqlError(setup, `select ${column} from public.invitations`)).code,
+              `leer ${column}`,
+            ).toBe(INSUFFICIENT_PRIVILEGE);
+            expect(
+              (
+                await expectSqlError(
+                  setup,
+                  `update public.invitations set ${column} = ${column} where id = $1`,
+                  [p.id],
+                )
+              ).code,
+              `escribir ${column}`,
+            ).toBe(INSUFFICIENT_PRIVILEGE);
+          }
+          await actAsPostgres(setup);
+        }
+        expect(await state(p.id)).toEqual({ state: "pending", attempts: 0 });
+      });
+    });
   });
+
+  describe("destinatarios y registro de un intento", () => {
+    it("con un intento reservado, los destinatarios salen de la fila de la invitación: el Dueño de ESA organización", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        // Sin reserva no hay destinatarios (nadie puede pedirlos «de gratis»).
+        expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
+        expect(await reserve(p.id)).toBe(true);
+        const info = await asServer<Recipients>(RECIPIENTS, [p.id]);
+        expect(info.tenant_id).toBe(w.tenantA);
+        expect(info.recipients).toEqual([{ user_id: w.owner.id, email: await ownerEmail() }]);
+        expect(info.role).toBe("admin");
+        expect(typeof info.tenant_name).toBe("string");
+      });
+    });
+
+    it("lo que entrega la base para el aviso no contiene el correo del invitado ni sus huellas", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin", email: "secreto-aviso@ejemplo.test" });
+        await reserve(p.id);
+        const text = JSON.stringify(await asServer<Recipients>(RECIPIENTS, [p.id])).toLowerCase();
+        for (const secret of [
+          "secreto-aviso",
+          p.hash,
+          p.tokenSha,
+          `v1.cifrado.${p.id}`,
+          "binding",
+        ]) {
+          expect(text).not.toContain(secret.toLowerCase());
+        }
+      });
+    });
+
+    it("el nombre de quien invita sale sin espacios sobrantes y vacío (nulo) si es solo espacios, con datos reales", async () => {
+      await withTx(setup, async () => {
+        const set = async (name: string) => {
+          await actAsPostgres(setup);
+          await setup.query("update public.profiles set full_name = $2 where user_id = $1", [
+            w.admin.id,
+            name,
+          ]);
+        };
+        const readName = async () => {
+          const { p } = await invite(w.admin, { role: "admin" });
+          await reserve(p.id);
+          return (await asServer<Recipients>(RECIPIENTS, [p.id])).inviter_name;
+        };
+        await set("   ");
+        expect(await readName()).toBeNull();
+        await set("  Ana Pérez  ");
+        expect(await readName()).toBe("Ana Pérez");
+      });
+    });
+
+    it("se anota un correo por reserva, para el Dueño activo; repetir no crea otro y al enviarse queda «sent»", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        expect(await reserve(p.id)).toBe(true);
+        const mailId = randomUUID();
+        const args = [mailId, p.id, w.owner.id, "v1.cifrado.aviso", sha256Hex("aviso")];
+        expect(await asServer(REGISTER, args)).toEqual({ registered: true });
+        await actAsPostgres(setup);
+        const mail = (
+          await setup.query("select * from public.email_messages where id = $1", [mailId])
+        ).rows[0];
+        expect(mail.kind).toBe("invitation_notice");
+        expect(mail.status).toBe("pending");
+        expect(mail.invitation_id).toBe(p.id);
+        expect(mail.created_by).toBeNull();
+        // La reserva ya se usó: otro correo no se anota.
+        expect(
+          await asServer(REGISTER, [
+            randomUUID(),
+            p.id,
+            w.owner.id,
+            "v1.cifrado.aviso",
+            sha256Hex("aviso"),
+          ]),
+        ).toEqual({ registered: false });
+        expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
+        expect(await asServer(SETTLE, [mailId, "mailpit", "n-1", null])).toEqual({
+          status: "sent",
+        });
+        expect((await state(p.id)).state).toBe("sent");
+      });
+    });
+
+    it("sin reserva no se anota nada, aunque sea el Dueño de verdad", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        expect(
+          await asServer(REGISTER, [randomUUID(), p.id, w.owner.id, "v1.x.y", sha256Hex("a")]),
+        ).toEqual({ registered: false });
+        expect(await noticeMails(p.id)).toBe(0);
+      });
+    });
+
+    it("el destinatario es siempre el Dueño de ESA organización: el Dueño de otra, un Administrador o cualquiera se rechazan", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        await reserve(p.id);
+        await actAsService(setup);
+        for (const to of [w.ownerB.id, w.admin.id, w.sales.id, randomUUID()]) {
+          const error = await expectSqlError(setup, REGISTER, [
+            randomUUID(),
+            p.id,
+            to,
+            "v1.cifrado.aviso",
+            sha256Hex("aviso"),
+          ]);
+          expect(error.code, to).toBe(INSUFFICIENT_PRIVILEGE);
+          expect(error.message).toContain("recipient_not_owner");
+        }
+        expect(
+          (
+            await expectSqlError(setup, REGISTER, [
+              randomUUID(),
+              p.id,
+              w.owner.id,
+              "",
+              sha256Hex("a"),
+            ])
+          ).code,
+        ).toBe(INVALID);
+        await actAsPostgres(setup);
+        expect(await noticeMails(p.id)).toBe(0);
+      });
+    });
+
+    it("nadie con un pase ejecuta esas funciones", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        for (const user of [w.owner, w.admin]) {
+          for (const [sql, params] of [
+            [RECIPIENTS, [p.id]],
+            [PENDING, [10, null]],
+            [REGISTER, [randomUUID(), p.id, w.owner.id, "v1.x.y", sha256Hex("a")]],
+          ] as [string, unknown[]][]) {
+            await asUser(setup, user, w.tenantA);
+            expect((await expectSqlError(setup, sql, params)).code).toBe(INSUFFICIENT_PRIVILEGE);
+            await actAsPostgres(setup);
+          }
+        }
+      });
+    });
+
+    it("el registro del aviso lo lee solo el Dueño: ni el Administrador, que es quien invitó, ni nadie más", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        const mailId = await attempt(p.id);
+        for (const [user, expected] of [
+          [w.owner, 1],
+          [w.admin, 0],
+          [w.sales, 0],
+          [w.viewer, 0],
+          [w.approver, 0],
+        ] as const) {
+          await asUser(setup, user, w.tenantA);
+          const { rows } = await setup.query("select id from public.email_messages where id = $1", [
+            mailId,
+          ]);
+          expect(rows.length, user.id).toBe(expected);
+          await actAsPostgres(setup);
+        }
+      });
+    });
+
+    it("el correo de la invitación sí lo ven quienes manejan el equipo (Dueño y Administrador)", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        for (const [user, expected] of [
+          [w.owner, 1],
+          [w.admin, 1],
+          [w.sales, 0],
+        ] as const) {
+          await asUser(setup, user, w.tenantA);
+          const { rows } = await setup.query("select id from public.email_messages where id = $1", [
+            p.mailId,
+          ]);
+          expect(rows.length, user.id).toBe(expected);
+          await actAsPostgres(setup);
+        }
+      });
+    });
+  });
+
+  describe("reservar un intento (gastarlo antes de enviar)", () => {
+    it("reservar anota la hora y cuenta el intento; mientras no pase el intervalo, no se puede reservar otro", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        expect(await reserve(p.id)).toBe(true);
+        const inv = await row(p.id);
+        expect(inv.owner_notice_attempts).toBe(1);
+        expect(inv.owner_notice_last_attempt_at).not.toBeNull();
+        expect(await ready(p.id)).toBe(false);
+        expect(await reserve(p.id)).toBe(false);
+        expect((await state(p.id)).attempts).toBe(1);
+      });
+    });
+
+    it("mientras hay un intento vivo (pendiente de enviar) no se reserva otro; enviado, nunca más (sin duplicados)", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        const first = await attempt(p.id);
+        expect(first).not.toBeNull();
+        await waitRetryInterval(p.id);
+        expect(await ready(p.id)).toBe(false);
+        expect(await reserve(p.id)).toBe(false);
+        expect(await asServer(SETTLE, [first, "mailpit", "n-1", null])).toEqual({ status: "sent" });
+        expect(await state(p.id)).toEqual({ state: "sent", attempts: 1 });
+        await waitRetryInterval(p.id);
+        expect(await ready(p.id)).toBe(false);
+        expect(await attempt(p.id)).toBeNull();
+        expect(await noticeMails(p.id)).toBe(1);
+      });
+    });
+
+    it("dos tareas a la vez no toman el mismo aviso (skip locked)", async () => {
+      // Datos confirmados (las dos conexiones tienen que verlos); se borran al terminar.
+      await setup.query("begin");
+      const { p } = await invite(w.admin, { role: "admin", email: "carrera-aviso@ejemplo.test" });
+      await setup.query("commit");
+      const second = await connect();
+      try {
+        const run = async (client: Client) => {
+          await client.query("begin");
+          await actAsService(client);
+          try {
+            const { rows } = await client.query<{ r: Pending }>(PENDING, [100, p.id]);
+            await new Promise((resolve) => setTimeout(resolve, 200)); // se mantiene el candado un instante
+            await client.query("commit");
+            return rows[0].r.invitation_ids.includes(p.id);
+          } catch (error) {
+            await client.query("rollback");
+            throw error;
+          }
+        };
+        const results = await Promise.all([run(setup), run(second)]);
+        expect(results.filter(Boolean)).toHaveLength(1);
+        expect((await state(p.id)).attempts).toBe(1);
+      } finally {
+        await actAsPostgres(setup);
+        await second.end();
+        // Limpieza de los datos ficticios de esta prueba (sin las reglas de solo agregar, solo en esta sesión).
+        await setup.query("begin");
+        await setup.query("set local session_replication_role = replica");
+        await setup.query("delete from public.email_messages where invitation_id = $1", [p.id]);
+        await setup.query("delete from public.invitations where id = $1", [p.id]);
+        await setup.query("commit");
+      }
+    });
+  });
+
+  describe("reintentos y tope", () => {
+    it("reintenta los fallidos: espera el intervalo mínimo y se detiene en el tope de intentos", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        for (let n = 1; n <= MAX_ATTEMPTS; n++) {
+          const mailId = await attempt(p.id);
+          expect(mailId, `intento ${n}`).not.toBeNull();
+          const settled = await settleFailed(mailId!);
+          expect(settled.status).toBe("failed");
+          if (n < MAX_ATTEMPTS) {
+            expect(settled.exhausted, `intento ${n}`).toBe(false);
+            expect(await state(p.id)).toEqual({ state: "pending", attempts: n });
+            // Recién fallado: todavía no toca; pasado el intervalo, vuelve a estar listo.
+            expect(await ready(p.id)).toBe(false);
+            expect(await attempt(p.id)).toBeNull();
+            await waitRetryInterval(p.id);
+            expect(await ready(p.id)).toBe(true);
+          } else {
+            // El último intento permitido: el aviso queda agotado y a la vista.
+            expect(settled.exhausted).toBe(true);
+          }
+        }
+        expect(await state(p.id)).toEqual({ state: "exhausted", attempts: MAX_ATTEMPTS });
+        await waitRetryInterval(p.id);
+        expect(await ready(p.id)).toBe(false);
+        expect(await attempt(p.id)).toBeNull();
+        expect(await noticeMails(p.id)).toBe(MAX_ATTEMPTS);
+      });
+    });
+
+    it("un aviso que falla ANTES de anotarse igual gasta sus intentos y termina agotándose (no queda atascado)", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        // Cada corrida reserva y «se rompe» antes de anotar el correo (nunca llega a `register`).
+        for (let n = 1; n <= MAX_ATTEMPTS; n++) {
+          expect(await reserve(p.id), `reserva ${n}`).toBe(true);
+          expect((await state(p.id)).attempts).toBe(n);
+          await waitRetryInterval(p.id);
+        }
+        expect(await state(p.id)).toEqual({ state: "pending", attempts: MAX_ATTEMPTS });
+        // Se acabaron los intentos: no se reserva más y la tarea lo da por agotado y lo cuenta.
+        const batch = await reserveBatch();
+        expect(batch.exhausted).toBeGreaterThanOrEqual(1);
+        expect(batch.invitation_ids).not.toContain(p.id);
+        expect(await reserve(p.id)).toBe(false);
+        expect(await state(p.id)).toEqual({ state: "exhausted", attempts: MAX_ATTEMPTS });
+      });
+    });
+
+    it("un aviso atascado no tapa a los siguientes: reservado, no vuelve a la cola hasta que pase el intervalo", async () => {
+      await withTx(setup, async () => {
+        const stuck = (await invite(w.admin, { role: "admin", email: "atascado-1@ejemplo.test" }))
+          .p;
+        const others = [
+          (await invite(w.admin, { role: "admin", email: "siguiente-1@ejemplo.test" })).p,
+          (await invite(w.admin, { role: "admin", email: "siguiente-2@ejemplo.test" })).p,
+        ];
+        const first = await reserveBatch();
+        for (const p of [stuck, ...others]) expect(first.invitation_ids).toContain(p.id);
+        // El atascado nunca se cierra; en la corrida siguiente ya no aparece (ni los demás, que ya se reservaron).
+        const second = await reserveBatch();
+        for (const p of [stuck, ...others]) expect(second.invitation_ids).not.toContain(p.id);
+        // Otra invitación nueva sí entra a la cola de inmediato.
+        const fresh = (await invite(w.admin, { role: "admin", email: "nueva-1@ejemplo.test" })).p;
+        expect((await reserveBatch()).invitation_ids).toContain(fresh.id);
+      });
+    });
+
+    it("un intento que nunca se cerró (el servidor se cayó) se da por fallido y se reintenta", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        const first = await attempt(p.id);
+        // Pasan 6 minutos sin que nadie lo cierre.
+        await ageEmail(first!, "6 minutes");
+        await waitRetryInterval(p.id);
+        expect((await reserveBatch()).invitation_ids).toContain(p.id);
+        await actAsPostgres(setup);
+        const mail = (
+          await setup.query("select status, error_code from public.email_messages where id = $1", [
+            first,
+          ])
+        ).rows[0];
+        expect(mail).toEqual({ status: "failed", error_code: "abandoned" });
+        expect(await state(p.id)).toEqual({ state: "pending", attempts: 2 });
+      });
+    });
+
+    it("si el último intento permitido se abandona, el aviso se da por agotado y la tarea lo cuenta", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        let last: string | null = null;
+        for (let n = 1; n <= MAX_ATTEMPTS; n++) {
+          if (last) await settleFailed(last);
+          await waitRetryInterval(p.id);
+          last = await attempt(p.id);
+          expect(last, `intento ${n}`).not.toBeNull();
+        }
+        await ageEmail(last!, "6 minutes");
+        await waitRetryInterval(p.id);
+        const result = await reserveBatch();
+        expect(result.exhausted).toBeGreaterThanOrEqual(1);
+        expect(result.invitation_ids).not.toContain(p.id);
+        expect(await state(p.id)).toEqual({ state: "exhausted", attempts: MAX_ATTEMPTS });
+      });
+    });
+
+    it("el último intento no se da por agotado mientras está en curso, y si sale, queda «sent»", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        let last: string | null = null;
+        for (let n = 1; n <= MAX_ATTEMPTS; n++) {
+          if (last) await settleFailed(last);
+          await waitRetryInterval(p.id);
+          last = await attempt(p.id);
+        }
+        // Otra corrida de la tarea pasa mientras el último intento sigue en vuelo: no lo toca.
+        await reserveBatch();
+        expect((await state(p.id)).state).toBe("pending");
+        expect(await asServer(SETTLE, [last, "mailpit", "ultimo", null])).toEqual({
+          status: "sent",
+        });
+        expect((await state(p.id)).state).toBe("sent");
+      });
+    });
+
+    it("sin un Dueño activo con correo, el aviso se da por agotado de inmediato (no_recipient), sin quedar atascado", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        await actAsPostgres(setup);
+        await setup.query(
+          "update public.members set status = 'removed', removed_at = now() where tenant_id = $1 and user_id = $2",
+          [w.tenantA, w.owner.id],
+        );
+        expect(await reserve(p.id)).toBe(true);
+        const info = await asServer<Recipients>(RECIPIENTS, [p.id]);
+        expect(info.recipients).toEqual([]);
+        expect(info.exhausted).toBe("no_recipient");
+        expect((await state(p.id)).state).toBe("exhausted");
+        await waitRetryInterval(p.id);
+        expect(await ready(p.id)).toBe(false);
+        expect((await reserveBatch()).invitation_ids).not.toContain(p.id);
+      });
+    });
+  });
+
+  describe("qué invitaciones generan aviso", () => {
+    it("una invitación ACEPTADA antes de que salga el aviso igual se lista y se envía", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, {
+          role: "admin",
+          email: "aceptada-rapida@ejemplo.test",
+        });
+        // Un cómplice la acepta en segundos, antes de que corra la tarea.
+        await accept(p.id);
+        expect(await ready(p.id)).toBe(true);
+        expect((await reserveBatch()).invitation_ids).toContain(p.id);
+        const info = await asServer<Recipients>(RECIPIENTS, [p.id]);
+        expect(info.recipients.map((r) => r.user_id)).toEqual([w.owner.id]);
+        const mailId = randomUUID();
+        expect(
+          await asServer(REGISTER, [
+            mailId,
+            p.id,
+            w.owner.id,
+            "v1.cifrado.aviso",
+            sha256Hex("aviso"),
+          ]),
+        ).toEqual({ registered: true });
+        expect(await asServer(SETTLE, [mailId, "mailpit", "n-1", null])).toEqual({
+          status: "sent",
+        });
+        expect((await state(p.id)).state).toBe("sent");
+        // El estado del aviso quedó intacto por la aceptación: sigue la misma invitación aceptada.
+        expect((await row(p.id)).status).toBe("accepted");
+      });
+    });
+
+    it("una invitación aceptada también agota sus intentos si el aviso no sale", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, {
+          role: "admin",
+          email: "aceptada-agota@ejemplo.test",
+        });
+        await accept(p.id);
+        for (let n = 1; n <= MAX_ATTEMPTS; n++) {
+          expect(await reserve(p.id), `reserva ${n}`).toBe(true);
+          await waitRetryInterval(p.id);
+        }
+        expect((await reserveBatch()).exhausted).toBeGreaterThanOrEqual(1);
+        expect((await state(p.id)).state).toBe("exhausted");
+      });
+    });
+
+    it("una invitación CANCELADA no genera aviso", async () => {
+      await withTx(setup, async () => {
+        const p = (await invite(w.admin, { role: "admin", email: "cancelada-aviso@ejemplo.test" }))
+          .p;
+        await call(w.admin, w.tenantA, REVOKE, [p.id]);
+        expect(await ready(p.id)).toBe(false);
+        expect((await reserveBatch()).invitation_ids).not.toContain(p.id);
+        expect(await reserve(p.id)).toBe(false);
+        expect(await attempt(p.id)).toBeNull();
+        expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
+        expect(await noticeMails(p.id)).toBe(0);
+      });
+    });
+
+    it("una invitación vencida sin aceptar ni cancelar igual avisa (que se invitó a un Administrador ya ocurrió)", async () => {
+      await withTx(setup, async () => {
+        const p = (await invite(w.admin, { role: "admin", email: "vencida-aviso@ejemplo.test" })).p;
+        await actAsPostgres(setup);
+        await setup.query(
+          "update public.invitations set expires_at = now() - interval '1 hour' where id = $1",
+          [p.id],
+        );
+        expect(await ready(p.id)).toBe(true);
+        expect(await attempt(p.id)).not.toBeNull();
+      });
+    });
+  });
+
+  describe("auditoría, plazos y constantes", () => {
+    it("reservar, anotar o cerrar un intento no ensucia la auditoría con «invitation.updated»", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        const updates = () =>
+          count(
+            "select count(*) as n from public.audit_log where resource_id = $1 and action = 'invitation.updated'",
+            [p.id],
+          );
+        const before = await updates();
+        const mailId = await attempt(p.id);
+        await settleFailed(mailId!);
+        expect(await updates()).toBe(before);
+      });
+    });
+
+    it("el aviso de una invitación cancelada se borra por plazo, con su invitación", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        const mailId = await attempt(p.id);
+        await settleFailed(mailId!);
+        await call(w.admin, w.tenantA, REVOKE, [p.id]);
+        await actAsPostgres(setup);
+        await setup.query(
+          "update public.invitations set revoked_at = now() - interval '31 days' where id = $1",
+          [p.id],
+        );
+        await setup.query("select app.purge_invitations()");
+        expect(
+          await count("select count(*) as n from public.email_messages where invitation_id = $1", [
+            p.id,
+          ]),
+        ).toBe(0);
+        expect(
+          await count("select count(*) as n from public.invitations where id = $1", [p.id]),
+        ).toBe(0);
+      });
+    });
+
+    it("el aviso de una invitación aceptada se conserva 30 días tras aceptarse y luego se borra con sus correos", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, {
+          role: "admin",
+          email: "aceptada-plazo@ejemplo.test",
+        });
+        const mailId = await attempt(p.id);
+        await asServer(SETTLE, [mailId, "mailpit", "n-1", null]);
+        await accept(p.id);
+        await setup.query("select app.purge_invitations()");
+        expect(await noticeMails(p.id)).toBe(1); // recién aceptada: se conserva
+        await actAsPostgres(setup);
+        await setup.query(
+          "update public.invitations set accepted_at = now() - interval '31 days' where id = $1",
+          [p.id],
+        );
+        await setup.query("select app.purge_invitations()");
+        expect(await noticeMails(p.id)).toBe(0);
+        expect(
+          await count("select count(*) as n from public.invitations where id = $1", [p.id]),
+        ).toBe(1);
+      });
+    });
+
+    it("las constantes del aviso quedan declaradas con nombre (5 intentos, 10 minutos, 5 minutos)", async () => {
+      await actAsPostgres(setup);
+      const { rows } = await setup.query(
+        `select app.invitation_notice_max_attempts() as a, app.invitation_notice_retry_minutes() as r,
+                app.invitation_notice_stale_minutes() as s`,
+      );
+      expect(rows[0]).toEqual({ a: MAX_ATTEMPTS, r: 10, s: 5 });
+    });
+  });
+
+  const ownerEmail = async () => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query<{ email: string }>("select email from auth.users where id = $1", [
+        w.owner.id,
+      ])
+    ).rows[0].email;
+  };
 });
 
 describe("borrado por plazo", () => {

@@ -182,10 +182,33 @@ describe("Ataque 3 · las huellas y el vínculo no los lee nadie con un pase", (
       );
       expect(ok.status, ok.text).toBe(200);
       expect((ok.json as unknown[]).length).toBeGreaterThan(0);
-      for (const column of ["token_sha256", "email_binding", "email_hash", "*"]) {
+      for (const column of [
+        "token_sha256",
+        "email_binding",
+        "email_hash",
+        "owner_notice_state",
+        "owner_notice_attempts",
+        "owner_notice_last_attempt_at",
+        "*",
+      ]) {
         const res = await rest(token, `invitations?select=${column}`, { headers });
         expect(res.status, `${persona} ${column}`).toBeGreaterThanOrEqual(400);
         expect(res.text).not.toContain(fx.orgs.A.invitation!.tokenSha256);
+      }
+      // Ni escribir en las columnas del aviso al Dueño (darlo por enviado, vaciar los intentos…).
+      for (const body of [
+        { owner_notice_state: "sent" },
+        { owner_notice_attempts: 0 },
+        { owner_notice_last_attempt_at: null },
+      ]) {
+        const patch = await rest(token, `invitations?id=eq.${fx.orgs.A.invitation!.invitationId}`, {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=representation" },
+          body,
+        });
+        expect(patch.status, `${persona} escribir ${Object.keys(body)[0]}`).toBeGreaterThanOrEqual(
+          400,
+        );
       }
       // Tampoco sirve filtrar por ellas para adivinar su valor.
       for (const column of ["token_sha256", "email_hash", "email_binding"]) {

@@ -3,7 +3,7 @@ import { serverLog } from "@/lib/log/server-log";
 import { can } from "@/lib/permissions/matrix";
 import { addDaysIso, todayInChile } from "@/lib/quotes/validity";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
-import { readDailyCaps } from "./builder-queries";
+import { FORBIDDEN_CODE, readDailyCaps } from "./builder-queries";
 import {
   ORGANIZATION_DAILY_CAP,
   PROTECTION_WINDOW_DAYS,
@@ -42,7 +42,7 @@ export function canSeeProtection(role: string): boolean {
  * migración `intake_daily_cap_column`): lo entrega `readDailyCaps`, que la base solo ejecuta con el
  * permiso `intake.forms.manage`. Hoy ese permiso y `intake.protection.read` son de los mismos roles
  * (hay una prueba que lo vigila); si algún día se separan, quien lea la protección sin poder manejar
- * formularios recibiría «error» aquí en vez de un tope.
+ * formularios recibiría «prohibido» aquí en vez de un tope.
  */
 export async function loadProtection(active: ActiveTenant): Promise<ProtectionData> {
   if (!canSeeProtection(active.role)) return { ok: false, reason: "forbidden" };
@@ -58,8 +58,13 @@ export async function loadProtection(active: ActiveTenant): Promise<ProtectionDa
     readDailyCaps(active),
   ]);
   if (counters.error || !counters.data || !caps.ok) {
-    // Solo el código: nunca el mensaje de la base ni datos de nadie.
     const capsFailure = caps.ok ? null : caps;
+    // La base decide con el rol efectivo (p. ej. sin dos pasos actúa como Observador): si rechaza el tope con
+    // «prohibido», el panel no es para esta persona, no es una falla.
+    if (!counters.error && counters.data && capsFailure?.code === FORBIDDEN_CODE) {
+      return { ok: false, reason: "forbidden" };
+    }
+    // Solo el código: nunca el mensaje de la base ni datos de nadie.
     void serverLog("error", "intake_protection_load_failed", {
       code: counters.error?.code ?? capsFailure?.code ?? "unknown",
     });

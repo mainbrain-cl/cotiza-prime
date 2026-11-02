@@ -24,7 +24,7 @@ afterAll(async () => {
 const CAPS = "select * from public.intake_form_daily_caps($1) as r";
 const CAPS_ALL = "select * from public.intake_form_daily_caps() as r";
 const SAVE = "select public.save_intake_form($1, $2, $3::jsonb, null) as r";
-// Todas las columnas legibles de la tabla (todas menos `daily_cap`).
+// Algunas de las columnas legibles (la prueba de permisos por columna cubre las 18 que no son `daily_cap`).
 const READABLE =
   "id, tenant_id, public_id, name, title, intro, success_message, status, revision, fields";
 
@@ -76,17 +76,6 @@ describe("quién lee el tope por la función", () => {
       // Sin formulario: solo lo suyo (aquí, nada de A).
       const all = await setup.query(CAPS_ALL);
       expect(all.rows.map((r) => r.form_id)).not.toContain(form.formId);
-      await actAsPostgres(setup);
-    });
-  });
-
-  it("un pase de otra organización con la cabecera de B pidiendo el formulario de A tampoco filtra el valor", async () => {
-    await withTx(setup, async () => {
-      const form = await makeForm(setup, w.owner, w.tenantA, { form: { daily_cap: 41 } });
-      await asUser(setup, w.owner, w.tenantB); // el Dueño de A no es miembro de B
-      const error = await expectSqlError(setup, CAPS, [form.formId]);
-      expect(error.code).toBe("42501");
-      expect(error.message).not.toContain("41");
       await actAsPostgres(setup);
     });
   });

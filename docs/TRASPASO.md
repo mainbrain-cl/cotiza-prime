@@ -58,11 +58,11 @@ días sin moverse; no se perdió nada).
 
 | | |
 |---|---|
-| **Historias construidas** | **35 de 92 (38 %)** |
-| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 construida y en `main` desde el 2026-10-28) · **5 (equipo y permisos) confirmado por José el 2026-10-28 y en construcción** (H-011a en `main` desde el 2026-10-29; sigue H-011b) · 6 a 12 sin partir |
-| **Pruebas, la última vez** | En `main` (2026-10-28): 1.388 unitarias (1 omitida) · 22 guardias estáticas · e2e de H-092: 9 de 9. De la última batería completa, sin recontar tras las mezclas: 645 de base de datos · 1.061 de aislamiento entre organizaciones · unas 130 de punta a punta (todas en verde) |
-| **Base de datos** | 36 migraciones, cada una con su deshacer |
-| **Rama** | `main` estaba limpia en `1085ef1` (2026-10-27). El 2026-10-28 se mezclaron los PR #2, #8, #1, #6, #4 y #5 (ver §5). **Desde ahora el trabajo va por ramas y PR: nada directo a `main`** |
+| **Historias construidas** | **36 de 92 (39 %)** |
+| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 construida y en `main` desde el 2026-10-28) · **5 (equipo y permisos) confirmado por José el 2026-10-28 y en construcción** (H-011a y H-008 en `main`; siguen H-009 y H-011b) · 6 a 12 sin partir |
+| **Pruebas, la última vez** | 2026-11-02, local, antes de mezclar los PR #15, #16 y #17: 1.728 unitarias (1 omitida) · 789 de base de datos · 1.121 de aislamiento entre organizaciones (3 pendientes) · e2e `chromium` 116 de 116 con la app compilada · e2e `isolation` 18 de 18. `test:db:rollbacks` no se corrió |
+| **Base de datos** | 38 migraciones, cada una con su deshacer |
+| **Rama** | `main` estaba limpia en `1085ef1` (2026-10-27). El 2026-10-28 se mezclaron los PR #2, #8, #1, #6, #4 y #5 (ver §5); después, hasta el #17 (`50b76f3`, 2026-11-02). **Desde ahora el trabajo va por ramas y PR: nada directo a `main`** |
 
 ### Lo que funciona hoy (en local)
 
@@ -101,8 +101,8 @@ hoy, 7 y 30 días; solo Dueño y Administrador), control del tope diario (1 a 20
 - La rama remota `wip/h-092-bloqueos-y-tope` ya no hace falta, pero **no se ha borrado**: borrable cuando José lo ordene.
 
 **Sprint 5 (equipo y permisos).** Confirmado por José el 2026-10-28 (Compuerta 3; Aarón queda avisado y puede
-objetar). En construcción: H-011a (matriz única de permisos) en `main` desde el 2026-10-29 (PR #12, revisada y mezclada
-por Aarón); sigue H-011b. Documentos: `docs/sprints/005-equipo-y-permisos.md` y `docs/arquitectura/sprint-5-equipo-y-permisos.md`.
+objetar). En construcción: H-011a (matriz única de permisos, PR #12) y H-008 (invitar a un miembro, PR #15) en `main`; hasta
+H-009 el enlace del correo de invitación lleva a «No encontrado». Siguen H-009 y H-011b. Documentos: `docs/sprints/005-equipo-y-permisos.md` y `docs/arquitectura/sprint-5-equipo-y-permisos.md`.
 
 **Decisión 020** (en `main`): aprobada por José el 2026-10-28 y ratificada por Aarón el 2026-10-29; plazo de
 aviso 24 h. En corto: qué decide José mientras Aarón no esté; qué sigue siendo de Aarón (producto, dinero,
@@ -158,6 +158,9 @@ cambie el alcance se vuelve historia y entra a la lista; no se agrega a escondid
 - **`db reset` y `test:db:rollbacks` vacían la base local**: después, `npm run db:seed`. Si otra persona
   está usando la app contra esa base, no las corras.
 - **Playwright no corre con `npm run dev` abierto** en la misma carpeta: cerrar el servidor (puerto 3000).
+- **Supabase no arranca («ports are not available») o queda sin puertos publicados:** Windows reservó el rango
+  (`netsh interface ipv4 show excludedportrange protocol=tcp`). Como administrador, `net stop winnat` y
+  `net start winnat`; luego `npx supabase start`. No borra datos.
 - **Windows:** `npm install` puede borrar de `package-lock.json` las entradas `node_modules/@emnapi/core` y
   `@emnapi/runtime`, y entonces `npm ci` falla en CI. `npm run lint` lo comprueba: no subas con eso en rojo.
 - **No enlaces `node_modules` de una copia de trabajo con un acceso directo hacia otra carpeta:** al borrar

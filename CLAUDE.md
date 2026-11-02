@@ -43,7 +43,7 @@ Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por sepa
 hallazgos corregidos. Pruebas: `npm test`, `test:db`, `test:isolation` (504 ataques entre
 organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHub Actions.
 
-- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 36 migraciones. Datos de
+- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 38 migraciones. Datos de
   prueba: `npm run db:seed` (`ana`, `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
   `Prueba-Cotiza-2026`; Negocio Demo 1 y 2). Cómo levantarlo: `README.md`.
 - **Documentos de arquitectura:** `docs/arquitectura/modelo-datos.md` (aprobado) y
@@ -54,26 +54,29 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Estado al 2026-10-29 — empezar por aquí (traspaso a José)
+### Estado al 2026-11-02 — empezar por aquí (traspaso a José)
 
 **Lee primero `docs/TRASPASO.md`**: es la guía para ponerse al día (cómo levantarlo, qué leer, dónde
 quedó todo, trampas, qué decide Aarón y cómo trabaja). Este bloque es solo el resumen.
 
-**Dónde está:** 35 de 92 historias construidas (38 %). Sprint 1 cerrado; sprint 2 construido (falta que
+**Dónde está:** 36 de 92 historias construidas (39 %). Sprint 1 cerrado; sprint 2 construido (falta que
 Aarón lo pruebe y apruebe la plantilla 1); sprint 3 con 8 de 9 (falta **H-076**, las tres plantillas de
 PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3); **sprint 4 completo**
 (H-092 construida y en `main`). **Sprint 5 (equipo y permisos) confirmado por José el 2026-10-28**
 (Compuerta 3) y en construcción: **H-011a (matriz única de permisos) en `main` desde el 2026-10-29**
-(PR #12, revisada y mezclada por Aarón); sigue H-011b (pruebas por rol). Documentos: `docs/sprints/005-equipo-y-permisos.md` y
-`docs/arquitectura/sprint-5-equipo-y-permisos.md`. Sprints 6 a 12 sin partir. 36 migraciones. Pruebas en
-`main` (recontadas el 2026-10-30, local): 1.593 unitarias (1 omitida), 665 de base de datos, 1.063 de
-aislamiento (3 pendientes), e2e `isolation` 18 de 18 y e2e `chromium` 111 de 112 con la app compilada.
+(PR #12) y **H-008 (invitar a un miembro) en `main` desde el 2026-11-02** (PR #15; hasta H-009 el enlace del
+correo lleva a «No encontrado»); siguen H-009 (aceptar la invitación) y H-011b (pruebas por rol). Documentos: `docs/sprints/005-equipo-y-permisos.md` y
+`docs/arquitectura/sprint-5-equipo-y-permisos.md`. Sprints 6 a 12 sin partir. 38 migraciones. Pruebas en
+`main` (recontadas el 2026-11-02, local): 1.728 unitarias (1 omitida), 789 de base de datos, 1.121 de
+aislamiento (3 pendientes), e2e `isolation` 18 de 18 y e2e `chromium` 116 de 116 con la app compilada.
+`test:db:rollbacks` no se corrió el 2026-11-02 (vacía la base local).
 
 **Lo que ya funciona (en local):** registro y organizaciones, catálogo y clientes, cotizador con PDF,
 enviar por correo, enlace del cliente (aceptar o rechazar con motivo obligatorio), rebotes, vencimiento,
 revocar enlace, registro de actividad, formulario público (constructor, página pública con anti-robot,
 resumen en vivo sin precios, incrustable, QR), solicitudes (asignar, descartar, anonimizar, convertir en
-cotización) y panel de protección con tope diario (H-092). Menú flotante vertical, tarjetas, contadores y
+cotización), panel de protección con tope diario (H-092) y pantalla «Tu equipo» para invitar, reenviar y
+cancelar (H-008). Menú flotante vertical, tarjetas, contadores y
 fondos animados (React Bits, decisión 018).
 
 **Mezclas del 2026-10-28.** Por orden explícita de José y **sin revisión de Aarón** se mezclaron en `main`
@@ -107,15 +110,21 @@ falla igual en `main` sin los PR (sospecha: tope diario del formulario de prueba
 arriba). Con la app compilada queda 1 de 112: un salto de redirección del ingreso que una vez pasó los 5 s
 (`intake-form-builder.spec.ts:136`, pasa 3 de 3 sola); `intake-embed.spec.ts:506` no falló. La del botón
 «Guardando…» de `intake-protection.spec.ts` era un error real (el campo del tope diario pisaba lo que se
-escribía mientras se guardaba) y se corrige en el PR de `fix/tope-diario-pisa-lo-escrito`.
+escribía mientras se guardaba) y se corrigió en el PR #14.
 
-**Decisiones de Aarón pendientes** (el código aplica un supuesto): aprobar las plantillas de PDF; regla de
+**Mezclas del 2026-11-02.** Aarón pidió mezclar los PR #15 (H-008), #16 (diseños de H-040 y H-048, sin
+construir) y #17 (tope diario privado). Se probaron juntos antes de mezclar, con las cifras de arriba; sin CI y
+sin prueba en pantalla. Se leyeron las migraciones y el código más delicado, no todo el PR #15.
+
+**Decisiones de Aarón pendientes** (el código aplica un supuesto): quién puede enviar sin aprobación (nº 15 de
+`PROYECTO.md` §16.2) y cómo se programa la tarea de avisos al Dueño (nº 17); aprobar las plantillas de PDF; regla de
 enlaces ya respondidos (rechazada: tras la vigencia solo aviso; aceptada: activo hasta pagada más un plazo);
 proveedor y dominio de correo (decisión 016, propuesta Resend); anti-robot real (decisión 019, propuesta
-Turnstile o ALTCHA); dominio y marca; facturación de GitHub; antes del piloto, abogado, datos de Main Brain
+Turnstile o ALTCHA; antes de correos reales, además, que un nombre de organización con una dirección web no se
+vuelva enlace en la invitación); dominio y marca; facturación de GitHub; antes del piloto, abogado, datos de Main Brain
 para los términos (29 marcadores), custodia de claves de cifrado y quién responde un incidente.
 
-**Qué sigue:** terminar el sprint 5 → revisión grande de Aarón (decirle qué está listo, el link
+**Qué sigue:** terminar el sprint 5 (H-009, H-011b y el resto de su lista) → revisión grande de Aarón (decirle qué está listo, el link
 `http://localhost:3000` y los accesos) → 6 aprobación y datos de pago → 7 cobro → piloto privado. Estimación: unas 2 a 3 semanas hasta el piloto y 4 a 6 hasta el lanzamiento.
 
 **Cómo se prueba en pantalla:** `npm run dev` → http://localhost:3000 (Docker abierto y `npx supabase
@@ -130,7 +139,9 @@ historia. Mirar siempre el CI tras cada subida.
 **Trampas de Windows:** `npm install` puede borrar de `package-lock.json` las entradas
 `node_modules/@emnapi/core` y `@emnapi/runtime` (`npm run lint` lo comprueba). Nunca enlazar `node_modules`
 de una copia con un acceso directo a otra carpeta. Playwright no corre con `npm run dev` abierto en la misma
-carpeta.
+carpeta. Si Supabase no arranca con «ports are not available» o queda sin puertos publicados, Windows reservó
+el rango (`netsh interface ipv4 show excludedportrange protocol=tcp`): `net stop winnat` y `net start winnat`
+como administrador, y de nuevo `npx supabase start` (pasó el 2026-10-30; no borra datos).
 
 **Repositorio:** `github.com/avronygg/cotiza-prime`, privado, rama `main`.
 

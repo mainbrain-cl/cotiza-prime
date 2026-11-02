@@ -18,7 +18,10 @@ import {
 } from "./invitation-names";
 
 export const OWNER_NOTICE_SENDER_NAME = "Cotiza Prime";
+/** Invitación pendiente o vencida: el botón lleva a «Tu equipo», donde se ve y se puede cancelar. */
 export const OWNER_NOTICE_BUTTON_LABEL = "Ver tu equipo";
+/** Invitación ya aceptada: «Tu equipo» solo lista las pendientes, así que el botón no promete nada de eso. */
+export const OWNER_NOTICE_ACCEPTED_BUTTON_LABEL = "Abrir Cotiza Prime";
 const emailSchema = z.email().max(254);
 
 export type InvitationOwnerNoticeInput = {
@@ -29,8 +32,10 @@ export type InvitationOwnerNoticeInput = {
   /** Cómo se llama el rol en la interfaz, p. ej. «Administrador». */
   roleLabel: string;
   invitedAt: string | Date;
-  /** Dirección de «Tu equipo» dentro de la aplicación. */
+  /** Adonde lleva el botón: «Tu equipo» (pendiente o vencida) o el inicio de la organización (ya aceptada). */
   teamUrl: string;
+  /** La persona ya aceptó antes de que saliera el aviso: el texto no promete cancelar nada. */
+  invitationAccepted?: boolean;
   idempotencyKey?: string;
 };
 
@@ -67,10 +72,14 @@ export function buildInvitationOwnerNotice(
       `${shorten(inviter)} invitó a una persona a ${shorten(organization)} como ${roleLabel}`,
   );
 
+  const accepted = input.invitationAccepted === true;
   const lines = [
     `${inviter} invitó a una persona a ${organization} con el rol de ${roleLabel}, el ${formatDate(invitedAt)}.`,
-    "Como ese rol puede manejar el equipo, te avisamos. Puedes ver la invitación y cancelarla, si no corresponde, en «Tu equipo».",
+    accepted
+      ? `La persona ya aceptó y es ${roleLabel} de tu organización. Revisa tu equipo.`
+      : "Como ese rol puede manejar el equipo, te avisamos. Puedes ver la invitación y cancelarla, si no corresponde, en «Tu equipo».",
   ];
+  const buttonLabel = accepted ? OWNER_NOTICE_ACCEPTED_BUTTON_LABEL : OWNER_NOTICE_BUTTON_LABEL;
   const footer = "Aviso automático de Cotiza Prime para el Dueño de la organización.";
   const paragraphs = lines.map((line) => `<p style="margin:0 0 12px 0;">${escapeHtml(line)}</p>`);
   const link = escapeHtml(url.href);
@@ -80,10 +89,10 @@ export function buildInvitationOwnerNotice(
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fa;"><tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;font-family:Arial,Helvetica,sans-serif;color:#0f1729;font-size:16px;line-height:1.55;">
 <tr><td style="padding:28px 28px 8px 28px;">${paragraphs.join("")}</td></tr>
-<tr><td align="left" style="padding:8px 28px 28px 28px;"><a href="${link}" style="display:inline-block;background:#2b54e0;color:#ffffff;text-decoration:none;font-weight:bold;padding:14px 24px;border-radius:8px;">${OWNER_NOTICE_BUTTON_LABEL}</a></td></tr>
+<tr><td align="left" style="padding:8px 28px 28px 28px;"><a href="${link}" style="display:inline-block;background:#2b54e0;color:#ffffff;text-decoration:none;font-weight:bold;padding:14px 24px;border-radius:8px;">${buttonLabel}</a></td></tr>
 <tr><td style="padding:16px 28px;border-top:1px solid #e2e6ee;font-size:12px;color:#6b7489;">${escapeHtml(footer)}</td></tr>
 </table></td></tr></table></body></html>`;
-  const text = [...lines, "", `${OWNER_NOTICE_BUTTON_LABEL}: ${url.href}`, "", footer].join("\n");
+  const text = [...lines, "", `${buttonLabel}: ${url.href}`, "", footer].join("\n");
   return {
     ok: true,
     message: {

@@ -110,4 +110,60 @@ describe("aviso al Dueño por una invitación (H-008)", () => {
       expect(message.subject).toContain("😀");
     }
   });
+
+  describe("invitación ya aceptada antes de que saliera el aviso", () => {
+    const accepted = () =>
+      build({ invitationAccepted: true, teamUrl: "http://localhost:3000/o/aaaa" });
+
+    it("dice que la persona ya aceptó y NO promete cancelar ni «ver la invitación»", () => {
+      const message = accepted();
+      for (const body of [message.text, message.html]) {
+        expect(body).toContain(
+          "La persona ya aceptó y es Administrador de tu organización. Revisa tu equipo.",
+        );
+        expect(body).not.toMatch(/cancel/i);
+        expect(body).not.toContain("Puedes ver la invitación");
+        expect(body).not.toContain("Ver tu equipo");
+      }
+    });
+
+    it("el botón no promete lo que «Tu equipo» no tiene: lleva al inicio de la organización", () => {
+      const message = accepted();
+      expect(message.html).toContain("Abrir Cotiza Prime");
+      expect(message.html).toContain('href="http://localhost:3000/o/aaaa"');
+      expect(message.text).toContain("Abrir Cotiza Prime: http://localhost:3000/o/aaaa");
+    });
+
+    it("sigue diciendo quién invitó, a qué organización, el rol y la fecha, y sin el correo del invitado", () => {
+      const message = accepted();
+      expect(message.subject).toBe(
+        "Mixta Doble invitó a una persona a Negocio Demo 1 como Administrador",
+      );
+      expect(message.text).toContain("con el rol de Administrador, el 30-10-2026");
+      expect((message.text.match(/@/g) ?? []).length).toBe(0);
+    });
+
+    it("las pendientes y vencidas conservan el texto de cancelar y el botón a «Tu equipo»", () => {
+      const message = build();
+      expect(message.text).toContain("cancelarla, si no corresponde, en «Tu equipo»");
+      expect(message.html).toContain("Ver tu equipo");
+    });
+  });
+
+  it("una familia de emojis (unida por caracteres invisibles, que se limpian) tampoco rompe el asunto", () => {
+    const family = "👨‍👩‍👧‍👦";
+    const message = build({ inviterName: family.repeat(60), organizationName: family.repeat(60) });
+    expect(message.subject.length).toBeLessThanOrEqual(150);
+    expect(() => encodeURIComponent(message.subject)).not.toThrow();
+  });
+
+  it("un emoji compuesto (bandera, tono de piel) no queda cortado a la vista en el asunto", () => {
+    for (const unit of ["🇨🇱", "👍🏽"]) {
+      const message = build({ inviterName: unit.repeat(60), organizationName: unit.repeat(60) });
+      expect(message.subject.length).toBeLessThanOrEqual(150);
+      // Cada unidad que queda está entera: quitando las unidades completas no sobra nada raro.
+      const body = message.subject.replaceAll(unit, "");
+      expect(body.replaceAll("…", "")).toBe(" invitó a una persona a  como Administrador");
+    }
+  });
 });

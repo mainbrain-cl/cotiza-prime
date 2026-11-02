@@ -24,18 +24,35 @@ export function cleanText(value: string): string {
 }
 
 const MAX_SUBJECT_LENGTH = 150;
-/** Largos de nombre (en caracteres, no en unidades) que se prueban para que el asunto quepa. */
+/** Largos de nombre (en caracteres visibles, no en unidades) que se prueban para que el asunto quepa. */
 const SUBJECT_NAME_LENGTHS = [50, 20, 10] as const;
 
-/** Corta por caracteres (no por unidades UTF-16: un emoji nunca queda partido a la mitad) y agrega «…». */
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Parte un texto en caracteres visibles: un emoji compuesto (bandera, tono de piel, familia) cuenta como uno. */
+function visibleChars(value: string): string[] {
+  return Array.from(graphemes.segment(value), (part) => part.segment);
+}
+
+/** Corta por caracteres visibles (nunca parte un emoji ni una bandera por la mitad) y agrega «…». */
 export function shortenName(value: string, max: number): string {
-  const chars = Array.from(value);
+  const chars = visibleChars(value);
   return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : value;
 }
 
+/** Último recurso: corta a `limit` unidades sin partir un carácter visible. */
+function cutToLength(value: string, limit: number): string {
+  let out = "";
+  for (const char of visibleChars(value)) {
+    if (out.length + char.length > limit) break;
+    out += char;
+  }
+  return out;
+}
+
 /**
- * Arma el asunto con nombres recortados por caracteres. Si con 50 caracteres por nombre no cabe en 150 unidades
- * (emojis y letras raras ocupan dos), se reintenta con nombres más cortos: un nombre raro NUNCA impide el correo.
+ * Arma el asunto con nombres recortados por caracteres visibles. Si con 50 por nombre no cabe en 150 unidades
+ * (emojis y letras raras ocupan dos o más), se reintenta con nombres más cortos: un nombre raro NUNCA impide el correo.
  */
 export function fitSubject(build: (shorten: (name: string) => string) => string): string {
   let subject = "";
@@ -43,5 +60,5 @@ export function fitSubject(build: (shorten: (name: string) => string) => string)
     subject = build((name) => shortenName(name, max));
     if (subject.length <= MAX_SUBJECT_LENGTH) return subject;
   }
-  return subject.slice(0, MAX_SUBJECT_LENGTH);
+  return cutToLength(subject, MAX_SUBJECT_LENGTH);
 }

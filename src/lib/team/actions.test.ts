@@ -19,6 +19,16 @@ const notifyOwner = vi.fn();
 let role = "owner";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// `after` corre lo que se le da DESPUÉS de responder; en la prueba se junta y se vacía a mano.
+const afterTasks: (() => Promise<void>)[] = [];
+vi.mock("next/server", () => ({
+  after: (task: () => Promise<void>) => {
+    afterTasks.push(task);
+  },
+}));
+const runAfter = async () => {
+  for (const task of afterTasks.splice(0)) await task();
+};
 vi.mock("@/lib/tenant/active-tenant", () => ({
   requireActiveTenant: vi.fn(async () => ({
     tenantId: TENANT_ID,
@@ -50,6 +60,7 @@ beforeEach(() => {
   from.mockReset();
   deliver.mockReset();
   deliver.mockResolvedValue(true);
+  afterTasks.length = 0;
   notifyOwner.mockReset();
   notifyOwner.mockResolvedValue(undefined);
   logged.length = 0;
@@ -181,6 +192,9 @@ describe("invitar", () => {
     });
     const state = await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "admin"));
     expect(state.status).toBe("sent");
+    // Se responde primero: el intento inmediato del aviso corre DESPUÉS (`after`).
+    expect(notifyOwner).not.toHaveBeenCalled();
+    await runAfter();
     expect(notifyOwner).toHaveBeenCalledTimes(1);
     expect(notifyOwner).toHaveBeenCalledWith(
       (rpc.mock.calls[0][1] as { p_invitation_id: string }).p_invitation_id,
@@ -199,6 +213,7 @@ describe("invitar", () => {
     await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "sales"));
     rpc.mockResolvedValue({ data: created, error: null });
     await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "sales"));
+    await runAfter();
     expect(notifyOwner).not.toHaveBeenCalled();
   });
 
@@ -210,6 +225,8 @@ describe("invitar", () => {
     notifyOwner.mockRejectedValue(new Error("boom: " + EMAIL));
     const state = await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "admin"));
     expect(state).toEqual({ status: "sent", message: `Enviamos la invitación a ${EMAIL}.` });
+    await runAfter(); // el fallo del aviso no sale de la acción
+    expect(notifyOwner).toHaveBeenCalledTimes(1);
     for (const line of logged) expect(line.toLowerCase()).not.toContain("persona.nueva");
   });
 
@@ -221,6 +238,7 @@ describe("invitar", () => {
     await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "admin"));
     rpc.mockResolvedValueOnce({ data: null, error: { code: "CP429", message: "limit_pending" } });
     await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "admin"));
+    await runAfter();
     expect(notifyOwner).not.toHaveBeenCalled();
   });
 
@@ -248,9 +266,8 @@ describe("invitar", () => {
     const state = await inviteMemberAction(TENANT_ID, IDLE, form(EMAIL, "viewer"));
     expect(state.status).toBe("error");
     expect(state.message).toContain("no pudimos enviar el correo");
-    expect((deliver.mock.calls[0][0] as { inviterName: string }).inviterName).toBe(
-      "Un miembro del equipo",
-    );
+    // Sin nombre, el correo usa el texto de respaldo del armador (una sola constante).
+    expect((deliver.mock.calls[0][0] as { inviterName: string }).inviterName).toBe("");
   });
 
   it("«ya es miembro» y «ya hay una invitación pendiente» se dicen sin enviar nada", async () => {

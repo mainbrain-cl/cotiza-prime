@@ -7,12 +7,13 @@ import { createAdminClient } from "@/lib/supabase/admin-client";
 
 /**
  * El PORTERO de las invitaciones (H-008). Es el único archivo de `src/lib/team/` que usa la llave maestra y
- * llama a TRES funciones de la base, todas solo del servidor:
+ * llama a CUATRO funciones de la base, todas solo del servidor:
  *  - `invitation_email_settle`: cierra el registro del correo de una invitación o de su aviso (enviado, con lo
  *    que informó el proveedor; o fallido, con un código sin datos personales);
- *  - `invitation_notice_recipients` e `invitation_notice_register`: el aviso al Dueño cuando alguien que no es
- *    el Dueño invita a un Administrador. La base decide a quién avisar y qué datos van; el aviso nunca lleva el
- *    correo del invitado.
+ *  - `invitation_notices_pending`, `invitation_notice_recipients` e `invitation_notice_register`: el aviso al
+ *    Dueño cuando alguien que no es el Dueño invita a un Administrador. La base lo deja anotado al invitar, decide
+ *    a quién avisar y qué datos van; el aviso nunca lleva el correo del invitado. La tarea
+ *    (`src/server/jobs/send-invitation-notices.ts`) lo envía y reintenta los fallidos.
  *
  * Por qué hace falta: ninguna persona con pase puede escribir en `email_messages` (es un registro de solo
  * agregar que anota lo que el proveedor de correo respondió), así que lo cierra el servidor, igual que en el
@@ -29,19 +30,51 @@ export class TeamGatewayError extends Error {
   }
 }
 
-/** Cierra el correo de una invitación: enviado (con lo que informó el proveedor) o fallido (solo un código). */
+const settleSchema = z.object({
+  status: z.string(),
+  /** Solo en el aviso al Dueño: el intento fallido fue el último permitido. */
+  exhausted: z.boolean().optional(),
+});
+
+/**
+ * Cierra el correo de una invitación o de su aviso: enviado (con lo que informó el proveedor) o fallido (solo un
+ * código). `exhausted` es verdadero cuando un aviso al Dueño agotó sus intentos.
+ */
 export async function settleInvitationEmail(input: {
   emailId: string;
   sent?: { provider: string; providerMessageId: string };
   errorCode?: string;
-}): Promise<void> {
-  const { error } = await createAdminClient().rpc("invitation_email_settle", {
+}): Promise<{ exhausted: boolean }> {
+  const { data, error } = await createAdminClient().rpc("invitation_email_settle", {
     p_email_id: input.emailId,
     p_provider: input.sent?.provider ?? null,
     p_provider_message_id: input.sent?.providerMessageId ?? null,
     p_error_code: input.sent ? null : (input.errorCode ?? "unknown"),
   });
   if (error) throw new TeamGatewayError("settle", error.code);
+  const parsed = settleSchema.safeParse(data);
+  return { exhausted: parsed.success && parsed.data.exhausted === true };
+}
+
+const pendingSchema = z.object({
+  invitation_ids: z.array(z.uuid()).max(100),
+  exhausted: z.number().int().min(0),
+});
+
+/**
+ * Los avisos al Dueño que la tarea tiene que atender ahora (pendientes, o fallidos que ya toca reintentar), y
+ * cuántos acaban de agotar sus intentos. Solo entrega identificadores de invitaciones.
+ */
+export async function listPendingInvitationNotices(
+  limit: number,
+): Promise<{ invitationIds: string[]; exhausted: number }> {
+  const { data, error } = await createAdminClient().rpc("invitation_notices_pending", {
+    p_limit: limit,
+  });
+  if (error) throw new TeamGatewayError("notices_pending", error.code);
+  const parsed = pendingSchema.safeParse(data);
+  if (!parsed.success) throw new TeamGatewayError("notices_pending", "shape");
+  return { invitationIds: parsed.data.invitation_ids, exhausted: parsed.data.exhausted };
 }
 
 const recipientsSchema = z.object({

@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { serverLog } from "@/lib/log/server-log";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
-import { deliverInvitationEmail, notifyOwnerOfInvitation } from "./delivery";
+import { deliverInvitationEmail } from "./delivery";
 import {
   INVITATION_NOT_FOUND,
   TEAM_GENERIC_FAILURE,
@@ -24,7 +24,13 @@ import type { InviteInput } from "./schemas";
  */
 
 export type TeamActionResult =
-  | { status: "ok"; message: string; delivered?: boolean }
+  | {
+      status: "ok";
+      message: string;
+      delivered?: boolean;
+      /** La invitación para la que hay que intentar el aviso al Dueño (la acción lo hace sin hacer esperar). */
+      notifyOwnerOf?: string;
+    }
   | {
       status: "error";
       kind: TeamErrorKind | "exists" | "member";
@@ -40,7 +46,6 @@ export const MAIL_NOT_SENT_MESSAGE =
   "Creamos la invitación, pero no pudimos enviar el correo. Aparece en la lista como «Pendiente, no enviada»: reenvíala desde ahí.";
 export const UNREADABLE_EMAIL_MESSAGE =
   "No pudimos leer el correo de esta invitación. Cancélala y crea una nueva.";
-const FALLBACK_INVITER = "Un miembro del equipo";
 
 const createdSchema = z.object({
   result: z.enum(["created", "already_member", "already_pending"]),
@@ -66,16 +71,15 @@ function failure(error: { code?: string | null; message?: string | null }, logNa
   return { status: "error", kind: mapped.kind, message: mapped.message } as const;
 }
 
-/** Nombre de quien invita, para el correo. Si no se puede leer, un texto neutro (el correo igual sale). */
+/** Nombre de quien invita, para el correo (puede venir vacío: el correo igual sale). */
 async function inviterName(active: ActiveTenant): Promise<string> {
   const { data } = await active.supabase
     .from("profiles")
     .select("full_name")
     .eq("user_id", active.userId)
     .maybeSingle();
-  return typeof data?.full_name === "string" && data.full_name.trim()
-    ? data.full_name
-    : FALLBACK_INVITER;
+  // Si falta o es solo espacios, el armador del correo usa el texto de respaldo (una sola constante).
+  return typeof data?.full_name === "string" ? data.full_name : "";
 }
 
 export async function createInvitation(
@@ -115,17 +119,16 @@ export async function createInvitation(
     expiresAt: body.expires_at,
     token: invitation.token,
   });
-  // Un aviso que falla nunca deshace ni cambia el resultado de la invitación (ya está creada y enviada).
-  if (body.notify_owner === true) {
-    try {
-      await notifyOwnerOfInvitation(invitation.invitationId);
-    } catch {
-      void serverLog("warn", "invitation_notice_failed", { code: "unexpected" });
-    }
-  }
+  // El aviso al Dueño ya quedó anotado en la base; la acción intenta enviarlo después de responder.
+  const notifyOwnerOf = body.notify_owner === true ? invitation.invitationId : undefined;
   return delivered
-    ? { status: "ok", delivered: true, message: `Enviamos la invitación a ${invitation.email}.` }
-    : { status: "ok", delivered: false, message: MAIL_NOT_SENT_MESSAGE };
+    ? {
+        status: "ok",
+        delivered: true,
+        notifyOwnerOf,
+        message: `Enviamos la invitación a ${invitation.email}.`,
+      }
+    : { status: "ok", delivered: false, notifyOwnerOf, message: MAIL_NOT_SENT_MESSAGE };
 }
 
 export async function resendInvitation(

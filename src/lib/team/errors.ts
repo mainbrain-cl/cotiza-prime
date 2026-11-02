@@ -23,7 +23,7 @@ const LIMIT_MESSAGES: Record<string, string> = {
   limit_user_hour:
     "Enviaste muchas invitaciones en la última hora. Espera un rato e inténtalo de nuevo.",
   limit_tenant_day: `Tu organización llegó al máximo de ${INVITATION_MAX_PER_TENANT_DAY} invitaciones por día. Inténtalo mañana.`,
-  limit_pending: `Tienes ${INVITATION_MAX_PENDING} invitaciones pendientes. Cancela alguna o espera a que venzan para invitar a más personas.`,
+  limit_pending: `Tienes ${INVITATION_MAX_PENDING} invitaciones pendientes. Cancela alguna o espera a que venzan para invitar a más personas o para reenviar una vencida.`,
   limit_resends: `Esta invitación ya se reenvió ${INVITATION_MAX_RESENDS} veces. Cancélala y crea una nueva.`,
   resend_too_soon: `Esta invitación se envió hace poco. Espera ${INVITATION_RESEND_MIN_MINUTES} minutos para reenviarla.`,
 };

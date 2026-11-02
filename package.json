@@ -17,6 +17,7 @@
     "test:db": "vitest run --config vitest.db.config.mts",
     "test:isolation": "vitest run --config vitest.isolation.config.mts",
     "test:db:rollbacks": "node scripts/check-rollbacks.mjs",
+    "job:invitation-notices": "tsx --conditions=react-server --env-file=.env.local scripts/send-invitation-notices.ts",
     "db:seed": "tsx --conditions=react-server --env-file=.env.local scripts/seed.ts",
     "check:lockfile": "node scripts/check-lockfile.mjs"
   },

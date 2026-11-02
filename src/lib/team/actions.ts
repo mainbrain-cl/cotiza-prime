@@ -1,11 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import type { FormState } from "@/lib/auth/form-state";
 import { fieldErrorsOf } from "@/lib/auth/schemas";
+import { serverLog } from "@/lib/log/server-log";
 import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
+import { notifyOwnerOfInvitation } from "./delivery";
 import { INVITATION_NOT_FOUND } from "./errors";
 import { inviteSchema } from "./schemas";
 import { createInvitation, resendInvitation, revokeInvitation } from "./service";
@@ -50,6 +53,18 @@ export async function inviteMemberAction(
   const result = await createInvitation(active, parsed.data);
   if (result.status === "ok") {
     refresh(active.tenantId);
+    // El aviso al Dueño ya quedó anotado en la base (la tarea lo envía y reintenta). Este es el intento
+    // inmediato, DESPUÉS de responder: quien invita no espera un segundo envío y un fallo no le llega.
+    const invitationId = result.notifyOwnerOf;
+    if (invitationId) {
+      after(async () => {
+        try {
+          await notifyOwnerOfInvitation(invitationId);
+        } catch {
+          await serverLog("warn", "invitation_notice_failed", { code: "unexpected" });
+        }
+      });
+    }
     // Si el correo no salió, la invitación existe igual: se avisa sin vaciar el formulario.
     return result.delivered
       ? { status: "sent", message: result.message }

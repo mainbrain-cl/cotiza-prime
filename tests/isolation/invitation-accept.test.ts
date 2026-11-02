@@ -163,8 +163,18 @@ describe("Ataque 2 · quien está en A y en B, quien fue quitada y quien solo mi
     const fx = fixture();
     const b = fx.orgs.B.invitation!;
     const before = await snapshotB();
+    const deniedBefore = await deniedInB(fx.personas.mixta.userId);
     const res = await call("mixta", "accept_invitation", b.tokenSha256, fx.orgs.A.tenantId);
     expect(res.json).toEqual({ result: "wrong_email" });
+    // El intento queda en la auditoría de B (la organización de la invitación), no en la de A: exactamente uno.
+    expect(await deniedInB(fx.personas.mixta.userId)).toBe(deniedBefore + 1);
+    expect(
+      await countWhere(
+        db,
+        "audit_log",
+        `action = 'invitation.accept_denied' and actor_user_id = '${fx.personas.mixta.userId}' and tenant_id = '${fx.orgs.A.tenantId}'`,
+      ),
+    ).toBe(0);
     for (const name of BUSINESS_TABLES) {
       expect(await fingerprintB(name), `${name} de B cambió`).toBe(before.get(name));
     }
@@ -185,8 +195,10 @@ describe("Ataque 2 · quien está en A y en B, quien fue quitada y quien solo mi
     ).toBe(0);
     // Y con la invitación de B tampoco.
     const b = fx.orgs.B.invitation!;
+    const deniedBefore = await deniedInB(fx.personas.ex.userId);
     const inB = await call("ex", "accept_invitation", b.tokenSha256);
     expect(inB.json).toEqual({ result: "wrong_email" });
+    expect(await deniedInB(fx.personas.ex.userId)).toBe(deniedBefore + 1);
     expect(
       await countWhere(
         db,
@@ -229,6 +241,12 @@ describe("Ataque 4 · adivinar códigos: el límite de aceptaciones fallidas", (
   it("Carla prueba 10 códigos al azar y a la 11 queda bloqueada, también con un código que existe", async () => {
     const fx = fixture();
     const before = await snapshotB();
+    const deniedByCarla = () =>
+      countWhere(
+        db,
+        "audit_log",
+        `action = 'invitation.accept_denied' and actor_user_id = '${fx.personas.carla.userId}'`,
+      );
     // Carla ya gastó 2 fallos en la prueba anterior (A y B); se completan hasta el tope.
     let result: unknown = null;
     for (let n = 0; n < 12; n++) {
@@ -236,11 +254,15 @@ describe("Ataque 4 · adivinar códigos: el límite de aceptaciones fallidas", (
       if ((result as { result: string }).result === "rate_limited") break;
     }
     expect(result).toEqual({ result: "rate_limited" });
+    // Los códigos al azar no tienen organización: no dejaron ningún registro. Se cuentan los de antes del bloqueo.
+    const deniedWhenLocked = await deniedByCarla();
     // Bloqueada: ni el código de una invitación real se prueba.
     const real = await call("carla", "accept_invitation", fx.orgs.A.invitation!.tokenSha256);
     expect(real.json).toEqual({ result: "rate_limited" });
     const preview = await call("carla", "invitation_preview", fx.orgs.B.invitation!.tokenSha256);
     expect(preview.json).toEqual({ result: "rate_limited" });
+    // Bloqueada no se escribe NADA en la auditoría: el registro no crece más rápido que el límite.
+    expect(await deniedByCarla()).toBe(deniedWhenLocked);
     for (const name of BUSINESS_TABLES) {
       expect(await fingerprintB(name), `${name} de B cambió`).toBe(before.get(name));
     }

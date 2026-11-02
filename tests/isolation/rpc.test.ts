@@ -29,12 +29,18 @@ afterAll(async () => {
  * `invite_accept_user` (esas suben a propósito: aceptar o ver una invitación con un código que no existe cuenta un
  * fallo) y de las últimas 23 horas (la limpieza automática borra las de más de un día y cambiaría la huella).
  */
-async function fingerprintOf(spec: (typeof ISOLATION_TABLES)[number]): Promise<string> {
+const FINGERPRINT_WINDOW_MS = 23 * 60 * 60 * 1000;
+
+async function fingerprintOf(
+  spec: (typeof ISOLATION_TABLES)[number],
+  cutoff: Date,
+): Promise<string> {
   if (spec.name !== "auth_rate_limits") return fingerprint(db, spec);
   const { rows } = await db.query<{ h: string }>(
     `select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
        from public.auth_rate_limits t
-      where t.scope <> 'invite_accept_user' and t.updated_at > now() - interval '23 hours'`,
+      where t.scope <> 'invite_accept_user' and t.updated_at > $1`,
+    [cutoff],
   );
   return rows[0].h;
 }
@@ -49,8 +55,10 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
     // minutos, H-009): para no gastar el cupo de Ana, esas dos las llama Dante, que casi no usa el suyo.
     const tokenFor = async (name: string) =>
       name === "accept_invitation" || name === "invitation_preview" ? tokenOf("dante") : token;
+    // El corte de «las últimas 23 horas» se calcula UNA vez y se usa igual antes y después.
+    const cutoff = new Date(Date.now() - FINGERPRINT_WINDOW_MS);
     const before = new Map<string, string>();
-    for (const spec of ISOLATION_TABLES) before.set(spec.name, await fingerprintOf(spec));
+    for (const spec of ISOLATION_TABLES) before.set(spec.name, await fingerprintOf(spec, cutoff));
 
     for (const [name, spec] of Object.entries(RPC_CASES)) {
       for (const header of [fx.orgs.B.tenantId, undefined]) {
@@ -68,7 +76,7 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
     }
     for (const spec of ISOLATION_TABLES) {
       // `legal_acceptances` y `tenants` de B no cambian; las tablas de Ana pueden crecer (create_tenant, aceptaciones)
-      expect(await fingerprintOf(spec), `${spec.name} cambió`).toBe(before.get(spec.name));
+      expect(await fingerprintOf(spec, cutoff), `${spec.name} cambió`).toBe(before.get(spec.name));
     }
   });
 

@@ -708,11 +708,40 @@ test("bloqueada por intentos: se ofrece «Intentar de nuevo» y el código se qu
     expect((await context.cookies()).find((c) => c.name === COOKIE_NAME)?.value).toBe(token);
     await withDb((db) =>
       db.query(
-        "update public.auth_rate_limits set locked_until = now() - interval '1 second' where scope = 'invite_accept_user'",
+        `update public.auth_rate_limits set locked_until = now() - interval '1 second'
+          where scope = 'invite_accept_user'
+            and key_hash = (select encode(sha256(convert_to('invite_accept_user|' || id::text, 'UTF8')), 'hex')
+                              from auth.users where email = $1)`,
+        [email],
       ),
     );
     await page.getByRole("link", { name: "Intentar de nuevo" }).click();
     await expect(page.getByTestId("invitation-ready")).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+test("el cierre de sesión normal borra la invitación guardada (computador compartido)", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(180_000);
+  const email = uniqueEmail("acepta-compartido");
+  await invite(ownerPage, tenantId, email, "viewer");
+  const { link } = await waitForInviteLink(email);
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await signUpAndVerify(page, email, "Computador Compartido");
+    await page.goto(link);
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
+    expect((await context.cookies()).find((c) => c.name === COOKIE_NAME)).toBeDefined();
+    // Sale desde otra pantalla de la cuenta: la invitación de esta persona no debe quedar para la siguiente.
+    await page.goto("/organizaciones/nueva");
+    await page.getByRole("button", { name: "Cerrar sesión" }).click();
+    await expect(page).toHaveURL(/\/ingresar\?aviso=sesion-cerrada$/);
+    expect((await context.cookies()).find((c) => c.name === COOKIE_NAME)).toBeUndefined();
   } finally {
     await context.close();
   }

@@ -234,6 +234,26 @@ describe("Ataque 6 · lo que ningún pase puede leer", () => {
     }
   });
 
+  it("tampoco se llega a `daily_cap` por selects incrustados, filtros, `or` ni conteos con HEAD", async () => {
+    const fx = fixture();
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+    for (const persona of ["ana", "mixta", "dante"] as const) {
+      const token = await tokenOf(persona);
+      for (const [query, method] of [
+        ["intake_form_items?select=id,intake_forms(daily_cap)", "GET"],
+        ["intake_form_items?select=id,intake_forms(*)", "GET"],
+        ["intake_form_items?select=id,...intake_forms(daily_cap)", "GET"],
+        ["intake_form_items?select=id,intake_forms!inner(id)&intake_forms.daily_cap=eq.50", "GET"],
+        ["intake_requests?select=id,intake_forms(*)", "GET"],
+        ["intake_forms?select=id&or=(daily_cap.eq.50)", "GET"],
+        ["intake_forms?select=id&daily_cap=eq.50", "HEAD"],
+      ] as const) {
+        const res = await rest(token, query, { headers, method });
+        expect(res.status, `${persona} ${method} ${query}`).toBeGreaterThanOrEqual(400);
+      }
+    }
+  });
+
   it("el tope lo lee por la función solo el Dueño o el Administrador, y solo el de su organización", async () => {
     const fx = fixture();
     const a = fx.orgs.A.intake!;

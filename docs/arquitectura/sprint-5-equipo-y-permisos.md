@@ -357,6 +357,9 @@ el segundo paso. **No trae códigos de respaldo.**
   Observador. Así, aunque la app se salte la pantalla, la base no les deja usar su rol. La app muestra «Activa
   la verificación en dos pasos para usar las funciones de tu rol». Aplica también a quien acaban de ascender
   a Administrador (pregunta 1).
+- **Requisito para H-004c:** `active.role` debe ser el rol efectivo, o la app y la base discrepan (la app decide con el
+  rol guardado en `members`; la base, con `app.effective_role()`). El editor del formulario ya tolera el `42501` del tope
+  (`loadForm` deja `dailyCap = null` y `loadProtection` responde «prohibido»); el resto de las pantallas, no.
 - **Pruebas:** los códigos se generan con `node:crypto`, sin agregar dependencias. La fixture registra el
   factor de ana y de mixta para obtener pases «aal2».
 - **Tamaño:** pasa de dos días; se parte en tres: H-004a (activar y pedir el código al ingresar), H-004b

@@ -32,9 +32,10 @@ export async function acceptInvitationAction(): Promise<AcceptState> {
   if (outcome.status === "no_session") redirect(LOGIN_PATH);
   if (outcome.status === "failed") return { status: "error", message: INVITATION_GENERIC_FAILURE };
   if (outcome.status === "unavailable") {
-    // Un código que no sirve no se vuelve a intentar: se borra para que no vuelva a aparecer al ingresar.
+    // Un código que ya no sirve no se vuelve a intentar, pero NO se borra aquí: cambiar la cookie en una acción
+    // vuelve a dibujar la pantalla sin código y el motivo se perdería. Se borra con «Entendido»
+    // (`leaveInvitationAction`), que es la única salida que se ofrece en ese caso.
     const dead = DEAD_RESULTS.has(outcome.result);
-    if (dead) await clearInvitationCode();
     return { status: "error", message: messageForResult(outcome.result), dead };
   }
 

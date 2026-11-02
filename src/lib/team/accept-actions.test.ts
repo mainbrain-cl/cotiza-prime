@@ -89,14 +89,14 @@ describe("unirme", () => {
     expect(accept).toHaveBeenCalledWith(code);
   });
 
-  it.each(["not_found", "revoked", "expired", "used", "archived"] as const)(
-    "«%s»: el código ya no sirve, se borra y se ofrece salir",
+  it.each(["not_found", "revoked", "inviter_inactive", "expired", "used", "archived"] as const)(
+    "«%s»: el código ya no sirve y se ofrece salir; la cookie se borra al salir, no antes (si no, el motivo se pierde)",
     async (result) => {
       readCode.mockResolvedValue(newInvitationToken());
       accept.mockResolvedValue({ status: "unavailable", result });
       const state = await acceptInvitationAction();
       expect(state).toEqual({ status: "error", message: RESULT_MESSAGES[result], dead: true });
-      expect(clearCode).toHaveBeenCalledTimes(1);
+      expect(clearCode).not.toHaveBeenCalled();
     },
   );
 

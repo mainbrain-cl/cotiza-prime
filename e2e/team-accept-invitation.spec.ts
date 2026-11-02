@@ -604,6 +604,7 @@ test("si ya es miembro, la vista previa dice su rol actual y que la invitación 
     const page = await context.newPage();
     await page.goto("/ingresar");
     await login(page, email);
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
     await page.goto(link);
     await expect(page.getByTestId("invitation-already-member")).toHaveText(
       `Ya eres parte de ${ORG_NAME} como Observador. Esta invitación no cambia tu rol.`,
@@ -640,6 +641,7 @@ test("si «Unirme» falla porque el código ya no sirve, queda una sola salida (
     const page = await context.newPage();
     await page.goto("/ingresar");
     await login(page, email);
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
     await page.goto(link);
     await expect(page.getByTestId("invitation-ready")).toBeVisible();
     // La cancelan justo antes del clic.
@@ -691,6 +693,7 @@ test("bloqueada por intentos: se ofrece «Intentar de nuevo» y el código se qu
     const page = await context.newPage();
     await page.goto("/ingresar");
     await login(page, email);
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
     await page.goto(link);
     await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
       "data-result",

@@ -657,8 +657,8 @@ graves y con 6 menores (los m8 y m10 se corrigieron en el PR #6; ver más abajo)
 
 - **m4:** `loadProtection` lee como máximo 3.000 filas de contadores y 500 formularios. Con los 20 formularios activos
   que admite una organización no se alcanza; si algún día se acerca, mostrar «al menos» o el estado de error.
-- **11:** cualquier miembro puede leer `daily_cap` por la API directa (la migración da lectura de todas las columnas de
-  `intake_forms`); el plan §6 dice «solo Dueño y Administrador». Poco sensible; decidir si se acepta o se limita la columna.
+- **11:** ~~cualquier miembro puede leer `daily_cap` por la API directa~~ — **resuelto el 2026-11-02 (decisión de José: se
+  limita la columna)**, ver «Hecho después (2026-11-02)» más abajo.
 - **12:** un cambio de tope queda en la auditoría como `changed: ['daily_cap']`, sin el valor anterior ni el nuevo.
   Requiere migración.
 
@@ -685,3 +685,33 @@ graves y con 6 menores (los m8 y m10 se corrigieron en el PR #6; ver más abajo)
   `server-log.ts`) y toda definición de `codeOf` solo devuelve el mensaje de un `IntakeGatewayError`.
 - **Cifras del panel con punto de miles** (`1.500`).
 - **Aviso de tope sin saltos:** `loadProtection` parte junto con `loadForm`, antes de las demás lecturas.
+
+**Hecho después (2026-11-02, rama `fix/h-092-tope-solo-admin`, con migración): pendiente m11 resuelto**
+
+José decidió limitar la columna: el tope diario (`daily_cap`) lo lee solo quien puede manejar formularios
+(`intake.forms.manage`: Dueño y Administrador), como decía el plan §6. Antes cualquier miembro lo leía por la API directa.
+
+- **Migración `20261102100000_intake_daily_cap_column`** (deshacer en `supabase/rollbacks/`): se retira el `SELECT` de
+  tabla de `intake_forms` a `authenticated` y se vuelve a dar **por columnas, todas menos `daily_cap`** (mismo patrón que
+  `profiles.last_tenant_id` y `quote_items.unit_cost_clp`; un permiso de tabla completo no se puede «descontar» una columna).
+  Función nueva `public.intake_form_daily_caps(p_form_id uuid default null)`: devuelve `(form_id, daily_cap)` de un
+  formulario o de todos los de la organización activa; `security definer`, `search_path = ''`, la organización sale de
+  `app.current_tenant_id()` y el permiso se pregunta a la matriz con `app.can('intake.forms.manage')` (sin roles escritos a
+  mano). Sin sesión u organización propia activa o sin el permiso: `42501`; un formulario que no es de la organización
+  activa: `CP404`. Las funciones de la base (`save_intake_form`, el portero público) corren con los permisos de su dueño y
+  no cambian.
+- **Efectos de la elección:** `select=*` sobre `intake_forms` ya no funciona para nadie (hay una columna privada), y una
+  columna nueva de la tabla no queda legible hasta sumarla a la lista de la migración (comportamiento seguro; una prueba
+  de base de datos lo vigila). Se eligió esta vía y no una vista porque es el patrón del repositorio y no agrega objetos.
+- **Aplicación:** `readDailyCaps` (en `builder-queries.ts`, el único lugar que lee el tope) llama a la función.
+  `loadForm` lo pide solo si el rol puede manejar formularios (`can(role, "intake.forms.manage")`); para Aprobador, Comercial
+  y Observador `dailyCap` es `null`, no se hace la llamada que la base rechazaría y la pantalla no muestra panel ni «0».
+  `loadProtection` (ya cortado por `intake.protection.read`) usa la misma función en vez de leer la tabla. Lista, QR y
+  solicitudes no leían el tope. Nota: `intake.protection.read` e `intake.forms.manage` son hoy de los mismos roles; una
+  prueba unitaria lo vigila porque la función solo acepta el segundo.
+- **Pruebas:** `tests/db/intake-daily-cap.test.ts` (pases reales de cada rol, lectura directa rechazada, resto de la tabla
+  legible, guardado del tope, aislamiento entre organizaciones y el deshacer); aislamiento: la función en `RPC_CASES`,
+  `intake_forms` con `starSelectRejected` y tres ataques nuevos en `tests/isolation/intake.test.ts`; unitarias de
+  `loadForm`/`loadProtection`; la e2e `intake-protection` suma la lectura directa y la función para el Comercial.
+- **Sigue pendiente de lo anterior:** 4 (límite de lectura de contadores) y 12 (la auditoría no guarda el valor del tope).
+

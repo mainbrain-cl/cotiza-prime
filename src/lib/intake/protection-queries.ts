@@ -59,8 +59,9 @@ export async function loadProtection(active: ActiveTenant): Promise<ProtectionDa
   ]);
   if (counters.error || !counters.data || !caps.ok) {
     // Solo el código: nunca el mensaje de la base ni datos de nadie.
+    const capsFailure = caps.ok ? null : caps;
     void serverLog("error", "intake_protection_load_failed", {
-      code: counters.error?.code ?? (caps.ok ? "unknown" : caps.code),
+      code: counters.error?.code ?? capsFailure?.code ?? "unknown",
     });
     return { ok: false, reason: "error" };
   }

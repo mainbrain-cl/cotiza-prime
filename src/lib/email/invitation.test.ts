@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FALLBACK_INVITER_NAME, FALLBACK_ORGANIZATION_NAME } from "./invitation-names";
 import { buildInvitationEmail, type InvitationEmailInput } from "./invitation";
 
 const TOKEN = "A".repeat(43);
@@ -81,8 +82,6 @@ describe("correo de invitación (H-008)", () => {
       { fromAddress: "" },
       { inviteUrl: "esto no es una url" },
       { expiresAt: "ayer" },
-      { inviterName: "   " },
-      { organizationName: "‮" },
     ] as Partial<InvitationEmailInput>[]) {
       expect(buildInvitationEmail({ ...base, ...over }), JSON.stringify(over)).toEqual({
         ok: false,
@@ -94,4 +93,31 @@ describe("correo de invitación (H-008)", () => {
   it("avisa que se puede ignorar si no se esperaba", () => {
     expect(build().text).toContain("Si no esperabas esta invitación");
   });
+
+  it.each([
+    ["espacios", " "],
+    ["vacío", ""],
+    ["un carácter invisible", "\u200b"],
+    ["marcas de dirección", "\u202e\u2066"],
+    ["saltos de línea", "\r\n\t"],
+  ])(
+    "un nombre de quien invita de puro «%s» no impide el correo: usa el texto de respaldo",
+    (_label, name) => {
+      const message = build({ inviterName: name });
+      expect(message.subject).toBe(
+        `${FALLBACK_INVITER_NAME} te invitó a Negocio Demo 1 en Cotiza Prime`,
+      );
+      expect(message.text).toContain(`${FALLBACK_INVITER_NAME} te invitó a Negocio Demo 1`);
+    },
+  );
+
+  it.each([" ", "", "\u200b", "\u202e"])(
+    "una organización sin nombre visible (%j) usa el texto de respaldo",
+    (name) => {
+      const message = build({ organizationName: name });
+      expect(message.subject).toBe(
+        `Ana Pérez te invitó a ${FALLBACK_ORGANIZATION_NAME} en Cotiza Prime`,
+      );
+    },
+  );
 });

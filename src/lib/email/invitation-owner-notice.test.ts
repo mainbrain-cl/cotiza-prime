@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FALLBACK_INVITER_NAME, FALLBACK_ORGANIZATION_NAME } from "./invitation-names";
 import {
   buildInvitationOwnerNotice,
   type InvitationOwnerNoticeInput,
@@ -62,7 +63,6 @@ describe("aviso al Dueño por una invitación (H-008)", () => {
       { fromAddress: "" },
       { teamUrl: "no es url" },
       { invitedAt: "ayer" },
-      { inviterName: "  " },
     ] as Partial<InvitationOwnerNoticeInput>[]) {
       expect(buildInvitationOwnerNotice({ ...base, ...over }), JSON.stringify(over)).toEqual({
         ok: false,
@@ -70,4 +70,32 @@ describe("aviso al Dueño por una invitación (H-008)", () => {
       });
     }
   });
+
+  it.each([
+    ["espacios", " "],
+    ["vacío", ""],
+    ["un carácter invisible", "\u200b"],
+    ["marcas de dirección", "\u202e\u2066"],
+  ])(
+    "un nombre de quien invita de puro «%s» NO silencia el aviso: usa el texto de respaldo",
+    (_label, name) => {
+      const message = build({ inviterName: name });
+      expect(message.subject).toBe(
+        `${FALLBACK_INVITER_NAME} invitó a una persona a Negocio Demo 1 como Administrador`,
+      );
+      expect(message.text).toContain(
+        `${FALLBACK_INVITER_NAME} invitó a una persona a Negocio Demo 1`,
+      );
+    },
+  );
+
+  it.each([" ", "", "\u200b"])(
+    "una organización sin nombre visible (%j) tampoco silencia el aviso",
+    (name) => {
+      const message = build({ organizationName: name });
+      expect(message.subject).toBe(
+        `Mixta Doble invitó a una persona a ${FALLBACK_ORGANIZATION_NAME} como Administrador`,
+      );
+    },
+  );
 });

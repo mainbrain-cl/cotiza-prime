@@ -11,14 +11,18 @@ import { z } from "zod";
 import { formatDate } from "@/lib/format-date";
 import { escapeHtml } from "./basic-format";
 import type { EmailMessage } from "./types";
-import { HEADER_UNSAFE } from "./unsafe-characters";
+import {
+  FALLBACK_INVITER_NAME,
+  FALLBACK_ORGANIZATION_NAME,
+  cleanName,
+  cleanText,
+} from "./invitation-names";
 
 export const INVITATION_SENDER_NAME = "Cotiza Prime";
 export const INVITATION_BUTTON_LABEL = "Aceptar la invitación";
 const MAX_SUBJECT_LENGTH = 150;
 /** Cuánto del nombre de la organización y de quien invita cabe en el asunto sin pasarse del límite. */
 const MAX_SUBJECT_NAME_LENGTH = 50;
-const UNSAFE_GLOBAL = new RegExp(HEADER_UNSAFE.source, "g");
 const emailSchema = z.email().max(254);
 
 export type InvitationEmailInput = {
@@ -42,7 +46,6 @@ export type InvitationEmailInput = {
 export type InvitationEmailResult =
   { ok: true; message: EmailMessage } | { ok: false; code: "invalid_input" };
 
-const clean = (value: string) => value.replace(UNSAFE_GLOBAL, " ").replace(/\s+/g, " ").trim();
 const shorten = (value: string) =>
   value.length > MAX_SUBJECT_NAME_LENGTH
     ? `${value.slice(0, MAX_SUBJECT_NAME_LENGTH - 1)}…`
@@ -64,11 +67,12 @@ export function buildInvitationEmail(input: InvitationEmailInput): InvitationEma
   const expires = new Date(input.expiresAt);
   if (Number.isNaN(expires.getTime())) return { ok: false, code: "invalid_input" };
 
-  const inviter = clean(input.inviterName);
-  const organization = clean(input.organizationName);
-  const roleLabel = clean(input.roleLabel);
-  const roleDescription = clean(input.roleDescription);
-  if (!inviter || !organization || !roleLabel) return { ok: false, code: "invalid_input" };
+  // Un nombre que queda vacío al limpiarlo no impide el correo: se usa el texto de respaldo.
+  const inviter = cleanName(input.inviterName, FALLBACK_INVITER_NAME);
+  const organization = cleanName(input.organizationName, FALLBACK_ORGANIZATION_NAME);
+  const roleLabel = cleanText(input.roleLabel);
+  const roleDescription = cleanText(input.roleDescription);
+  if (!roleLabel) return { ok: false, code: "invalid_input" };
 
   const subject = `${shorten(inviter)} te invitó a ${shorten(organization)} en Cotiza Prime`;
   if (subject.length > MAX_SUBJECT_LENGTH) return { ok: false, code: "invalid_input" };

@@ -1119,6 +1119,7 @@ Cada una indica **antes de qué fase** tiene que estar resuelta.
 | 14 | **Proveedor de mapas** para la distancia automática | — | M20 |
 | 15 | **Quién puede enviar directo**: ¿se define por rol, por persona o por regla de la organización? (§5.3 es por organización). Enviar siempre es desde la plataforma, en un clic: nunca descargar el PDF ni armar el correo a mano | Por organización, con excepción por persona | Fase 3 |
 | 16 | **Orden de construcción:** el formulario público (paso 1 del recorrido) hoy va en la fase 6 | Sin cambio hasta que Aarón decida adelantarlo | Antes de armar el sprint 4 |
+| 17 | **Cómo se programa en producción la tarea de avisos al Dueño por invitaciones** (H-008, `docs/arquitectura/sprint-5-equipo-y-permisos.md`). Probablemente exige una ruta HTTP protegida con secreto que hoy no existe a propósito; no depende de la decisión 016 (proveedor de correo) | Sin programarla: en producción el aviso al Dueño es de mejor esfuerzo (solo el intento inmediato) | Piloto privado |
 
 ---
 

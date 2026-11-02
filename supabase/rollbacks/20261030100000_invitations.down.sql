@@ -19,7 +19,9 @@ end $$;
 drop function if exists app.purge_invitations();
 drop function if exists public.invitation_notice_register(uuid, uuid, uuid, text, text);
 drop function if exists public.invitation_notice_recipients(uuid);
-drop function if exists app.invitation_owner_notice_due(uuid);
+drop function if exists public.invitation_notices_pending(integer);
+drop function if exists app.invitation_notice_ready(uuid);
+drop function if exists app.invitation_notice_applies(text, uuid, uuid);
 drop function if exists public.invitation_email_settle(uuid, text, text, text);
 drop function if exists public.revoke_invitation(uuid);
 drop function if exists public.resend_invitation(uuid, text, text, uuid, text);
@@ -118,4 +120,5 @@ drop function if exists app.normalize_email(text);
 drop function if exists
   app.invitation_ttl_days(), app.invitation_max_per_user_hour(), app.invitation_max_per_tenant_day(),
   app.invitation_max_pending(), app.invitation_max_resends(), app.invitation_resend_min_minutes(),
-  app.invitation_mail_grace_minutes(), app.invitation_retention_days();
+  app.invitation_mail_grace_minutes(), app.invitation_retention_days(),
+  app.invitation_notice_max_attempts(), app.invitation_notice_retry_minutes(), app.invitation_notice_stale_minutes();

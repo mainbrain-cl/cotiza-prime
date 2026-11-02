@@ -7,6 +7,8 @@ import {
   INVITATION_NOTICE_MESSAGES,
   INVITATION_RESULTS,
   INVITED_HINT,
+  RETRY_RESULTS,
+  alreadyMemberSentence,
   MISSING_CODE_MESSAGE,
   RESULT_MESSAGES,
   acceptResponseSchema,
@@ -169,5 +171,51 @@ describe("lo que contesta la base", () => {
     );
     expect(acceptResponseSchema.safeParse(null).success).toBe(false);
     expect(acceptResponseSchema.safeParse("accepted").success).toBe(false);
+  });
+});
+
+describe("quien invitó ya no puede invitar (inviter_inactive)", () => {
+  it("es un resultado definitivo y manda a pedirle a OTRA persona de la organización", () => {
+    expect(INVITATION_RESULTS).toContain("inviter_inactive");
+    expect(DEAD_RESULTS.has("inviter_inactive")).toBe(true);
+    expect(RESULT_MESSAGES.inviter_inactive).toContain(
+      "Pide a otra persona de la organización que te invite de nuevo.",
+    );
+    expect(RESULT_MESSAGES.inviter_inactive).not.toMatch(/cancelada/);
+    expect(messageForResult("inviter_inactive")).toBe(RESULT_MESSAGES.inviter_inactive);
+  });
+
+  it("no nombra a la organización", () => {
+    expect(RESULT_MESSAGES.inviter_inactive).not.toMatch(/Negocio|Ltda|SpA/);
+  });
+});
+
+describe("quien ya es miembro", () => {
+  it("la frase dice su rol actual y que la invitación no lo cambia", () => {
+    expect(alreadyMemberSentence({ organizationName: "Negocio 1", roleLabel: "Observador" })).toBe(
+      "Ya eres parte de Negocio 1 como Observador. Esta invitación no cambia tu rol.",
+    );
+  });
+
+  it("la vista previa acepta los dos campos nuevos", () => {
+    const parsed = previewResponseSchema.safeParse({
+      result: "ok",
+      already_member: true,
+      current_role: "viewer",
+      tenant_id: TENANT_ID,
+      tenant_name: "Negocio 1",
+      role: "admin",
+    });
+    expect(parsed.success).toBe(true);
+    expect(previewResponseSchema.safeParse({ result: "ok", current_role: null }).success).toBe(
+      true,
+    );
+  });
+});
+
+describe("resultados que se arreglan reintentando", () => {
+  it("el límite de intentos y el correo sin verificar no borran el código", () => {
+    expect([...RETRY_RESULTS].sort()).toEqual(["rate_limited", "unverified"]);
+    for (const result of RETRY_RESULTS) expect(DEAD_RESULTS.has(result)).toBe(false);
   });
 });

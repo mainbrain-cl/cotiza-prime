@@ -47,6 +47,7 @@ export const INVITATION_RESULTS = [
   "not_found",
   "wrong_email",
   "revoked",
+  "inviter_inactive",
   "expired",
   "used",
   "archived",
@@ -57,6 +58,7 @@ export type InvitationResult = (typeof INVITATION_RESULTS)[number];
 export const DEAD_RESULTS: ReadonlySet<InvitationResult> = new Set([
   "not_found",
   "revoked",
+  "inviter_inactive",
   "expired",
   "used",
   "archived",
@@ -68,6 +70,9 @@ const uuid = z.uuid();
 export const previewResponseSchema = z.object({
   result: z.enum(INVITATION_RESULTS),
   tenant_id: uuid.optional(),
+  /** Ya eres miembro activo: aceptar no cambia tu rol (`current_role`). */
+  already_member: z.boolean().optional(),
+  current_role: z.string().nullable().optional(),
   tenant_name: z.string().optional(),
   inviter_name: z.string().nullable().optional(),
   role: z.string().optional(),
@@ -90,6 +95,8 @@ export const RESULT_MESSAGES: Readonly<
   not_found:
     "Este enlace de invitación no es válido. Revisa que lo hayas abierto completo desde el correo, o pide a quien te invitó que te envíe otra.",
   revoked: "Esta invitación fue cancelada. Pide a quien te invitó que te envíe una nueva.",
+  inviter_inactive:
+    "Esta invitación ya no es válida: quien te invitó dejó de poder invitar. Pide a otra persona de la organización que te invite de nuevo.",
   expired: "Esta invitación venció. Pide a quien te invitó que te envíe una nueva.",
   used: "Esta invitación ya se usó. Si necesitas entrar, pide a quien te invitó que te envíe una nueva.",
   archived:
@@ -141,3 +148,14 @@ export type AcceptState = {
 };
 
 export const INITIAL_ACCEPT_STATE: AcceptState = { status: "idle" };
+
+/** Para quien ya es miembro: aceptar marca la invitación como usada, pero su rol no cambia. */
+export function alreadyMemberSentence(input: {
+  organizationName: string;
+  roleLabel: string;
+}): string {
+  return `Ya eres parte de ${input.organizationName} como ${input.roleLabel}. Esta invitación no cambia tu rol.`;
+}
+
+/** Los resultados que se arreglan con volver a intentar (no hay que borrar el código). */
+export const RETRY_RESULTS: ReadonlySet<InvitationResult> = new Set(["rate_limited", "unverified"]);

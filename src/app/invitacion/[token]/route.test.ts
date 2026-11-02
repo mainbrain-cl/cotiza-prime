@@ -85,7 +85,9 @@ describe("/invitacion/[código]", () => {
     expect(response.headers.get("location")).toBe(
       "https://app.ejemplo.test/invitacion?aviso=muchos-intentos",
     );
-    expect(response.cookies.get(INVITATION_COOKIE_NAME)).toBeUndefined();
+    // No guarda el código de este enlace y borra el de un enlace anterior (como con uno mal formado).
+    expect(response.cookies.get(INVITATION_COOKIE_NAME)?.value ?? "").toBe("");
+    expect(response.headers.get("set-cookie") ?? "").toContain(`${INVITATION_COOKIE_NAME}=;`);
     expect(consume).toHaveBeenCalledWith("203.0.113.9");
   });
 });

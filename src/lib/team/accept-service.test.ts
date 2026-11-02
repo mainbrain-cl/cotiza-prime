@@ -149,6 +149,41 @@ describe("la vista previa", () => {
       inviterName: "Ana",
       role: "sales",
       expiresAt: "2026-11-10T12:00:00Z",
+      alreadyMember: false,
+      currentRole: null,
+    });
+  });
+
+  it("si ya es miembro activa, trae su rol actual", async () => {
+    rpc.mockResolvedValue({
+      data: {
+        result: "ok",
+        tenant_id: TENANT_ID,
+        tenant_name: "Negocio 1",
+        inviter_name: "Ana",
+        role: "admin",
+        already_member: true,
+        current_role: "viewer",
+      },
+      error: null,
+    });
+    expect(await previewInvitation(code)).toMatchObject({
+      status: "ready",
+      role: "admin",
+      alreadyMember: true,
+      currentRole: "viewer",
+    });
+  });
+
+  it("«inviter_inactive» llega como resultado definitivo", async () => {
+    rpc.mockResolvedValue({ data: { result: "inviter_inactive" }, error: null });
+    expect(await previewInvitation(code)).toEqual({
+      status: "unavailable",
+      result: "inviter_inactive",
+    });
+    expect(await acceptInvitation(code)).toEqual({
+      status: "unavailable",
+      result: "inviter_inactive",
     });
   });
 

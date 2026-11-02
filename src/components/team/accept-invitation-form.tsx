@@ -36,22 +36,26 @@ export function AcceptInvitationForm({
         {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
         {state.dead ? null : <SubmitButton pendingLabel={pendingLabel}>{label}</SubmitButton>}
       </form>
-      {state.dead ? (
-        <form action={leaveInvitationAction}>
-          <Button type="submit" size="lg" variant="secondary" className="w-full">
-            Entendido
-          </Button>
-        </form>
-      ) : null}
+      {/* Una sola salida: si el código ya no sirve se llama «Entendido»; si no, «Seguir sin unirme». */}
+      <LeaveInvitationButton
+        label={state.dead ? "Entendido" : "Seguir sin unirme"}
+        variant={state.dead ? "secondary" : "ghost"}
+      />
     </div>
   );
 }
 
 /** «Seguir sin unirme»: borra el código guardado y vuelve al inicio. */
-export function LeaveInvitationButton({ label = "Seguir sin unirme" }: { label?: string }) {
+export function LeaveInvitationButton({
+  label = "Seguir sin unirme",
+  variant = "ghost",
+}: {
+  label?: string;
+  variant?: "ghost" | "secondary";
+}) {
   return (
     <form action={leaveInvitationAction}>
-      <Button type="submit" size="lg" variant="ghost" className="w-full">
+      <Button type="submit" size="lg" variant={variant} className="w-full">
         {label}
       </Button>
     </form>

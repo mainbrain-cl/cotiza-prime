@@ -319,5 +319,6 @@ export async function acceptLegalAction(): Promise<void> {
   );
   const { error } = await supabase.rpc("accept_current_legal_documents");
   if (error) redirect(`${ACCEPT_TERMS_PATH}?error=1`);
-  redirect(HOME_PATH);
+  // Quien venía de una invitación (se registró y debe aceptar términos nuevos) vuelve a ella para unirse.
+  redirect((await hasPendingInvitation()) ? INVITATION_ACCEPT_PATH : HOME_PATH);
 }

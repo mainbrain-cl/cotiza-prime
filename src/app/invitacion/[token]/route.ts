@@ -48,7 +48,10 @@ export async function GET(_request: NextRequest, context: RouteContext<"/invitac
   const { clientIp } = await getRequestContext();
   if (!(await consumeInvitationLinkQuota(clientIp))) {
     await serverLog("warn", "invitation_link_rate_limited");
-    return leave(origin, INVITATION_NOTICES.tooMany);
+    // Igual que con un enlace mal formado: el código de un enlace anterior no se queda esperando.
+    const blocked = leave(origin, INVITATION_NOTICES.tooMany);
+    blocked.cookies.delete(INVITATION_COOKIE_NAME);
+    return blocked;
   }
 
   const response = leave(origin);

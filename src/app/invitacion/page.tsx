@@ -18,9 +18,12 @@ import { formatDate } from "@/lib/format-date";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "@/lib/permissions/matrix";
 import { previewInvitation } from "@/lib/team/accept-service";
 import {
+  INVITATION_ACCEPT_PATH,
   INVITATION_GENERIC_FAILURE,
   INVITATION_NOTICE_MESSAGES,
   MISSING_CODE_MESSAGE,
+  RETRY_RESULTS,
+  alreadyMemberSentence,
   invitationSentence,
   invitedRole,
   messageForResult,
@@ -50,21 +53,14 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
 
   if (!code) {
     return (
-      <AuthCard
-        title="Falta tu invitación"
-        description={notice ?? MISSING_CODE_MESSAGE}
-        footer={
-          sessionUser ? (
-            <Link
-              href={HOME_PATH}
-              className="font-semibold text-accent underline-offset-4 hover:underline"
-            >
-              Ir a mi cuenta
-            </Link>
-          ) : null
-        }
-      >
-        {null}
+      <AuthCard title="Falta tu invitación" description={notice ?? MISSING_CODE_MESSAGE}>
+        <Link
+          href={sessionUser ? HOME_PATH : LOGIN_PATH}
+          className={buttonVariants({ size: "lg", variant: "secondary" })}
+          data-testid="invitation-missing-action"
+        >
+          {sessionUser ? "Ir a mi cuenta" : "Ingresar"}
+        </Link>
       </AuthCard>
     );
   }
@@ -124,18 +120,36 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
               </Button>
             </form>
           ) : null}
-          <LeaveInvitationButton label={wrongAccount ? "Seguir sin unirme" : "Entendido"} />
+          {RETRY_RESULTS.has(result) ? (
+            // Se arregla esperando o verificando el correo: el código se queda guardado para el reintento.
+            <Link
+              href={INVITATION_ACCEPT_PATH}
+              className={buttonVariants({ size: "lg", variant: "secondary" })}
+            >
+              Intentar de nuevo
+            </Link>
+          ) : null}
+          <LeaveInvitationButton
+            label={wrongAccount || RETRY_RESULTS.has(result) ? "Seguir sin unirme" : "Entendido"}
+          />
         </div>
       </AuthCard>
     );
   }
 
   const role = invitedRole(preview.role);
+  const organizationName = cleanName(preview.organizationName, FALLBACK_ORGANIZATION_NAME);
   const sentence = invitationSentence({
     inviterName: cleanName(preview.inviterName, FALLBACK_INVITER_NAME),
-    organizationName: cleanName(preview.organizationName, FALLBACK_ORGANIZATION_NAME),
+    organizationName,
     roleLabel: role ? ROLE_LABELS[role] : "miembro",
   });
+  // Si ya eres miembro, aceptar no te cambia el rol: se dice cuál tienes en vez de prometer el de la invitación.
+  const currentRole = invitedRole(preview.currentRole ?? undefined);
+  const alreadyMemberNote =
+    preview.alreadyMember && currentRole
+      ? alreadyMemberSentence({ organizationName, roleLabel: ROLE_LABELS[currentRole] })
+      : null;
 
   return (
     <AuthCard title="Te invitaron a unirte a un equipo">
@@ -143,19 +157,25 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
         <p className="text-md font-medium" data-testid="invitation-sentence">
           {sentence}
         </p>
-        {role ? <p className="text-fg-muted">{ROLE_DESCRIPTIONS[role]}</p> : null}
+        {alreadyMemberNote ? (
+          <p className="font-medium text-fg" data-testid="invitation-already-member">
+            {alreadyMemberNote}
+          </p>
+        ) : role ? (
+          <p className="text-fg-muted">{ROLE_DESCRIPTIONS[role]}</p>
+        ) : null}
         {preview.expiresAt ? (
           <p className="text-sm text-fg-subtle">
             La invitación vale hasta el {formatDate(preview.expiresAt)}.
           </p>
         ) : null}
-        <AcceptInvitationForm />
-        <div className="flex flex-col gap-2 border-t border-border pt-4 text-sm text-fg-muted">
-          <p>
-            Ingresaste como <strong className="break-all text-fg">{user.email}</strong>.
-          </p>
-          <LeaveInvitationButton />
-        </div>
+        <AcceptInvitationForm
+          label={alreadyMemberNote ? "Entrar" : "Unirme"}
+          pendingLabel={alreadyMemberNote ? "Entrando…" : "Uniéndote…"}
+        />
+        <p className="border-t border-border pt-4 text-sm text-fg-muted">
+          Ingresaste como <strong className="break-all text-fg">{user.email}</strong>.
+        </p>
       </div>
     </AuthCard>
   );

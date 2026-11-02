@@ -30,6 +30,9 @@ export type PreviewOutcome =
       inviterName: string | null;
       role: string;
       expiresAt: string | null;
+      /** Ya es miembro activa: aceptar no le cambia el rol; este es el que tiene hoy. */
+      alreadyMember: boolean;
+      currentRole: string | null;
     }
   | { status: "already_member"; tenantId: string }
   | { status: "unavailable"; result: Exclude<InvitationResult, "ok" | "accepted"> }
@@ -84,6 +87,8 @@ export async function previewInvitation(code: string): Promise<PreviewOutcome> {
       inviterName: body.inviter_name ?? null,
       role: body.role,
       expiresAt: body.expires_at ?? null,
+      alreadyMember: body.already_member === true,
+      currentRole: body.current_role ?? null,
     };
   }
   if (body.result === "accepted") {

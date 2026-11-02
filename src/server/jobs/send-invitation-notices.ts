@@ -1,5 +1,5 @@
 import "server-only";
-import { deliverPendingInvitationNotices } from "@/lib/team/delivery";
+import { deliverPendingInvitationNotices, type NoticeJobResult } from "@/lib/team/delivery";
 
 /**
  * Tarea del aviso al Dueño (H-008, decisión de José: el aviso es robusto, no de mejor esfuerzo).
@@ -11,9 +11,13 @@ import { deliverPendingInvitationNotices } from "@/lib/team/delivery";
  * queda en el log como `invitation_notice_exhausted` (solo un código, sin datos personales) y con
  * `owner_notice_state = 'exhausted'` en la base.
  *
- * Hay que programarla para que corra cada pocos minutos (por ejemplo, `npm run job:invitation-notices` desde un
- * cron del servidor). Nunca lanza.
+ * Nunca lanza: `failed` dice que no pudo ni empezar.
+ *
+ * PENDIENTE (decisión propia, antes del piloto): cómo se programa en producción. El script
+ * `scripts/send-invitation-notices.ts` es SOLO para uso local o manual (usa `tsx` y `.env.local`). En Vercel las
+ * tareas programadas llaman a una dirección HTTP protegida por un secreto; esa ruta no existe, a propósito,
+ * hasta decidirlo. Mientras tanto, en producción el aviso es de mejor esfuerzo: solo corre el intento inmediato.
  */
-export async function runSendInvitationNotices(): Promise<{ attended: number; exhausted: number }> {
+export async function runSendInvitationNotices(): Promise<NoticeJobResult> {
   return deliverPendingInvitationNotices();
 }

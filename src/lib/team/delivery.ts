@@ -11,7 +11,7 @@ import { sendWithRetry } from "@/lib/quotes/send/dispatch";
 import { tenantPath } from "@/lib/tenant/constants";
 import {
   TeamGatewayError,
-  listPendingInvitationNotices,
+  reserveInvitationNotices,
   readInvitationNotice,
   registerInvitationNotice,
   settleInvitationEmail,
@@ -97,7 +97,10 @@ export async function deliverInvitationEmail(input: InvitationDelivery): Promise
 /** Cuántos avisos atiende cada corrida de la tarea. */
 export const NOTICE_JOB_BATCH_SIZE = 20;
 
-type NoticeInfo = NonNullable<Awaited<ReturnType<typeof readInvitationNotice>>>;
+/** El rol que llegó de la base no es de la matriz: el aviso se cierra como fallido con su propio código. */
+class InvalidNoticeRole extends Error {}
+
+type NoticeInfo = NonNullable<Awaited<ReturnType<typeof readInvitationNotice>>["notice"]>;
 
 /**
  * Un intento de aviso a UN destinatario. Una vez anotado el intento en la base, SIEMPRE se cierra (enviado o
@@ -121,7 +124,7 @@ async function noticeOne(
   let failureCode: string | null = null;
   let sent: { provider: string; providerMessageId: string } | null = null;
   try {
-    if (!isMemberRole(info.role)) throw new Error("invalid_role");
+    if (!isMemberRole(info.role)) throw new InvalidNoticeRole();
     const config = loadEmailConfig();
     const built = buildInvitationOwnerNotice({
       recipientAddress: recipient.email,
@@ -147,7 +150,12 @@ async function noticeOne(
       }
     }
   } catch (cause) {
-    failureCode = cause instanceof EmailConfigError ? "email_config" : "unexpected";
+    failureCode =
+      cause instanceof InvalidNoticeRole
+        ? "invalid_role"
+        : cause instanceof EmailConfigError
+          ? "email_config"
+          : "unexpected";
   }
   if (failureCode) await serverLog("warn", "invitation_notice_failed", { code: failureCode });
   try {
@@ -165,17 +173,20 @@ async function noticeOne(
 }
 
 /**
- * Intenta el aviso al Dueño de UNA invitación. Es el intento inmediato (después de crearla, sin hacer esperar a
- * quien invita) y también lo que usa la tarea. La garantía NO es este intento: el aviso ya quedó anotado en la
- * base como pendiente y la tarea lo envía y reintenta. Nunca lanza.
+ * Envía el aviso de una invitación cuyo intento YA está reservado (la reserva gastó un intento en la base). Nunca
+ * lanza. Sin Dueño con correo, la base lo da por agotado y aquí queda en el log (solo un código).
  */
-export async function notifyOwnerOfInvitation(invitationId: string): Promise<void> {
+async function sendReservedNotice(invitationId: string): Promise<void> {
   try {
-    const info = await readInvitationNotice(invitationId);
-    if (!info) return;
-    for (const recipient of info.recipients) {
+    const { notice, exhaustedReason } = await readInvitationNotice(invitationId);
+    if (exhaustedReason) {
+      // Hoy la base solo da un motivo: no hay un Dueño activo con correo.
+      await serverLog("error", "invitation_notice_exhausted", { code: "no_recipient" });
+    }
+    if (!notice) return;
+    for (const recipient of notice.recipients) {
       try {
-        await noticeOne(invitationId, info, recipient);
+        await noticeOne(invitationId, notice, recipient);
       } catch (cause) {
         await serverLog("warn", "invitation_notice_failed", { code: codeOf(cause) });
       }
@@ -186,22 +197,45 @@ export async function notifyOwnerOfInvitation(invitationId: string): Promise<voi
 }
 
 /**
- * La tarea: envía los avisos al Dueño que quedaron pendientes y reintenta los fallidos (con el tope de intentos
- * y el intervalo mínimo que fija la base). Nunca lanza; devuelve cuántas invitaciones atendió y cuántos avisos
- * acaban de agotar sus intentos.
+ * El intento inmediato del aviso al Dueño de UNA invitación, justo después de crearla (sin hacer esperar a quien
+ * invita). Reserva el intento y lo envía. La garantía NO es este intento: el aviso ya quedó anotado en la base
+ * como pendiente y la tarea lo envía y reintenta. Nunca lanza.
+ */
+export async function notifyOwnerOfInvitation(invitationId: string): Promise<void> {
+  try {
+    const reserved = await reserveInvitationNotices(1, invitationId);
+    if (reserved.exhausted > 0) {
+      await serverLog("error", "invitation_notice_exhausted", { code: "max_attempts" });
+    }
+    if (reserved.invitationIds.includes(invitationId)) await sendReservedNotice(invitationId);
+  } catch (cause) {
+    await serverLog("warn", "invitation_notice_failed", { code: codeOf(cause) });
+  }
+}
+
+export type NoticeJobResult = { attended: number; exhausted: number; failed: boolean };
+
+/**
+ * La tarea: reserva y envía los avisos al Dueño que quedaron pendientes y reintenta los fallidos (con el tope
+ * de intentos y el intervalo mínimo que fija la base). Nunca lanza; `failed` dice que no pudo ni empezar (la base
+ * no respondió), para que quien la ejecuta termine con error.
  */
 export async function deliverPendingInvitationNotices(
   limit = NOTICE_JOB_BATCH_SIZE,
-): Promise<{ attended: number; exhausted: number }> {
+): Promise<NoticeJobResult> {
   try {
-    const pending = await listPendingInvitationNotices(limit);
-    if (pending.exhausted > 0) {
+    const reserved = await reserveInvitationNotices(limit);
+    if (reserved.exhausted > 0) {
       await serverLog("error", "invitation_notice_exhausted", { code: "max_attempts" });
     }
-    for (const invitationId of pending.invitationIds) await notifyOwnerOfInvitation(invitationId);
-    return { attended: pending.invitationIds.length, exhausted: pending.exhausted };
+    for (const invitationId of reserved.invitationIds) await sendReservedNotice(invitationId);
+    return {
+      attended: reserved.invitationIds.length,
+      exhausted: reserved.exhausted,
+      failed: false,
+    };
   } catch (cause) {
     await serverLog("error", "invitation_notice_job_failed", { code: codeOf(cause) });
-    return { attended: 0, exhausted: 0 };
+    return { attended: 0, exhausted: 0, failed: true };
   }
 }

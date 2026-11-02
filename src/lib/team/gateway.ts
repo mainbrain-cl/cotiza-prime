@@ -62,14 +62,18 @@ const pendingSchema = z.object({
 });
 
 /**
- * Los avisos al Dueño que la tarea tiene que atender ahora (pendientes, o fallidos que ya toca reintentar), y
- * cuántos acaban de agotar sus intentos. Solo entrega identificadores de invitaciones.
+ * RESERVA los avisos al Dueño que hay que atender ahora (pendientes, o fallidos que ya toca reintentar): reservar
+ * gasta un intento en la base (con `skip locked`, dos tareas a la vez no toman el mismo aviso) y devuelve solo
+ * identificadores de invitaciones, más cuántos acaban de agotar sus intentos. Con `invitationId` reserva solo ese
+ * aviso (el intento inmediato después de invitar).
  */
-export async function listPendingInvitationNotices(
+export async function reserveInvitationNotices(
   limit: number,
+  invitationId: string | null = null,
 ): Promise<{ invitationIds: string[]; exhausted: number }> {
   const { data, error } = await createAdminClient().rpc("invitation_notices_pending", {
     p_limit: limit,
+    p_invitation_id: invitationId,
   });
   if (error) throw new TeamGatewayError("notices_pending", error.code);
   const parsed = pendingSchema.safeParse(data);
@@ -84,6 +88,8 @@ const recipientsSchema = z.object({
   role: z.string().optional(),
   invited_at: z.string().optional(),
   recipients: z.array(z.object({ user_id: z.uuid(), email: z.string().min(3).max(254) })).max(10),
+  /** La base dio el aviso por agotado sin intentarlo: `no_recipient` (no hay un Dueño activo con correo). */
+  exhausted: z.string().optional(),
 });
 
 export type InvitationNoticeInfo = {
@@ -95,13 +101,18 @@ export type InvitationNoticeInfo = {
   recipients: { userId: string; email: string }[];
 };
 
+export type InvitationNoticeRead = {
+  /** Los datos del aviso y a quién va; `null` si no hay un intento reservado que enviar. */
+  notice: InvitationNoticeInfo | null;
+  /** El aviso se dio por agotado sin poder enviarse (hoy solo `no_recipient`): la aplicación lo deja en el log. */
+  exhaustedReason: string | null;
+};
+
 /**
- * A quién avisar de una invitación y con qué datos, ya filtrados por la base. Si no corresponde avisar (o ya se
- * avisó), `null`. La base no entrega el correo del invitado.
+ * A quién avisar de una invitación con un intento reservado y con qué datos, ya filtrados por la base. Sin
+ * reserva, `notice` es `null`. La base no entrega el correo del invitado.
  */
-export async function readInvitationNotice(
-  invitationId: string,
-): Promise<InvitationNoticeInfo | null> {
+export async function readInvitationNotice(invitationId: string): Promise<InvitationNoticeRead> {
   const { data, error } = await createAdminClient().rpc("invitation_notice_recipients", {
     p_invitation_id: invitationId,
   });
@@ -109,17 +120,21 @@ export async function readInvitationNotice(
   const parsed = recipientsSchema.safeParse(data);
   if (!parsed.success) throw new TeamGatewayError("notice_recipients", "shape");
   const body = parsed.data;
-  if (body.recipients.length === 0) return null;
+  const exhaustedReason = body.exhausted ?? null;
+  if (body.recipients.length === 0) return { notice: null, exhaustedReason };
   if (!body.tenant_id || !body.tenant_name || !body.role || !body.invited_at) {
     throw new TeamGatewayError("notice_recipients", "shape");
   }
   return {
-    tenantId: body.tenant_id,
-    tenantName: body.tenant_name,
-    inviterName: body.inviter_name ?? null,
-    role: body.role,
-    invitedAt: body.invited_at,
-    recipients: body.recipients.map((r) => ({ userId: r.user_id, email: r.email })),
+    exhaustedReason: null,
+    notice: {
+      tenantId: body.tenant_id,
+      tenantName: body.tenant_name,
+      inviterName: body.inviter_name ?? null,
+      role: body.role,
+      invitedAt: body.invited_at,
+      recipients: body.recipients.map((r) => ({ userId: r.user_id, email: r.email })),
+    },
   };
 }
 

@@ -5,15 +5,14 @@ const gateway = {
   readInvitationNotice: vi.fn(),
   registerInvitationNotice: vi.fn(),
   settleInvitationEmail: vi.fn(),
-  listPendingInvitationNotices: vi.fn(),
+  reserveInvitationNotices: vi.fn(),
 };
 vi.mock("./gateway", () => ({
   TeamGatewayError: class extends Error {},
   readInvitationNotice: (...args: unknown[]) => gateway.readInvitationNotice(...args),
   registerInvitationNotice: (...args: unknown[]) => gateway.registerInvitationNotice(...args),
   settleInvitationEmail: (...args: unknown[]) => gateway.settleInvitationEmail(...args),
-  listPendingInvitationNotices: (...args: unknown[]) =>
-    gateway.listPendingInvitationNotices(...args),
+  reserveInvitationNotices: (...args: unknown[]) => gateway.reserveInvitationNotices(...args),
 }));
 
 const send = vi.fn();
@@ -49,11 +48,18 @@ const info = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** Lo que entrega `readInvitationNotice` con un intento reservado. */
+const read = (over: Record<string, unknown> = {}) => ({
+  notice: info(over),
+  exhaustedReason: null,
+});
+
 beforeEach(() => {
   for (const fn of [...Object.values(gateway), send, getEmailTransport, getAppOrigin, serverLog]) {
     fn.mockReset();
   }
-  gateway.readInvitationNotice.mockResolvedValue(info());
+  gateway.reserveInvitationNotices.mockResolvedValue({ invitationIds: [INVITATION], exhausted: 0 });
+  gateway.readInvitationNotice.mockResolvedValue(read());
   gateway.registerInvitationNotice.mockResolvedValue(true);
   gateway.settleInvitationEmail.mockResolvedValue({ exhausted: false });
   send.mockResolvedValue({ ok: true, providerMessageId: "msg-1" });
@@ -66,6 +72,8 @@ const logged = () => JSON.stringify(serverLog.mock.calls);
 describe("notifyOwnerOfInvitation", () => {
   it("camino feliz: anota el intento, envía el aviso al Dueño y cierra el registro como enviado", async () => {
     await notifyOwnerOfInvitation(INVITATION);
+    // El intento inmediato RESERVA primero (gasta un intento en la base) y solo ese aviso.
+    expect(gateway.reserveInvitationNotices).toHaveBeenCalledWith(1, INVITATION);
     expect(gateway.readInvitationNotice).toHaveBeenCalledWith(INVITATION);
     expect(gateway.registerInvitationNotice).toHaveBeenCalledTimes(1);
     const registered = gateway.registerInvitationNotice.mock.calls[0][0] as {
@@ -91,8 +99,47 @@ describe("notifyOwnerOfInvitation", () => {
     expect(serverLog).not.toHaveBeenCalled();
   });
 
+  it("si la base no entrega la reserva (no toca, ya se hizo o lo tomó otra tarea) no se lee ni se envía nada", async () => {
+    gateway.reserveInvitationNotices.mockResolvedValue({ invitationIds: [], exhausted: 0 });
+    await notifyOwnerOfInvitation(INVITATION);
+    expect(gateway.readInvitationNotice).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    // ...ni se atiende una reserva de OTRA invitación.
+    gateway.reserveInvitationNotices.mockResolvedValue({
+      invitationIds: ["55555555-5555-4555-8555-555555555555"],
+      exhausted: 0,
+    });
+    await notifyOwnerOfInvitation(INVITATION);
+    expect(gateway.readInvitationNotice).not.toHaveBeenCalled();
+  });
+
+  it("sin Dueño con correo la base lo da por agotado: queda en el log con su código y no se envía", async () => {
+    gateway.readInvitationNotice.mockResolvedValue({
+      notice: null,
+      exhaustedReason: "no_recipient",
+    });
+    await notifyOwnerOfInvitation(INVITATION);
+    expect(serverLog).toHaveBeenCalledWith("error", "invitation_notice_exhausted", {
+      code: "no_recipient",
+    });
+    expect(gateway.registerInvitationNotice).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("un rol desconocido cierra el intento con su propio código (invalid_role), no con «unexpected»", async () => {
+    gateway.readInvitationNotice.mockResolvedValue(read({ role: "otro-rol" }));
+    await notifyOwnerOfInvitation(INVITATION);
+    expect(send).not.toHaveBeenCalled();
+    expect(gateway.settleInvitationEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: "invalid_role" }),
+    );
+    expect(serverLog).toHaveBeenCalledWith("warn", "invitation_notice_failed", {
+      code: "invalid_role",
+    });
+  });
+
   it("la base no lo anota (no corresponde, ya se hizo o aún no toca): no se registra ni se envía nada", async () => {
-    gateway.readInvitationNotice.mockResolvedValue(null);
+    gateway.readInvitationNotice.mockResolvedValue({ notice: null, exhaustedReason: null });
     await notifyOwnerOfInvitation(INVITATION);
     expect(gateway.registerInvitationNotice).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
@@ -108,7 +155,7 @@ describe("notifyOwnerOfInvitation", () => {
 
   it("no se pudo armar el correo: se cierra como fallido con el código y no se envía", async () => {
     gateway.readInvitationNotice.mockResolvedValue(
-      info({ recipients: [{ userId: OWNER, email: "no-es-un-correo" }] }),
+      read({ recipients: [{ userId: OWNER, email: "no-es-un-correo" }] }),
     );
     await notifyOwnerOfInvitation(INVITATION);
     expect(send).not.toHaveBeenCalled();
@@ -169,7 +216,7 @@ describe("notifyOwnerOfInvitation", () => {
   it.each([" ", "", "​", "‮"])(
     "un nombre de quien invita sin texto visible (%j) NO silencia el aviso",
     async (name) => {
-      gateway.readInvitationNotice.mockResolvedValue(info({ inviterName: name }));
+      gateway.readInvitationNotice.mockResolvedValue(read({ inviterName: name }));
       await notifyOwnerOfInvitation(INVITATION);
       expect(send).toHaveBeenCalledTimes(1);
       expect((send.mock.calls[0][0] as EmailMessage).subject).toContain(
@@ -182,7 +229,7 @@ describe("notifyOwnerOfInvitation", () => {
   );
 
   it("sin nombre (nulo) tampoco", async () => {
-    gateway.readInvitationNotice.mockResolvedValue(info({ inviterName: null }));
+    gateway.readInvitationNotice.mockResolvedValue(read({ inviterName: null }));
     await notifyOwnerOfInvitation(INVITATION);
     expect(send).toHaveBeenCalledTimes(1);
   });
@@ -190,7 +237,7 @@ describe("notifyOwnerOfInvitation", () => {
   it("NUNCA lanza: ni si la base falla al leer, ni al registrar, ni al cerrar", async () => {
     gateway.readInvitationNotice.mockRejectedValue(new Error("boom " + INVITEE));
     await expect(notifyOwnerOfInvitation(INVITATION)).resolves.toBeUndefined();
-    gateway.readInvitationNotice.mockResolvedValue(info());
+    gateway.readInvitationNotice.mockResolvedValue(read());
     gateway.registerInvitationNotice.mockRejectedValue(new Error("boom " + INVITEE));
     await expect(notifyOwnerOfInvitation(INVITATION)).resolves.toBeUndefined();
     gateway.registerInvitationNotice.mockResolvedValue(true);
@@ -205,27 +252,37 @@ describe("notifyOwnerOfInvitation", () => {
 
 describe("deliverPendingInvitationNotices (la tarea)", () => {
   it("atiende cada invitación pendiente que entrega la base", async () => {
-    gateway.listPendingInvitationNotices.mockResolvedValue({
+    gateway.reserveInvitationNotices.mockResolvedValue({
       invitationIds: [INVITATION, "55555555-5555-4555-8555-555555555555"],
       exhausted: 0,
     });
     const result = await deliverPendingInvitationNotices(7);
-    expect(gateway.listPendingInvitationNotices).toHaveBeenCalledWith(7);
+    // Una sola reserva para toda la tanda; cada aviso reservado se envía sin volver a reservar.
+    expect(gateway.reserveInvitationNotices).toHaveBeenCalledTimes(1);
+    expect(gateway.reserveInvitationNotices).toHaveBeenCalledWith(7);
     expect(gateway.readInvitationNotice).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({ attended: 2, exhausted: 0 });
+    expect(result).toEqual({ attended: 2, exhausted: 0, failed: false });
   });
 
   it("deja en el log los avisos que acaban de agotar sus intentos", async () => {
-    gateway.listPendingInvitationNotices.mockResolvedValue({ invitationIds: [], exhausted: 3 });
-    expect(await deliverPendingInvitationNotices()).toEqual({ attended: 0, exhausted: 3 });
+    gateway.reserveInvitationNotices.mockResolvedValue({ invitationIds: [], exhausted: 3 });
+    expect(await deliverPendingInvitationNotices()).toEqual({
+      attended: 0,
+      exhausted: 3,
+      failed: false,
+    });
     expect(serverLog).toHaveBeenCalledWith("error", "invitation_notice_exhausted", {
       code: "max_attempts",
     });
   });
 
   it("si la base falla al listar, no lanza y lo deja en el log", async () => {
-    gateway.listPendingInvitationNotices.mockRejectedValue(new Error("boom"));
-    expect(await deliverPendingInvitationNotices()).toEqual({ attended: 0, exhausted: 0 });
+    gateway.reserveInvitationNotices.mockRejectedValue(new Error("boom"));
+    expect(await deliverPendingInvitationNotices()).toEqual({
+      attended: 0,
+      exhausted: 0,
+      failed: true,
+    });
     expect(serverLog).toHaveBeenCalledWith(
       "error",
       "invitation_notice_job_failed",
@@ -234,7 +291,7 @@ describe("deliverPendingInvitationNotices (la tarea)", () => {
   });
 
   it("un aviso que falla no impide atender los demás", async () => {
-    gateway.listPendingInvitationNotices.mockResolvedValue({
+    gateway.reserveInvitationNotices.mockResolvedValue({
       invitationIds: [INVITATION, "55555555-5555-4555-8555-555555555555"],
       exhausted: 0,
     });

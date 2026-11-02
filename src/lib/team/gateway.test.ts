@@ -15,7 +15,7 @@ vi.mock("@/lib/crypto/search-hash", () => ({
 
 import {
   TeamGatewayError,
-  listPendingInvitationNotices,
+  reserveInvitationNotices,
   readInvitationNotice,
   registerInvitationNotice,
   settleInvitationEmail,
@@ -70,25 +70,33 @@ describe("settleInvitationEmail", () => {
   });
 });
 
-describe("listPendingInvitationNotices", () => {
-  it("pide el tope y entrega solo identificadores y la cuenta de agotados", async () => {
+describe("reserveInvitationNotices", () => {
+  it("reserva hasta el tope y entrega solo identificadores y la cuenta de agotados", async () => {
     rpc.mockResolvedValue({ data: { invitation_ids: [INVITATION], exhausted: 2 }, error: null });
-    expect(await listPendingInvitationNotices(20)).toEqual({
+    expect(await reserveInvitationNotices(20)).toEqual({
       invitationIds: [INVITATION],
       exhausted: 2,
     });
-    expect(rpc).toHaveBeenCalledWith("invitation_notices_pending", { p_limit: 20 });
+    expect(rpc).toHaveBeenCalledWith("invitation_notices_pending", {
+      p_limit: 20,
+      p_invitation_id: null,
+    });
+  });
+
+  it("con un identificador reserva solo ese aviso (el intento inmediato)", async () => {
+    rpc.mockResolvedValue({ data: { invitation_ids: [INVITATION], exhausted: 0 }, error: null });
+    await reserveInvitationNotices(1, INVITATION);
+    expect(rpc).toHaveBeenCalledWith("invitation_notices_pending", {
+      p_limit: 1,
+      p_invitation_id: INVITATION,
+    });
   });
 
   it("una respuesta mal formada o un error de la base lanzan un error con código", async () => {
     rpc.mockResolvedValue({ data: { invitation_ids: ["no-uuid"], exhausted: 0 }, error: null });
-    await expect(listPendingInvitationNotices(5)).rejects.toThrow(
-      "team_gateway_notices_pending:shape",
-    );
+    await expect(reserveInvitationNotices(5)).rejects.toThrow("team_gateway_notices_pending:shape");
     rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "x" } });
-    await expect(listPendingInvitationNotices(5)).rejects.toThrow(
-      "team_gateway_notices_pending:42501",
-    );
+    await expect(reserveInvitationNotices(5)).rejects.toThrow("team_gateway_notices_pending:42501");
   });
 });
 
@@ -105,26 +113,37 @@ describe("readInvitationNotice", () => {
   it("devuelve los datos del aviso y a quién va", async () => {
     rpc.mockResolvedValue({ data: body, error: null });
     expect(await readInvitationNotice(INVITATION)).toEqual({
-      tenantId: TENANT,
-      tenantName: "Negocio Demo",
-      inviterName: "Mixta Doble",
-      role: "admin",
-      invitedAt: "2026-10-30T15:00:00.000Z",
-      recipients: [{ userId: OWNER, email: "duena@ejemplo.test" }],
+      exhaustedReason: null,
+      notice: {
+        tenantId: TENANT,
+        tenantName: "Negocio Demo",
+        inviterName: "Mixta Doble",
+        role: "admin",
+        invitedAt: "2026-10-30T15:00:00.000Z",
+        recipients: [{ userId: OWNER, email: "duena@ejemplo.test" }],
+      },
     });
     expect(rpc).toHaveBeenCalledWith("invitation_notice_recipients", {
       p_invitation_id: INVITATION,
     });
   });
 
-  it("si la base no lo anota (no corresponde, ya se hizo o todavía no toca) no hay aviso", async () => {
+  it("sin intento reservado la base no entrega destinatarios: no hay aviso", async () => {
     rpc.mockResolvedValue({ data: { recipients: [] }, error: null });
-    expect(await readInvitationNotice(INVITATION)).toBeNull();
+    expect(await readInvitationNotice(INVITATION)).toEqual({ notice: null, exhaustedReason: null });
+  });
+
+  it("si no hay un Dueño con correo, la base lo da por agotado y lo dice (no_recipient)", async () => {
+    rpc.mockResolvedValue({ data: { recipients: [], exhausted: "no_recipient" }, error: null });
+    expect(await readInvitationNotice(INVITATION)).toEqual({
+      notice: null,
+      exhaustedReason: "no_recipient",
+    });
   });
 
   it("sin nombre de quien invita, lo entrega como nulo (el armador usa el respaldo)", async () => {
     rpc.mockResolvedValue({ data: { ...body, inviter_name: null }, error: null });
-    expect((await readInvitationNotice(INVITATION))?.inviterName).toBeNull();
+    expect((await readInvitationNotice(INVITATION)).notice?.inviterName).toBeNull();
   });
 
   it("una respuesta incompleta o un error de la base lanzan un error con código", async () => {

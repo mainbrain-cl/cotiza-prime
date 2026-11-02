@@ -4,6 +4,7 @@
 -- H-008). Los contadores de los dos alcances nuevos se borran (son efímeros y solo guardan huellas).
 drop function if exists public.accept_invitation(text);
 drop function if exists public.invitation_preview(text);
+drop function if exists app.invitation_audit_wrong_email(public.invitations, uuid, text);
 drop function if exists app.invitation_state(public.invitations, uuid, text);
 drop function if exists app.invitation_accept_fail(uuid);
 drop function if exists app.invitation_accept_locked(uuid);

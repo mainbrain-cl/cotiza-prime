@@ -31,6 +31,7 @@ const FUNCTIONS = [
   "public.accept_invitation(text)",
   "public.invitation_preview(text)",
   "app.invitation_state(public.invitations, uuid, text)",
+  "app.invitation_audit_wrong_email(public.invitations, uuid, text)",
   "app.invitation_accept_fail(uuid)",
   "app.invitation_accept_locked(uuid)",
   "app.invitation_accept_key(uuid)",

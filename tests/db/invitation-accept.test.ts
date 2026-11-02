@@ -479,7 +479,8 @@ describe("aceptar: lo que se rechaza", () => {
         "update public.members set status = 'removed', removed_at = now(), removed_by = $3 where tenant_id = $1 and user_id = $2",
         [w.tenantA, w.admin.id, w.owner.id],
       );
-      expect(await accept(person, p.tokenSha)).toEqual({ result: "revoked" });
+      expect(await accept(person, p.tokenSha)).toEqual({ result: "inviter_inactive" });
+      expect(await preview(person, p.tokenSha)).toEqual({ result: "inviter_inactive" });
       expect(await memberOf(w.tenantA, person)).toBeUndefined();
     }));
 
@@ -492,7 +493,27 @@ describe("aceptar: lo que se rechaza", () => {
         "update public.members set role = 'viewer' where tenant_id = $1 and user_id = $2",
         [w.tenantA, w.admin.id],
       );
-      expect(await accept(person, p.tokenSha)).toEqual({ result: "revoked" });
+      expect(await accept(person, p.tokenSha)).toEqual({ result: "inviter_inactive" });
+    }));
+
+  it("una invitación que H-010 cancele por «inviter_removed» da el mismo resultado, sin datos", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.admin, person.email, "viewer");
+      await actAsPostgres(setup);
+      await setup.query(
+        `update public.invitations set status = 'revoked', revoked_at = now(), revoke_reason = 'inviter_removed'
+          where id = $1`,
+        [p.id],
+      );
+      expect(await accept(person, p.tokenSha)).toEqual({ result: "inviter_inactive" });
+      expect(await preview(person, p.tokenSha)).toEqual({ result: "inviter_inactive" });
+      // Una cancelada de forma normal sigue siendo «revoked».
+      const other = await newPerson();
+      const q = await inviteAs(w.owner, other.email, "viewer");
+      await asUser(setup, w.owner, w.tenantA);
+      await setup.query(REVOKE, [q.id]);
+      expect((await accept(other, q.tokenSha)).result).toBe("revoked");
     }));
 
   it("cuenta con el correo SIN verificar: «unverified», y no cuenta como intento fallido", () =>
@@ -641,6 +662,53 @@ describe("aceptar: quien ya estuvo o ya está", () => {
 });
 
 describe("la vista previa", () => {
+  it("si ya eres miembro activo, dice cuál es tu rol actual (aceptar no lo cambia)", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "admin");
+      const fresh = await preview(person, p.tokenSha);
+      expect(fresh).toMatchObject({
+        result: "ok",
+        already_member: false,
+        current_role: null,
+        role: "admin",
+      });
+      await actAsPostgres(setup);
+      await setup.query(
+        "insert into public.members (tenant_id, user_id, role) values ($1, $2, 'viewer')",
+        [w.tenantA, person.id],
+      );
+      const member = await preview(person, p.tokenSha);
+      expect(member).toMatchObject({
+        result: "ok",
+        already_member: true,
+        current_role: "viewer",
+        role: "admin",
+      });
+      // Y aceptar confirma lo que decía: el rol sigue siendo el actual.
+      expect(await accept(person, p.tokenSha)).toMatchObject({
+        role: "viewer",
+        already_member: true,
+      });
+    }));
+
+  it("quien fue quitado no figura como miembro: se le muestra el rol de la invitación, que sí recibirá", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      await actAsPostgres(setup);
+      await setup.query(
+        `insert into public.members (tenant_id, user_id, role, status, removed_at, removed_by)
+         values ($1, $2, 'admin', 'removed', now(), $3)`,
+        [w.tenantA, person.id, w.owner.id],
+      );
+      const p = await inviteAs(w.owner, person.email, "sales");
+      expect(await preview(person, p.tokenSha)).toMatchObject({
+        already_member: false,
+        current_role: null,
+        role: "sales",
+      });
+    }));
+
   it("para la cuenta invitada entrega organización, quién invitó, rol y vigencia", () =>
     withTx(setup, async () => {
       const person = await newPerson();
@@ -1118,4 +1186,134 @@ describe("dos conexiones reales a la vez", () => {
       await resender.end();
     }
   });
+});
+
+describe("solo lectura: un GET de PostgREST no puede probar códigos", () => {
+  it("las dos funciones se niegan (25006) en una transacción de solo lectura y no cuentan ni cambian nada", async () => {
+    await actAsPostgres(setup);
+    await setup.query("begin");
+    try {
+      const person = await createUser(setup);
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      await asUser(setup, w.owner, w.tenantA);
+      await setup.query(REVOKE, [p.id]);
+      await actAsPostgres(setup);
+      // Desde aquí la transacción es de solo lectura, como la de un GET de PostgREST. Con una invitación cancelada
+      // las funciones NO escribirían nada: si igual contestan, es que se saltaron el límite de intentos.
+      await setup.query("set transaction read only");
+      for (const sql of [ACCEPT, PREVIEW]) {
+        await actAs(setup, person);
+        const error = await expectSqlError(setup, sql, [p.tokenSha]);
+        expect(error.code, sql).toBe("25006");
+      }
+      await actAs(setup, person);
+      const wrong = await expectSqlError(setup, ACCEPT, [randomSha()]);
+      expect(wrong.code).toBe("25006");
+    } finally {
+      await setup.query("rollback");
+    }
+  });
+});
+
+describe("la auditoría de quien prueba un código con otro correo (invitation.accept_denied)", () => {
+  type AuditRow = {
+    action: string;
+    result: string;
+    tenant_id: string;
+    actor_user_id: string;
+    resource_id: string;
+    details: Json;
+  };
+  const deniedBy = async (user: TestUser): Promise<AuditRow[]> => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query<AuditRow>(
+        `select action, result, tenant_id, actor_user_id, resource_id, details from public.audit_log
+          where action = 'invitation.accept_denied' and actor_user_id = $1 order by id`,
+        [user.id],
+      )
+    ).rows;
+  };
+
+  it("se registra en la organización de la invitación, como «denied», sin el correo ni el código", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const stranger = await newPerson();
+      const p = await inviteAs(w.ownerB, person.email, "admin", w.tenantB);
+      expect((await accept(stranger, p.tokenSha)).result).toBe("wrong_email");
+      expect((await preview(stranger, p.tokenSha)).result).toBe("wrong_email");
+      const rows = await deniedBy(stranger);
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row).toMatchObject({
+          result: "denied",
+          tenant_id: w.tenantB,
+          actor_user_id: stranger.id,
+          resource_id: p.id,
+        });
+      }
+      expect(rows.map((r) => r.details)).toEqual([
+        { reason: "wrong_email", step: "accept" },
+        { reason: "wrong_email", step: "preview" },
+      ]);
+      const everything = JSON.stringify(rows);
+      for (const secret of [person.email, stranger.email, p.tokenSha, "@ejemplo.test"]) {
+        expect(everything).not.toContain(secret);
+      }
+      // No aparece en la auditoría de ninguna otra organización.
+      expect(
+        await count(
+          "select count(*) as n from public.audit_log where action = 'invitation.accept_denied' and tenant_id <> $1 and actor_user_id = $2",
+          [w.tenantB, stranger.id],
+        ),
+      ).toBe(0);
+    }));
+
+  it("la ve quien maneja el equipo de ESA organización y nadie de otra", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const stranger = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      await accept(stranger, p.tokenSha);
+      const read = async (user: TestUser, tenant: string) => {
+        await asUser(setup, user, tenant);
+        const { rows } = await setup.query<{ n: string }>(
+          "select count(*) as n from public.audit_log where action = 'invitation.accept_denied' and actor_user_id = $1",
+          [stranger.id],
+        );
+        await actAsPostgres(setup);
+        return Number(rows[0].n);
+      };
+      expect(await read(w.owner, w.tenantA)).toBe(1);
+      expect(await read(w.ownerB, w.tenantB)).toBe(0);
+    }));
+
+  it("no se registra para un código inventado (no hay organización), ni cuando la cuenta ya está bloqueada", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const stranger = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      for (let n = 0; n < 3; n++) await accept(stranger, randomSha());
+      expect(await deniedBy(stranger)).toHaveLength(0);
+      // Hasta el tope se registra cada intento; pasado el tope (la cuenta bloqueada) ya no se escribe nada:
+      // la auditoría no puede crecer más rápido que el límite de fallos.
+      for (let n = 0; n < MAX_FAILURES + 5; n++) await accept(stranger, p.tokenSha);
+      expect(await failuresOf(stranger)).toMatchObject({ locked: true });
+      const rows = await deniedBy(stranger);
+      expect(rows).toHaveLength(MAX_FAILURES - 3);
+      expect(await accept(stranger, p.tokenSha)).toEqual({ result: "rate_limited" });
+      expect(await deniedBy(stranger)).toHaveLength(MAX_FAILURES - 3);
+    }));
+
+  it("tampoco se registra cuando el correo sí coincide ni en los otros fallos (vencida, cancelada, usada)", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      await preview(person, p.tokenSha);
+      await accept(person, p.tokenSha);
+      const other = await newPerson();
+      expect((await accept(other, p.tokenSha)).result).toBe("used");
+      expect(await deniedBy(person)).toHaveLength(0);
+      expect(await deniedBy(other)).toHaveLength(0);
+    }));
 });

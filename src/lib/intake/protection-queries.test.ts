@@ -86,6 +86,21 @@ describe("loadProtection (H-092)", () => {
     expect(await loadProtection(b.active)).toEqual({ ok: false, reason: "error" });
   });
 
+  it("si la base rechaza el tope con 42501 (el rol efectivo no alcanza), es «prohibido», no «error»", async () => {
+    // La app cree al rol autorizado (`admin`), pero la base decide con el rol efectivo.
+    const forbidden = fakeActive("admin", {
+      intake_daily_counters: counters([]),
+      intake_form_daily_caps: { data: null, error: { code: "42501" } },
+    });
+    expect(await loadProtection(forbidden.active)).toEqual({ ok: false, reason: "forbidden" });
+    // Otro código sigue siendo una falla.
+    const failed = fakeActive("admin", {
+      intake_daily_counters: counters([]),
+      intake_form_daily_caps: { data: null, error: { code: "57014" } },
+    });
+    expect(await loadProtection(failed.active)).toEqual({ ok: false, reason: "error" });
+  });
+
   it("lee solo las dos tablas necesarias y arma los contadores por formulario y de la organización", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-07T15:00:00Z"));

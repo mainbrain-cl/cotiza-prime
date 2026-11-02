@@ -984,6 +984,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
     role?: string;
     tenant_id?: string;
     tenant_name?: string;
+    invitation_status?: string;
     exhausted?: string;
   };
 
@@ -1130,6 +1131,24 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
         expect(info.recipients).toEqual([{ user_id: w.owner.id, email: await ownerEmail() }]);
         expect(info.role).toBe("admin");
         expect(typeof info.tenant_name).toBe("string");
+      });
+    });
+
+    it("entrega el estado de la invitación: pendiente, o ya aceptada (para que el texto no prometa cancelar)", async () => {
+      await withTx(setup, async () => {
+        const pending = (await invite(w.admin, { role: "admin", email: "estado-1@ejemplo.test" }))
+          .p;
+        await reserve(pending.id);
+        expect((await asServer<Recipients>(RECIPIENTS, [pending.id])).invitation_status).toBe(
+          "pending",
+        );
+        const accepted = (await invite(w.admin, { role: "admin", email: "estado-2@ejemplo.test" }))
+          .p;
+        await accept(accepted.id);
+        await reserve(accepted.id);
+        expect((await asServer<Recipients>(RECIPIENTS, [accepted.id])).invitation_status).toBe(
+          "accepted",
+        );
       });
     });
 
@@ -1367,6 +1386,67 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
         await setup.query("delete from public.invitations where id = $1", [p.id]);
         await setup.query("commit");
       }
+    });
+  });
+
+  describe("una reserva solo sirve si es reciente, y cancelar saca el aviso de la cola", () => {
+    it("una reserva que nadie usó no queda como saldo: pasados 5 minutos, registrar se rechaza", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, { role: "admin" });
+        expect(await reserve(p.id)).toBe(true);
+        // Pasan 6 minutos sin que nadie anote el correo (se simula fechando la reserva hacia atrás).
+        await actAsPostgres(setup);
+        await setup.query(
+          "update public.invitations set owner_notice_last_attempt_at = now() - interval '6 minutes' where id = $1",
+          [p.id],
+        );
+        expect(
+          await asServer(REGISTER, [randomUUID(), p.id, w.owner.id, "v1.x.y", sha256Hex("a")]),
+        ).toEqual({ registered: false });
+        expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
+        expect(await noticeMails(p.id)).toBe(0);
+        // Una reserva reciente (4 minutos) sí sirve.
+        await setup.query(
+          "update public.invitations set owner_notice_last_attempt_at = now() - interval '4 minutes' where id = $1",
+          [p.id],
+        );
+        expect(
+          await asServer(REGISTER, [randomUUID(), p.id, w.owner.id, "v1.x.y", sha256Hex("a")]),
+        ).toEqual({ registered: true });
+      });
+    });
+
+    it("cancelar DESPUÉS de reservar saca el aviso de la cola: ni se anota ni se lista", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, {
+          role: "admin",
+          email: "cancelar-despues@ejemplo.test",
+        });
+        expect(await reserve(p.id)).toBe(true);
+        await call(w.admin, w.tenantA, REVOKE, [p.id]);
+        expect(await state(p.id)).toEqual({ state: "none", attempts: 1 });
+        expect(
+          await asServer(REGISTER, [randomUUID(), p.id, w.owner.id, "v1.x.y", sha256Hex("a")]),
+        ).toEqual({ registered: false });
+        expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
+        await waitRetryInterval(p.id);
+        expect(await ready(p.id)).toBe(false);
+        expect((await reserveBatch()).invitation_ids).not.toContain(p.id);
+        expect(await noticeMails(p.id)).toBe(0);
+      });
+    });
+
+    it("cancelar una invitación cuyo aviso ya salió no cambia ese estado (sigue «sent»)", async () => {
+      await withTx(setup, async () => {
+        const { p } = await invite(w.admin, {
+          role: "admin",
+          email: "cancelar-enviado@ejemplo.test",
+        });
+        const mailId = await attempt(p.id);
+        await asServer(SETTLE, [mailId, "mailpit", "n-1", null]);
+        await call(w.admin, w.tenantA, REVOKE, [p.id]);
+        expect((await state(p.id)).state).toBe("sent");
+      });
     });
   });
 

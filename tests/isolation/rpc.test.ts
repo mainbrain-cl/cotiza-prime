@@ -203,7 +203,7 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
         p_provider_message_id: "x",
         p_error_code: null,
       },
-      invitation_notices_pending: { p_limit: 5 },
+      invitation_notices_pending: { p_limit: 5, p_invitation_id: null },
       invitation_notice_recipients: { p_invitation_id: randomUUID() },
       invitation_notice_register: {
         p_email_id: randomUUID(),
@@ -216,7 +216,11 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {
         const res = await rpc(token, name, args[name]);
-        expect(res.status, `${name} ${token ? "con pase" : "anónimo"}`).toBeGreaterThanOrEqual(400);
+        const who = `${name} ${token ? "con pase" : "anónimo"}`;
+        // Tiene que ser un rechazo por PERMISO (la función existe y esos argumentos calzan con su firma): un
+        // 404 («no existe esa función con esos argumentos») pasaría igual aunque la función no estuviera.
+        expect([401, 403], `${who}: ${res.text}`).toContain(res.status);
+        expect((res.json as { code?: string } | null)?.code, who).not.toBe("PGRST202");
       }
     }
   });

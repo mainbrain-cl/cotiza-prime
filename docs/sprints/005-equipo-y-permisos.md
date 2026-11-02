@@ -56,7 +56,7 @@ migraciones las hace un solo agente, de a una y en orden.
    H-041; H-040 usa la matriz de H-011.
 10. Cierre con la batería completa (unitarias, base de datos, aislamiento y punta a punta).
 
-El diseño propone partir H-004 en **tres historias** (a, b y c) en `HISTORIAS.md` (pregunta 15).
+H-004 se partió en **tres historias** (a, b y c) y H-048 en **dos** (a y b) en `HISTORIAS.md` el 2026-11-02 (el supuesto de la pregunta 15 y la decisión de José sobre H-048).
 
 ## Lo que hay que decidir antes de construir
 

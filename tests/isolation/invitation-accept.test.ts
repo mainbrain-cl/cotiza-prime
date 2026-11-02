@@ -34,11 +34,33 @@ const spec = (name: string) => ISOLATION_TABLES.find((t) => t.name === name)!;
 const randomSha = () => randomBytes(32).toString("hex");
 const BUSINESS_TABLES = ["invitations", "members", "email_messages", "audit_log"] as const;
 
+/**
+ * Huella de lo de B. En la auditoría NO cuentan los `invitation.accept_denied`: que quede escrito que alguien probó
+ * el código de una invitación de B con otro correo es justamente lo que se quiere (se comprueba aparte).
+ */
+async function fingerprintB(name: (typeof BUSINESS_TABLES)[number]): Promise<string> {
+  if (name !== "audit_log") return fingerprint(db, spec(name));
+  const { rows } = await db.query<{ h: string }>(
+    `select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
+       from public.audit_log t
+      where t.tenant_id = $1 and t.action <> 'invitation.accept_denied'`,
+    [fixture().orgs.B.tenantId],
+  );
+  return rows[0].h;
+}
+
 async function snapshotB() {
   const out = new Map<string, string>();
-  for (const name of BUSINESS_TABLES) out.set(name, await fingerprint(db, spec(name)));
+  for (const name of BUSINESS_TABLES) out.set(name, await fingerprintB(name));
   return out;
 }
+
+const deniedInB = async (userId: string) =>
+  countWhere(
+    db,
+    "audit_log",
+    `action = 'invitation.accept_denied' and tenant_id = '${fixture().orgs.B.tenantId}' and actor_user_id = '${userId}'`,
+  );
 
 const call = async (
   persona: PersonaKey,
@@ -54,8 +76,10 @@ describe("Ataque 1 · usar el código de una invitación de B (dirigida a otro c
       const fx = fixture();
       const b = fx.orgs.B.invitation!;
       const before = await snapshotB();
-      // Dos llamadas por función: cada intento fallido gasta el cupo de Ana (10 en 10 minutos).
-      for (const header of [fx.orgs.B.tenantId, undefined]) {
+      // Una llamada por función: cada intento fallido gasta el cupo de Ana (10 en 10 minutos). La cabecera de B
+      // en una y ninguna en la otra; la de A la prueba Mixta más abajo.
+      const deniedBefore = await deniedInB(fx.personas.ana.userId);
+      for (const header of [fn === "accept_invitation" ? fx.orgs.B.tenantId : undefined]) {
         const res = await call("ana", fn, b.tokenSha256, header);
         expect(res.status, `${fn} ${header}`).toBe(200);
         expect(res.json, `${fn} ${header}`).toEqual({ result: "wrong_email" });
@@ -64,8 +88,19 @@ describe("Ataque 1 · usar el código de una invitación de B (dirigida a otro c
         }
       }
       for (const name of BUSINESS_TABLES) {
-        expect(await fingerprint(db, spec(name)), `${name} de B cambió`).toBe(before.get(name));
+        expect(await fingerprintB(name), `${name} de B cambió`).toBe(before.get(name));
       }
+      // Lo único que queda en B es el registro de que Ana lo intentó, sin su correo ni el código.
+      expect(await deniedInB(fx.personas.ana.userId)).toBe(deniedBefore + 1);
+      const { rows: denied } = await db.query<{ details: unknown; result: string }>(
+        `select details, result from public.audit_log
+          where action = 'invitation.accept_denied' and tenant_id = $1 and actor_user_id = $2
+          order by id desc limit 1`,
+        [fx.orgs.B.tenantId, fx.personas.ana.userId],
+      );
+      expect(denied[0].result).toBe("denied");
+      expect(JSON.stringify(denied[0].details)).not.toContain(fx.personas.ana.email);
+      expect(JSON.stringify(denied[0].details)).not.toContain(b.tokenSha256);
       expect(
         await countWhere(
           db,
@@ -131,7 +166,7 @@ describe("Ataque 2 · quien está en A y en B, quien fue quitada y quien solo mi
     const res = await call("mixta", "accept_invitation", b.tokenSha256, fx.orgs.A.tenantId);
     expect(res.json).toEqual({ result: "wrong_email" });
     for (const name of BUSINESS_TABLES) {
-      expect(await fingerprint(db, spec(name)), `${name} de B cambió`).toBe(before.get(name));
+      expect(await fingerprintB(name), `${name} de B cambió`).toBe(before.get(name));
     }
   });
 
@@ -207,7 +242,7 @@ describe("Ataque 4 · adivinar códigos: el límite de aceptaciones fallidas", (
     const preview = await call("carla", "invitation_preview", fx.orgs.B.invitation!.tokenSha256);
     expect(preview.json).toEqual({ result: "rate_limited" });
     for (const name of BUSINESS_TABLES) {
-      expect(await fingerprint(db, spec(name)), `${name} de B cambió`).toBe(before.get(name));
+      expect(await fingerprintB(name), `${name} de B cambió`).toBe(before.get(name));
     }
     // El bloqueo es de ESA cuenta: otra persona sigue siendo atendida normalmente.
     const other = await call("beto", "accept_invitation", randomSha());
@@ -230,4 +265,44 @@ describe("Ataque 5 · sin sesión no responde nada", () => {
       for (const marker of orgMarkers("B")) expect(res.text).not.toContain(marker);
     },
   );
+});
+
+describe("Ataque 6 · por GET no se pueden probar códigos saltándose el límite", () => {
+  it("una invitación cancelada de A, consultada por GET con un pase real, no entrega ningún resultado", async () => {
+    const fx = fixture();
+    const { buildNewInvitation } = await import("@/lib/team/record");
+    const mine = buildNewInvitation(
+      fx.orgs.A.tenantId,
+      `get-${fx.runId}@ejemplo.test`.toLowerCase(),
+      "viewer",
+    );
+    const owner = await tokenOf("ana");
+    const created = await rpc(
+      owner,
+      "create_invitation",
+      mine.params,
+      tenantHeader(fx.orgs.A.tenantId),
+    );
+    expect(created.status, created.text).toBe(200);
+    const revoked = await rpc(
+      owner,
+      "revoke_invitation",
+      { p_invitation_id: mine.invitationId },
+      tenantHeader(fx.orgs.A.tenantId),
+    );
+    expect(revoked.status, revoked.text).toBe(200);
+
+    const sha = mine.params.p_token_sha256;
+    const token = await tokenOf("dante");
+    for (const fn of ["invitation_preview", "accept_invitation"]) {
+      const res = await rest(token, `rpc/${fn}?p_token_sha256=${sha}`, { method: "GET" });
+      expect(res.status, `${fn} por GET`).toBeGreaterThanOrEqual(400);
+      expect((res.json as { code?: string }).code, `${fn} por GET`).toBe("25006");
+      expect(res.text, `${fn} por GET`).not.toContain("result");
+      expect(res.text, `${fn} por GET`).not.toContain("revoked");
+    }
+    // Por POST, en cambio, sí contesta.
+    const viaPost = await call("dante", "invitation_preview", sha);
+    expect(viaPost.json).toEqual({ result: "revoked" });
+  });
 });

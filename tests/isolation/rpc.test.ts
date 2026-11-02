@@ -24,18 +24,37 @@ afterAll(async () => {
   await db.end();
 });
 
+/**
+ * Huella de la tabla para comparar antes y después. De `auth_rate_limits` solo cuentan las filas que NO son de
+ * `invite_accept_user` (esas suben a propósito: aceptar o ver una invitación con un código que no existe cuenta un
+ * fallo) y de las últimas 23 horas (la limpieza automática borra las de más de un día y cambiaría la huella).
+ */
+async function fingerprintOf(spec: (typeof ISOLATION_TABLES)[number]): Promise<string> {
+  if (spec.name !== "auth_rate_limits") return fingerprint(db, spec);
+  const { rows } = await db.query<{ h: string }>(
+    `select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
+       from public.auth_rate_limits t
+      where t.scope <> 'invite_accept_user' and t.updated_at > now() - interval '23 hours'`,
+  );
+  return rows[0].h;
+}
+
 const NOT_EXPOSED_STATUS = 406; // PostgREST: el esquema pedido no está expuesto
 
 describe("A13 · ninguna función permite actuar sobre otra organización", () => {
   it("cada función del registro, llamada por Ana con la cabecera de B o sin cabecera, no toca a B", async () => {
     const fx = fixture();
     const token = await tokenOf("ana");
+    // Aceptar y ver una invitación con un código que no existe cuenta un fallo de la persona que llama (10 en 10
+    // minutos, H-009): para no gastar el cupo de Ana, esas dos las llama Dante, que casi no usa el suyo.
+    const tokenFor = async (name: string) =>
+      name === "accept_invitation" || name === "invitation_preview" ? tokenOf("dante") : token;
     const before = new Map<string, string>();
-    for (const spec of ISOLATION_TABLES) before.set(spec.name, await fingerprint(db, spec));
+    for (const spec of ISOLATION_TABLES) before.set(spec.name, await fingerprintOf(spec));
 
     for (const [name, spec] of Object.entries(RPC_CASES)) {
       for (const header of [fx.orgs.B.tenantId, undefined]) {
-        const res = await rpc(token, name, spec.args, tenantHeader(header));
+        const res = await rpc(await tokenFor(name), name, spec.args, tenantHeader(header));
         // Nunca devuelve datos de B
         expect(res.text, `${name}`).not.toContain(fx.orgs.B.canary);
         expect(res.text, `${name}`).not.toContain(fx.orgs.B.tenantId);
@@ -48,11 +67,8 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
       }
     }
     for (const spec of ISOLATION_TABLES) {
-      // Los contadores de intentos (`auth_rate_limits`) suben A PROPÓSITO: aceptar o ver una invitación con un código
-      // que no existe cuenta un fallo de esa persona (H-009). No son datos de B; los demás ataques los vigila su prueba.
-      if (spec.name === "auth_rate_limits") continue;
       // `legal_acceptances` y `tenants` de B no cambian; las tablas de Ana pueden crecer (create_tenant, aceptaciones)
-      expect(await fingerprint(db, spec), `${spec.name} cambió`).toBe(before.get(spec.name));
+      expect(await fingerprintOf(spec), `${spec.name} cambió`).toBe(before.get(spec.name));
     }
   });
 

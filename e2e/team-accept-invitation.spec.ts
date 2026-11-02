@@ -333,6 +333,10 @@ test("si verifica el correo en otro dispositivo, el inicio le recuerda abrir de 
     await expect(
       page.getByText("Abre de nuevo el enlace del correo que te enviaron."),
     ).toBeVisible();
+    // Con sesión, la salida es un botón grande (no un enlace de texto).
+    const toAccount = page.getByTestId("invitation-missing-action");
+    await expect(toAccount).toHaveText("Ir a mi cuenta");
+    expect((await toAccount.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
     // Abre el enlace del correo con la sesión que ya tiene y se une.
     await page.goto(link);
     await expect(page.getByTestId("invitation-sentence")).toContainText(
@@ -550,6 +554,10 @@ test("un enlace mal formado o inventado no abre nada: aviso claro y ninguna cook
       ),
     ).toBeVisible();
     expect((await context.cookies()).find((c) => c.name === COOKIE_NAME)).toBeUndefined();
+    // Sin sesión también hay un botón grande para seguir.
+    const toLogin = page.getByTestId("invitation-missing-action");
+    await expect(toLogin).toHaveText("Ingresar");
+    expect((await toLogin.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
 
     // Bien formado pero inventado: sin sesión no se sabe nada; con sesión, «no es válido».
     const invented = "A".repeat(43);
@@ -568,6 +576,140 @@ test("un enlace mal formado o inventado no abre nada: aviso claro y ninguna cook
         "Este enlace de invitación no es válido. Revisa que lo hayas abierto completo desde el correo, o pide a quien te invitó que te envíe otra.",
       ),
     ).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+test("si ya es miembro, la vista previa dice su rol actual y que la invitación no lo cambia", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const email = uniqueEmail("acepta-ya-miembro");
+  await createAccount(browser, baseURL, email, "Ya Era Miembro");
+  await invite(ownerPage, tenantId, email, "admin");
+  const { link } = await waitForInviteLink(email);
+  // Entra a la organización por otro camino DESPUÉS de que le llegó la invitación, como Observador.
+  await withDb((db) =>
+    db.query(
+      `insert into public.members (tenant_id, user_id, role)
+       select $1, id, 'viewer' from auth.users where email = $2`,
+      [tenantId, email],
+    ),
+  );
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.goto("/ingresar");
+    await login(page, email);
+    await page.goto(link);
+    await expect(page.getByTestId("invitation-already-member")).toHaveText(
+      `Ya eres parte de ${ORG_NAME} como Observador. Esta invitación no cambia tu rol.`,
+    );
+    // No promete el rol de la invitación.
+    await expect(page.getByText("Configura la organización, maneja el equipo")).toHaveCount(0);
+    await page.getByRole("button", { name: "Entrar", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+    await withDb(async (db) => {
+      const { rows } = await db.query<{ role: string }>(
+        `select m.role from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email = $2`,
+        [tenantId, email],
+      );
+      expect(rows).toEqual([{ role: "viewer" }]);
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("si «Unirme» falla porque el código ya no sirve, queda una sola salida («Entendido»)", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const email = uniqueEmail("acepta-se-cancela");
+  await createAccount(browser, baseURL, email, "Se Cancela Al Final");
+  await invite(ownerPage, tenantId, email, "viewer");
+  const { link, token } = await waitForInviteLink(email);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.goto("/ingresar");
+    await login(page, email);
+    await page.goto(link);
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
+    // La cancelan justo antes del clic.
+    await withDb((db) =>
+      db.query(
+        `update public.invitations set status = 'revoked', revoked_at = now(), revoke_reason = 'cancelled'
+          where token_sha256 = $1`,
+        [sha256(token)],
+      ),
+    );
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(
+      page.getByText(
+        "Esta invitación fue cancelada. Pide a quien te invitó que te envíe una nueva.",
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Entendido", exact: true })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Seguir sin unirme" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Unirme", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Entendido", exact: true }).click();
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("bloqueada por intentos: se ofrece «Intentar de nuevo» y el código se queda guardado", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const email = uniqueEmail("acepta-bloqueada");
+  await createAccount(browser, baseURL, email, "Bloqueada Por Intentos");
+  await invite(ownerPage, tenantId, email, "viewer");
+  const { link, token } = await waitForInviteLink(email);
+  // La cuenta ya gastó sus intentos fallidos (el contador es una huella del id de la cuenta).
+  await withDb((db) =>
+    db.query(
+      `insert into public.auth_rate_limits (scope, key_hash, failures, locked_until)
+       select 'invite_accept_user', encode(sha256(convert_to('invite_accept_user|' || id::text, 'UTF8')), 'hex'),
+              10, now() + interval '10 minutes'
+         from auth.users where email = $1`,
+      [email],
+    ),
+  );
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.goto("/ingresar");
+    await login(page, email);
+    await page.goto(link);
+    await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
+      "data-result",
+      "rate_limited",
+    );
+    await expect(
+      page.getByText("Demasiados intentos. Espera unos minutos e inténtalo de nuevo."),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Intentar de nuevo" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Entendido", exact: true })).toHaveCount(0);
+    // El código sigue en la cookie: al terminar el bloqueo, «Intentar de nuevo» lo usa.
+    expect((await context.cookies()).find((c) => c.name === COOKIE_NAME)?.value).toBe(token);
+    await withDb((db) =>
+      db.query(
+        "update public.auth_rate_limits set locked_until = now() - interval '1 second' where scope = 'invite_accept_user'",
+      ),
+    );
+    await page.getByRole("link", { name: "Intentar de nuevo" }).click();
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
   } finally {
     await context.close();
   }

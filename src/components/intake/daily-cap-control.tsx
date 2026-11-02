@@ -52,6 +52,7 @@ export function DailyCapControl({
     }
     setError(null);
     setSaving(true);
+    const submittedText = text;
     try {
       const result = await saveDailyCapAction(tenantId, formId, checked.value);
       if (result.status === "error") {
@@ -60,7 +61,8 @@ export function DailyCapControl({
       }
       const stored = result.dailyCap ?? checked.value;
       setSaved(stored);
-      setText(String(stored));
+      // Si mientras guardaba se escribió otro número, ese es el que vale: no se le devuelve el anterior.
+      setText((current) => (current === submittedText ? String(stored) : current));
       toast.success(result.message, { id: SAVED_TOAST_ID });
     } catch {
       setBanner(OFFLINE_MESSAGE);

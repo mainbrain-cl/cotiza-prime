@@ -99,7 +99,7 @@ export function InvitationList({ tenantId, items }: { tenantId: string; items: I
                 <dd data-testid="invitation-expiry">{item.expiresLabel}</dd>
               </div>
               <div className="flex gap-1.5">
-                <dt className="sr-only">Creada</dt>
+                <dt className="sr-only">Invitada</dt>
                 <dd data-testid="invitation-created">{item.createdLabel}</dd>
               </div>
               <div className="flex gap-1.5">

@@ -19,7 +19,8 @@ end $$;
 drop function if exists app.purge_invitations();
 drop function if exists public.invitation_notice_register(uuid, uuid, uuid, text, text);
 drop function if exists public.invitation_notice_recipients(uuid);
-drop function if exists public.invitation_notices_pending(integer);
+drop function if exists public.invitation_notices_pending(integer, uuid);
+drop function if exists app.invitation_notice_reserved(uuid);
 drop function if exists app.invitation_notice_ready(uuid);
 drop function if exists app.invitation_notice_applies(text, uuid, uuid);
 drop function if exists public.invitation_email_settle(uuid, text, text, text);
@@ -112,6 +113,7 @@ begin
 end $$;
 
 -- La tabla y lo que la acompaña
+drop index if exists public.invitations_notice_queue;
 drop table public.invitations;
 drop function if exists app.audit_invitation_change();
 drop domain app.invitation_role;

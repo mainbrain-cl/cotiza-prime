@@ -144,6 +144,9 @@ create unique index invitations_one_pending_per_email on public.invitations (ten
 create index invitations_tenant_status  on public.invitations (tenant_id, status, created_at desc);
 create index invitations_tenant_inviter on public.invitations (tenant_id, invited_by, created_at);
 create index invitations_tenant_member  on public.invitations (tenant_id, member_id) where member_id is not null;
+-- La cola de la tarea de avisos al Dueño mira solo las que están pendientes, de la más antigua a la más nueva
+-- (excepción justificada a «los índices empiezan por tenant_id»: la tarea recorre todas las organizaciones).
+create index invitations_notice_queue on public.invitations (created_at) where owner_notice_state = 'pending';
 
 create trigger invitations_meta before insert or update on public.invitations
   for each row execute function app.set_row_meta();
@@ -220,10 +223,14 @@ create index email_messages_invitation on public.email_messages (tenant_id, invi
 create unique index email_messages_one_invitation_notice on public.email_messages (tenant_id, invitation_id)
   where kind = 'invitation_notice' and status <> 'failed';
 
--- El correo de una invitación lleva el correo del invitado (cifrado): solo lo ve quien maneja el equipo.
+-- El correo de una invitación lleva el correo del invitado (cifrado): solo lo ve quien maneja el equipo. El aviso
+-- al Dueño es del Dueño: lo ve quien puede transferir la organización (`tenant.transfer`), no el Administrador
+-- (así no ve si el aviso sobre lo que él mismo hizo salió o falló).
 alter policy email_messages_select on public.email_messages
   using (tenant_id = (select app.current_tenant_id())
-         and (kind not in ('invitation', 'invitation_notice') or (select app.can('team.manage'))));
+         and (kind not in ('invitation', 'invitation_notice')
+              or (kind = 'invitation' and (select app.can('team.manage')))
+              or (kind = 'invitation_notice' and (select app.can('tenant.transfer')))));
 
 -- Registro de correos de solo agregar. Salidas: la limpieza por plazo de los avisos de solicitud (como antes,
 -- amarrada al vencimiento de la solicitud) y ahora la de los correos de una invitación vencida, cancelada o
@@ -577,8 +584,11 @@ begin
          status = 'sent', status_at = now(), sent_at = now()
    where tenant_id = v_mail.tenant_id and id = v_mail.id;
   if v_mail.kind = 'invitation_notice' then
+    -- «Enviado» solo quiere decir que el proveedor aceptó el correo: si después rebota, el estado sigue en `sent`.
+    -- (También pasa de `exhausted` a `sent`: un último intento lento que igual salió.)
     update public.invitations set owner_notice_state = 'sent'
-     where tenant_id = v_mail.tenant_id and id = v_mail.invitation_id and owner_notice_state = 'pending';
+     where tenant_id = v_mail.tenant_id and id = v_mail.invitation_id
+       and owner_notice_state in ('pending', 'exhausted');
   end if;
   return jsonb_build_object('status', 'sent');
 end $$;
@@ -592,6 +602,7 @@ grant execute on function public.invitation_email_settle(uuid, text, text, text)
 -- quien puede transferir la organización» (`tenant.transfer`).
 --
 -- Es ROBUSTO: `create_invitation` anota el aviso como pendiente en la misma operación (`owner_notice_state`).
+-- Cada intento se RESERVA antes de hacerse (`invitation_notices_pending`): reservar gasta un intento.
 -- Lo envía la tarea `src/server/jobs/send-invitation-notices.ts`, que también REINTENTA los fallidos hasta
 -- `app.invitation_notice_max_attempts()` veces, separados al menos `app.invitation_notice_retry_minutes()`
 -- minutos. Cada intento es una fila de `email_messages` (`invitation_notice`); el índice único deja una sola
@@ -610,13 +621,14 @@ language sql stable security definer set search_path = '' as $$
 $$;
 revoke all on function app.invitation_notice_applies(text, uuid, uuid) from public, anon, authenticated;
 
--- ¿Está lista para intentarse ahora? Anotada como pendiente, la invitación sigue pendiente y vigente, quedan
--- intentos, pasó el intervalo desde el último y no hay un intento vivo (pendiente o enviado).
+-- ¿Se puede RESERVAR un intento ahora? Anotada como pendiente, la invitación no se canceló (sigue pendiente o ya
+-- se aceptó: que un Administrador invitó a otro ya ocurrió, y aceptarla no cancela el aviso; tampoco importa que
+-- haya vencido), quedan intentos, pasó el intervalo desde el último y no hay un intento vivo (pendiente o enviado).
 create function app.invitation_notice_ready(p_invitation_id uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
   select exists (
     select 1 from public.invitations i
-     where i.id = p_invitation_id and i.status = 'pending' and i.expires_at > now()
+     where i.id = p_invitation_id and i.status in ('pending', 'accepted')
        and i.owner_notice_state = 'pending'
        and i.owner_notice_attempts < app.invitation_notice_max_attempts()
        and (i.owner_notice_last_attempt_at is null
@@ -628,10 +640,32 @@ language sql stable security definer set search_path = '' as $$
 $$;
 revoke all on function app.invitation_notice_ready(uuid) from public, anon, authenticated;
 
--- Lo que la tarea tiene que atender: primero da por fallidos los intentos que nunca se cerraron (el servidor se
--- cayó a medias) y por agotados los avisos sin intentos; luego entrega las invitaciones listas, las más antiguas
--- primero. `exhausted` cuenta los que acaban de agotarse (la aplicación los deja en el log).
-create function public.invitation_notices_pending(p_limit integer default 20) returns jsonb
+-- ¿Hay un intento RESERVADO sin usar? Cada reserva (`owner_notice_attempts`) permite anotar exactamente un correo.
+create function app.invitation_notice_reserved(p_invitation_id uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from public.invitations i
+     where i.id = p_invitation_id and i.status in ('pending', 'accepted')
+       and i.owner_notice_state = 'pending'
+       and i.owner_notice_attempts > (
+         select count(*) from public.email_messages e
+          where e.tenant_id = i.tenant_id and e.invitation_id = i.id and e.kind = 'invitation_notice')
+       and not exists (
+         select 1 from public.email_messages e
+          where e.tenant_id = i.tenant_id and e.invitation_id = i.id and e.kind = 'invitation_notice'
+            and e.status <> 'failed'))
+$$;
+revoke all on function app.invitation_notice_reserved(uuid) from public, anon, authenticated;
+
+-- RESERVA los avisos que la tarea (o el intento inmediato, con `p_invitation_id`) va a atender. Reservar es
+-- gastar un intento: se anota la hora y se cuenta ANTES de enviar, con `for update skip locked`, de modo que
+-- dos tareas a la vez no toman el mismo aviso y un aviso que falla sin llegar a anotarse (no hay Dueño con
+-- correo, el servidor se cae, algo se rompe) igual gasta sus intentos y termina agotándose; nunca se queda
+-- tapando la cola. Antes, da por fallidos los intentos que nunca se cerraron (el servidor se cayó a medias) y
+-- por agotados los avisos sin intentos (pasado el intervalo, para no pisar un último intento en curso).
+-- `exhausted` cuenta los que acaban de agotarse (la aplicación los deja en el log).
+create function public.invitation_notices_pending(p_limit integer default 20, p_invitation_id uuid default null)
+returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
   v_ids       jsonb;
@@ -643,24 +677,38 @@ begin
      and created_at < now() - make_interval(mins => app.invitation_notice_stale_minutes());
   update public.invitations i
      set owner_notice_state = 'exhausted'
-   where i.owner_notice_state = 'pending' and i.status = 'pending'
+   where i.owner_notice_state = 'pending' and i.status in ('pending', 'accepted')
      and i.owner_notice_attempts >= app.invitation_notice_max_attempts()
+     and i.owner_notice_last_attempt_at <= now() - make_interval(mins => app.invitation_notice_retry_minutes())
      and not exists (select 1 from public.email_messages e
                       where e.tenant_id = i.tenant_id and e.invitation_id = i.id and e.kind = 'invitation_notice'
                         and e.status = 'pending');
   get diagnostics v_exhausted = row_count;
-  select coalesce(jsonb_agg(x.id order by x.created_at), '[]'::jsonb) into v_ids
-    from (select i.id, i.created_at from public.invitations i
-           where i.owner_notice_state = 'pending' and app.invitation_notice_ready(i.id)
-           order by i.created_at
-           limit least(greatest(coalesce(p_limit, 20), 1), 100)) x;
+  with picked as (
+    select i.id, i.created_at from public.invitations i
+     where i.owner_notice_state = 'pending'
+       and (p_invitation_id is null or i.id = p_invitation_id)
+       and app.invitation_notice_ready(i.id)
+     order by i.created_at
+     limit least(greatest(coalesce(p_limit, 20), 1), 100)
+       for update skip locked
+  ), reserved as (
+    update public.invitations i
+       set owner_notice_attempts = i.owner_notice_attempts + 1, owner_notice_last_attempt_at = now()
+      from picked
+     where i.id = picked.id
+    returning i.id, picked.created_at
+  )
+  select coalesce(jsonb_agg(r.id order by r.created_at), '[]'::jsonb) into v_ids from reserved r;
   return jsonb_build_object('invitation_ids', v_ids, 'exhausted', v_exhausted);
 end $$;
-revoke all on function public.invitation_notices_pending(integer) from public, anon, authenticated;
-grant execute on function public.invitation_notices_pending(integer) to service_role;
+revoke all on function public.invitation_notices_pending(integer, uuid) from public, anon, authenticated;
+grant execute on function public.invitation_notices_pending(integer, uuid) to service_role;
 
--- A quién avisar y con qué datos (ya filtrados por la base). Si no toca avisar ahora, la lista de destinatarios
--- viene vacía: no se distingue «no corresponde» de «ya se hizo» ni de «todavía no toca reintentar».
+-- A quién avisar y con qué datos (ya filtrados por la base), para un intento RESERVADO. Sin reserva, la lista de
+-- destinatarios viene vacía. Si hay reserva pero la organización no tiene un Dueño activo con correo, el aviso
+-- no tiene a quién llegar nunca: se da por agotado aquí mismo y se avisa con `exhausted = 'no_recipient'` para
+-- que la aplicación lo deje en el log (sin datos personales).
 create function public.invitation_notice_recipients(p_invitation_id uuid) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -672,17 +720,21 @@ begin
   if p_invitation_id is null then
     raise exception 'invalid_arguments' using errcode = 'CP422';
   end if;
-  select * into i from public.invitations where id = p_invitation_id;
-  if not found or not app.invitation_notice_ready(i.id) then
+  select * into i from public.invitations where id = p_invitation_id for update;
+  if not found or not app.invitation_notice_reserved(i.id) then
     return jsonb_build_object('recipients', '[]'::jsonb);
   end if;
-  select t.name into v_tenant_name from public.tenants t where t.tenant_id = i.tenant_id;
-  select nullif(btrim(p.full_name), '') into v_inviter from public.profiles p where p.user_id = i.invited_by;
   select coalesce(jsonb_agg(jsonb_build_object('user_id', u.id, 'email', u.email::text) order by u.email), '[]'::jsonb)
     into v_recipients
     from public.members m join auth.users u on u.id = m.user_id
    where m.tenant_id = i.tenant_id and m.status = 'active' and app.role_can(m.role, 'tenant.transfer')
      and u.email is not null;
+  if jsonb_array_length(v_recipients) = 0 then
+    update public.invitations set owner_notice_state = 'exhausted' where tenant_id = i.tenant_id and id = i.id;
+    return jsonb_build_object('recipients', '[]'::jsonb, 'exhausted', 'no_recipient');
+  end if;
+  select t.name into v_tenant_name from public.tenants t where t.tenant_id = i.tenant_id;
+  select nullif(btrim(p.full_name), '') into v_inviter from public.profiles p where p.user_id = i.invited_by;
   return jsonb_build_object(
     'tenant_id', i.tenant_id, 'tenant_name', v_tenant_name, 'inviter_name', v_inviter,
     'role', i.role, 'invited_at', i.created_at, 'recipients', v_recipients);
@@ -690,8 +742,9 @@ end $$;
 revoke all on function public.invitation_notice_recipients(uuid) from public, anon, authenticated;
 grant execute on function public.invitation_notice_recipients(uuid) to service_role;
 
--- Anota el intento (antes de enviarlo): bloquea la invitación, vuelve a comprobar que toca intentar y cuenta el
--- intento. El destinatario tiene que ser el Dueño activo de la organización de ESA invitación.
+-- Anota el correo de un intento RESERVADO (antes de enviarlo): bloquea la invitación y comprueba que haya una
+-- reserva sin usar. El destinatario tiene que ser el Dueño activo de la organización de ESA invitación. No gasta
+-- un intento: ya se gastó al reservar.
 create function public.invitation_notice_register(
   p_email_id uuid, p_invitation_id uuid, p_to_user_id uuid, p_to_email_enc text, p_to_email_hash text
 ) returns jsonb
@@ -705,7 +758,7 @@ begin
     raise exception 'invalid_arguments' using errcode = 'CP422';
   end if;
   select * into i from public.invitations where id = p_invitation_id for update;
-  if not found or not app.invitation_notice_ready(i.id) then
+  if not found or not app.invitation_notice_reserved(i.id) then
     return jsonb_build_object('registered', false);
   end if;
   if not exists (select 1 from public.members m
@@ -721,9 +774,6 @@ begin
   exception when unique_violation then
     return jsonb_build_object('registered', false);
   end;
-  update public.invitations
-     set owner_notice_attempts = owner_notice_attempts + 1, owner_notice_last_attempt_at = now()
-   where tenant_id = i.tenant_id and id = i.id;
   return jsonb_build_object('registered', true);
 end $$;
 revoke all on function public.invitation_notice_register(uuid, uuid, uuid, text, text) from public, anon, authenticated;

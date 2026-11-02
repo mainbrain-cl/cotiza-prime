@@ -14,10 +14,11 @@
 --   · `app.normalize_email` (gemela de `src/lib/normalize/email.ts`) y `app.invitation_binding`.
 --   · `email_messages` gana el tipo `invitation` y la columna `invitation_id`.
 --   · Aviso al Dueño cuando alguien que NO es el Dueño invita a un Administrador (kind `invitation_notice`).
---     Es ROBUSTO, no de mejor esfuerzo: `create_invitation` deja anotado, en la misma transacción, que hay un
+--     Es ROBUSTO en la base: `create_invitation` deja anotado, en la misma transacción, que hay un
 --     aviso pendiente (`invitations.owner_notice_state = 'pending'`), aunque se la llame directo sin pasar por la
 --     pantalla; una tarea (`src/server/jobs/send-invitation-notices.ts`) envía los pendientes y reintenta los
---     fallidos con tope e intervalo. Funciones solo del servidor: `invitation_notices_pending`,
+--     fallidos con tope e intervalo. EN PRODUCCIÓN eso vale solo cuando se resuelva la decisión #17 (cómo se
+--     programa la tarea de avisos); mientras tanto, solo corre el intento inmediato. Funciones solo del servidor: `invitation_notices_pending`,
 --     `invitation_notice_recipients`, `invitation_notice_register` y el mismo `invitation_email_settle`.
 --     El aviso no lleva el correo del invitado.
 --   · Tarea diaria `app.purge_invitations()`: nada se guarda indefinidamente (LEGAL.md §1.3).
@@ -527,7 +528,9 @@ begin
     raise exception 'not_pending' using errcode = 'CP423';
   end if;
   update public.invitations
-     set status = 'revoked', revoked_at = now(), revoked_by = v_uid, revoke_reason = 'cancelled'
+     set status = 'revoked', revoked_at = now(), revoked_by = v_uid, revoke_reason = 'cancelled',
+         -- Una invitación cancelada no genera aviso: si había uno por enviar, sale de la cola.
+         owner_notice_state = case when owner_notice_state = 'pending' then 'none' else owner_notice_state end
    where tenant_id = v_tenant and id = v_inv.id;
   perform app.write_audit(v_tenant, 'user', v_uid, 'invitation.revoked', 'invitation', v_inv.id, 'success',
     jsonb_build_object('role', v_inv.role, 'reason', 'cancelled'));
@@ -601,7 +604,9 @@ grant execute on function public.invitation_email_settle(uuid, text, text, text)
 -- invitado. Se decide con la matriz y no con nombres de rol: «el rol puede manejar el equipo» y «el Dueño es
 -- quien puede transferir la organización» (`tenant.transfer`).
 --
--- Es ROBUSTO: `create_invitation` anota el aviso como pendiente en la misma operación (`owner_notice_state`).
+-- Es ROBUSTO en la base: `create_invitation` anota el aviso como pendiente en la misma operación
+-- (`owner_notice_state`). En producción, el envío y los reintentos de la tarea valen solo cuando se resuelva la
+-- decisión #17 (cómo se programa la tarea de avisos); mientras tanto, solo corre el intento inmediato.
 -- Cada intento se RESERVA antes de hacerse (`invitation_notices_pending`): reservar gasta un intento.
 -- Lo envía la tarea `src/server/jobs/send-invitation-notices.ts`, que también REINTENTA los fallidos hasta
 -- `app.invitation_notice_max_attempts()` veces, separados al menos `app.invitation_notice_retry_minutes()`
@@ -647,6 +652,8 @@ language sql stable security definer set search_path = '' as $$
     select 1 from public.invitations i
      where i.id = p_invitation_id and i.status in ('pending', 'accepted')
        and i.owner_notice_state = 'pending'
+       -- Una reserva solo sirve si es reciente: una que nadie usó no queda como saldo para siempre.
+       and i.owner_notice_last_attempt_at > now() - make_interval(mins => app.invitation_notice_stale_minutes())
        and i.owner_notice_attempts > (
          select count(*) from public.email_messages e
           where e.tenant_id = i.tenant_id and e.invitation_id = i.id and e.kind = 'invitation_notice')
@@ -697,6 +704,12 @@ begin
        set owner_notice_attempts = i.owner_notice_attempts + 1, owner_notice_last_attempt_at = now()
       from picked
      where i.id = picked.id
+       -- Las condiciones se REPITEN aquí como columnas: `app.invitation_notice_ready` lee la foto del inicio de la
+       -- consulta, y si otra reserva confirmó justo en medio, esta vuelve a mirar la fila ya actualizada y no la toma.
+       and i.owner_notice_state = 'pending'
+       and i.owner_notice_attempts < app.invitation_notice_max_attempts()
+       and (i.owner_notice_last_attempt_at is null
+            or i.owner_notice_last_attempt_at <= now() - make_interval(mins => app.invitation_notice_retry_minutes()))
     returning i.id, picked.created_at
   )
   select coalesce(jsonb_agg(r.id order by r.created_at), '[]'::jsonb) into v_ids from reserved r;
@@ -737,7 +750,7 @@ begin
   select nullif(btrim(p.full_name), '') into v_inviter from public.profiles p where p.user_id = i.invited_by;
   return jsonb_build_object(
     'tenant_id', i.tenant_id, 'tenant_name', v_tenant_name, 'inviter_name', v_inviter,
-    'role', i.role, 'invited_at', i.created_at, 'recipients', v_recipients);
+    'role', i.role, 'invited_at', i.created_at, 'invitation_status', i.status, 'recipients', v_recipients);
 end $$;
 revoke all on function public.invitation_notice_recipients(uuid) from public, anon, authenticated;
 grant execute on function public.invitation_notice_recipients(uuid) to service_role;

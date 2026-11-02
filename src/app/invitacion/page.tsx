@@ -6,7 +6,7 @@ import {
   LeaveInvitationButton,
 } from "@/components/team/accept-invitation-form";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { signOutAction } from "@/lib/auth/actions";
+import { signOutKeepingInvitationAction } from "@/lib/auth/actions";
 import { HOME_PATH, LOGIN_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
 import { getOptionalUser, requireUser } from "@/lib/auth/session";
 import {
@@ -114,7 +114,7 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
             Ingresaste como <strong className="break-all text-fg">{user.email}</strong>.
           </p>
           {wrongAccount ? (
-            <form action={signOutAction}>
+            <form action={signOutKeepingInvitationAction}>
               <Button type="submit" size="lg" className="w-full">
                 Cerrar sesión e ingresar con otro correo
               </Button>

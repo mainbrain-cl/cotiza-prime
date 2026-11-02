@@ -42,7 +42,7 @@ import {
 } from "@/lib/security/login-rate-limit";
 import { createClient } from "@/lib/supabase/server";
 import { INVITATION_ACCEPT_PATH } from "@/lib/team/accept-model";
-import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
+import { clearInvitationCode, hasPendingInvitation } from "@/lib/team/invitation-cookie";
 import { CLIENT_IP_HEADER } from "@/lib/tenant/constants";
 
 /** Prefijo de las cookies de sesión que crea Supabase (`sb-<proyecto>-auth-token`). */
@@ -180,8 +180,12 @@ export async function signInAction(_previous: FormState, formData: FormData): Pr
  * H-002: cierre efectivo. Invalida la sesión en el servidor de autenticación y borra las cookies.
  * Si el servidor de autenticación no responde, igual se borran a mano las cookies de este
  * navegador y se avisa con un mensaje distinto al de éxito: la sesión pudo quedar activa en el servidor.
+ *
+ * `keepInvitation`: el cierre normal también borra la invitación guardada en este navegador (H-009): en un
+ * computador compartido, quien ingrese después no debe caer en la invitación de otra persona. Solo el botón
+ * «Cerrar sesión e ingresar con otro correo» de la propia invitación la conserva.
  */
-export async function signOutAction(): Promise<void> {
+async function performSignOut(keepInvitation: boolean): Promise<void> {
   const user = await getOptionalUser();
   const supabase = await createClient();
   // `local`: cierra esta sesión y deja las de otros dispositivos.
@@ -194,6 +198,7 @@ export async function signOutAction(): Promise<void> {
       if (cookie.name.startsWith(SUPABASE_COOKIE_PREFIX)) cookieStore.delete(cookie.name);
     }
   }
+  if (!keepInvitation) await clearInvitationCode();
   if (user) {
     await logAuditEvent({
       action: "session.logout",
@@ -204,6 +209,16 @@ export async function signOutAction(): Promise<void> {
   redirect(
     `${LOGIN_PATH}?aviso=${error ? LOGIN_NOTICES.signOutIncomplete : LOGIN_NOTICES.signedOut}`,
   );
+}
+
+/** Cierre de sesión normal: también borra la invitación guardada en este navegador. */
+export async function signOutAction(): Promise<void> {
+  await performSignOut(false);
+}
+
+/** «Cerrar sesión e ingresar con otro correo» (pantalla de la invitación): conserva la invitación para seguir. */
+export async function signOutKeepingInvitationAction(): Promise<void> {
+  await performSignOut(true);
 }
 
 /**

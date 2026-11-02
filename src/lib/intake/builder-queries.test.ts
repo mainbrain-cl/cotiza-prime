@@ -143,6 +143,22 @@ describe("loadForm", () => {
     }
   });
 
+  it("si la base rechaza el tope con 42501 (rol efectivo menor que el guardado), el editor carga sin tope", async () => {
+    // La app cree que `admin` puede; la base decide con el rol efectivo (p. ej. sin dos pasos).
+    const { active, rpcs } = fakeActive(
+      {
+        intake_forms: { data: FORM_ROW },
+        intake_form_items: { data: [] },
+        intake_form_daily_caps: { data: null, error: { code: "42501", message: "forbidden" } },
+      },
+      "admin",
+    );
+    const result = await loadForm(active, FORM_ROW.id);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.loaded.dailyCap).toBeNull();
+    expect(rpcs).toHaveLength(1);
+  });
+
   it("si falla la lectura del tope (o no vuelve fila) para quien la pide, devuelve error, nunca un tope inventado", async () => {
     const failed = fakeActive({
       intake_forms: { data: FORM_ROW },

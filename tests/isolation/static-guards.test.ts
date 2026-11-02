@@ -672,7 +672,7 @@ describe("guardias estáticas del aislamiento", () => {
     expect(intakeLogProblem('serverLog("warn", "x", { code: codeOf })')).not.toBeNull();
   });
 
-  it("11. (H-008) el portero de invitaciones solo llama a sus tres funciones y nunca lee ni escribe una tabla", () => {
+  it("11. (H-008) el portero de invitaciones solo llama a sus cuatro funciones y nunca lee ni escribe una tabla", () => {
     const gateway = stripComments(read(path.join(SRC, "lib", "team", "gateway.ts"))).replace(
       /\s+/g,
       " ",
@@ -682,6 +682,7 @@ describe("guardias estáticas del aislamiento", () => {
       "invitation_email_settle",
       "invitation_notice_recipients",
       "invitation_notice_register",
+      "invitation_notices_pending",
     ]);
     expect(gateway.match(/\.rpc\(/g)?.length).toBe(called.length);
     expect(/\.(insert|upsert|delete|select|update)\(/.test(gateway)).toBe(false);
@@ -704,7 +705,10 @@ describe("guardias estáticas del aislamiento", () => {
         rel(f).startsWith("src/lib/team/") ||
         rel(f).startsWith("src/components/team/") ||
         rel(f).startsWith("src/app/o/[tenantId]/equipo/") ||
-        rel(f) === "src/lib/email/invitation.ts",
+        rel(f) === "src/lib/email/invitation.ts" ||
+        rel(f) === "src/lib/email/invitation-owner-notice.ts" ||
+        rel(f) === "src/lib/email/invitation-names.ts" ||
+        rel(f).startsWith("src/server/jobs/"),
     );
     expect(scoped.length).toBeGreaterThan(8);
     const offenders: string[] = [];

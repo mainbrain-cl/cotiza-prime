@@ -517,5 +517,11 @@ test("si alguien que no es el Dueño invita a un Administrador, el Dueño recibe
       [tenantId],
     );
     expect(rows).toEqual([{ status: "sent" }]);
+    // El aviso quedó anotado al invitar: el que correspondía, enviado; los demás, sin aviso.
+    const states = await db.query<{ owner_notice_state: string }>(
+      "select owner_notice_state from public.invitations where tenant_id = $1 order by owner_notice_state",
+      [tenantId],
+    );
+    expect(states.rows.map((r) => r.owner_notice_state)).toEqual(["none", "none", "sent"]);
   });
 });

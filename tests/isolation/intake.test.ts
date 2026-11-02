@@ -217,6 +217,77 @@ describe("Ataque 6 · lo que ningún pase puede leer", () => {
     }
   });
 
+  it("nadie con pase lee `daily_cap` por la tabla: ni el Dueño, ni con `select=*`, ni filtrando u ordenando por él", async () => {
+    const fx = fixture();
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+    for (const persona of ["ana", "mixta", "dante"] as const) {
+      const token = await tokenOf(persona);
+      for (const query of [
+        "intake_forms?select=daily_cap",
+        "intake_forms?select=*",
+        "intake_forms?select=id&daily_cap=gte.1",
+        "intake_forms?select=id&order=daily_cap",
+      ]) {
+        const res = await rest(token, query, { headers });
+        expect(res.status, `${persona} ${query}`).toBeGreaterThanOrEqual(400);
+      }
+    }
+  });
+
+  it("el tope lo lee por la función solo el Dueño o el Administrador, y solo el de su organización", async () => {
+    const fx = fixture();
+    const a = fx.orgs.A.intake!;
+    const b = fx.orgs.B.intake!;
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+    const { rows } = await db.query<{ id: string; daily_cap: number }>(
+      "select id, daily_cap from public.intake_forms where tenant_id = $1",
+      [fx.orgs.A.tenantId],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const persona of ["ana", "mixta"] as const) {
+      const token = await tokenOf(persona);
+      const all = await rpc(token, "intake_form_daily_caps", {}, headers);
+      expect(all.status, `${persona}: ${all.text}`).toBe(200);
+      const got = (all.json as { form_id: string; daily_cap: number }[]).map((r) => [
+        r.form_id,
+        r.daily_cap,
+      ]);
+      expect(got.sort()).toEqual(rows.map((r) => [r.id, r.daily_cap]).sort());
+      expect(all.text).not.toContain(b.formId);
+      const one = await rpc(token, "intake_form_daily_caps", { p_form_id: a.formId }, headers);
+      expect(one.status, one.text).toBe(200);
+      expect((one.json as unknown[]).length).toBe(1);
+    }
+    // El Observador de A (rol sin permiso) recibe «prohibido».
+    const dante = await rpc(await tokenOf("dante"), "intake_form_daily_caps", {}, headers);
+    expect(dante.status).toBeGreaterThanOrEqual(400);
+    expect(codeOf(dante)).toBe("42501");
+  });
+
+  it("Ana pide el tope del formulario de B: con la cabecera de A recibe «No encontrado» (CP404); con la de B o sin cabecera, 42501", async () => {
+    const fx = fixture();
+    const b = fx.orgs.B.intake!;
+    const token = await tokenOf("ana");
+    const own = await rpc(
+      token,
+      "intake_form_daily_caps",
+      { p_form_id: b.formId },
+      tenantHeader(fx.orgs.A.tenantId),
+    );
+    expect(own.status).toBeGreaterThanOrEqual(400);
+    expect(codeOf(own), own.text).toBe("CP404");
+    for (const header of [fx.orgs.B.tenantId, undefined]) {
+      const res = await rpc(
+        token,
+        "intake_form_daily_caps",
+        { p_form_id: b.formId },
+        tenantHeader(header),
+      );
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(codeOf(res), res.text).toBe("42501");
+    }
+  });
+
   it("un Lector no ve los contadores del día; el Dueño ve los de A y no los de B", async () => {
     const fx = fixture();
     const query = "intake_daily_counters?select=tenant_id,form_id,accepted,blocked_rate";

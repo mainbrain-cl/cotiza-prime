@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
+import { rolesThatCanEver } from "@/lib/permissions/matrix";
 import {
   canSeeProtection,
   capStateOfForm,
@@ -16,7 +17,14 @@ type Result = { data?: unknown; error?: { code: string } | null };
 
 function fakeActive(role: string, script: Record<string, Result>) {
   const tables: string[] = [];
+  const rpcs: string[] = [];
   const supabase = {
+    // El tope diario ya no se lee de la tabla (columna privada): lo entrega una función de la base.
+    rpc(name: string) {
+      rpcs.push(name);
+      const result: Result = { error: null, ...(script[name] ?? { data: [] }) };
+      return { then: (resolve: (value: Result) => unknown) => resolve(result) };
+    },
     from(table: string) {
       tables.push(table);
       const builder: Record<string, unknown> = {};
@@ -28,7 +36,11 @@ function fakeActive(role: string, script: Record<string, Result>) {
       return builder;
     },
   };
-  return { active: { role, tenantId: "t", supabase } as unknown as ActiveTenant, tables };
+  return {
+    active: { role, tenantId: "t", supabase } as unknown as ActiveTenant,
+    tables,
+    rpcs,
+  };
 }
 
 const counters = (rows: Record<string, unknown>[]) => ({
@@ -43,11 +55,21 @@ const counters = (rows: Record<string, unknown>[]) => ({
 });
 
 describe("loadProtection (H-092)", () => {
+  it("quien lee la protección es exactamente quien puede pedir el tope a la base (`intake.forms.manage`)", () => {
+    // `intake_form_daily_caps` solo la ejecuta `intake.forms.manage`; si estos dos permisos se separan, el panel
+    // de protección de un rol con uno y sin el otro caería en «error». Esta prueba avisa antes.
+    expect(rolesThatCanEver("intake.protection.read").sort()).toEqual(
+      rolesThatCanEver("intake.forms.manage").sort(),
+    );
+  });
+
   it("solo Dueño y Administrador; los demás roles ni consultan la base", async () => {
     for (const role of ["approver", "sales", "viewer"]) {
-      const { active, tables } = fakeActive(role, {});
+      const { active, tables, rpcs } = fakeActive(role, {});
       expect(await loadProtection(active)).toEqual({ ok: false, reason: "forbidden" });
       expect(tables, role).toEqual([]);
+      // Tampoco se pide el tope: la base lo rechazaría para estos roles.
+      expect(rpcs, role).toEqual([]);
       expect(canSeeProtection(role)).toBe(false);
     }
     expect(canSeeProtection("owner")).toBe(true);
@@ -59,29 +81,46 @@ describe("loadProtection (H-092)", () => {
     expect(await loadProtection(a.active)).toEqual({ ok: false, reason: "error" });
     const b = fakeActive("owner", {
       intake_daily_counters: counters([]),
-      intake_forms: { data: null, error: { code: "X" } },
+      intake_form_daily_caps: { data: null, error: { code: "X" } },
     });
     expect(await loadProtection(b.active)).toEqual({ ok: false, reason: "error" });
+  });
+
+  it("si la base rechaza el tope con 42501 (el rol efectivo no alcanza), es «prohibido», no «error»", async () => {
+    // La app cree al rol autorizado (`admin`), pero la base decide con el rol efectivo.
+    const forbidden = fakeActive("admin", {
+      intake_daily_counters: counters([]),
+      intake_form_daily_caps: { data: null, error: { code: "42501" } },
+    });
+    expect(await loadProtection(forbidden.active)).toEqual({ ok: false, reason: "forbidden" });
+    // Otro código sigue siendo una falla.
+    const failed = fakeActive("admin", {
+      intake_daily_counters: counters([]),
+      intake_form_daily_caps: { data: null, error: { code: "57014" } },
+    });
+    expect(await loadProtection(failed.active)).toEqual({ ok: false, reason: "error" });
   });
 
   it("lee solo las dos tablas necesarias y arma los contadores por formulario y de la organización", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-07T15:00:00Z"));
     try {
-      const { active, tables } = fakeActive("admin", {
+      const { active, tables, rpcs } = fakeActive("admin", {
         intake_daily_counters: counters([
           { form_id: FORM_A, day: "2026-10-07", accepted: 2, blocked_cap: 3 },
           { form_id: FORM_B, day: "2026-10-07", accepted: 1, blocked_captcha: 4 },
         ]),
-        intake_forms: {
+        intake_form_daily_caps: {
           data: [
-            { id: FORM_A, daily_cap: 2 },
-            { id: FORM_B, daily_cap: 50 },
+            { form_id: FORM_A, daily_cap: 2 },
+            { form_id: FORM_B, daily_cap: 50 },
           ],
         },
       });
       const data = await loadProtection(active);
-      expect(tables.sort()).toEqual(["intake_daily_counters", "intake_forms"]);
+      // Los contadores salen de su tabla; el tope, de la función (nunca de `intake_forms`).
+      expect(tables).toEqual(["intake_daily_counters"]);
+      expect(rpcs).toEqual(["intake_form_daily_caps"]);
       expect(data.ok).toBe(true);
       if (!data.ok) return;
       expect(summaryOfForm(data, FORM_A).today).toMatchObject({ accepted: 2, blockedCap: 3 });
@@ -111,10 +150,10 @@ describe("loadProtection (H-092)", () => {
           { form_id: FORM_A, day: "2026-10-07", accepted: 200 },
           { form_id: FORM_B, day: "2026-10-07", accepted: 100 },
         ]),
-        intake_forms: {
+        intake_form_daily_caps: {
           data: [
-            { id: FORM_A, daily_cap: 200 },
-            { id: FORM_B, daily_cap: 200 },
+            { form_id: FORM_A, daily_cap: 200 },
+            { form_id: FORM_B, daily_cap: 200 },
           ],
         },
       });

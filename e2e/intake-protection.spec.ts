@@ -387,6 +387,8 @@ test.describe("H-092 · que el formulario no se llene de basura", () => {
     for (const url of [editorUrl(ctx.a), listUrl(ctx.a)]) {
       await carla.goto(url);
       await expect(carla.locator("h1")).toBeVisible();
+      // sin el tope (columna privada) el editor y la lista cargan igual: ni error ni «0»
+      await expect(carla.getByTestId("form-load-error")).toHaveCount(0);
       await expect(carla.getByTestId("protection-panel")).toHaveCount(0);
       await expect(carla.getByTestId("daily-cap-form")).toHaveCount(0);
       await expect(carla.getByTestId("cap-reached")).toHaveCount(0);
@@ -408,6 +410,17 @@ test.describe("H-092 · que el formulario no se llene de basura", () => {
     expect(change.status).toBeGreaterThanOrEqual(400);
     expect((change.json as { code?: string }).code).toBe("42501");
     expect((await dbForm(ctx.a)).daily_cap).toBe(2);
+    // el tope es una columna privada: nadie lo lee por la tabla (ni el Dueño); por la función, solo el Dueño
+    for (const token of [ctx.sales.token, ctx.owner.token]) {
+      const direct = await rest(token, "intake_forms?select=daily_cap", { headers: header(ctx.a) });
+      expect(direct.status).toBeGreaterThanOrEqual(400);
+    }
+    const capAsSales = await rpc(ctx.sales.token, "intake_form_daily_caps", {}, header(ctx.a));
+    expect(capAsSales.status).toBeGreaterThanOrEqual(400);
+    expect((capAsSales.json as { code?: string }).code).toBe("42501");
+    const capAsOwner = await rpc(ctx.owner.token, "intake_form_daily_caps", {}, header(ctx.a));
+    expect(capAsOwner.status).toBe(200);
+    expect(capAsOwner.json).toEqual([{ form_id: ctx.a.formId, daily_cap: 2 }]);
     // los contadores: el Comercial no lee ninguna fila; el Dueño sí
     const asSales = await rest(ctx.sales.token, "intake_daily_counters?select=form_id", {
       headers: header(ctx.a),

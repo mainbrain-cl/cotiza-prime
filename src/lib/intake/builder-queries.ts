@@ -1,4 +1,5 @@
 import "server-only";
+import { can } from "@/lib/permissions/matrix";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
 import { getAppOrigin } from "@/lib/http/request-context";
 import {
@@ -95,8 +96,11 @@ export type LoadedForm = {
   id: string;
   status: FormStatus;
   revision: number;
-  /** Tope diario de solicitudes del formulario (H-092); no depende de los contadores. */
-  dailyCap: number;
+  /**
+   * Tope diario de solicitudes del formulario (H-092); no depende de los contadores. `null` cuando el rol no
+   * puede manejar formularios: la columna es privada en la base y a ese rol ni se le pide.
+   */
+  dailyCap: number | null;
   publicUrl: string | null;
   /** Sitios autorizados para incrustar el formulario (H-093). */
   embedOrigins: string[];
@@ -131,6 +135,36 @@ function toEditorItem(row: ItemRow): EditorItem {
   };
 }
 
+/** Código con que la base responde «no tienes el permiso» (`42501`). */
+export const FORBIDDEN_CODE = "42501";
+
+export type DailyCapsResult =
+  | { ok: true; caps: Map<string, number> }
+  /** Solo el código de la falla: nunca el mensaje de la base. */
+  | { ok: false; code: string };
+
+/**
+ * El tope diario de un formulario (con `formId`) o de todos los de la organización activa, por id. La columna
+ * `daily_cap` es privada (migración `intake_daily_cap_column`): la entrega la función `intake_form_daily_caps`,
+ * que la base solo ejecuta con el permiso `intake.forms.manage`. Quien llame debe haberlo revisado antes con
+ * la matriz: a los demás roles la base responde «prohibido». Es el único lugar de la aplicación que lo lee.
+ */
+export async function readDailyCaps(
+  active: ActiveTenant,
+  formId?: string,
+): Promise<DailyCapsResult> {
+  const { data, error } = await active.supabase.rpc(
+    "intake_form_daily_caps",
+    formId === undefined ? {} : { p_form_id: formId },
+  );
+  if (error || !data) return { ok: false, code: error?.code ?? "unknown" };
+  const caps = new Map<string, number>();
+  for (const row of data as { form_id: string; daily_cap: number }[]) {
+    caps.set(row.form_id, Number(row.daily_cap));
+  }
+  return { ok: true, caps };
+}
+
 export type LoadFormResult =
   | { ok: true; loaded: LoadedForm }
   /** `not_found`: no existe en esta organización (la RLS lo decide). `error`: falló la lectura. */
@@ -144,21 +178,40 @@ export async function loadForm(active: ActiveTenant, formId: string): Promise<Lo
   const { data: row, error: formError } = await active.supabase
     .from("intake_forms")
     .select(
-      "id, public_id, status, revision, name, title, intro, success_message, fields, privacy_policy_url, embed_origins, daily_cap",
+      "id, public_id, status, revision, name, title, intro, success_message, fields, privacy_policy_url, embed_origins",
     )
     .eq("id", formId)
     .maybeSingle();
   if (formError) return { ok: false, reason: "error" };
   if (!row) return { ok: false, reason: "not_found" };
-  const { data: items, error: itemsError } = await active.supabase
-    .from("intake_form_items")
-    .select(
-      "id, kind, catalog_item_id, public_name, public_description, unit, quantity_mode, min_qty_milli, max_qty_milli",
-    )
-    .eq("form_id", formId)
-    .eq("is_active", true)
-    .order("position", { ascending: true });
+  // El tope diario es una columna privada: solo quien maneja formularios lo lee, y por una función de la
+  // base (no por la tabla). Los demás roles ni lo piden: la base lo rechazaría.
+  const [itemsResult, capsResult] = await Promise.all([
+    active.supabase
+      .from("intake_form_items")
+      .select(
+        "id, kind, catalog_item_id, public_name, public_description, unit, quantity_mode, min_qty_milli, max_qty_milli",
+      )
+      .eq("form_id", formId)
+      .eq("is_active", true)
+      .order("position", { ascending: true }),
+    can(active.role, "intake.forms.manage") ? readDailyCaps(active, formId) : Promise.resolve(null),
+  ]);
+  const { data: items, error: itemsError } = itemsResult;
   if (itemsError || !items) return { ok: false, reason: "error" };
+  let dailyCap: number | null = null;
+  if (capsResult) {
+    if (capsResult.ok) {
+      const cap = capsResult.caps.get(formId);
+      // Una respuesta sin este formulario no se disfraza de tope.
+      if (cap === undefined) return { ok: false, reason: "error" };
+      dailyCap = cap;
+    } else if (capsResult.code !== FORBIDDEN_CODE) {
+      return { ok: false, reason: "error" };
+    }
+    // «Prohibido» (42501): la app cree que el rol puede, pero la base decide con el rol EFECTIVO (p. ej. un
+    // Administrador sin dos pasos actúa como Observador). No es una falla: el editor carga sin tope.
+  }
 
   const status = row.status as FormStatus;
   return {
@@ -167,7 +220,7 @@ export async function loadForm(active: ActiveTenant, formId: string): Promise<Lo
       id: row.id as string,
       status,
       revision: row.revision as number,
-      dailyCap: Number(row.daily_cap),
+      dailyCap,
       publicUrl: isLive(status) ? publicFormUrl(getAppOrigin(), row.public_id as string) : null,
       embedOrigins: ((row.embed_origins as string[] | null) ?? []).slice(),
       embedSnippet: isLive(status)

@@ -655,8 +655,11 @@ graves y con 6 menores (los m8 y m10 se corrigieron en el PR #6; ver más abajo)
 
 **Pendiente (anotado, no bloquea)**
 
-- **m4:** `loadProtection` lee como máximo 3.000 filas de contadores y 500 formularios. Con los 20 formularios activos
-  que admite una organización no se alcanza; si algún día se acerca, mostrar «al menos» o el estado de error.
+- **m4:** `loadProtection` lee como máximo 3.000 filas de contadores. Los topes los entrega `intake_form_daily_caps`
+  (desde el 2026-11-02, sin `.limit(500)`): devuelve **todos** los formularios de la organización, archivados incluidos y
+  sin tope de cantidad, y la API corta en 1.000 filas sin avisar (`max_rows = 1000` en `supabase/config.toml`). Con los 20
+  formularios activos que admite una organización (más los archivados) no se alcanza; si algún día se acerca, mostrar
+  «al menos» o el estado de error.
 - **11:** ~~cualquier miembro puede leer `daily_cap` por la API directa~~ — **resuelto el 2026-11-02 (decisión de José: se
   limita la columna)**, ver «Hecho después (2026-11-02)» más abajo.
 - **12:** un cambio de tope queda en la auditoría como `changed: ['daily_cap']`, sin el valor anterior ni el nuevo.

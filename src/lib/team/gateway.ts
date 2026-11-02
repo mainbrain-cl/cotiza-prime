@@ -87,6 +87,7 @@ const recipientsSchema = z.object({
   inviter_name: z.string().nullable().optional(),
   role: z.string().optional(),
   invited_at: z.string().optional(),
+  invitation_status: z.enum(["pending", "accepted"]).optional(),
   recipients: z.array(z.object({ user_id: z.uuid(), email: z.string().min(3).max(254) })).max(10),
   /** La base dio el aviso por agotado sin intentarlo: `no_recipient` (no hay un Dueño activo con correo). */
   exhausted: z.string().optional(),
@@ -98,6 +99,8 @@ export type InvitationNoticeInfo = {
   inviterName: string | null;
   role: string;
   invitedAt: string;
+  /** Cómo está la invitación al enviar el aviso: pendiente (o vencida) o ya aceptada. */
+  invitationStatus: "pending" | "accepted";
   recipients: { userId: string; email: string }[];
 };
 
@@ -133,6 +136,7 @@ export async function readInvitationNotice(invitationId: string): Promise<Invita
       inviterName: body.inviter_name ?? null,
       role: body.role,
       invitedAt: body.invited_at,
+      invitationStatus: body.invitation_status ?? "pending",
       recipients: body.recipients.map((r) => ({ userId: r.user_id, email: r.email })),
     },
   };

@@ -120,12 +120,22 @@ describe("readInvitationNotice", () => {
         inviterName: "Mixta Doble",
         role: "admin",
         invitedAt: "2026-10-30T15:00:00.000Z",
+        invitationStatus: "pending",
         recipients: [{ userId: OWNER, email: "duena@ejemplo.test" }],
       },
     });
     expect(rpc).toHaveBeenCalledWith("invitation_notice_recipients", {
       p_invitation_id: INVITATION,
     });
+  });
+
+  it("entrega el estado de la invitación (pendiente o ya aceptada) para que el texto no prometa cancelar", async () => {
+    rpc.mockResolvedValue({ data: { ...body, invitation_status: "accepted" }, error: null });
+    expect((await readInvitationNotice(INVITATION)).notice?.invitationStatus).toBe("accepted");
+    rpc.mockResolvedValue({ data: { ...body, invitation_status: "revoked" }, error: null });
+    await expect(readInvitationNotice(INVITATION)).rejects.toThrow(
+      "team_gateway_notice_recipients:shape",
+    );
   });
 
   it("sin intento reservado la base no entrega destinatarios: no hay aviso", async () => {

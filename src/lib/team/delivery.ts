@@ -133,7 +133,12 @@ async function noticeOne(
       organizationName: info.tenantName,
       roleLabel: ROLE_LABELS[info.role],
       invitedAt: info.invitedAt,
-      teamUrl: `${getAppOrigin()}${tenantPath(info.tenantId, "equipo")}`,
+      // Una invitación ya aceptada no sale en «Tu equipo» (solo lista las pendientes): el botón lleva al inicio.
+      invitationAccepted: info.invitationStatus === "accepted",
+      teamUrl: `${getAppOrigin()}${tenantPath(
+        info.tenantId,
+        info.invitationStatus === "accepted" ? "" : "equipo",
+      )}`,
       idempotencyKey: emailId,
     });
     if (!built.ok) {
@@ -199,7 +204,8 @@ async function sendReservedNotice(invitationId: string): Promise<void> {
 /**
  * El intento inmediato del aviso al Dueño de UNA invitación, justo después de crearla (sin hacer esperar a quien
  * invita). Reserva el intento y lo envía. La garantía NO es este intento: el aviso ya quedó anotado en la base
- * como pendiente y la tarea lo envía y reintenta. Nunca lanza.
+ * como pendiente y la tarea lo envía y reintenta (en producción, solo cuando se resuelva la decisión #17, cómo se
+ * programa la tarea de avisos; mientras tanto, solo corre este intento). Nunca lanza.
  */
 export async function notifyOwnerOfInvitation(invitationId: string): Promise<void> {
   try {

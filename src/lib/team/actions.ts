@@ -53,8 +53,8 @@ export async function inviteMemberAction(
   const result = await createInvitation(active, parsed.data);
   if (result.status === "ok") {
     refresh(active.tenantId);
-    // El aviso al Dueño ya quedó anotado en la base (la tarea lo envía y reintenta). Este es el intento
-    // inmediato, DESPUÉS de responder: quien invita no espera un segundo envío y un fallo no le llega.
+    // El aviso al Dueño ya quedó anotado en la base (la tarea lo envía y reintenta; en producción, solo cuando
+    // se resuelva la decisión #17, cómo se programa la tarea). Este es el intento inmediato, DESPUÉS de responder: quien invita no espera un segundo envío y un fallo no le llega.
     const invitationId = result.notifyOwnerOf;
     if (invitationId) {
       after(async () => {

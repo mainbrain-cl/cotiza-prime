@@ -2,7 +2,8 @@ import "server-only";
 import { deliverPendingInvitationNotices, type NoticeJobResult } from "@/lib/team/delivery";
 
 /**
- * Tarea del aviso al Dueño (H-008, decisión de José: el aviso es robusto, no de mejor esfuerzo).
+ * Tarea del aviso al Dueño (H-008, decisión de José: el aviso es robusto, no de mejor esfuerzo). EN PRODUCCIÓN eso
+ * vale solo cuando se resuelva la decisión #17 (cómo se programa la tarea de avisos); ver más abajo.
  *
  * Cuando alguien que no es el Dueño invita a un Administrador, la base deja el aviso anotado como pendiente en
  * la misma operación (`invitations.owner_notice_state`). Esta tarea envía los pendientes y REINTENTA los que

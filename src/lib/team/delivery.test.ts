@@ -44,6 +44,7 @@ const info = (over: Record<string, unknown> = {}) => ({
   inviterName: "Mixta Doble",
   role: "admin",
   invitedAt: "2026-10-30T15:00:00.000Z",
+  invitationStatus: "pending",
   recipients: [{ userId: OWNER, email: "duena@ejemplo.test" }],
   ...over,
 });
@@ -97,6 +98,16 @@ describe("notifyOwnerOfInvitation", () => {
       sent: { provider: "memory", providerMessageId: "msg-1" },
     });
     expect(serverLog).not.toHaveBeenCalled();
+  });
+
+  it("una invitación ya aceptada: el aviso no promete cancelar y el botón lleva al inicio, no a «Tu equipo»", async () => {
+    gateway.readInvitationNotice.mockResolvedValue(read({ invitationStatus: "accepted" }));
+    await notifyOwnerOfInvitation(INVITATION);
+    const message = send.mock.calls[0][0] as EmailMessage;
+    expect(message.text).toContain("La persona ya aceptó y es Administrador de tu organización.");
+    expect(message.text).not.toMatch(/cancel/i);
+    expect(message.html).toContain(`href="http://localhost:3000/o/${TENANT}"`);
+    expect(message.html).not.toContain("/equipo");
   });
 
   it("si la base no entrega la reserva (no toca, ya se hizo o lo tomó otra tarea) no se lee ni se envía nada", async () => {

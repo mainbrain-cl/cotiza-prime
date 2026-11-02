@@ -135,6 +135,9 @@ function toEditorItem(row: ItemRow): EditorItem {
   };
 }
 
+/** Código con que la base responde «no tienes el permiso» (`42501`). */
+export const FORBIDDEN_CODE = "42501";
+
 export type DailyCapsResult =
   | { ok: true; caps: Map<string, number> }
   /** Solo el código de la falla: nunca el mensaje de la base. */
@@ -198,10 +201,16 @@ export async function loadForm(active: ActiveTenant, formId: string): Promise<Lo
   if (itemsError || !items) return { ok: false, reason: "error" };
   let dailyCap: number | null = null;
   if (capsResult) {
-    const cap = capsResult.ok ? capsResult.caps.get(formId) : undefined;
-    // Una falla, o una respuesta sin este formulario, no se disfraza de tope.
-    if (cap === undefined) return { ok: false, reason: "error" };
-    dailyCap = cap;
+    if (capsResult.ok) {
+      const cap = capsResult.caps.get(formId);
+      // Una respuesta sin este formulario no se disfraza de tope.
+      if (cap === undefined) return { ok: false, reason: "error" };
+      dailyCap = cap;
+    } else if (capsResult.code !== FORBIDDEN_CODE) {
+      return { ok: false, reason: "error" };
+    }
+    // «Prohibido» (42501): la app cree que el rol puede, pero la base decide con el rol EFECTIVO (p. ej. un
+    // Administrador sin dos pasos actúa como Observador). No es una falla: el editor carga sin tope.
   }
 
   const status = row.status as FormStatus;

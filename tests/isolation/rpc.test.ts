@@ -48,6 +48,9 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
       }
     }
     for (const spec of ISOLATION_TABLES) {
+      // Los contadores de intentos (`auth_rate_limits`) suben A PROPÓSITO: aceptar o ver una invitación con un código
+      // que no existe cuenta un fallo de esa persona (H-009). No son datos de B; los demás ataques los vigila su prueba.
+      if (spec.name === "auth_rate_limits") continue;
       // `legal_acceptances` y `tenants` de B no cambian; las tablas de Ana pueden crecer (create_tenant, aceptaciones)
       expect(await fingerprint(db, spec), `${spec.name} cambió`).toBe(before.get(spec.name));
     }

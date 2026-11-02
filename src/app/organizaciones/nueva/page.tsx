@@ -4,6 +4,7 @@ import { AuthCard } from "@/components/auth/auth-card";
 import { Button } from "@/components/ui/button";
 import { signOutAction } from "@/lib/auth/actions";
 import { requireUser } from "@/lib/auth/session";
+import { INVITED_HINT } from "@/lib/team/accept-model";
 import { listMemberships } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { TenantForm } from "./tenant-form";
@@ -41,6 +42,12 @@ export default async function NewTenantPage() {
       }
     >
       <TenantForm />
+      {isFirst ? (
+        // Quien verificó su correo en otro dispositivo no trae la invitación guardada (H-009).
+        <p className="text-center text-sm text-fg-muted" data-testid="invited-hint">
+          {INVITED_HINT}
+        </p>
+      ) : null}
     </AuthCard>
   );
 }

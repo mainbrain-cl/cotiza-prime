@@ -41,6 +41,8 @@ import {
   recordSignupAttempt,
 } from "@/lib/security/login-rate-limit";
 import { createClient } from "@/lib/supabase/server";
+import { INVITATION_ACCEPT_PATH } from "@/lib/team/accept-model";
+import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
 import { CLIENT_IP_HEADER } from "@/lib/tenant/constants";
 
 /** Prefijo de las cookies de sesión que crea Supabase (`sb-<proyecto>-auth-token`). */
@@ -170,7 +172,8 @@ export async function signInAction(_previous: FormState, formData: FormData): Pr
       tenantId: membership.tenant_id,
     });
   }
-  redirect(HOME_PATH);
+  // Si la persona venía de abrir el enlace de una invitación, vuelve a ella para unirse (H-009).
+  redirect((await hasPendingInvitation()) ? INVITATION_ACCEPT_PATH : HOME_PATH);
 }
 
 /**

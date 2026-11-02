@@ -61,6 +61,16 @@ const nextConfig: NextConfig = {
         source,
         headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }],
       })),
+      // La invitación (H-009): `/invitacion/:código` lleva el código secreto de la invitación. Nada se guarda en
+      // cachés ni en buscadores, y al salir no se manda la dirección a ningún sitio.
+      {
+        source: "/invitacion/:path*",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
       // El enlace del cliente (H-030) y el formulario público (H-087) los abre cualquiera: nada se guarda en
       // cachés ni en buscadores, y al salir de la página no se manda la dirección (lleva el token o el
       // identificador del formulario) a ningún sitio.

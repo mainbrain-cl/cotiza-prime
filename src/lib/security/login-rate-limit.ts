@@ -97,6 +97,16 @@ export const INTAKE_READ_MAX_PER_IP_PER_WINDOW = 60;
 export const INTAKE_READ_WINDOW_SECONDS = SECONDS_PER_MINUTE;
 export const INTAKE_READ_LOCK_SECONDS = SECONDS_PER_MINUTE;
 
+/**
+ * Enlace de una invitación (H-009): aperturas de `/invitacion/[código]` permitidas por minuto desde una misma IP.
+ * Cada apertura cuenta, sea válida o no (la ruta no sabe si el código sirve: eso lo decide la base con sesión).
+ * La apertura número N+1 es la que bloquea. Siempre con huellas: nunca la IP ni el código.
+ * Las aceptaciones fallidas por persona (`invite_accept_user`) las cuenta la propia base de datos.
+ */
+export const INVITATION_LINK_MAX_PER_IP_PER_WINDOW = 30;
+export const INVITATION_LINK_WINDOW_SECONDS = SECONDS_PER_MINUTE;
+export const INVITATION_LINK_LOCK_SECONDS = SECONDS_PER_MINUTE;
+
 export type RateLimitScope =
   | "login_email"
   | "login_ip"
@@ -112,7 +122,8 @@ export type RateLimitScope =
   | "share_respond_ip"
   | "intake_read_ip"
   | "intake_submit_ip"
-  | "intake_submit_ip_day";
+  | "intake_submit_ip_day"
+  | "invite_link_ip";
 
 /**
  * La tabla `auth_rate_limits` solo admite ciertos valores en su columna `scope`. Los pedidos de
@@ -136,6 +147,7 @@ const STORAGE_SCOPE: Record<RateLimitScope, string> = {
   intake_read_ip: "intake_read_ip",
   intake_submit_ip: "intake_submit_ip",
   intake_submit_ip_day: "intake_submit_ip_day",
+  invite_link_ip: "invite_link_ip",
 };
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
@@ -218,6 +230,11 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: INTAKE_SUBMIT_MAX_PER_IP_PER_DAY + 1,
     windowSeconds: INTAKE_SUBMIT_DAY_SECONDS,
     lockSeconds: INTAKE_SUBMIT_DAY_SECONDS,
+  },
+  invite_link_ip: {
+    maxFailures: INVITATION_LINK_MAX_PER_IP_PER_WINDOW + 1,
+    windowSeconds: INVITATION_LINK_WINDOW_SECONDS,
+    lockSeconds: INVITATION_LINK_LOCK_SECONDS,
   },
 };
 
@@ -523,4 +540,20 @@ export async function consumeIntakeSubmitQuota(ip: string | null): Promise<Intak
     if (await failOpen(operation, false, () => recordAll([target]))) return "blocked_now";
   }
   return "allowed";
+}
+
+/**
+ * ¿Puede esta IP abrir otro enlace de invitación ahora (H-009)? Cuenta la apertura y responde `false` al pasar el
+ * tope por minuto. La clave es una huella de la IP agrupada, nunca la IP en claro. Sin IP conocida, en producción
+ * cuenta en el grupo "desconocida"; en desarrollo y pruebas no se limita. Si el contador falla, se deja pasar y se
+ * avisa en el log (la base cuenta aparte las aceptaciones fallidas de cada persona).
+ */
+export async function consumeInvitationLinkQuota(ip: string | null): Promise<boolean> {
+  const ipKey = shareIpKey(ip);
+  if (!ipKey) return true;
+  const target: Target = {
+    scope: "invite_link_ip",
+    keyHash: searchHash("invite_link_ip", PLATFORM_TENANT_ID, ipKey),
+  };
+  return !(await failOpen("invite_link_quota_ip", false, () => recordAll([target])));
 }

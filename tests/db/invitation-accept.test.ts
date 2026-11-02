@@ -1141,6 +1141,52 @@ describe("dos conexiones reales a la vez", () => {
     }
   });
 
+  it("muchas peticiones de la MISMA cuenta a la vez no pasan el tope: con 9 fallos, solo una suma el décimo y deja UN registro; las otras reciben rate_limited", async () => {
+    const { stranger, tenant, p } = await committedInvitation();
+    // La cuenta equivocada ya lleva 9 fallos (confirmados).
+    await setup.query("begin");
+    await actAs(setup, stranger);
+    for (let n = 0; n < MAX_FAILURES - 1; n++) {
+      expect((await setup.query<{ r: Json }>(ACCEPT, [randomSha()])).rows[0].r.result).toBe(
+        "not_found",
+      );
+    }
+    await setup.query("commit");
+    expect(await failuresOf(stranger)).toEqual({ failures: MAX_FAILURES - 1, locked: false });
+
+    const others = [await connect(), await connect(), await connect()];
+    try {
+      const run = (client: Client, fn: string) =>
+        inTx(
+          client,
+          async () => {
+            await actAs(client, stranger);
+            return (await client.query<{ r: Json }>(fn, [p.tokenSha])).rows[0].r;
+          },
+          150, // se mantiene la transacción abierta un instante: sin el candado, todas verían «no bloqueada»
+        );
+      const results = await Promise.all([
+        run(setup, ACCEPT),
+        run(others[0], ACCEPT),
+        run(others[1], PREVIEW),
+        run(others[2], PREVIEW),
+      ]);
+      expect(results.filter((r) => r.result === "wrong_email")).toHaveLength(1);
+      expect(results.filter((r) => r.result === "rate_limited")).toHaveLength(3);
+      expect(await failuresOf(stranger)).toEqual({ failures: MAX_FAILURES, locked: true });
+      await actAsPostgres(setup);
+      expect(
+        await count(
+          "select count(*) as n from public.audit_log where action = 'invitation.accept_denied' and actor_user_id = $1 and tenant_id = $2",
+          [stranger.id, tenant],
+        ),
+      ).toBe(1);
+    } finally {
+      await actAsPostgres(setup);
+      for (const client of others) await client.end();
+    }
+  });
+
   it("aceptar mientras otro reenvía (código nuevo): el código viejo ya no sirve", async () => {
     const { owner, invitee, tenant, p } = await committedInvitation();
     const resender = await connect();
@@ -1269,7 +1315,7 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
       ).toBe(0);
     }));
 
-  it("la ve quien maneja el equipo de ESA organización y nadie de otra", () =>
+  it("la ve el Dueño de ESA organización (el registro de actividad es suyo) y nadie más: ni el resto del equipo ni otra organización", () =>
     withTx(setup, async () => {
       const person = await newPerson();
       const stranger = await newPerson();
@@ -1285,6 +1331,9 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
         return Number(rows[0].n);
       };
       expect(await read(w.owner, w.tenantA)).toBe(1);
+      expect(await read(w.admin, w.tenantA)).toBe(0);
+      expect(await read(w.sales, w.tenantA)).toBe(0);
+      expect(await read(w.viewer, w.tenantA)).toBe(0);
       expect(await read(w.ownerB, w.tenantB)).toBe(0);
     }));
 
@@ -1305,7 +1354,7 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
       expect(await deniedBy(stranger)).toHaveLength(MAX_FAILURES - 3);
     }));
 
-  it("tampoco se registra cuando el correo sí coincide ni en los otros fallos (vencida, cancelada, usada)", () =>
+  it("tampoco se registra cuando el correo sí coincide ni en los otros fallos (usada, cancelada, vencida, quien invitó ya no puede)", () =>
     withTx(setup, async () => {
       const person = await newPerson();
       const p = await inviteAs(w.owner, person.email, "viewer");
@@ -1315,5 +1364,43 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
       expect((await accept(other, p.tokenSha)).result).toBe("used");
       expect(await deniedBy(person)).toHaveLength(0);
       expect(await deniedBy(other)).toHaveLength(0);
+
+      // Una cuenta EQUIVOCADA con el código de una invitación que ya no sirve no deja registro: el estado se
+      // responde antes de comparar el correo.
+      const wrong = await newPerson();
+      const target = await newPerson();
+      const cancelled = await inviteAs(w.owner, target.email, "viewer");
+      await asUser(setup, w.owner, w.tenantA);
+      await setup.query(REVOKE, [cancelled.id]);
+      const expired = await inviteAs(
+        w.owner,
+        `vencida-${randomUUID().slice(0, 8)}@ejemplo.test`,
+        "viewer",
+      );
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.invitations set expires_at = now() - interval '1 second' where id = $1",
+        [expired.id],
+      );
+      const byAdmin = await inviteAs(
+        w.admin,
+        `quitado-${randomUUID().slice(0, 8)}@ejemplo.test`,
+        "viewer",
+      );
+      await setup.query(
+        "update public.members set status = 'removed', removed_at = now(), removed_by = $3 where tenant_id = $1 and user_id = $2",
+        [w.tenantA, w.admin.id, w.owner.id],
+      );
+      const expectations: [string, string][] = [
+        [cancelled.tokenSha, "revoked"],
+        [expired.tokenSha, "expired"],
+        [byAdmin.tokenSha, "inviter_inactive"],
+      ];
+      for (const [sha, result] of expectations) {
+        expect((await accept(wrong, sha)).result, `accept ${result}`).toBe(result);
+        expect((await preview(wrong, sha)).result, `preview ${result}`).toBe(result);
+      }
+      expect(await deniedBy(wrong)).toHaveLength(0);
+      expect(await failuresOf(wrong)).toEqual({ failures: 0, locked: false });
     }));
 });

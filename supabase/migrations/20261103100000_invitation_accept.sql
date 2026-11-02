@@ -134,10 +134,16 @@ revoke all on function app.invitation_state(public.invitations, uuid, text) from
 -- Deja en la auditoría de la organización de la invitación que alguien probó el código con otro correo.
 -- Va SIN el correo ni el código: solo quién (la cuenta), a qué invitación y el motivo.
 -- Por qué no inunda la auditoría: (1) solo se llama junto con `app.invitation_accept_fail`, es decir, nunca más de
--- 10 veces en 10 minutos por cuenta (después la cuenta queda bloqueada y la función ni llega aquí); (2) para llegar
--- a esta rama hay que conocer un código REAL (un código inventado da `not_found`, sin organización y sin registro);
--- (3) crear cuentas para repartir los intentos tiene su propio tope por IP en el registro. Los resultados se
--- devuelven (no se lanzan), así que el registro persiste aunque el intento haya fallado.
+-- 10 veces en 10 minutos por cuenta (después la cuenta queda bloqueada y la función ni llega aquí). Para que el tope
+-- valga también con muchas peticiones SIMULTÁNEAS de una misma cuenta, las dos funciones toman un candado por cuenta
+-- (`pg_advisory_xact_lock`) justo después de la guarda de solo lectura: las llamadas de una cuenta pasan en fila y la
+-- segunda ya ve el fallo de la primera (sin el candado, la pregunta «¿está bloqueada?» solo ve lo ya confirmado y
+-- 30 peticiones a la vez veían «no bloqueada», sumaban un fallo y escribían una fila cada una); (2) para llegar a esta
+-- rama hay que conocer un código REAL (un código inventado da `not_found`, sin organización y sin registro);
+-- (3) repartir los intentos entre muchas cuentas exige crearlas, y el registro tiene el tope por IP de la
+-- APLICACIÓN (`signUpAction`); quien se registra llamando directo a `/auth/v1/signup` solo choca con el tope de
+-- Supabase y con la confirmación del correo, que es el freno real. Los resultados se devuelven (no se lanzan), así
+-- que el registro persiste aunque el intento haya fallado.
 create function app.invitation_audit_wrong_email(i public.invitations, p_user_id uuid, p_step text) returns void
 language sql volatile security definer set search_path = '' as $$
   select app.write_audit(i.tenant_id, 'user', p_user_id, 'invitation.accept_denied', 'invitation', i.id, 'denied',
@@ -168,6 +174,9 @@ begin
   if current_setting('transaction_read_only') = 'on' then
     raise exception 'read_only' using errcode = '25006';
   end if;
+  -- Un candado por cuenta, hasta el fin de la transacción: las llamadas de una misma cuenta pasan en fila, así que
+  -- la pregunta «¿está bloqueada?» ve los fallos que otras llamadas simultáneas ya sumaron (ver arriba).
+  perform pg_advisory_xact_lock(hashtextextended('invite_accept_user|' || v_uid::text, 0));
   if p_token_sha256 is null or p_token_sha256 !~ '^[0-9a-f]{64}$' then
     raise exception 'invalid_arguments' using errcode = 'CP422';
   end if;
@@ -244,6 +253,9 @@ begin
   if current_setting('transaction_read_only') = 'on' then
     raise exception 'read_only' using errcode = '25006';
   end if;
+  -- Un candado por cuenta, hasta el fin de la transacción: las llamadas de una misma cuenta pasan en fila, así que
+  -- la pregunta «¿está bloqueada?» ve los fallos que otras llamadas simultáneas ya sumaron (ver arriba).
+  perform pg_advisory_xact_lock(hashtextextended('invite_accept_user|' || v_uid::text, 0));
   -- 2. forma de la huella
   if p_token_sha256 is null or p_token_sha256 !~ '^[0-9a-f]{64}$' then
     raise exception 'invalid_arguments' using errcode = 'CP422';

@@ -3,6 +3,7 @@ import { serverLog } from "@/lib/log/server-log";
 import { can } from "@/lib/permissions/matrix";
 import { addDaysIso, todayInChile } from "@/lib/quotes/validity";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
+import { readDailyCaps } from "./builder-queries";
 import {
   ORGANIZATION_DAILY_CAP,
   PROTECTION_WINDOW_DAYS,
@@ -36,32 +37,34 @@ export function canSeeProtection(role: string): boolean {
  * Lee los contadores de los últimos 30 días de TODA la organización (la RLS de la tabla ya limita a Dueño
  * y Administrador; aquí además se corta antes de consultar para los demás roles). Solo cuentas: ni una
  * dirección de conexión ni un dato de contacto.
+ *
+ * El tope diario de cada formulario NO se lee de la tabla (la columna `daily_cap` es privada desde la
+ * migración `intake_daily_cap_column`): lo entrega `readDailyCaps`, que la base solo ejecuta con el
+ * permiso `intake.forms.manage`. Hoy ese permiso y `intake.protection.read` son de los mismos roles
+ * (hay una prueba que lo vigila); si algún día se separan, quien lea la protección sin poder manejar
+ * formularios recibiría «error» aquí en vez de un tope.
  */
 export async function loadProtection(active: ActiveTenant): Promise<ProtectionData> {
   if (!canSeeProtection(active.role)) return { ok: false, reason: "forbidden" };
   const now = new Date();
   const since = addDaysIso(todayInChile(now), -(PROTECTION_WINDOW_DAYS - 1));
-  const [counters, forms] = await Promise.all([
+  const [counters, caps] = await Promise.all([
     active.supabase
       .from("intake_daily_counters")
       .select("form_id, day, accepted, blocked_captcha, blocked_rate, blocked_cap, blocked_invalid")
       .gte("day", since)
       .order("day", { ascending: false })
       .limit(MAX_COUNTER_ROWS),
-    active.supabase.from("intake_forms").select("id, daily_cap").limit(500),
+    readDailyCaps(active),
   ]);
-  if (counters.error || !counters.data || forms.error || !forms.data) {
+  if (counters.error || !counters.data || !caps.ok) {
     // Solo el código: nunca el mensaje de la base ni datos de nadie.
     void serverLog("error", "intake_protection_load_failed", {
-      code: counters.error?.code ?? forms.error?.code ?? "unknown",
+      code: counters.error?.code ?? (caps.ok ? "unknown" : caps.code),
     });
     return { ok: false, reason: "error" };
   }
-  const caps = new Map<string, number>();
-  for (const form of forms.data as { id: string; daily_cap: number }[]) {
-    caps.set(form.id, Number(form.daily_cap));
-  }
-  return { ok: true, now, rows: counters.data as CounterRow[], caps };
+  return { ok: true, now, rows: counters.data as CounterRow[], caps: caps.caps };
 }
 
 /** Los contadores de hoy, 7 y 30 días de un solo formulario. */

@@ -16,13 +16,20 @@ type Result = { data?: unknown; error?: { code: string; message: string } | null
  * Cliente de Supabase de mentira: cada tabla responde con lo que se le guion, sin importar los
  * filtros. Guarda las consultas para comprobar cuántas se hicieron y a qué tablas.
  */
-function fakeActive(script: Record<string, Result | Result[]>) {
+function fakeActive(script: Record<string, Result | Result[]>, role = "owner") {
   const calls: { table: string; filters: unknown[][] }[] = [];
+  const rpcs: { name: string; args: unknown }[] = [];
   const queues = new Map<string, Result[]>();
   for (const [table, value] of Object.entries(script)) {
     queues.set(table, Array.isArray(value) ? [...value] : [value]);
   }
   const supabase = {
+    // `intake_form_daily_caps`: el tope diario ya no se lee de la tabla (columna privada).
+    rpc(name: string, args: unknown) {
+      rpcs.push({ name, args });
+      const result: Result = { error: null, ...(script[name] as Result) };
+      return { then: (resolve: (value: Result) => unknown) => resolve(result) };
+    },
     from(table: string) {
       const call = { table, filters: [] as unknown[][] };
       calls.push(call);
@@ -48,7 +55,7 @@ function fakeActive(script: Record<string, Result | Result[]>) {
       return builder;
     },
   };
-  return { active: { supabase } as unknown as ActiveTenant, calls };
+  return { active: { role, supabase } as unknown as ActiveTenant, calls, rpcs };
 }
 
 const FORM_ROW = {
@@ -62,8 +69,9 @@ const FORM_ROW = {
   success_message: "",
   fields: {},
   privacy_policy_url: null,
-  daily_cap: 50,
 };
+// Lo que devuelve `intake_form_daily_caps` para este formulario.
+const CAP_ROW = { form_id: FORM_ROW.id, daily_cap: 50 };
 
 describe("loadForm", () => {
   it("si falla la lectura del formulario devuelve error, no «no encontrado»", async () => {
@@ -76,6 +84,7 @@ describe("loadForm", () => {
   it("si falla la lectura de los servicios devuelve error, nunca un editor con la lista vacía", async () => {
     const { active } = fakeActive({
       intake_forms: { data: FORM_ROW },
+      intake_form_daily_caps: { data: [CAP_ROW] },
       intake_form_items: { data: null, error: { code: "57014", message: "timeout" } },
     });
     const result = await loadForm(active, FORM_ROW.id);
@@ -88,8 +97,9 @@ describe("loadForm", () => {
   });
 
   it("con todo bien devuelve el formulario con sus servicios", async () => {
-    const { active } = fakeActive({
+    const { active, calls, rpcs } = fakeActive({
       intake_forms: { data: FORM_ROW },
+      intake_form_daily_caps: { data: [CAP_ROW] },
       intake_form_items: {
         data: [
           {
@@ -114,6 +124,38 @@ describe("loadForm", () => {
       expect(result.loaded.form.items).toHaveLength(1);
       expect(result.loaded.publicUrl).toBeNull();
     }
+    // La tabla no se consulta por `daily_cap` (columna privada): el tope viene de la función.
+    const formQuery = calls.find((c) => c.table === "intake_forms")!;
+    expect(JSON.stringify(formQuery.filters)).not.toContain("daily_cap");
+    expect(rpcs).toEqual([{ name: "intake_form_daily_caps", args: { p_form_id: FORM_ROW.id } }]);
+  });
+
+  it("Aprobador, Comercial y Observador cargan el formulario sin pedir el tope (queda en null, no en 0)", async () => {
+    for (const role of ["approver", "sales", "viewer"]) {
+      const { active, rpcs } = fakeActive(
+        { intake_forms: { data: FORM_ROW }, intake_form_items: { data: [] } },
+        role,
+      );
+      const result = await loadForm(active, FORM_ROW.id);
+      expect(result.ok, role).toBe(true);
+      if (result.ok) expect(result.loaded.dailyCap, role).toBeNull();
+      expect(rpcs, role).toEqual([]);
+    }
+  });
+
+  it("si falla la lectura del tope (o no vuelve fila) para quien la pide, devuelve error, nunca un tope inventado", async () => {
+    const failed = fakeActive({
+      intake_forms: { data: FORM_ROW },
+      intake_form_items: { data: [] },
+      intake_form_daily_caps: { data: null, error: { code: "57014", message: "timeout" } },
+    });
+    expect(await loadForm(failed.active, FORM_ROW.id)).toEqual({ ok: false, reason: "error" });
+    const empty = fakeActive({
+      intake_forms: { data: FORM_ROW },
+      intake_form_items: { data: [] },
+      intake_form_daily_caps: { data: [] },
+    });
+    expect(await loadForm(empty.active, FORM_ROW.id)).toEqual({ ok: false, reason: "error" });
   });
 });
 

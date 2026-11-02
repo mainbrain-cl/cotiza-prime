@@ -123,7 +123,8 @@ export default async function IntakeFormEditorPage({
         hasContactEmail={contactEmail !== ""}
         contactSettingsHref={tenantPath(active.tenantId, "configuracion/empresa")}
         protectionSlot={
-          canEdit ? (
+          // El tope solo llega a quien maneja formularios; para los demás no hay panel (ni «0»).
+          canEdit && loaded.dailyCap !== null ? (
             <Suspense fallback={<ProtectionSkeleton />}>
               <ProtectionSection
                 dataPromise={protection}

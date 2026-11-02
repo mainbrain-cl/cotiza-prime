@@ -263,6 +263,8 @@ export const ISOLATION_TABLES: TableSpec[] = [
     idColumn: "id",
     ownedByB: byTenantB,
     readColumns: "id,tenant_id,name,title,status",
+    // Sin `daily_cap`: el tope diario solo lo lee quien maneja formularios, por `intake_form_daily_caps`.
+    starSelectRejected: true,
     insertAttack: (_fx, tenant, marker) => ({
       id: randomUUID(),
       tenant_id: tenant,
@@ -470,7 +472,7 @@ export const ISOLATION_TABLES: TableSpec[] = [
 export interface RpcCase {
   /** Argumentos válidos de una llamada normal. */
   args: object;
-  /** ¿Escribe datos de la organización activa? Entonces con una organización ajena debe fallar. */
+  /** ¿Escribe o lee datos que exigen una organización activa propia? Entonces con una organización ajena debe fallar. */
   writesActiveTenant: boolean;
 }
 
@@ -586,6 +588,8 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: true,
   },
   regenerate_intake_form_public_id: { args: { p_form_id: randomUUID() }, writesActiveTenant: true },
+  // Lee (no escribe) el tope diario, pero exige organización activa propia y el permiso de manejar formularios.
+  intake_form_daily_caps: { args: { p_form_id: randomUUID() }, writesActiveTenant: true },
   // Sprint 4 · solicitudes del formulario público (M32).
   assign_intake_request: {
     args: { p_request_id: randomUUID(), p_assignee_user_id: randomUUID() },

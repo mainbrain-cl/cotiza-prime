@@ -90,7 +90,7 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
         title="Ya eres parte de esta organización"
         description="Esta invitación ya la aceptaste con tu cuenta."
       >
-        <AcceptInvitationForm label="Entrar" pendingLabel="Entrando…" />
+        <AcceptInvitationForm label="Entrar" pendingLabel="Entrando…" offerLeave={false} />
       </AuthCard>
     );
   }
@@ -100,9 +100,7 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
     const wrongAccount = result === "wrong_email";
     return (
       <AuthCard
-        title={
-          wrongAccount ? "Esta invitación es para otro correo" : "No podemos abrir esta invitación"
-        }
+        title={wrongAccount ? "Cambia de cuenta para unirte" : "No podemos abrir esta invitación"}
         description={messageForResult(result)}
       >
         <div

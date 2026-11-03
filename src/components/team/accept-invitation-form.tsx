@@ -15,9 +15,12 @@ import { Button } from "@/components/ui/button";
 export function AcceptInvitationForm({
   label = "Unirme",
   pendingLabel = "Uniéndote…",
+  offerLeave = true,
 }: {
   label?: string;
   pendingLabel?: string;
+  /** Falso cuando la persona ya es parte de la organización: «Seguir sin unirme» no tendría sentido. */
+  offerLeave?: boolean;
 }) {
   const [state, formAction] = useActionState<AcceptState, FormData>(
     acceptInvitationAction,
@@ -37,10 +40,12 @@ export function AcceptInvitationForm({
         {state.dead ? null : <SubmitButton pendingLabel={pendingLabel}>{label}</SubmitButton>}
       </form>
       {/* Una sola salida: si el código ya no sirve se llama «Entendido»; si no, «Seguir sin unirme». */}
-      <LeaveInvitationButton
-        label={state.dead ? "Entendido" : "Seguir sin unirme"}
-        variant={state.dead ? "secondary" : "ghost"}
-      />
+      {offerLeave || state.dead ? (
+        <LeaveInvitationButton
+          label={state.dead ? "Entendido" : "Seguir sin unirme"}
+          variant={state.dead ? "secondary" : "ghost"}
+        />
+      ) : null}
     </div>
   );
 }

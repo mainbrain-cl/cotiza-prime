@@ -455,6 +455,73 @@ test("«Seguir sin unirme» borra el código y vuelve al inicio", async ({ brows
   }
 });
 
+test("sin conexión: «Unirme» y «Seguir sin unirme» avisan en la misma pantalla y, al volver la red, funcionan", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const email = uniqueEmail("acepta-sin-red");
+  await invite(ownerPage, tenantId, email, "viewer");
+  const { link } = await waitForInviteLink(email);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await signUpAndVerify(page, email, "Sin Red");
+    await page.goto(link);
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
+
+    await context.setOffline(true);
+    const offlineMessage = page
+      .getByRole("alert")
+      .filter({ hasText: "No pudimos comunicarnos con el servidor" });
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(offlineMessage).toHaveCount(1);
+    // La persona sigue viendo su invitación: no cae a la pantalla de error de «problema de nuestro lado».
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
+    await expect(page.getByText("Tuvimos un problema de nuestro lado")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Seguir sin unirme" }).click();
+    await expect(offlineMessage).toHaveCount(2);
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
+
+    await context.setOffline(false);
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+  } finally {
+    await context.close();
+  }
+});
+
+test("el registro recuerda usar el correo de la invitación, y solo cuando hay una invitación en curso", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(120_000);
+  const email = uniqueEmail("acepta-ayuda-registro");
+  await invite(ownerPage, tenantId, email, "viewer");
+  const { link } = await waitForInviteLink(email);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.goto("/registro");
+    await expect(page.getByRole("heading", { name: "Crea tu cuenta" })).toBeVisible();
+    await expect(page.getByTestId("signup-invitation-hint")).toHaveCount(0);
+
+    await page.goto(link);
+    await page.getByRole("link", { name: "Crear mi cuenta", exact: true }).click();
+    await expect(page).toHaveURL(`${baseURL}/registro`);
+    const hint = page.getByTestId("signup-invitation-hint");
+    await expect(hint).toBeVisible();
+    await expect(hint).toContainText("Crea tu cuenta con el correo al que llegó la invitación");
+    // Aquí todavía no se sabe de quién es la invitación: no se nombra la organización.
+    expect(await hint.innerText()).not.toContain(ORG_NAME);
+  } finally {
+    await context.close();
+  }
+});
+
 test("invitación vencida y cancelada: se explica con claridad y a quién pedir otra", async ({
   browser,
   baseURL,

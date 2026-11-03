@@ -122,6 +122,13 @@ export function InvitationList({ tenantId, items }: { tenantId: string; items: I
               </p>
             ) : null}
 
+            {item.resendsLeft === 0 ? (
+              <p data-testid="invitation-no-resends" className="text-sm text-fg-muted">
+                Ya usaste los reenvíos de esta invitación. Si la persona la necesita de nuevo,
+                cancélala e invítala otra vez.
+              </p>
+            ) : null}
+
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -130,9 +137,6 @@ export function InvitationList({ tenantId, items }: { tenantId: string; items: I
                 data-testid="invitation-resend"
                 disabled={pending || item.resendsLeft === 0}
                 onClick={() => resend(item.id)}
-                title={
-                  item.resendsLeft === 0 ? "Ya usaste los reenvíos de esta invitación." : undefined
-                }
               >
                 {busy ? <Loader2 aria-hidden className="animate-spin" /> : <RotateCw aria-hidden />}
                 Reenviar

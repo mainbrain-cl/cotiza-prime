@@ -1,10 +1,14 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { FormAlert, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
 import { acceptInvitationAction, leaveInvitationAction } from "@/lib/team/accept-actions";
-import { INITIAL_ACCEPT_STATE, type AcceptState } from "@/lib/team/accept-model";
+import {
+  INITIAL_ACCEPT_STATE,
+  INVITATION_OFFLINE_MESSAGE,
+  type AcceptState,
+} from "@/lib/team/accept-model";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -22,10 +26,15 @@ export function AcceptInvitationForm({
   /** Falso cuando la persona ya es parte de la organización: «Seguir sin unirme» no tendría sentido. */
   offerLeave?: boolean;
 }) {
-  const [state, formAction] = useActionState<AcceptState, FormData>(
-    acceptInvitationAction,
-    INITIAL_ACCEPT_STATE,
-  );
+  // Si la petición no llega al servidor (sin red), se queda en esta pantalla con un mensaje claro: dejarla
+  // subir a la pantalla de error diría «problema de nuestro lado» cuando el problema es la conexión.
+  const [state, formAction] = useActionState<AcceptState, FormData>(async () => {
+    try {
+      return await acceptInvitationAction();
+    } catch {
+      return { status: "error", message: INVITATION_OFFLINE_MESSAGE };
+    }
+  }, INITIAL_ACCEPT_STATE);
 
   return (
     <div className="flex flex-col gap-3">
@@ -58,8 +67,20 @@ export function LeaveInvitationButton({
   label?: string;
   variant?: "ghost" | "secondary";
 }) {
+  const [error, setError] = useState<string | null>(null);
   return (
-    <form action={leaveInvitationAction}>
+    <form
+      action={async () => {
+        setError(null);
+        try {
+          await leaveInvitationAction();
+        } catch {
+          setError(INVITATION_OFFLINE_MESSAGE);
+        }
+      }}
+      className="flex flex-col gap-3"
+    >
+      {error ? <FormAlert>{error}</FormAlert> : null}
       <Button type="submit" size="lg" variant={variant} className="w-full">
         {label}
       </Button>

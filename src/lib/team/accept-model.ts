@@ -108,6 +108,10 @@ export const RESULT_MESSAGES: Readonly<
   rate_limited: "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
 };
 
+/** Cuando la petición ni siquiera llega al servidor (sin red): el problema no es nuestro y la invitación sigue guardada. */
+export const INVITATION_OFFLINE_MESSAGE =
+  "No pudimos comunicarnos con el servidor. Revisa tu conexión e inténtalo de nuevo; tu invitación sigue guardada.";
+
 export const INVITATION_GENERIC_FAILURE =
   "No pudimos completar la acción. Intenta de nuevo en unos minutos; si sigue igual, pide que te envíen otra invitación.";
 

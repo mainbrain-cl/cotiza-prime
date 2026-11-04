@@ -120,7 +120,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 ---
 
-### H-004 · Activar la verificación en dos pasos · M01
+### H-004a · Activar la verificación en dos pasos · M01
 
 **Como** Dueño o Administrador
 **quiero** proteger mi cuenta con un segundo paso al ingresar
@@ -128,15 +128,51 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 **Criterios de aceptación**
 - [ ] Activo la verificación con una aplicación de códigos, escaneando un código QR
-- [ ] Recibo códigos de respaldo para guardar, y se me pide confirmar que los guardé
-- [ ] Si soy Dueño o Administrador, no puedo usar las funciones de mi rol hasta activarla
+- [ ] Al ingresar, después de la contraseña, se me pide el código de la aplicación
 - [ ] Cualquier otro miembro puede activarla de forma voluntaria
-- [ ] Desactivarla exige ingresar un código válido
 
 **Prioridad:** núcleo
 **Tamaño:** mediano
 **Depende de:** H-002
 **Datos personales:** no
+**Notas técnicas:** H-004 se partió en tres (2026-11-02, según el diseño del sprint 5, `docs/arquitectura/sprint-5-equipo-y-permisos.md` §5b y §7). Esta es la primera: activar y pedir el código al ingresar.
+
+---
+
+### H-004b · Códigos de respaldo y desactivar la verificación · M01
+
+**Como** Dueño o Administrador
+**quiero** tener códigos de respaldo y poder desactivar la verificación de forma segura
+**para** no quedar fuera de mi cuenta si pierdo el teléfono, sin que otra persona pueda apagarla.
+
+**Criterios de aceptación**
+- [ ] Recibo códigos de respaldo para guardar, y se me pide confirmar que los guardé
+- [ ] Puedo entrar con un código de respaldo, que sirve una sola vez
+- [ ] Desactivarla exige ingresar un código válido
+
+**Prioridad:** núcleo
+**Tamaño:** mediano
+**Depende de:** H-004a
+**Datos personales:** no
+
+---
+
+### H-004c · Dos pasos obligatorios para Dueño y Administrador · M01
+
+**Como** Dueño de una organización
+**quiero** que quien controla el dinero y la configuración tenga activada la verificación en dos pasos
+**para** que la cuenta bancaria y las reglas no dependan solo de una contraseña.
+
+**Criterios de aceptación**
+- [ ] Si soy Dueño o Administrador, no puedo usar las funciones de mi rol hasta activarla
+- [ ] Mientras no la active, entro como Observador (veo todo, no cambio nada) y se me explica cómo activarla
+- [ ] Si la desactivo, vuelvo a quedar como Observador hasta activarla de nuevo
+
+**Prioridad:** núcleo
+**Tamaño:** mediano
+**Depende de:** H-004a, H-004b, H-011
+**Datos personales:** no
+**Notas técnicas:** 🔒 cambia el pase de sesión de las cuentas de prueba en todas las pruebas, por eso va sola y al final del sprint 5. Requisito heredado de H-092 m11: `active.role` debe ser el rol efectivo, o la aplicación y la base discrepan (el editor del formulario ya tolera el `42501` del tope). Los supuestos 1 a 3 del diseño (queda como Observador; también obligatoria en pruebas; puede desactivarla) están en `sprint-5-equipo-y-permisos.md` §8.
 
 ---
 
@@ -678,6 +714,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-011
 **Datos personales:** no
+**Notas técnicas:** 🔒 controla qué sale al cliente; no se mezcla sin Aarón. Diseño en `docs/arquitectura/sprint-5-h-040-aprobaciones.md`: tabla `approval_rules` con historial, una función única que decide si se pide aprobación y un control en el envío; unos 3,5 días. Se propone partirla en H-040a (regla, función y pantalla) y H-040b (control en el envío), que entran juntas a `main`; pendiente de decidir (D12). Bloquea su construcción la decisión 15 (quién puede enviar sin aprobación, de Aarón) y D1, D3 y D4.
 
 ---
 
@@ -820,21 +857,43 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 ---
 
-### H-048 · Tener textos listos para usar · M08
+### H-048a · Administrar los textos listos para usar · M08
 
 **Como** Administrador
-**quiero** escribir una vez el texto base del correo, las condiciones comerciales y las exclusiones
+**quiero** escribir una vez el texto base del correo, las condiciones comerciales, las exclusiones y las notas al pie
 **para** que todo el equipo los use igual.
 
 **Criterios de aceptación**
 - [ ] Guardo varios textos con nombre: correo base, condiciones, exclusiones, notas al pie
-- [ ] Al cotizar, el Comercial los inserta con un clic y puede ajustarlos
-- [ ] El texto base del correo puede incluir el nombre del cliente y el número de la cotización, que se completan solos
+- [ ] Marco un correo base como texto inicial de los correos de mi organización
+- [ ] En el texto del correo puedo usar el nombre del cliente, el número de la cotización, quien envía y mi organización, que se completan solos, y veo una vista previa con datos de ejemplo
+- [ ] Solo el Dueño y los Administradores los crean, editan y borran
 
 **Prioridad:** usable
-**Tamaño:** mediano
+**Tamaño:** grande
 **Depende de:** H-029
 **Datos personales:** no
+**Notas técnicas:** H-048 se partió en dos (2026-11-02, decisión de José). Diseño en `docs/arquitectura/sprint-5-h-048-textos.md`: tabla `text_snippets`, permiso `settings.manage`, unos 4 días. Es una historia normal; el `revisor` la revisa.
+
+---
+
+### H-048b · Usar los textos al cotizar, con exclusiones y notas al pie propias · M08
+
+**Como** Comercial
+**quiero** insertar con un clic los textos guardados de mi organización y tener campos propios para exclusiones y notas al pie
+**para** cotizar rápido y que el cliente vea siempre lo que incluye y lo que no.
+
+**Criterios de aceptación**
+- [ ] La cotización tiene dos campos propios, «Exclusiones» y «Notas al pie», que salen en el PDF y en la página del cliente
+- [ ] Al cotizar inserto con un clic un texto guardado en el campo que corresponde, y puedo ajustarlo
+- [ ] Al enviar, el correo parte con el texto inicial de mi organización, con el nombre del cliente y el número ya completados, y se me avisa si queda algo sin completar
+- [ ] Las cotizaciones ya enviadas no cambian si después se edita o borra un texto guardado
+
+**Prioridad:** usable
+**Tamaño:** grande
+**Depende de:** H-048a, H-041
+**Datos personales:** no
+**Notas técnicas:** 🔒 reescribe `save_quote_draft` y cambia lo que ve el cliente final (PDF y página del enlace); no se mezcla sin Aarón (decisión 020 §5). Se construye después de H-041 y nunca en paralelo con ella, porque las dos reescriben `save_quote_draft` y git no avisa si una migración pisa a la otra. Los campos nuevos se congelan en la copia sellada del documento, sin tocar `prepare_quote_send`. Unos 4,5 días. Ver `sprint-5-h-048-textos.md` §3 a §5 y §12.
 
 ---
 
@@ -855,7 +914,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 **Prioridad:** núcleo
 **Tamaño:** mediano
-**Depende de:** H-004, H-011
+**Depende de:** H-004c, H-011
 **Datos personales:** sí — datos financieros
 **Notas técnicas:** cifrado obligatorio. Una sola cuenta por organización (supuesto de la decisión pendiente 6)
 
@@ -1186,6 +1245,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-044
 **Datos personales:** no
+**Notas técnicas:** la nueva versión copia los cuatro textos de la cotización: observaciones, condiciones, exclusiones y notas al pie (campos de H-048b).
 
 ---
 
@@ -1204,6 +1264,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** chico
 **Depende de:** H-025
 **Datos personales:** no
+**Notas técnicas:** el borrador nuevo copia los cuatro textos de la cotización: observaciones, condiciones, exclusiones y notas al pie (campos de H-048b).
 
 ---
 
@@ -1318,7 +1379,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** grande
 **Depende de:** H-028
 **Datos personales:** no
-**Notas técnicas:** adelantada al sprint 3 (2026-10-06, pedido de Aarón). Las plantillas 2 y 3 las propone la sesión principal con vista previa que Aarón aprueba antes de construirlas, igual que la 1. Todas salen con el logo, los colores y los datos de la organización ya cargados (H-007), listas para cotizar. Agregar plantillas después no debe tocar la estructura: cada plantilla es un módulo en `src/lib/pdf/templates/`
+**Notas técnicas:** las tres plantillas muestran las observaciones, las condiciones, las exclusiones, la forma de pago y las notas al pie (campos de H-048b; la prueba de H-048b recorre las tres cuando existan). Adelantada al sprint 3 (2026-10-06, pedido de Aarón). Las plantillas 2 y 3 las propone la sesión principal con vista previa que Aarón aprueba antes de construirlas, igual que la 1. Todas salen con el logo, los colores y los datos de la organización ya cargados (H-007), listas para cotizar. Agregar plantillas después no debe tocar la estructura: cada plantilla es un módulo en `src/lib/pdf/templates/`
 
 ---
 
@@ -1633,7 +1694,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 **Prioridad:** usable
 **Tamaño:** mediano
-**Depende de:** H-100, H-024, H-050, H-048
+**Depende de:** H-100, H-024, H-050, H-048a
 **Datos personales:** sí — datos bancarios
 
 ---
@@ -1823,7 +1884,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 **Prioridad:** usable
 **Tamaño:** chico
-**Depende de:** H-010, H-004
+**Depende de:** H-010, H-004c
 **Datos personales:** no
 
 ---
@@ -1917,6 +1978,8 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 ---
 
 # Índice por prioridad
+
+> H-004 y H-048 se partieron el 2026-11-02 (H-004a, H-004b y H-004c; H-048a y H-048b). Los conteos de abajo y las «92 historias» se mantienen con la numeración original.
 
 **Núcleo — sin esto el producto no tiene sentido (44)**
 H-001 · H-002 · H-003 · H-004 · H-005 · H-006 · H-007 · H-008 · H-009 · H-010 · H-011 · H-012 ·

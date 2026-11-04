@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { HOME_PATH, LOGIN_NOTICES, LOGIN_PATH } from "@/lib/auth/paths";
 import { getAppOrigin } from "@/lib/http/request-context";
 import { createClient } from "@/lib/supabase/server";
+import { INVITATION_ACCEPT_PATH } from "@/lib/team/accept-model";
+import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
 
 /**
  * Llegada desde el enlace del correo de verificación (H-001).
@@ -22,5 +24,8 @@ export async function GET(request: NextRequest) {
   if (error) {
     return NextResponse.redirect(`${origin}${LOGIN_PATH}?aviso=${LOGIN_NOTICES.linkNotUsable}`);
   }
-  return NextResponse.redirect(`${origin}${HOME_PATH}`);
+  // Quien se registró desde el enlace de una invitación (y verifica su correo en este mismo navegador) vuelve
+  // a ella para unirse (H-009). Si lo verificó en otro dispositivo no hay cookie: el inicio se lo recuerda.
+  const next = (await hasPendingInvitation()) ? INVITATION_ACCEPT_PATH : HOME_PATH;
+  return NextResponse.redirect(`${origin}${next}`);
 }

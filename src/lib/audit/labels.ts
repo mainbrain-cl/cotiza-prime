@@ -29,6 +29,8 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "invitation.updated": "Cambió una invitación",
   "invitation.resent": "Se reenvió una invitación",
   "invitation.revoked": "Se canceló una invitación",
+  "invitation.accepted": "Una persona aceptó la invitación al equipo",
+  "invitation.accept_denied": "Alguien intentó usar una invitación con otro correo",
 };
 
 const RESOURCE_LABELS: Readonly<Record<string, string>> = {

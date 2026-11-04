@@ -50,7 +50,7 @@ Dos migraciones, un solo agente, en orden, con rollback y fecha posterior a la �
 | `global_discount_value` | `bigint not null default 0` (puntos base si `percent`, pesos si `amount`) | H-027 |
 | `subtotal_taxable_clp`, `subtotal_exempt_clp`, `subtotal_clp`, `line_discounts_clp`, `global_discount_clp`, `global_discount_taxable_clp`, `global_discount_exempt_clp`, `net_taxable_clp`, `net_exempt_clp`, `tax_clp`, `total_clp` | `bigint not null default 0 check (>= 0)` | H-026, H-027 |
 | `validity_mode` (`'days'`/`'date'`), `validity_days` (1–365), `valid_until` (`date`) | pueden quedar vacías | H-027, H-034 |
-| `observations`, `conditions` | `text` hasta 4.000 caracteres, sin HTML | H-027, H-048 |
+| `observations`, `conditions` | `text` hasta 4.000 caracteres, sin HTML | H-027, H-048b |
 | `payment_terms` | `text null check (in ('full','split_50_50'))` | H-052 |
 | `sent_at`, `archived_at` | `timestamptz null` | H-029, H-073 |
 | `created_by` | `uuid not null` → `auth.users` (autor) | Decisión 009 |

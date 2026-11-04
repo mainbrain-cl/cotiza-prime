@@ -21,8 +21,14 @@ const ACTIONS_WITHOUT_ACTIVE_TENANT: Record<string, string> = {
     "cambia la contraseña de la cuenta, no actúa sobre una organización",
   "lib/auth/actions.ts#signOutAction":
     "cierra la sesión de la cuenta, no actúa sobre una organización",
+  "lib/auth/actions.ts#signOutKeepingInvitationAction":
+    "cierra la sesión de la cuenta conservando la invitación; no actúa sobre una organización",
   "lib/auth/actions.ts#acceptLegalAction": "los términos son de la cuenta, no de una organización",
   "lib/tenant/actions.ts#createTenantAction": "crea la organización: aún no existe una activa",
+  "lib/team/accept-actions.ts#acceptInvitationAction":
+    "la persona aún no es miembro: la organización la define la invitación, que decide la base de datos",
+  "lib/team/accept-actions.ts#leaveInvitationAction":
+    "solo borra el código guardado en este navegador, no actúa sobre una organización",
 };
 
 function walk(dir: string): string[] {

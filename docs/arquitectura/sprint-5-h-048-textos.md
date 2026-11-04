@@ -3,11 +3,16 @@
 > **Estado: diseño del `planificador` (Opus), 2026-11-02, rehecho con las decisiones de José del mismo día. Sin
 > construir.** José decidió: (1) exclusiones y notas al pie tendrán **campo propio** en la cotización; (2) las
 > **cuatro variables** (`cliente`, `numero`, `remitente`, `organizacion`); (3) **partir H-048** en H-048a y
-> H-048b; (4) **no construir hasta que Aarón revise el PR #15** (H-008).
+> H-048b; (4) **no construir hasta que Aarón revise el PR #15** (H-008): **cumplido**, Aarón lo mezcló el 2026-11-02.
 >
 > **H-048a es una historia normal; H-048b es delicada** (§11): reescribe `save_quote_draft` y cambia lo que ve el
 > cliente final, así que no se mezcla sin Aarón (decisión 020 §5). Partir las historias en `docs/HISTORIAS.md` y
 > las notas para H-069, H-070 y H-076 (§3.3 y §4) se hacen al empezar a construir.
+>
+> **Actualización del 2026-11-04.** Se verificaron las premisas contra `main` (sección «Verificación del
+> 2026-11-04», al final). José decidió construir **H-048a como una sola historia en dos PR** (§10). La partición
+> en `HISTORIAS.md` y las notas de H-069, H-070 y H-076 ya están en el PR #19. Las fechas de migración se
+> reasignaron después de la de H-009 (§13).
 
 **En simple.**
 
@@ -46,7 +51,7 @@ es `save_quote_draft`, que H-041 también reescribe (§12).
 
 ## 2. H-048a · la tabla de textos (unos 4 días)
 
-**Migración** `20261102110000_text_snippets.sql` y su deshacer (fecha reservada: ver §13).
+**Migración** `20261104110000_text_snippets.sql` y su deshacer (fecha reservada: ver §13).
 
 `public.text_snippets`: `id` (lo genera la aplicación), `tenant_id`, `kind` (`email_body`, `conditions`,
 `exclusions`, `footer_note`), `name` (1 a 80), `body` (1 a 4.000), `is_default` (solo `email_body`; uno por
@@ -73,7 +78,7 @@ organización), `revision`, y quién creó/cambió y cuándo (`app.set_row_meta_
 
 ## 3. H-048b · campos propios en la cotización (unos 4,5 días)
 
-### 3.1 Columnas nuevas en `quotes` (migración `20261102130000_quote_text_fields.sql`)
+### 3.1 Columnas nuevas en `quotes` (migración `20261104130000_quote_text_fields.sql`)
 
 `exclusions` y `footer_note`: `text null`, con `check (… is null or char_length(…) <= app.quote_text_max_length())`
 (función nueva que devuelve 4.000; una prueba de paridad la compara con `QUOTE_TEXT_MAX_LENGTH`). Mismas reglas
@@ -216,9 +221,14 @@ los cuatro estados).
 
 ## 10. Orden de construcción y tamaño
 
-**H-048a (unos 4 días):** módulo puro `src/lib/snippets/` con pruebas (0,5) → migración `text_snippets`, deshacer
-y pruebas de base (1) → aislamiento (0,5) → consultas, acciones, etiquetas de auditoría y semilla (0,5) →
-pantallas de Configuración (1) → Playwright y `revisor` (0,5).
+**H-048a (unos 4 días), una historia en dos PR (decisión de José, 2026-11-04):**
+
+- **PR 1, la base (unos 2 días):** módulo puro `src/lib/snippets/` con pruebas (0,5) → migración `text_snippets`,
+  deshacer y pruebas de base (1) → aislamiento (0,5). Deja la tabla y las tres funciones sin ninguna pantalla:
+  nadie escribe directo, así que es seguro mezclarla sola, con el `revisor` y verificación local.
+- **PR 2, lo que se ve (unos 2 días):** consultas, acciones, etiquetas de auditoría y semilla (0,5) → pantallas de
+  Configuración (1) → Playwright y `revisor` (0,5). La historia se da por terminada, y se prueba mirando la
+  pantalla, solo al mezclar este segundo PR.
 
 **H-048b (unos 4,5 días):** migración `quote_text_fields`, deshacer, pruebas y prueba trampa (1) → recorrido en la
 aplicación (`QuoteRow`, consultas, esquemas, `payload.ts`, `editor-model.ts`, `convert-lines.ts`, solo lectura y
@@ -259,11 +269,16 @@ H-041). **Nunca H-041 y H-048b en paralelo.**
 
 | Historia | Archivo |
 |---|---|
-| H-048a | `supabase/migrations/20261102110000_text_snippets.sql` (+ deshacer) |
-| H-048b | `supabase/migrations/20261102130000_quote_text_fields.sql` (+ deshacer que restaura la definición vigente de `save_quote_draft`, borra las columnas y la función de la constante; se pierde lo escrito en esos campos, solo en local) |
+| H-048a | `supabase/migrations/20261104110000_text_snippets.sql` (+ deshacer) |
+| H-048b | `supabase/migrations/20261104130000_quote_text_fields.sql` (+ deshacer que restaura la definición vigente de `save_quote_draft`, borra las columnas y la función de la constante; se pierde lo escrito en esos campos, solo en local) |
+
+Actualización del 2026-11-04: las fechas reservadas el 2026-11-02 (`…110000`, `…120000`, `…130000`) quedaron por
+detrás de la de H-009 (`20261103100000`, PR #20). Nuevas reservas: H-048a `20261104110000`, H-040
+`20261104120000`, H-048b `20261104130000`, dejando `20261104100000` libre para H-010. Siguen siendo reservas:
+rige la regla de abajo, y H-048b debe quedar con fecha posterior a la de H-041.
 
 Choque anotado: el pendiente m11 de H-092 (`20261102100000_intake_daily_cap_column.sql`) y la propuesta de
-H-040 usaban la misma fecha `20261102100000`; para H-040 se sugiere `20261102120000`.
+H-040 usaban la misma fecha `20261102100000`; para H-040 se sugiere `20261104120000`.
 
 **Regla (se escribe en `README.md` o en el diseño del sprint al empezar a construir):**
 
@@ -282,7 +297,7 @@ H-040 usaban la misma fecha `20261102100000`; para H-040 se sugiere `20261102120
 | 2 | Construir H-048b | ¿H-041 antes que H-048b? | José | Sí |
 | 3 | El PDF de H-048b | Títulos y lugar en el PDF y la página del cliente | Aarón (marca y plantilla); José puede aplicar el supuesto | «EXCLUSIONES» después de condiciones y «NOTAS» al final de la lista de bloques, no en el pie de cada página |
 | 4 | El esquema de H-048a | ¿Hay un correo marcado como «texto inicial»? | José | Sí, uno por organización (`PROYECTO.md` §6.3) |
-| 5 | Construir H-040 o m11 | Choque de fecha `20261102100000` | José | H-040 pasa a `20261102120000` |
+| 5 | Construir H-040 o m11 | Choque de fecha `20261102100000` | José | H-040 pasa a `20261104120000` |
 | 6 | No bloquea | ¿Partir más (H-048b en «campos propios» y «usar textos guardados»)? | José | No; partirla no sacaría lo delicado de ninguna mitad |
 | 7 | No bloquea | Endurecer los cuatro textos contra caracteres invisibles y de dirección invertida (hoy solo se rechazan los de control) | José | Fuera de H-048, historia chica aparte; José pidió las mismas reglas que hoy |
 | 8 | No bloquea | H-069 y H-070 copian los cuatro textos | José | Sí, anotado en esas historias |
@@ -406,3 +421,22 @@ y normalización.
   ejecutando el archivo y registrando su versión en `supabase_migrations.schema_migrations`, que es lo mismo que
   hace `migration up`. Con esa migración ajena, la guardia G3 del aislamiento lista `accept_invitation` e
   `invitation_preview` como funciones sin registrar: falla hasta que ese PR agregue sus entradas al registro.
+## Verificación del 2026-11-04
+
+Contrastado con `origin/main` (última migración `20261102100000`; H-009 trae `20261103100000` en el PR #20):
+
+- **Existen** los archivos y piezas que el diseño nombra: `defaultEmailBody` (`src/lib/quotes/send/content.ts`),
+  `parseBasicFormat` (`src/lib/email/basic-format.ts`), `ConfirmAction`, `documentSnapshotSchema`
+  (`src/lib/share/read-model.ts`), `app.intake_text_unsafe`, `app.set_row_meta_by`, `app.forbid_tenant_change`,
+  `app.audit_row_change`, `settings.manage`, y las fixtures y el registro de aislamiento.
+- **`save_quote_draft` tiene una sola definición vigente** (`20261005130000_brand_server_only_logo.sql`), con las
+  claves permitidas `customer_id`, `global_discount`, `validity`, `observations` y `conditions`, y la revisión de
+  rol con `app.has_role('owner','admin','sales')`: es justo lo que H-048b debe copiar sin tocar.
+- **`app.quote_text_max_length` no existe** (la crea H-048b), y `text_snippets` tampoco (la crea H-048a).
+- **H-008 ya está en `main`**: `configuracion/page.tsx` ya tiene «Tu equipo», `labels.ts` tiene `invitation.*` y
+  `src/lib/team/` es el patrón más reciente de acciones, errores y esquemas para H-048a. Los choques de §12 con
+  H-008 desaparecen; los de H-009 (PR #20) son los mismos archivos (`labels.ts`, `registry.ts`, `fixture.ts`) y
+  se resuelven con un `git merge` de `main` al empezar.
+- **Sigue sin poder verificarse:** H-041 y H-040 (no construidas) y cómo pagina la plantilla 1 con cinco bloques
+  largos (lo dirán las pruebas de render).
+

@@ -15,6 +15,26 @@ describe("nombres del registro de actividad", () => {
     for (const label of Object.values(AUDIT_ACTION_LABELS)) expect(label.length).toBeGreaterThan(0);
   });
 
+  it("nombra los textos guardados y no muestra nunca su contenido (H-048a)", () => {
+    expect(actionLabel("text_snippet.created")).toBe("Se creó un texto guardado");
+    expect(actionLabel("text_snippet.updated")).toBe("Se cambió un texto guardado");
+    expect(actionLabel("text_snippet.deleted")).toBe("Se eliminó un texto guardado");
+    expect(isKnownAuditAction("text_snippet.deleted")).toBe(true);
+    expect(resourceLabel("text_snippet")).toBe("Texto guardado");
+    // lo que guarda la base: tipo, nombre y campos cambiados; la frase solo nombra los campos
+    expect(
+      describeAuditDetails({
+        kind: "email_body",
+        name: "Saludo con CANARIO",
+        changed: ["name", "body", "is_default"],
+      }),
+    ).toBe("Cambió: nombre, texto, predeterminado");
+    expect(
+      describeAuditDetails({ kind: "conditions", name: "Pago con CANARIO", is_default: false }),
+    ).toBeNull();
+    expect(describeAuditDetails({ kind: "exclusions", name: "X", was_default: false })).toBeNull();
+  });
+
   it("solo las acciones de la lista se aceptan como filtro", () => {
     expect(isKnownAuditAction("member.updated")).toBe(true);
     expect(isKnownAuditAction("toString")).toBe(false);

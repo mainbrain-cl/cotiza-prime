@@ -7,6 +7,13 @@ import { computeCheckDigit, normalizeRut } from "../src/lib/chile/rut";
 import { encryptPii } from "../src/lib/crypto/pii";
 import { searchHash } from "../src/lib/crypto/search-hash";
 import { normalizeEmail } from "../src/lib/normalize/email";
+import { TENANT_HEADER } from "../src/lib/tenant/constants";
+import {
+  normalizeSnippetBody,
+  normalizeSnippetName,
+  type SnippetKind,
+} from "../src/lib/snippets/model";
+import { checkKindRules } from "../src/lib/snippets/schemas";
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 const TEST_PASSWORD = "Prueba-Cotiza-2026"; // solo para cuentas ficticias locales
@@ -270,12 +277,125 @@ async function seedCustomers(
   if (rows.length > 0) check("customers insert", await admin.from("customers").insert(rows));
 }
 
+/** Textos guardados de demostración (H-048a): el mismo juego para cada organización de prueba. */
+const SNIPPETS: {
+  key: string;
+  kind: SnippetKind;
+  name: string;
+  body: string;
+  isDefault: boolean;
+}[] = [
+  {
+    key: "email-saludo",
+    kind: "email_body",
+    name: "Saludo estándar",
+    body: "Estimado/a {{cliente}}:\n\nJunto con saludar, le enviamos la cotización {{numero}} que preparamos para usted.\n\nQuedamos atentos a cualquier consulta.\n\nSaludos cordiales,\n{{remitente}}\n{{organizacion}}",
+    isDefault: true,
+  },
+  {
+    key: "condiciones-pago",
+    kind: "conditions",
+    name: "Pago a 30 días",
+    body: "Pago a 30 días desde la fecha de la factura. Los valores están expresados en pesos chilenos y no incluyen IVA, salvo que se indique lo contrario.",
+    isDefault: false,
+  },
+  {
+    key: "exclusiones-embalaje",
+    kind: "exclusions",
+    name: "No incluye embalaje",
+    body: "No incluye embalaje, carga ni descarga a pie de camión, ni permisos municipales.",
+    isDefault: false,
+  },
+  {
+    key: "nota-vigencia",
+    kind: "footer_note",
+    name: "Vigencia de la oferta",
+    body: "Esta cotización es válida por 15 días corridos desde su fecha de emisión. Pasado ese plazo, los precios pueden cambiar.",
+    isDefault: false,
+  },
+];
+
+/**
+ * Crea los textos de demostración que falten, con la MISMA función de la base que usa la aplicación
+ * (`create_text_snippet`), entrando como el Dueño de cada organización: la tabla no admite escritura directa ni
+ * siquiera con la llave maestra, y así las reglas del texto las revisa la base. Es idempotente: cada texto tiene
+ * un identificador estable y no se vuelve a crear si ya existe (por id o por tipo y nombre). El texto inicial del
+ * correo solo se marca si la organización aún no tiene uno.
+ */
+async function seedSnippets(
+  admin: SupabaseClient,
+  url: string,
+  anonKey: string,
+  tenantId: string,
+  ownerEmail: string,
+): Promise<void> {
+  const existing = check(
+    "text_snippets select",
+    await admin
+      .from("text_snippets")
+      .select("id, kind, name, is_default")
+      .eq("tenant_id", tenantId),
+  ) as { id: string; kind: string; name: string; is_default: boolean }[];
+  const haveIds = new Set(existing.map((r) => r.id));
+  const haveNames = new Set(existing.map((r) => `${r.kind}|${r.name.toLowerCase()}`));
+  let hasDefault = existing.some((r) => r.is_default);
+
+  const pending = SNIPPETS.flatMap((snippet) => {
+    const id = stableUuid(`seed-snippet|${tenantId}|${snippet.key}`);
+    const name = normalizeSnippetName(snippet.name);
+    const body = normalizeSnippetBody(snippet.body);
+    if (haveIds.has(id) || haveNames.has(`${snippet.kind}|${name.toLowerCase()}`)) return [];
+    const isDefault = snippet.isDefault && !hasDefault;
+    const problem = checkKindRules(snippet.kind, { body, isDefault });
+    if (problem)
+      throw new Error(`Texto de demostración inválido (${snippet.key}): ${problem.message}`);
+    if (isDefault) hasDefault = true;
+    return [{ id, kind: snippet.kind, name, body, isDefault }];
+  });
+  if (pending.length === 0) return;
+
+  const owner = createClient(url, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { [TENANT_HEADER]: tenantId } },
+  });
+  const signedIn = await owner.auth.signInWithPassword({
+    email: ownerEmail,
+    password: TEST_PASSWORD,
+  });
+  if (signedIn.error)
+    throw new Error(`signInWithPassword ${ownerEmail}: ${signedIn.error.message}`);
+  for (const snippet of pending) {
+    check(
+      "create_text_snippet",
+      await owner.rpc("create_text_snippet", {
+        p_snippet_id: snippet.id,
+        p_kind: snippet.kind,
+        p_name: snippet.name,
+        p_body: snippet.body,
+        p_is_default: snippet.isDefault,
+      }),
+    );
+  }
+  // Solo esta sesión: sin `scope` local se cerrarían las sesiones de Ana y Beto en todos sus navegadores.
+  await owner.auth.signOut({ scope: "local" });
+}
+
 async function main(): Promise<void> {
   const url = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
   assertLocal(url);
   const admin = createClient(url, requireEnv("SUPABASE_SERVICE_ROLE_KEY"), {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+
+  const anonKey = requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  // El Dueño activo de cada organización, tal como está en PEOPLE (un solo lugar donde se escriben).
+  const ownerEmailOf = (key: TenantKey): string => {
+    const owner = PEOPLE.find((person) =>
+      person.memberships.some((m) => m.tenant === key && m.role === "owner" && !m.removed),
+    );
+    if (!owner) throw new Error(`La organización ${key} no tiene Dueño en PEOPLE`);
+    return owner.email;
+  };
 
   console.log("PRUEBAS (Supabase local):", url);
   const userIds = await seedUsers(admin);
@@ -288,6 +408,7 @@ async function main(): Promise<void> {
   for (const [key, tenantId] of tenantIds) {
     await seedCatalog(admin, tenantId);
     await seedCustomers(admin, key, tenantId);
+    await seedSnippets(admin, url, anonKey, tenantId, ownerEmailOf(key));
   }
   console.log(
     `Listo: ${userIds.size} personas, ${tenantIds.size} organizaciones. Contraseña de prueba: ${TEST_PASSWORD}`,

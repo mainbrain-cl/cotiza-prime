@@ -406,3 +406,108 @@ y normalización.
   ejecutando el archivo y registrando su versión en `supabase_migrations.schema_migrations`, que es lo mismo que
   hace `migration up`. Con esa migración ajena, la guardia G3 del aislamiento lista `accept_invitation` e
   `invitation_preview` como funciones sin registrar: falla hasta que ese PR agregue sus entradas al registro.
+
+---
+
+## Registro de construcción del PR 2 (2026-11-04)
+
+**Qué se construyó (lo que se ve de H-048a):** la capa de datos de la aplicación, las pantallas de «Textos listos»
+en Configuración, las etiquetas de auditoría, la semilla y las pruebas. Sin cambios en la base de datos (ninguna
+migración nueva).
+
+**Rutas y archivos**
+
+| Qué | Dónde |
+|---|---|
+| Lista agrupada por tipo (con estado vacío, de error y esqueleto) | `/o/[tenantId]/configuracion/textos` (`page.tsx`, `loading.tsx`) |
+| Nuevo texto | `/o/[tenantId]/configuracion/textos/nuevo` |
+| Editar y eliminar | `/o/[tenantId]/configuracion/textos/[snippetId]` |
+| Tarjeta «Textos listos» | `configuracion/page.tsx` (lista `SECTIONS`, ícono `FileText`) |
+| Formulario reutilizable (lo usará H-101) | `src/components/snippets/snippet-form.tsx` |
+| Lista de tarjetas | `src/components/snippets/snippet-list.tsx` |
+| Acciones de servidor | `src/lib/snippets/actions.ts` (`createSnippetAction`, `updateSnippetAction`, `deleteSnippetAction`) |
+| Llamadas a la base (solo las tres funciones) | `src/lib/snippets/service.ts` |
+| Traducción de errores | `src/lib/snippets/errors.ts` |
+| Lecturas (agrupadas y ordenadas; uno por id) | `src/lib/snippets/queries.ts`, `groups.ts` |
+| Datos de ejemplo de la vista previa | `src/lib/snippets/preview.ts` |
+| Etiquetas de auditoría | `src/lib/audit/labels.ts` (`text_snippet.created/updated/deleted`, recurso «Texto guardado», campos «texto» y «texto inicial») |
+| Semilla | `scripts/seed.ts` (`seedSnippets`) |
+| Pruebas | `src/lib/snippets/*.test.ts`, `src/components/snippets/snippet-form.test.tsx`, `tests/isolation/` (registro de rutas y guardia estática 12), `e2e/text-snippets.spec.ts`, `e2e/isolation.spec.ts` (P30) |
+
+**Decisiones donde el diseño no decía (las más conservadoras)**
+
+1. **Las acciones reciben datos simples, no un formulario**, y la pantalla las llama dentro de un `try/catch` (no con
+   `useActionState`): un fallo de red se muestra como aviso en la misma pantalla y lo escrito no se pierde (lección
+   de H-009). El identificador del texto nuevo lo genera la página al abrirse (`crypto.randomUUID()` en el servidor).
+2. **Cambiar un texto lee antes el tipo guardado** (`text_snippets.kind` con el pase de la persona) y valida las
+   variables y el «texto inicial» con `checkKindRules(tipo_guardado, …)`. Un texto que no está (o es de otra
+   organización) responde «No encontramos este texto…» sin llamar a la función. El esquema es estricto: un `kind` que
+   mande el navegador se rechaza.
+3. **Borrar un texto que ya no existe es éxito** (`CP404` con motivo `snippet_not_found`); `CP404 not_found`
+   (sin organización) no se disfraza de éxito. Crear con un identificador repetido (`exists`) también es éxito.
+4. **Validación doble:** la pantalla revisa nombre, texto y variables con los mismos esquemas del módulo (así no hay
+   reglas duplicadas) antes de ir al servidor; el servidor y la base las vuelven a exigir.
+5. **Vista previa:** sin `dangerouslySetInnerHTML`. Se completan las variables con datos de ejemplo (`Ana Pérez`,
+   `COT-2026-0001`, `Juan Soto`, `Tu Empresa SpA`) y se muestra la versión en texto del lector del formato básico
+   (`parseBasicFormat(...).text`): negritas sin asteriscos y enlaces como «texto (dirección)». Si el texto no se
+   podría enviar (enlace engañoso, demasiados enlaces) la vista previa lo avisa; guardar no se bloquea por eso.
+6. **Auditoría:** la base guarda tipo, nombre y campos cambiados (nunca el texto). El visor solo nombra los campos
+   que cambiaron; no muestra el nombre ni el texto.
+7. **Tope de 50:** al llegar al máximo se oculta el botón «Nuevo texto» y la lista lo explica; la base lo vuelve a
+   exigir.
+8. **Contador «x / 4.000»** sin anuncio en cada tecla para lectores de pantalla; solo se anuncia al pasar el máximo.
+9. **Semilla:** entra como el Dueño de cada organización de demostración (`ana`, `beto`) y llama a
+   `create_text_snippet`, porque ni siquiera la llave maestra puede insertar directo (las restricciones de la tabla
+   llaman funciones sin permiso para ese rol). Cuatro textos por organización (correo inicial, condiciones,
+   exclusiones, nota al pie).
+
+**Mensajes de error por código** (en `errors.ts`; el motivo viaja en el mensaje de la base)
+
+| Código · motivo | Mensaje |
+|---|---|
+| `42501` | «No tienes permiso para esto.» |
+| `CP404` (`snippet_not_found`, `not_found`) | «No encontramos este texto. Puede que otra persona lo haya eliminado.» (al borrar `snippet_not_found` es éxito) |
+| `CP409` `revision_conflict` | «Otra persona cambió este texto mientras lo editabas. Recarga para ver la versión actual.» (con botón «Recargar la versión actual») |
+| `CP422` `name_taken` | «Ya tienes un texto con ese nombre en este tipo. Elige otro nombre.» (bajo el nombre) |
+| `CP422` `too_many_snippets` | «Llegaste al máximo de 50 textos guardados. Elimina alguno para crear otro.» |
+| `CP422` `unknown_variable`, `variables_not_allowed`, `too_many_variables` | Los mensajes de `SNIPPET_VARIABLE_PROBLEM_MESSAGES` (bajo el texto) |
+| `CP422` `default_only_email` | «Solo un texto del correo puede ser el texto inicial.» |
+| `CP422` `invalid_name`, `invalid_body` | Piden revisar largo y caracteres (bajo el campo) |
+| `CP422` `invalid_kind`, `invalid_arguments`, `id_in_use`, otros | Mensaje genérico; en el log solo queda el código |
+
+**Límites conocidos**
+
+- La vista previa no dibuja negritas ni enlaces con formato (sería HTML); muestra la versión en texto.
+- Una pestaña que quedó abierta sobre un texto que otra persona eliminó: al guardar recibe «No encontramos este texto…».
+- Tras guardar una edición, la pantalla se vuelve a cargar (la clave del formulario incluye la revisión), así que se
+  reinicia con lo guardado; lo que se haya escrito mientras se guardaba se pierde.
+- No se probó con lector de pantalla, Safari ni Firefox (solo Chromium con Playwright y jsdom).
+- El caso «Comercial sin permiso» del aislamiento de pantalla se prueba en `e2e/text-snippets.spec.ts` (hay un
+  Comercial real); en la fixture de aislamiento no hay un miembro sin permiso con navegador, y lo de base de datos (Dante,
+  Observador) ya lo cubre `tests/isolation/text-snippets.test.ts`.
+
+**Correcciones de la ronda 1 de revisión (PR 2)**
+
+- **Textos que prometían de más.** Usar los textos al cotizar y que el correo parta con el texto inicial llegan con H-048b.
+  Hasta entonces la pantalla lo dice con honestidad («Pronto podrás usarlos al cotizar», «el correo podrá partir con
+  este texto») en la lista, el estado vacío, «Nuevo texto», el recuadro de variables, la casilla del texto inicial y las
+  ayudas de tipo. La vista previa con datos de ejemplo no cambió.
+- **Un correo que no se podría enviar ya no se guarda.** `checkSnippetEmailFormat` (en `preview.ts`) prueba el texto como
+  lo haría el envío (variables de ejemplo y lector del formato básico). Quedó dentro de `checkKindRules`, el punto único
+  que usan crear (esquema), cambiar (servicio), la pantalla y la semilla: para el tipo correo, un enlace engañoso o más de
+  20 enlaces se rechazan en el servidor con el mensaje de `BASIC_FORMAT_ERROR_MESSAGES` (sin repetir lo escrito, nada
+  nuevo en logs ni auditoría); los otros tres tipos no pasan por esa revisión. La pantalla lo anticipa con el mismo
+  chequeo. Esto reemplaza lo dicho en la decisión 5 («guardar no se bloquea por eso»).
+- **375 px.** La lista usa `grid-cols-1` y `min-w-0` en cada tarjeta: un nombre de 40 letras sin espacios ya no estira la
+  página (el caso e2e falló con 68 px de más sin la corrección).
+- **Semilla.** `signOut({ scope: "local" })` (ya no cierra las sesiones de Ana y Beto en otros navegadores) y los correos
+  de los Dueños salen de `PEOPLE`. No se corrió la semilla.
+- **Accesibilidad.** La tarjeta de la lista ya no pisa su contenido con un `aria-label` (se oye nombre, «Texto inicial» y
+  extracto); el contador «x / 4.000» está en el `aria-describedby` del campo; el error de «Usar como texto inicial» queda
+  conectado a la casilla (`aria-describedby` y `aria-invalid`).
+- **«Ya existía».** La respuesta `exists` ahora dice «Este texto ya estaba guardado; revisa que quedó como querías.» y,
+  al crear, lleva a la pantalla de ese texto en vez de a la lista.
+- **Etiqueta de auditoría** `is_default` pasó a «predeterminado» (era «texto inicial» para todo el sistema).
+- **Detalles.** `KIND_REQUIRED_MESSAGE` se exporta desde `schemas.ts`; el caso e2e de «No encontrado» se renombró a lo que
+  prueba (identificador al azar o roto); y `/textos/nuevo` con el tope de 50 muestra el aviso arriba en vez de dejar
+  escribir.

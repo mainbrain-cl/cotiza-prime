@@ -731,6 +731,52 @@ describe("guardias estáticas del aislamiento", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("12. (H-048a) los textos guardados solo se escriben por sus tres funciones, con el pase de la persona, y nada de lo que se escribe llega a un log ni se pinta como HTML", () => {
+    const scoped = sourceFiles.filter(
+      (f) =>
+        rel(f).startsWith("src/lib/snippets/") ||
+        rel(f).startsWith("src/components/snippets/") ||
+        rel(f).startsWith("src/app/o/[tenantId]/configuracion/textos/"),
+    );
+    expect(scoped.length).toBeGreaterThan(10);
+    const offenders: string[] = [];
+    const rpcNames = new Set<string>();
+    let calls = 0;
+    for (const file of scoped) {
+      const code = stripComments(read(file));
+      if (/admin-client|createAdminClient|SERVICE_ROLE/.test(code)) {
+        offenders.push(`${rel(file)}: usa la llave maestra`);
+      }
+      if (/dangerouslySetInnerHTML/.test(code)) offenders.push(`${rel(file)}: pinta HTML`);
+      if (/console\./.test(code)) offenders.push(`${rel(file)}: escribe en la consola`);
+      if (/logAuditEvent\(/.test(code)) offenders.push(`${rel(file)}: escribe en la auditoría`);
+      // la tabla solo se lee: escribir va siempre por las funciones de la base
+      if (/\.(insert|upsert|delete|update)\(/.test(code)) {
+        offenders.push(`${rel(file)}: escribe directo en una tabla`);
+      }
+      for (const match of code.matchAll(/\.rpc\(\s*["'`]([a-z_0-9]+)["'`]/g))
+        rpcNames.add(match[1]);
+      if (
+        (code.match(/\.rpc\(/g)?.length ?? 0) !==
+        [...code.matchAll(/\.rpc\(\s*["'`][a-z_0-9]+["'`]/g)].length
+      ) {
+        offenders.push(`${rel(file)}: llama a una función con un nombre que no es un texto fijo`);
+      }
+      for (const call of serverLogCalls(code)) {
+        calls += 1;
+        const problem = intakeLogProblem(call);
+        if (problem) offenders.push(`${rel(file)}: ${problem}: ${call}`);
+      }
+    }
+    expect(calls).toBeGreaterThan(3);
+    expect(sorted(rpcNames)).toEqual([
+      "create_text_snippet",
+      "delete_text_snippet",
+      "update_text_snippet",
+    ]);
+    expect(offenders).toEqual([]);
+  });
+
   it("7. la guardia detecta de verdad: el texto de una violación sí coincide con las reglas", () => {
     // Evita que una regla quede inútil por un error en su expresión regular.
     expect(/x-cp-tenant-id/i.test('headers["X-CP-Tenant-Id"]')).toBe(true);

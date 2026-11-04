@@ -105,6 +105,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         B.quoteIds[0],
         B.intake!.formId,
         B.intake!.requestId,
+        B.snippets!.emailId,
       );
       await expectNotFound(page, path);
       const html = await page.content();
@@ -204,6 +205,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         fx.orgs.A.quoteIds[0],
         fx.orgs.A.intake!.formId,
         fx.orgs.A.intake!.requestId,
+        fx.orgs.A.snippets!.emailId,
       );
       const response = await page.goto(path);
       expect(response?.status(), path).toBe(200);
@@ -289,6 +291,8 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
           "",
           fx.orgs.B.quoteIds[0],
           fx.orgs.B.intake!.formId,
+          fx.orgs.B.intake!.requestId,
+          fx.orgs.B.snippets!.emailId,
         );
         const res = await page.request.get(attackPath, {
           headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },
@@ -450,6 +454,97 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
           `ATAQUE-P28-%`,
         ]),
       ).toBe(0);
+    });
+  });
+
+  test("P30 · los textos guardados de B no se abren ni se cambian desde A (H-048a)", async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    const fx = loadFixture();
+    const A = fx.orgs.A;
+    const B = fx.orgs.B;
+    const bSnippetState = () =>
+      withDb(async (db) => {
+        const { rows } = await db.query<{ h: string }>(
+          `select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
+             from (select * from public.text_snippets where tenant_id = $1) t`,
+          [B.tenantId],
+        );
+        return rows[0].h;
+      });
+    const before = await bSnippetState();
+
+    // El texto de B pedido DESDE la organización A es idéntico a pedir uno que no existe.
+    // (el código puede ser 200: la pantalla ya empezó a enviarse; lo que importa es que sea idéntico)
+    const missing = await page.goto(`/o/${A.tenantId}/configuracion/textos/${crypto.randomUUID()}`);
+    await expect(page.getByRole("heading", { name: NOT_FOUND_HEADING })).toBeVisible();
+    const missingText = await mainText(page);
+    for (const id of [B.snippets!.emailId, B.snippets!.conditionsId]) {
+      const response = await page.goto(`/o/${A.tenantId}/configuracion/textos/${id}`);
+      expect(response?.status()).toBe(missing?.status());
+      await expect(page.getByRole("heading", { name: NOT_FOUND_HEADING })).toBeVisible();
+      expect(await mainText(page)).toBe(missingText);
+      const html = await page.content();
+      expect(html).not.toContain(B.canary);
+      expect(html).not.toContain(B.snippets!.emailBody);
+    }
+
+    // La lista de A solo trae los textos de A; la de B, ni con su cabecera ni sin ella.
+    await page.goto(`/o/${A.tenantId}/configuracion/textos`);
+    await expect(page.getByTestId("snippet-list")).toBeVisible();
+    const listHtml = await page.content();
+    expect(listHtml).toContain(A.canary);
+    expect(listHtml).not.toContain(B.canary);
+    const listAttack = await page.request.get(`/o/${B.tenantId}/configuracion/textos`, {
+      headers: { [TENANT_HEADER]: B.tenantId },
+    });
+    expect(listAttack.status()).toBe(404);
+    expect(await listAttack.text()).not.toContain(B.canary);
+
+    // Guardar y eliminar: el pedido de la pantalla de A se cambia para llevar el texto de B.
+    await page.goto(`/o/${A.tenantId}/configuracion/textos/${A.snippets!.conditionsId}`);
+    let tampered = 0;
+    await page.route(
+      `**/o/${A.tenantId}/configuracion/textos/${A.snippets!.conditionsId}`,
+      async (route) => {
+        const request = route.request();
+        const body = request.postData();
+        if (request.method() !== "POST" || body === null) return route.continue();
+        const replaced = body.split(A.snippets!.conditionsId).join(B.snippets!.conditionsId);
+        if (replaced !== body) tampered++;
+        await route.continue({ postData: replaced });
+      },
+    );
+    await page.getByTestId("snippet-name").fill(`ATAQUE-P30-${fx.runId}`);
+    await page.getByTestId("snippet-save").click();
+    await expect
+      .poll(() => tampered, { message: "el pedido debía llevar el texto de A" })
+      .toBeGreaterThan(0);
+    await expect(
+      page.getByRole("alert").filter({ hasText: "No encontramos este texto" }),
+    ).toBeVisible();
+    expect(await bSnippetState()).toBe(before);
+
+    const tamperedBeforeDelete = tampered;
+    await page.getByTestId("snippet-delete-button").click();
+    await page.getByTestId("snippet-delete-confirm").click();
+    await expect.poll(() => tampered).toBeGreaterThan(tamperedBeforeDelete);
+    // Borrar algo que no existe en A se trata como éxito (y vuelve a la lista), pero B queda intacta.
+    await expect(page).toHaveURL(new RegExp(`/o/${A.tenantId}/configuracion/textos$`));
+    expect(await bSnippetState()).toBe(before);
+    await withDb(async (db) => {
+      expect(
+        await countRows(db, `select 1 from public.text_snippets where name like $1`, [
+          `ATAQUE-P30-%`,
+        ]),
+      ).toBe(0);
+      // el texto de A, que Ana sí podía borrar, sigue ahí: el pedido cambiado nunca lo tocó
+      expect(
+        await countRows(db, `select 1 from public.text_snippets where id = $1`, [
+          A.snippets!.conditionsId,
+        ]),
+      ).toBe(1);
     });
   });
 

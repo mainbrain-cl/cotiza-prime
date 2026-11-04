@@ -8,6 +8,13 @@
 > **Antes de construir:** las fechas de las migraciones se asignan en ese momento. Cada migración debe tener
 > fecha **única** y posterior a la última integrada en `main` (`20261102100000` ya la usa el pendiente m11 de
 > H-092).
+>
+> **Actualización del 2026-11-04.** Se verificaron las premisas contra `main` (sección «Verificación del
+> 2026-11-04», al final) y José decidió **D1, D3 y D4 con los supuestos del diseño** (§11). Queda abierta solo la
+> **D2 (decisión 15, de Aarón)**: **no impide construir**, porque la tabla de la regla no cambia con ninguna de sus
+> respuestas (§5), pero el PR queda abierto hasta que Aarón la responda. La fecha de migración que se había
+> reservado (`20261102120000`) quedó por detrás de la de H-009 (`20261103100000`): la propuesta nueva es
+> `20261104120000`, y se confirma al construir con la regla de siempre (única y posterior a la última de `main`).
 
 **En pocas palabras.** Hoy no hay ningún lugar donde se guarde una regla de aprobación, y el envío no revisa
 nada: cualquier cotización sale directo. Se proponen cuatro piezas:
@@ -238,16 +245,16 @@ aplica. PR delicado: queda abierto hasta que Aarón lo revise; después, el `rev
 
 ## 11. Decisiones
 
-**Bloquean la construcción:**
+**Bloqueaban la construcción (D1, D3 y D4 decididas el 2026-11-04; D2 sigue con Aarón y no impide construir):**
 
 1. **D1 · ¿Se aplica la regla al enviar desde ya, aunque «Solicitar aprobación» llegue en el sprint 6?**
    Supuesto: sí. Lo que cumple la regla no sale; como parte en «Nunca», nada cambia si nadie la toca. La
-   alternativa (guardar sin aplicar) da una falsa sensación de control. Bloquea el paso 4.
+   alternativa (guardar sin aplicar) da una falsa sensación de control. Bloquea el paso 4. **Decidida por José el 2026-11-04: sí, se aplica desde ya.**
 2. **D2 · ¿A quién aplica?** (decisión 15, de Aarón). Supuesto: a todos los que envían, incluidos Dueño y
-   Administrador, con el aviso de «nadie más puede aprobar».
-3. **D3 · ¿El monto se compara con el total con IVA o con el neto?** Supuesto: total con IVA.
+   Administrador, con el aviso de «nadie más puede aprobar». **Pendiente de Aarón: no impide construir (§5), sí mezclar.**
+3. **D3 · ¿El monto se compara con el total con IVA o con el neto?** Supuesto: total con IVA. **Decidida por José el 2026-11-04: total con IVA.**
 4. **D4 · ¿Qué cuenta como descuento?** Supuesto: descuentos de línea más el general, sobre el valor antes de
-   descuentos y sin IVA (no las rebajas de precio respecto del catálogo).
+   descuentos y sin IVA (no las rebajas de precio respecto del catálogo). **Decidida por José el 2026-11-04: ese criterio.**
 
 **No bloquean (se construye con el supuesto):** D5 umbral de 0 % = «cualquier descuento» (permitido) · D6
 redondear el porcentaje a dos decimales antes de comparar (sí) · D7 regla de las organizaciones nuevas:
@@ -280,3 +287,18 @@ versiones creadas por personas); el comportamiento por dentro de `useResultToast
 `OfflineNotice`; y si las fixtures que insertan paquetes con `pg` (`tests/db/send-helpers.ts`,
 `tests/db/quote-packages.test.ts`, `tests/isolation/fixture.ts`, `check-rollbacks.mjs`) crean sus
 organizaciones de forma que el disparador de `tenants` las cubra.
+
+## Verificación del 2026-11-04
+
+Contrastado con `origin/main` (última migración `20261102100000`; H-009 trae `20261103100000` en el PR #20):
+
+- **Existen** los archivos y piezas que el diseño reutiliza: `app.forbid_mutation`, `app.forbid_tenant_change`,
+  `app.round_half_up_div`, `app.write_audit`, `quote_packages_guard`, `quote_packages_set_revision`,
+  `settings.manage` (Dueño y Administrador), `quote.approve` y `quote.approval.request` en la matriz,
+  `numbering-form.tsx` como patrón, y `configuracion/page.tsx` con «Tus reglas de aprobación» en «Disponible pronto».
+- **`approval_rules` y `app.quote_approval_check` no existen** (se crean aquí), igual que `approvals.configure`.
+- **H-008 ya está en `main`**: `configuracion/page.tsx` tiene ahora la tarjeta «Tu equipo» y `labels.ts` las
+  etiquetas `invitation.*`; el orden de las tarjetas y las etiquetas nuevas de H-040 parten de ahí.
+- **Sigue sin poder verificarse:** la implementación de H-041 (no está construida) y por tanto cómo reescribe
+  `prepare_quote_send`; por eso el control va en un disparador de `quote_packages` (§7) y no en esa función.
+

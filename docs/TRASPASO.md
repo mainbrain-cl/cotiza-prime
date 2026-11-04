@@ -53,16 +53,16 @@ de seguridad exige una decisión escrita en `docs/decisiones/`.
 
 ## 4. Dónde está el proyecto
 
-Fecha de este traspaso: **2026-10-27** (puesto al día el **2026-10-28**). El último trabajo fue el **2026-10-07** (el proyecto estuvo 20
+Fecha de este traspaso: **2026-10-27** (puesto al día el **2026-11-04**; el detalle de esa fecha está en `CLAUDE.md`, «Traspaso del 2026-11-04»). El último trabajo fue el **2026-10-07** (el proyecto estuvo 20
 días sin moverse; no se perdió nada).
 
 | | |
 |---|---|
-| **Historias construidas** | **36 de 92 (39 %)** |
-| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 construida y en `main` desde el 2026-10-28) · **5 (equipo y permisos) confirmado por José el 2026-10-28 y en construcción** (H-011a y H-008 en `main`; siguen H-009 y H-011b) · 6 a 12 sin partir |
-| **Pruebas, la última vez** | 2026-11-02, local, antes de mezclar los PR #15, #16 y #17: 1.728 unitarias (1 omitida) · 789 de base de datos · 1.121 de aislamiento entre organizaciones (3 pendientes) · e2e `chromium` 116 de 116 con la app compilada · e2e `isolation` 18 de 18. `test:db:rollbacks` no se corrió |
-| **Base de datos** | 38 migraciones, cada una con su deshacer |
-| **Rama** | `main` estaba limpia en `1085ef1` (2026-10-27). El 2026-10-28 se mezclaron los PR #2, #8, #1, #6, #4 y #5 (ver §5); después, hasta el #17 (`50b76f3`, 2026-11-02). **Desde ahora el trabajo va por ramas y PR: nada directo a `main`** |
+| **Historias construidas** | **38 de 92** (el total es anterior a partir H-004 y H-048; `HISTORIAS.md` tiene hoy 97 fichas: falta recontar) |
+| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 construida y en `main` desde el 2026-10-28) · **5 (equipo y permisos) confirmado por José el 2026-10-28 y en construcción** (H-011a, H-008, H-009 y H-048a en `main`; siguen H-010 y H-011b) · 6 a 12 sin partir |
+| **Pruebas, la última vez** | 2026-11-04, local, antes de mezclar los PR #19 a #23: 2.050 unitarias (1 omitida) · 907 de base de datos · 1.188 de aislamiento entre organizaciones (3 pendientes) · e2e `chromium` 141 de 141 con la app compilada · e2e `isolation` 19 de 19. `test:db:rollbacks` no se corrió sobre el conjunto |
+| **Base de datos** | 40 migraciones, cada una con su deshacer |
+| **Rama** | `main` estaba limpia en `1085ef1` (2026-10-27). El 2026-10-28 se mezclaron los PR #2, #8, #1, #6, #4 y #5 (ver §5); después, hasta el #23 (`42a1fff`, 2026-11-04). **Desde ahora el trabajo va por ramas y PR: nada directo a `main`** |
 
 ### Lo que funciona hoy (en local)
 
@@ -101,8 +101,8 @@ hoy, 7 y 30 días; solo Dueño y Administrador), control del tope diario (1 a 20
 - La rama remota `wip/h-092-bloqueos-y-tope` ya no hace falta, pero **no se ha borrado**: borrable cuando José lo ordene.
 
 **Sprint 5 (equipo y permisos).** Confirmado por José el 2026-10-28 (Compuerta 3; Aarón queda avisado y puede
-objetar). En construcción: H-011a (matriz única de permisos, PR #12) y H-008 (invitar a un miembro, PR #15) en `main`; hasta
-H-009 el enlace del correo de invitación lleva a «No encontrado». Siguen H-009 y H-011b. Documentos: `docs/sprints/005-equipo-y-permisos.md` y `docs/arquitectura/sprint-5-equipo-y-permisos.md`.
+objetar). En construcción: H-011a (PR #12), H-008 (PR #15), H-009 (PR #20) y H-048a (PR #22 y #23) en `main`. Siguen H-010 y
+H-011b. Documentos: `docs/sprints/005-equipo-y-permisos.md` y `docs/arquitectura/sprint-5-equipo-y-permisos.md`.
 
 **Decisión 020** (en `main`): aprobada por José el 2026-10-28 y ratificada por Aarón el 2026-10-29; plazo de
 aviso 24 h. En corto: qué decide José mientras Aarón no esté; qué sigue siendo de Aarón (producto, dinero,

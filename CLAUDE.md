@@ -43,7 +43,7 @@ Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por sepa
 hallazgos corregidos. Pruebas: `npm test`, `test:db`, `test:isolation` (504 ataques entre
 organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHub Actions.
 
-- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 38 migraciones. Datos de
+- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 40 migraciones. Datos de
   prueba: `npm run db:seed` (`ana`, `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
   `Prueba-Cotiza-2026`; Negocio Demo 1 y 2). Cómo levantarlo: `README.md`.
 - **Documentos de arquitectura:** `docs/arquitectura/modelo-datos.md` (aprobado) y
@@ -54,29 +54,74 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Estado al 2026-11-02 — empezar por aquí (traspaso a José)
+### Traspaso del 2026-11-04 — lo primero que hay que saber
+
+**Quedó en `main` (`42a1fff`):** PR #19, #21, #20 (H-009), #22 y #23 (H-048a), en ese orden, por pedido de Aarón.
+No hay PR abiertos. Ya se puede invitar y aceptar de punta a punta, y existe Configuración → «Textos listos».
+
+**Cómo se mezcló, para no repetir el trabajo:**
+- **#20 entró antes que #22**, no después como sugería José: su migración tiene fecha anterior y la regla pide que
+  cada una sea posterior a la última integrada.
+- **#23 se cambió de base a `main`** antes de mezclarlo. Sin eso habría quedado en la rama de #22.
+- **Se subieron commits de mezcla a las ramas de José** `feat/h-048a-textos-base` y `feat/h-048a-textos-pantallas`
+  para juntar `registry.ts`, `labels.ts` y `sprint-5-h-048-textos.md`. Los tres choques eran solo adiciones y quedaron
+  ambos lados. Quien tenga esas ramas abiertas debe partir de `main`.
+
+**Verificado en local, con los cinco juntos:** tipos, lint y formato limpios; 2.050 unitarias (1 omitida), 907 de base
+de datos, 1.188 de aislamiento (3 pendientes), e2e `chromium` 141 de 141 y `isolation` 19 de 19, ambos con
+`E2E_PROD=1`. En `main` ya mezclado solo se repitieron tipos, formato, unitarias y las guardias de aislamiento: quedó
+igual salvo el orden de unas líneas. Ahí `guards.test.ts` y `render.test.tsx` fallaron por tiempo con la máquina
+cargada y pasaron al correrlas solas.
+
+**Lo que NO se hizo:**
+- **Sin CI** (facturación de GitHub) y sin `test:db:rollbacks` sobre el conjunto (vacía la base local; José lo pasó
+  en la rama de #23, sin H-009).
+- **Aarón no lo probó en pantalla.** Mezcló #20 (delicado) por pedido expreso, sin revisarlo él. Lo revisó el agente
+  `revisor` en las rondas que cuenta cada PR; aquí se leyó la migración de H-009, no todo el código de los PR.
+- **La regla cero de Aarón (2026-11-03) pide CI verde y revisión adversarial aparte de lo delicado antes de integrar.**
+  El CI no corre, y para esta tanda no se lanzó una revisión adversarial nueva.
+- Firefox, lector de pantalla e iPhone real, sin probar.
+
+**Antes del piloto, nuevo por H-009:** en el proyecto de Supabase de producción, Confirm email ON, Secure email change
+ON y sin proveedores externos ni ingreso anónimo. Si no, la regla «solo con el mismo correo» no vale. Además, el
+código de la invitación viaja en la URL antes de la redirección y puede quedar en registros de acceso.
+
+**Qué sigue:** **H-010** (cambiar el rol o quitar a un miembro; ya no está bloqueada) → H-011b → H-004a/b → H-041 →
+H-048b → H-004c. Tras aceptar, nadie ve al nuevo miembro en «Tu equipo» hasta H-010. H-040 se puede construir, pero
+no mezclar hasta la decisión 15.
+
+**Le toca a Aarón:** decisión 15 (quién envía sin aprobación; supuesto: la regla aplica a todos los que envían, con
+excepción por persona más adelante), facturación de GitHub, y las opciones del issue #11 (decisión 015 y CI,
+`AGENTS.md`, decisión #17). Probar en pantalla: `npm run dev`, `ana@ejemplo.test`, «Equipo» y «Configuración → Textos
+listos»; los correos llegan a http://127.0.0.1:56324. Si los textos de ejemplo no aparecen, correr `npm run db:seed`.
+
+**Ojo con dos cosas de esta máquina:** al caerse VS Code, las pruebas en segundo plano pueden seguir vivas y ocupar
+el puerto 3100 (mirar antes de reintentar). Y el 2026-11-04 había otra app en `C:\dev\wt\lote` con `next start -p 3000`;
+no es de esta tanda y no se tocó, pero si usa la misma base puede cargar la máquina o ensuciar las pruebas.
+
+### Estado al 2026-11-04 — empezar por aquí (traspaso a José)
 
 **Lee primero `docs/TRASPASO.md`**: es la guía para ponerse al día (cómo levantarlo, qué leer, dónde
 quedó todo, trampas, qué decide Aarón y cómo trabaja). Este bloque es solo el resumen.
 
-**Dónde está:** 36 de 92 historias construidas (39 %). Sprint 1 cerrado; sprint 2 construido (falta que
+**Dónde está:** 38 historias construidas de 92 (el total es anterior a partir H-004 y H-048; `HISTORIAS.md` tiene hoy 97 fichas: falta recontar). Sprint 1 cerrado; sprint 2 construido (falta que
 Aarón lo pruebe y apruebe la plantilla 1); sprint 3 con 8 de 9 (falta **H-076**, las tres plantillas de
 PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3); **sprint 4 completo**
 (H-092 construida y en `main`). **Sprint 5 (equipo y permisos) confirmado por José el 2026-10-28**
 (Compuerta 3) y en construcción: **H-011a (matriz única de permisos) en `main` desde el 2026-10-29**
-(PR #12) y **H-008 (invitar a un miembro) en `main` desde el 2026-11-02** (PR #15; hasta H-009 el enlace del
-correo lleva a «No encontrado»); siguen H-009 (aceptar la invitación) y H-011b (pruebas por rol). Documentos: `docs/sprints/005-equipo-y-permisos.md` y
-`docs/arquitectura/sprint-5-equipo-y-permisos.md`. Sprints 6 a 12 sin partir. 38 migraciones. Pruebas en
-`main` (recontadas el 2026-11-02, local): 1.728 unitarias (1 omitida), 789 de base de datos, 1.121 de
-aislamiento (3 pendientes), e2e `isolation` 18 de 18 y e2e `chromium` 116 de 116 con la app compilada.
-`test:db:rollbacks` no se corrió el 2026-11-02 (vacía la base local).
+(PR #12), **H-008 (invitar, PR #15)**, **H-009 (aceptar, PR #20)** y **H-048a (textos listos, PR #22 y #23)**; siguen
+H-010 y H-011b. Documentos: `docs/sprints/005-equipo-y-permisos.md` y
+`docs/arquitectura/sprint-5-equipo-y-permisos.md`. Sprints 6 a 12 sin partir. 40 migraciones. Pruebas (2026-11-04, local): 2.050 unitarias (1 omitida), 907 de base de
+datos, 1.188 de aislamiento (3 pendientes), e2e `isolation` 19 de 19 y e2e `chromium` 141 de 141 con la app compilada.
+`test:db:rollbacks` no se corrió sobre el conjunto (vacía la base local).
 
 **Lo que ya funciona (en local):** registro y organizaciones, catálogo y clientes, cotizador con PDF,
 enviar por correo, enlace del cliente (aceptar o rechazar con motivo obligatorio), rebotes, vencimiento,
 revocar enlace, registro de actividad, formulario público (constructor, página pública con anti-robot,
 resumen en vivo sin precios, incrustable, QR), solicitudes (asignar, descartar, anonimizar, convertir en
-cotización), panel de protección con tope diario (H-092) y pantalla «Tu equipo» para invitar, reenviar y
-cancelar (H-008). Menú flotante vertical, tarjetas, contadores y
+cotización), panel de protección con tope diario (H-092), «Tu equipo» para invitar, reenviar y cancelar (H-008),
+aceptar una invitación (H-009) y «Textos listos» en Configuración (H-048a; todavía no se usan al cotizar, eso es
+H-048b). Menú flotante vertical, tarjetas, contadores y
 fondos animados (React Bits, decisión 018).
 
 **Mezclas del 2026-10-28.** Por orden explícita de José y **sin revisión de Aarón** se mezclaron en `main`
@@ -124,7 +169,7 @@ Turnstile o ALTCHA; antes de correos reales, además, que un nombre de organizac
 vuelva enlace en la invitación); dominio y marca; facturación de GitHub; antes del piloto, abogado, datos de Main Brain
 para los términos (29 marcadores), custodia de claves de cifrado y quién responde un incidente.
 
-**Qué sigue:** terminar el sprint 5 (H-009, H-011b y el resto de su lista) → revisión grande de Aarón (decirle qué está listo, el link
+**Qué sigue:** terminar el sprint 5 (H-010, H-011b y el resto de su lista) → revisión grande de Aarón (decirle qué está listo, el link
 `http://localhost:3000` y los accesos) → 6 aprobación y datos de pago → 7 cobro → piloto privado. Estimación: unas 2 a 3 semanas hasta el piloto y 4 a 6 hasta el lanzamiento.
 
 **Cómo se prueba en pantalla:** `npm run dev` → http://localhost:3000 (Docker abierto y `npx supabase

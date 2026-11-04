@@ -173,6 +173,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Depende de:** H-004a, H-004b, H-011
 **Datos personales:** no
 **Notas técnicas:** 🔒 cambia el pase de sesión de las cuentas de prueba en todas las pruebas, por eso va sola y al final del sprint 5. Requisito heredado de H-092 m11: `active.role` debe ser el rol efectivo, o la aplicación y la base discrepan (el editor del formulario ya tolera el `42501` del tope). Los supuestos 1 a 3 del diseño (queda como Observador; también obligatoria en pruebas; puede desactivarla) están en `sprint-5-equipo-y-permisos.md` §8.
+
 ---
 
 ### H-005 · Crear mi organización · M01, M03
@@ -893,6 +894,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Depende de:** H-048a, H-041
 **Datos personales:** no
 **Notas técnicas:** 🔒 reescribe `save_quote_draft` y cambia lo que ve el cliente final (PDF y página del enlace); no se mezcla sin Aarón (decisión 020 §5). Se construye después de H-041 y nunca en paralelo con ella, porque las dos reescriben `save_quote_draft` y git no avisa si una migración pisa a la otra. Los campos nuevos se congelan en la copia sellada del documento, sin tocar `prepare_quote_send`. Unos 4,5 días. Ver `sprint-5-h-048-textos.md` §3 a §5 y §12.
+
 ---
 
 # Fase 4 — Cobro

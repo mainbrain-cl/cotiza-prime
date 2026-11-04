@@ -20,7 +20,9 @@ los roles.
 
 | Historia | Tamaño | Notas |
 |---|---|---|
-| H-004 · Activar la verificación en dos pasos | mediano | Obligatoria para Dueño y Administrador antes de usar las funciones de su rol (PROYECTO §13.2) |
+| H-004a · Activar la verificación en dos pasos | mediano | Escanear el código QR y pedir el código de la aplicación al ingresar |
+| H-004b · Códigos de respaldo y desactivar la verificación | mediano | Códigos de un solo uso; desactivar exige un código válido |
+| 🔒 H-004c · Dos pasos obligatorios para Dueño y Administrador | mediano | Obligatoria antes de usar las funciones de su rol (PROYECTO §13.2); va sola y al final |
 | H-008 · Invitar a un miembro con su rol | mediano | Correo del invitado = dato personal: cifrado + huella. Enlace que caduca; reenviar y cancelar |
 | H-009 · Aceptar una invitación | chico | Solo con el mismo correo al que se envió; con o sin cuenta previa |
 | H-010 · Cambiar el rol de un miembro o quitarlo | mediano | Acceso se pierde al instante; nadie toca al Dueño; todo va a auditoría |
@@ -28,11 +30,12 @@ los roles.
 | H-040 · Configurar cuándo se exige aprobación | mediano | Solo la **configuración** de la regla; el flujo de aprobar llega en el sprint 6 |
 | H-041 · Bloquear precios y poner topes de descuento | mediano | El servidor rechaza el cambio aunque no pase por la pantalla |
 | H-042 · Limitar qué servicios cotiza cada comercial | chico | |
-| H-048 · Tener textos listos para usar | mediano | Correo base, condiciones, exclusiones y notas al pie |
+| H-048a · Administrar los textos listos para usar | grande | Correo base, condiciones, exclusiones y notas al pie; solo Dueño y Administrador. Diseño listo (`sprint-5-h-048-textos.md`), unos 4 días |
+| 🔒 H-048b · Usar los textos al cotizar, con exclusiones y notas al pie propias | grande | Va después de H-041 y nunca en paralelo con ella; cambia lo que ve el cliente final. Unos 4,5 días |
 
 **Total estimado:** el plan de sprints decía **9 días**, pero el diseño del `planificador`
 (`docs/arquitectura/sprint-5-equipo-y-permisos.md` §7) suma **unos 16 días solo para H-011, H-008, H-009,
-H-010, H-004 y H-041**, sin contar H-040, H-042 ni H-048. **El sprint es bastante más grande de lo
+H-010, H-004 (a, b y c) y H-041**, sin contar H-040, H-042 ni H-048. **El sprint es bastante más grande de lo
 estimado.** Antes de confirmarlo conviene decidir si se parte (por ejemplo, equipo y roles primero, y dos
 pasos y precios bloqueados después).
 
@@ -52,8 +55,9 @@ migraciones las hace un solo agente, de a una y en orden.
 7. **H-041, precios bloqueados y tope de descuento** (2 días, migración `price_locks`).
 8. **H-004c, dos pasos obligatorios** para Dueño y Administrador (1,5 días, `mfa_required_roles`): va solo y
    al final, porque cambia el pase de las cuentas de prueba en todas las pruebas.
-9. **Sin diseño aún:** H-042 (chica), H-040 (mediana) y H-048 (mediana). H-042 se engancha en la función de
-   H-041; H-040 usa la matriz de H-011.
+9. **Con diseño, sin construir:** H-040 (`sprint-5-h-040-aprobaciones.md`; bloqueada por la decisión 15 y D1, D3 y D4)
+   y H-048 (`sprint-5-h-048-textos.md`): **H-048a** después de H-011b, y **H-048b** después de H-041. **Sin diseño aún:**
+   H-042 (chica), que se engancha en la función de H-041. H-040 usa la matriz de H-011.
 10. Cierre con la batería completa (unitarias, base de datos, aislamiento y punta a punta).
 
 H-004 se partió en **tres historias** (a, b y c) y H-048 en **dos** (a y b) en `HISTORIAS.md` el 2026-11-02 (el supuesto de la pregunta 15 y la decisión de José sobre H-048).

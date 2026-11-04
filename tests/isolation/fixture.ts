@@ -84,6 +84,19 @@ export interface OrgData {
   intake: IntakeData | null;
   /** Una invitación pendiente al equipo, hecha por la dueña (A y B; C no tiene). */
   invitation: InvitationData | null;
+  /** Textos guardados (H-048a), creados por la dueña con su pase (A y B; C no tiene). */
+  snippets: SnippetsData | null;
+}
+
+/** Dos textos guardados de una organización: uno del correo (texto inicial) y unas condiciones. Ambos llevan el canario. */
+export interface SnippetsData {
+  emailId: string;
+  emailName: string;
+  /** Texto en claro (con el canario y una variable): si sale en otra respuesta, hay filtración. */
+  emailBody: string;
+  conditionsId: string;
+  conditionsName: string;
+  conditionsBody: string;
 }
 
 /** Una invitación pendiente: el correo en claro sirve para comprobar que nunca sale de su organización. */
@@ -243,6 +256,7 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       share: null,
       intake: null,
       invitation: null,
+      snippets: null,
     };
   }
 
@@ -430,6 +444,10 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
   for (const key of ["A", "B"] as const) {
     orgs[key].invitation = await buildInvitationData(orgs[key], personas[owners[key]], key);
   }
+  // Textos guardados en A y en B, por el camino legítimo (las funciones con el pase de la dueña).
+  for (const key of ["A", "B"] as const) {
+    orgs[key].snippets = await buildSnippetsData(orgs[key], personas[owners[key]], key);
+  }
   // C: un cliente, y luego se archiva
   {
     const id = randomUUID();
@@ -470,6 +488,41 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     orgs,
     platformAuditId: Number(audit.rows[0].id),
     rateLimitKeyHash,
+  };
+}
+
+async function buildSnippetsData(
+  data: OrgData,
+  owner: Persona,
+  key: OrgKey,
+): Promise<SnippetsData> {
+  const headers = org(data.tenantId);
+  const make = async (kind: string, name: string, body: string, isDefault: boolean) => {
+    const id = randomUUID();
+    const result = await mustOk<{ result: string }>(
+      rpc(
+        owner.session.accessToken,
+        "create_text_snippet",
+        { p_snippet_id: id, p_kind: kind, p_name: name, p_body: body, p_is_default: isDefault },
+        headers,
+      ),
+      `create_text_snippet ${key} ${kind}`,
+    );
+    if (result.result !== "created")
+      throw new Error(`Fixture: el texto ${kind} de ${key} no se creó`);
+    return id;
+  };
+  const emailName = `${data.canary} Saludo`;
+  const emailBody = `Estimado {{cliente}}: texto del correo ${data.canary}.`;
+  const conditionsName = `${data.canary} Condiciones`;
+  const conditionsBody = `Condiciones ${data.canary}: pago a 30 días.`;
+  return {
+    emailId: await make("email_body", emailName, emailBody, true),
+    emailName,
+    emailBody,
+    conditionsId: await make("conditions", conditionsName, conditionsBody, false),
+    conditionsName,
+    conditionsBody,
   };
 }
 

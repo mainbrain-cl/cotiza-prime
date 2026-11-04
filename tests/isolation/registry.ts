@@ -373,6 +373,24 @@ export const ISOLATION_TABLES: TableSpec[] = [
     ownWriteAccepted: false,
   },
   {
+    name: "text_snippets",
+    visibility: "business",
+    // Todo miembro de la organización activa los lee; nadie escribe directo (solo las tres funciones).
+    idColumn: "id",
+    ownedByB: byTenantB,
+    readColumns: "id,tenant_id,kind,name,body",
+    insertAttack: (_fx, tenant, marker) => ({
+      id: randomUUID(),
+      tenant_id: tenant,
+      kind: "conditions",
+      name: marker.slice(0, 80),
+      body: marker,
+    }),
+    updateAttack: (marker) => ({ body: marker, name: marker.slice(0, 80) }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
     name: "numbering_settings",
     visibility: "business",
     idColumn: "tenant_id",
@@ -659,6 +677,28 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: true,
   },
   revoke_invitation: { args: { p_invitation_id: randomUUID() }, writesActiveTenant: true },
+  // Sprint 5 · textos listos para usar (H-048a). Los argumentos son válidos en forma y apuntan a nada propio.
+  create_text_snippet: {
+    args: {
+      p_snippet_id: randomUUID(),
+      p_kind: "conditions",
+      p_name: "Ataque",
+      p_body: "Texto de ataque.",
+      p_is_default: false,
+    },
+    writesActiveTenant: true,
+  },
+  update_text_snippet: {
+    args: {
+      p_snippet_id: randomUUID(),
+      p_expected_revision: 1,
+      p_name: "Ataque",
+      p_body: "Texto de ataque.",
+      p_is_default: false,
+    },
+    writesActiveTenant: true,
+  },
+  delete_text_snippet: { args: { p_snippet_id: randomUUID() }, writesActiveTenant: true },
   // Sprint 5 · aceptar una invitación (H-009). Corren con sesión y SIN organización activa (la persona todavía no es
   // miembro; la organización la define la invitación y la decide la base), por eso no exigen una propia.
   invitation_preview: { args: { p_token_sha256: "a".repeat(64) }, writesActiveTenant: false },

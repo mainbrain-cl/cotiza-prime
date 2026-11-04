@@ -312,3 +312,97 @@ el nombre y la fecha de la migración de H-008; cómo pagina de verdad la planti
 8 KB (probable, hay que probarlo); el teclado y el lector de pantalla del menú de `@base-ui/react`; si otra
 parte del código lee `document_snapshot` con una forma estricta además de `read-model.ts` (no se encontró otra);
 y si la muestra `tmp/ejemplo-cotizacion.pdf` es la que Aarón revisa para aprobar la plantilla 1.
+
+---
+
+## Registro de construcción del PR 1 (2026-11-04)
+
+**Qué se construyó (solo la base de H-048a):** el módulo puro `src/lib/snippets/` (`model.ts`, `schemas.ts` y sus
+pruebas), la migración `20261104110000_text_snippets.sql` con su deshacer, las pruebas de base de datos
+(`tests/db/text-snippets.test.ts`) y el aislamiento (`tests/isolation/registry.ts`, `fixture.ts` y
+`tests/isolation/text-snippets.test.ts`). Sin pantallas, acciones de servidor, consultas ni semilla (PR 2). La
+fecha de la migración dejó de ser la reservada en §13 (`20261102110000`) y pasó a `20261104110000`, posterior a
+la última integrada en `main`.
+
+**Firmas finales** (la organización sale siempre de `app.current_tenant_id()`, nunca de un argumento):
+
+| Función | Respuesta |
+|---|---|
+| `create_text_snippet(p_snippet_id uuid, p_kind text, p_name text, p_body text, p_is_default boolean)` | `{result: 'created', id, revision: 1}`; repetir el mismo id en la misma organización devuelve `{result: 'exists', id, revision}` sin cambiar nada |
+| `update_text_snippet(p_snippet_id uuid, p_expected_revision integer, p_name text, p_body text, p_is_default boolean)` | `{result: 'updated', id, revision}` (sube en 1) o `{result: 'unchanged', id, revision}` si no cambia nada (sin auditoría) |
+| `delete_text_snippet(p_snippet_id uuid)` | `{result: 'deleted'}` |
+
+**Códigos de error** (el motivo viaja en el mensaje): `CP404` `not_found` (sin organización activa propia, también
+si la cabecera nombra otra) y `snippet_not_found`; `42501` `forbidden`; `CP409` `revision_conflict`; `CP422`
+`invalid_arguments`, `invalid_kind`, `invalid_name`, `invalid_body`, `default_only_email`, `variables_not_allowed`,
+`unknown_variable`, `too_many_variables`, `too_many_snippets`, `name_taken`, `id_in_use`. Orden de revisiones:
+`create_text_snippet`: organización → permiso → forma de los argumentos **y reglas del texto** (nombre, texto,
+variables, texto inicial; todo ANTES del candado) → candado → id repetido → tope y nombre repetido.
+`update_text_snippet`: organización → permiso → forma de los argumentos → candado → existencia (`CP404`) y revisión
+(`CP409`) → reglas del texto y nombre repetido. `delete_text_snippet`: organización → permiso → argumento → candado →
+existencia.
+
+**Decisiones donde el diseño no decía (todas las más conservadoras):**
+
+1. **El tipo no se cambia nunca.** `update_text_snippet` no recibe `p_kind`; para otro tipo se crea un texto nuevo.
+   El cambio es completo (nombre, texto y «texto inicial» siempre vienen).
+2. **Variables, regla exacta** (igual en la base `app.snippet_variables_problem` y en `checkSnippetVariables`): en
+   `email_body` solo valen las cuatro, escritas exactas (`{{cliente}}`; no `{{ cliente }}` ni mayúsculas), hasta 10
+   contando repetidas, y **no puede quedar ninguna llave suelta** fuera de una variable completa (así lo que se
+   inserte después no puede formar una variable nueva). En los otros tres tipos se rechaza cualquier `{{` o `}}`;
+   una llave simple (`{A}`) sí vale.
+3. **Caracteres no permitidos:** los mismos de `app.intake_text_unsafe` (control, invisibles, ancho cero, marcas de
+   dirección), más estrictos que las observaciones y condiciones de la cotización. No se reutilizó el
+   `CONTROL_CHARACTERS` de `schemas.ts` porque no se exporta y es menos estricto; una prueba compara, carácter por
+   carácter en todo Unicode, la base contra el módulo puro (el carácter nulo no puede existir en la base y el
+   módulo lo rechaza igual).
+4. **Normalización:** el nombre y el texto pasan a forma **NFC** (una tilde separada de su letra queda unida, así
+   «Condición» no convive con «Condición» escrita con la tilde aparte), se quitan espacios, tabuladores y saltos de
+   línea de los bordes (`btrim` con ese juego, igual en JavaScript) y los saltos de Windows (`\r\n`, `\r`) pasan a
+   `\n`; el largo se cuenta por carácter, no por unidad de UTF-16.
+5. **`sanitizeVariableValue` protege también los bordes del valor**, porque dos variables pueden quedar pegadas
+   (`{{organizacion}}{{cliente}}`). Cada `{` queda con un espacio después y cada `}` con uno antes
+   (`{{numero}}` queda `{ { numero } }`); si el valor empieza con `(` o `*` se le antepone un espacio, y si termina
+   en `]` o `*` se le agrega uno al final (así `[Org]` + `(https://...)` no forma un enlace ni `Ana*` + `*Juan` una
+   negrita). El corte a 100 cuenta esos espacios, quita una `{` o un espacio que queden colgando al final del corte y
+   nunca deja el valor sobre 100. La base no replica esta limpieza (la hace solo la aplicación).
+6. **Idempotencia:** el mismo id en la misma organización devuelve `exists` (doble clic); el id de otra organización
+   da `id_in_use` (mismo criterio que `create_intake_form`).
+7. **Marcar un texto inicial** desmarca el anterior en el mismo paso: el anterior sube su revisión y queda en la
+   auditoría (`text_snippet.updated`, `changed: ['is_default']`).
+8. **Borrar** no pide revisión y un segundo borrado da `CP404` (la acción del PR 2 puede tratarlo como éxito).
+9. **Auditoría:** `created` guarda `{kind, name, is_default}`; `updated` guarda `{kind, name, changed[]}`;
+   `deleted` guarda `{kind, name, was_default}`. Nunca el texto.
+10. **Deshacer:** no tiene la protección «se niega si hay datos» de otras migraciones (son textos de configuración,
+    no datos personales de terceros). Pierde los textos y deja la auditoría.
+11. **Esquema de cambiar sin tipo:** `updateSnippetSchema` no recibe `kind` (el tipo nunca cambia y la base usa el de
+    la fila). Las variables y el «texto inicial» se revisan con `checkKindRules(kind, { body, isDefault })`, y **el
+    PR 2 debe llamarla con el tipo guardado en la fila, no con uno que mande el navegador**. La constante
+    `SNIPPET_REVISION_MAX` (2.147.483.647, un entero de 32 bits de la base) reemplaza al número escrito a mano.
+12. **Etiquetas de auditoría:** las guardias de aislamiento y de pruebas unitarias no las exigen; se dejan para el PR 2
+    (`src/lib/audit/labels.ts` muestra el código mientras tanto).
+
+**Pruebas de paridad** (fallan si una de las dos partes cambia sola): constantes (`app.snippet*` contra el módulo),
+lista de tipos y de variables, caracteres no permitidos (todo Unicode), revisión de variables (unos 30 textos × 4 tipos)
+y normalización.
+
+**Límites conocidos:**
+
+- **Desfase de emojis (ya existía, es de otra historia):** un texto de correo con 1.000 emojis o más cabe en la base
+  (cuenta por carácter) pero `parseBasicFormat` mide con `.length` (un emoji vale 2), así que puede pasar el
+  máximo de 5.000 del correo.
+- **U+2065** (carácter sin asignar) lo acepta el texto guardado y lo rechaza el correo; viene de
+  `app.intake_text_unsafe`, que no lo incluye.
+- Un nombre o texto formado solo por espacios Unicode raros (por ejemplo `U+00A0`) pasa la regla de «no vacío»; la
+  base y el módulo puro coinciden en eso. No se endureció para no separar las dos partes.
+- `sanitizeVariableValue` no puede impedir que el *texto de la plantilla* escrito por el administrador forme un
+  enlace o una negrita junto al valor insertado (por ejemplo `[{{cliente}}](...)`): el administrador es de confianza.
+- El deshacer se probó dentro de una transacción (deshacer, reaplicar y verificar), pero **no** con
+  `npm run test:db:rollbacks` (vacía la base local; no se corrió).
+- `.next/types/validator.ts` de esta carpeta apunta a rutas de otra rama (`/invitacion`) y `tsc` lo marca; es ajeno a
+  este PR (se regenera con `next typegen`).
+- La base local tenía aplicada `20261103100000_invitation_accept.sql` (de otro PR): `supabase migration up --local`
+  se niega por eso («Remote migration versions not found in local migrations directory»). Esta migración se aplicó
+  ejecutando el archivo y registrando su versión en `supabase_migrations.schema_migrations`, que es lo mismo que
+  hace `migration up`. Con esa migración ajena, la guardia G3 del aislamiento lista `accept_invitation` e
+  `invitation_preview` como funciones sin registrar: falla hasta que ese PR agregue sus entradas al registro.

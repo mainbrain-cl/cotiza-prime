@@ -61,6 +61,17 @@ La primera vez, `npx playwright install chromium` descarga el navegador de las p
   pruebas de punta a punta con la aplicación compilada (ya va en `playwright.config.ts`); con
   `NEXT_PUBLIC_APP_ENV=production` se ignora. No se define nunca en un entorno real.
 
+## Despliegue: cuentas y correo verificado (aceptar invitaciones, H-009)
+
+Aceptar una invitación solo funciona con el mismo correo al que se envió, y eso descansa en que el correo verificado
+de una cuenta (`email_confirmed_at`) sea realmente de su dueño. Hoy esas opciones están solo en
+`supabase/config.toml` (la base local); **el proyecto de Supabase de producción hay que configurarlo a mano**:
+
+- **H-009 exige en el proyecto de producción: Confirm email ON, Secure email change ON y sin proveedores externos
+  (OAuth) ni ingreso anónimo, salvo decisión registrada.**
+- Es requisito de **salida a producción y del piloto**: revisarlo en el panel de Supabase (Authentication) antes de
+  invitar a la primera persona real.
+
 ## Estructura
 
 ```

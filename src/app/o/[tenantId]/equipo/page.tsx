@@ -66,8 +66,11 @@ export default async function TeamPage({ params }: PageProps<"/o/[tenantId]/equi
               Invitaciones pendientes
             </h2>
             {list.ok ? (
-              <p data-testid="invitation-count" className="text-sm text-fg-muted">
-                {items.length} de {INVITATION_MAX_PENDING}
+              <p className="text-sm text-fg-muted">
+                <span data-testid="invitation-count">
+                  {items.length} de {INVITATION_MAX_PENDING}
+                </span>{" "}
+                permitidas a la vez
               </p>
             ) : null}
           </div>

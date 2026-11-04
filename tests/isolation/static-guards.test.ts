@@ -705,6 +705,8 @@ describe("guardias estáticas del aislamiento", () => {
         rel(f).startsWith("src/lib/team/") ||
         rel(f).startsWith("src/components/team/") ||
         rel(f).startsWith("src/app/o/[tenantId]/equipo/") ||
+        // la ruta que recibe el código en claro y la pantalla que lo usa (H-009)
+        rel(f).startsWith("src/app/invitacion/") ||
         rel(f) === "src/lib/email/invitation.ts" ||
         rel(f) === "src/lib/email/invitation-owner-notice.ts" ||
         rel(f) === "src/lib/email/invitation-names.ts" ||

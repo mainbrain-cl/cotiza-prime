@@ -659,6 +659,10 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: true,
   },
   revoke_invitation: { args: { p_invitation_id: randomUUID() }, writesActiveTenant: true },
+  // Sprint 5 · aceptar una invitación (H-009). Corren con sesión y SIN organización activa (la persona todavía no es
+  // miembro; la organización la define la invitación y la decide la base), por eso no exigen una propia.
+  invitation_preview: { args: { p_token_sha256: "a".repeat(64) }, writesActiveTenant: false },
+  accept_invitation: { args: { p_token_sha256: "a".repeat(64) }, writesActiveTenant: false },
 };
 
 /** Funciones de `public` que solo ejecuta el servidor con la llave maestra: nadie con pase las llama. */
@@ -758,6 +762,9 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/privacidad", kind: "page", scope: "none" },
   { path: "/terminos", kind: "page", scope: "none" },
   { path: "/auth/callback", kind: "route", scope: "none" },
+  // H-009: la invitación se acepta con sesión y la decide la base; la ruta del enlace solo guarda una cookie.
+  { path: "/invitacion", kind: "page", scope: "none" },
+  { path: "/invitacion/[token]", kind: "route", scope: "none" },
   { path: "/auth/recuperar", kind: "route", scope: "none" },
   { path: "/api/v1/ping", kind: "api", scope: "none" },
   { path: "/api/v1/tenants/[tenantId]/logo", kind: "api", scope: "tenant" },

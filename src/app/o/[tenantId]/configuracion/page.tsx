@@ -1,6 +1,7 @@
 import {
   Building2,
   ChevronRight,
+  FileText,
   Hash,
   Palette,
   ScrollText,
@@ -34,6 +35,13 @@ const SECTIONS: { path: string; title: string; description: string; icon: Lucide
     title: "Numeración",
     description: "Prefijo, formato y desde qué número parten tus cotizaciones.",
     icon: Hash,
+  },
+  {
+    path: "configuracion/textos",
+    title: "Textos listos",
+    description:
+      "Escribe una vez el correo base, las condiciones, las exclusiones y las notas al pie.",
+    icon: FileText,
   },
   {
     path: "equipo",

@@ -832,6 +832,9 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/configuracion/empresa", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/marca", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/numeracion", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/configuracion/textos", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/configuracion/textos/nuevo", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/configuracion/textos/[snippetId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/equipo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones/nueva", kind: "page", scope: "tenant" },
@@ -857,6 +860,7 @@ export function concretePath(
   quoteId: string = itemId,
   formId: string = itemId,
   requestId: string = itemId,
+  snippetId: string = itemId,
 ): string {
   return route.path
     .replace("[tenantId]", tenantId)
@@ -864,7 +868,8 @@ export function concretePath(
     .replace("[itemId]", itemId)
     .replace("[quoteId]", quoteId)
     .replace("[formId]", formId)
-    .replace("[requestId]", requestId);
+    .replace("[requestId]", requestId)
+    .replace("[snippetId]", snippetId);
 }
 
 /** Qué se pide para "ver todo" de una tabla: `*`, o las columnas legibles si hay columnas privadas. */

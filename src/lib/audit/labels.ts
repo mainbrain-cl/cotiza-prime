@@ -29,6 +29,9 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "invitation.updated": "Cambió una invitación",
   "invitation.resent": "Se reenvió una invitación",
   "invitation.revoked": "Se canceló una invitación",
+  "text_snippet.created": "Se creó un texto guardado",
+  "text_snippet.updated": "Se cambió un texto guardado",
+  "text_snippet.deleted": "Se eliminó un texto guardado",
   "invitation.accepted": "Una persona aceptó la invitación al equipo",
   "invitation.accept_denied": "Alguien intentó usar una invitación con otro correo",
 };
@@ -42,6 +45,7 @@ const RESOURCE_LABELS: Readonly<Record<string, string>> = {
   customer: "Cliente",
   quote: "Cotización",
   invitation: "Invitación",
+  text_snippet: "Texto guardado",
 };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
@@ -71,6 +75,8 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   send_count: "envíos",
   last_sent_at: "último envío",
   revoke_reason: "motivo de la cancelación",
+  body: "texto",
+  is_default: "predeterminado",
 };
 
 export function actionLabel(action: string): string {

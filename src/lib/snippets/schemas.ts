@@ -12,6 +12,7 @@ import {
   normalizeSnippetName,
   snippetLength,
 } from "./model";
+import { checkSnippetEmailFormat } from "./preview";
 
 /**
  * Lo que llega de los formularios de textos guardados (H-048a). La base de datos vuelve a exigir lo mismo:
@@ -54,10 +55,11 @@ export const snippetBodySchema = z
       .refine((body) => !hasUnsafeSnippetCharacters(body, true), UNSAFE_CHARACTERS_MESSAGE),
   );
 
-const snippetKindSchema = z.enum(SNIPPET_KINDS, { error: "Elige el tipo de texto." });
+export const KIND_REQUIRED_MESSAGE = "Elige el tipo de texto.";
+const snippetKindSchema = z.enum(SNIPPET_KINDS, { error: KIND_REQUIRED_MESSAGE });
 
 /**
- * Variables y «texto inicial»: dependen del tipo. Devuelve el primer problema (con el campo al que pertenece) o
+ * Variables, formato del correo y «texto inicial»: dependen del tipo. Devuelve el primer problema (con el campo al que pertenece) o
  * `null`. Para cambiar un texto, el tipo es el que ya tiene guardado (el servidor lo lee de la fila), nunca el
  * que mande el navegador.
  */
@@ -67,6 +69,12 @@ export function checkKindRules(
 ): { path: "body" | "isDefault"; message: string } | null {
   const check = checkSnippetVariables(kind, value.body);
   if (!check.ok) return { path: "body", message: check.message };
+  // El texto del correo tiene que poder enviarse: si el envío lo rechazaría (enlace engañoso, demasiados
+  // enlaces), no se guarda. El mensaje dice qué corregir y no repite lo escrito.
+  if (kind === SNIPPET_KIND_WITH_VARIABLES) {
+    const format = checkSnippetEmailFormat(value.body);
+    if (!format.ok) return { path: "body", message: format.message };
+  }
   if (value.isDefault && kind !== SNIPPET_KIND_WITH_VARIABLES) {
     return { path: "isDefault", message: SNIPPET_DEFAULT_ONLY_EMAIL_MESSAGE };
   }

@@ -6,6 +6,8 @@ import { LegalFooter } from "@/components/legal/legal-footer";
 import { AuroraBackground } from "@/components/ui/aurora-background";
 import { LOGIN_PATH, NEW_TENANT_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
 import { getOptionalUser, requireUser } from "@/lib/auth/session";
+import { INVITATION_ACCEPT_PATH } from "@/lib/team/accept-model";
+import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
 import { resolveLandingTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 
@@ -14,7 +16,9 @@ export default async function Home() {
   if (await getOptionalUser()) {
     const user = await requireUser();
     const tenantId = await resolveLandingTenant(user);
-    redirect(tenantId ? tenantPath(tenantId) : NEW_TENANT_PATH);
+    if (tenantId) redirect(tenantPath(tenantId));
+    // Sin organizaciones y con una invitación esperando en este navegador: se va a unirse, no a crear una (H-009).
+    redirect((await hasPendingInvitation()) ? INVITATION_ACCEPT_PATH : NEW_TENANT_PATH);
   }
 
   return (

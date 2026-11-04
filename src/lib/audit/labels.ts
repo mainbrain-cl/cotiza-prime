@@ -32,6 +32,8 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "text_snippet.created": "Se creó un texto guardado",
   "text_snippet.updated": "Se cambió un texto guardado",
   "text_snippet.deleted": "Se eliminó un texto guardado",
+  "invitation.accepted": "Una persona aceptó la invitación al equipo",
+  "invitation.accept_denied": "Alguien intentó usar una invitación con otro correo",
 };
 
 const RESOURCE_LABELS: Readonly<Record<string, string>> = {

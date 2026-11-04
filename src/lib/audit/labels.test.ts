@@ -70,3 +70,14 @@ describe("nombres del registro de actividad", () => {
     expect(describeAuditDetails("texto")).toBeNull();
   });
 });
+
+describe("las acciones de aceptar una invitación (H-009)", () => {
+  it("tienen nombre y se pueden elegir en el filtro del registro de actividad", () => {
+    expect(actionLabel("invitation.accepted")).toBe("Una persona aceptó la invitación al equipo");
+    expect(actionLabel("invitation.accept_denied")).toBe(
+      "Alguien intentó usar una invitación con otro correo",
+    );
+    expect(isKnownAuditAction("invitation.accepted")).toBe(true);
+    expect(isKnownAuditAction("invitation.accept_denied")).toBe(true);
+  });
+});

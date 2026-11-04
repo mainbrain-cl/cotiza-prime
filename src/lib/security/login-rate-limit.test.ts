@@ -9,6 +9,8 @@ vi.mock("@/lib/crypto/search-hash", () => ({
 }));
 
 import {
+  INVITATION_LINK_MAX_PER_IP_PER_WINDOW,
+  consumeInvitationLinkQuota,
   INTAKE_READ_MAX_PER_IP_PER_WINDOW,
   INTAKE_SUBMIT_MAX_PER_IP_PER_DAY,
   INTAKE_SUBMIT_MAX_PER_IP_PER_WINDOW,
@@ -300,5 +302,41 @@ describe("formulario público (H-087)", () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
     expect(await consumeIntakeSubmitQuota("203.0.113.7")).toBe("allowed");
     expect(await consumeIntakeReadQuota("203.0.113.7")).toBe(true);
+  });
+});
+
+describe("aperturas del enlace de una invitación (H-009)", () => {
+  it("30 por minuto por IP: la 31 es la que bloquea, con una huella de la IP", async () => {
+    expect(await consumeInvitationLinkQuota("203.0.113.7")).toBe(true);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_scope: "invite_link_ip",
+      p_key_hash: "invite_link_ip|203.0.113.7",
+      p_max_failures: INVITATION_LINK_MAX_PER_IP_PER_WINDOW + 1,
+      p_window_seconds: 60,
+      p_lock_seconds: 60,
+    });
+    expect(INVITATION_LINK_MAX_PER_IP_PER_WINDOW).toBe(30);
+    rpc.mockResolvedValue({ data: "2026-10-01T00:00:00Z", error: null });
+    expect(await consumeInvitationLinkQuota("203.0.113.7")).toBe(false);
+  });
+
+  it("una IPv6 se agrupa por bloque /64", async () => {
+    await consumeInvitationLinkQuota("2001:db8:1:2:aaaa:bbbb:cccc:dddd");
+    expect(rpc.mock.calls[0][1].p_key_hash).toBe("invite_link_ip|2001:0db8:0001:0002::/64");
+  });
+
+  it("sin IP conocida, en producción cuenta en el grupo 'desconocida'; fuera de producción no limita", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    await consumeInvitationLinkQuota(null);
+    expect(rpc.mock.calls[0][1].p_key_hash).toBe("invite_link_ip|desconocida");
+    rpc.mockClear();
+    vi.stubEnv("NODE_ENV", "test");
+    expect(await consumeInvitationLinkQuota(null)).toBe(true);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("si el contador falla se deja pasar (la base cuenta aparte las aceptaciones fallidas)", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    expect(await consumeInvitationLinkQuota("203.0.113.7")).toBe(true);
   });
 });

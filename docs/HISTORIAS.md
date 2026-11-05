@@ -735,7 +735,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-021, H-026
 **Datos personales:** no
-**Notas técnicas:** el servidor rechaza el cambio aunque llegue sin pasar por la pantalla
+**Notas técnicas:** el servidor rechaza el cambio aunque llegue sin pasar por la pantalla. Debe dejar el gancho `app.can_quote_catalog_item` (por ahora siempre responde «sí») llamado desde `save_quote_draft` para H-042, más el test que lo vigila: dentro de una transacción, reemplaza el gancho por uno que responde «no» y espera `CP422` desde `save_quote_draft`. Ver `docs/arquitectura/h-042-servicios-por-comercial.md` §3.
 
 ---
 
@@ -751,9 +751,10 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 - [ ] Las cotizaciones que ya tenía no se modifican
 
 **Prioridad:** usable
-**Tamaño:** chico
+**Tamaño:** mediano
 **Depende de:** H-010, H-020, H-041
 **Datos personales:** no
+**Notas técnicas:** 🔒 delicada (permisos por persona y una función con permisos elevados); no se mezcla sin Aarón (decisión 020 §5). Unos 3,75 días en dos PR. D2: ordena (cada Comercial ve una lista más corta) y no controla (las líneas escritas a mano no se limitan). Diseño en `docs/arquitectura/h-042-servicios-por-comercial.md`.
 
 ---
 

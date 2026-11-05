@@ -1,9 +1,9 @@
 # H-042 · Limitar qué servicios cotiza cada comercial (M02) — plan de construcción
 
 > **Estado: diseño del `planificador` (Opus), 2026-11-05. Sin construir.** Es una historia 🔒 **delicada** (permisos por persona y una
-> función con permisos elevados): por la decisión 020 §5 su PR queda abierto hasta que Aarón lo revise. Las decisiones D1 a D12 (§10)
+> función con permisos elevados): por la decisión 020 §5 su PR queda abierto hasta que Aarón lo revise. Las decisiones D1 a D13 (§10)
 > llevan un supuesto por defecto; **José los aplicó el 2026-11-05** (regla de trabajo: lo corriente y reversible se aplica con la
-> opción recomendada y se anota). **Aarón revisó el diseño el 2026-11-05** y fijó D2, D3, D7 y D10 (§10) como «decisión por defecto
+> opción recomendada y se anota). **Aarón revisó el diseño el 2026-11-05** y fijó D2, D3, D7, D10 y D13 (§10) como «decisión por defecto
 > aplicada por Aarón el 2026-11-05». Esta versión incorpora esa revisión.
 >
 > **Antes de construir:** la fecha de la migración se asigna en ese momento (única y posterior a la última de `main`). H-010 ya tomó
@@ -22,7 +22,7 @@
    catálogo. Por ahora las líneas escritas a mano no se limitan, igual que en el supuesto 18 de H-041. **Con eso, H-042 *ordena* (cada
    Comercial ve una lista más corta) y *no controla*: un Comercial limitado igual puede escribir una línea libre con cualquier nombre y
    precio.** La versión que sí controla se decide junto con la pregunta 18 de H-041, para toda la organización y no por persona (D2).
-5. Son unos 3,25 días, no «chico». Es **delicada** porque toca permisos y una función con permisos elevados: va con `revisor` y no se
+5. Son unos 3,75 días, no «chico». Es **delicada** porque toca permisos y una función con permisos elevados: va con `revisor` y no se
    mezcla sin Aarón.
 
 ---
@@ -43,7 +43,7 @@
   línea de otra cotización).
 - **Nadie escribe directo en las líneas**: no hay permisos de escritura directa (`20261005110000_quotes.sql:190`); todo pasa por
   `save_quote_draft`.
-- **La conversión de solicitudes (H-090) también guarda por `save_quote_draft`**: `src/lib/intake/convert-lines.ts:94`.
+- **La conversión de solicitudes (H-090) también guarda por `save_quote_draft`**: `src/lib/intake/convert-lines.ts:99` (llama a `saveQuoteDraftAction`, que a su vez llama a la función de la base).
 - **El catálogo nunca se borra**: no hay permiso de borrado, solo se desactiva (`is_active`).
 - **La matriz** (`src/lib/permissions/matrix.ts` y su gemela en la base, `app.role_can` de la migración `role_matrix`) no tiene una
   acción para esto. Agregar una acción obliga a redefinir `app.role_can` en otra migración y rompe
@@ -72,14 +72,11 @@
 
 ### Tablas (una migración, por ejemplo `<fecha>_member_catalog_scope.sql`, con su deshacer)
 
-> **Simplificación recomendada (a confirmar al construir): una sola tabla.** Bastaría `member_catalog_scope_items`, donde **no tener
-> filas significa «todos los servicios»**. Como D6 prohíbe la lista vacía, no hace falta una fila aparte para distinguir «todos» de
-> «lista». Se ahorra una tabla, un disparador y una relación. La doble pulsación se cubre como en H-010, que compara el rol esperado:
-> `set_member_catalog_scope` recibe la **lista esperada** actual y responde `CP409` si no coincide con lo guardado (eso reemplaza a
-> `revision`). Lo que se pierde: el `mode` explícito, y el «Cambiado por» a nivel de regla (saldría de la auditoría o de
-> `created_by/at` de las filas). Se dejan dos tablas solo si se quiere conservar `revision` y ese «Cambiado por» sin consultar la
-> auditoría. El resto de este documento está escrito con dos tablas; con una, los pasos 5 y 6 de la función se reducen a comparar
-> listas.
+> **Alternativa considerada y descartada (D13): una sola tabla.** Bastaría `member_catalog_scope_items`, donde no tener filas significa
+> «todos los servicios» (D6 prohíbe la lista vacía), y la doble pulsación se cubriría comparando la lista esperada. Se descartó por
+> dos razones: (1) la línea «Cambiado por Ana el dd-mm-aaaa» de la ficha no puede salir de la auditoría, porque `audit.read` es solo del
+> Dueño y la ficha la ve también el Administrador; (2) la columna `revision` protege mejor contra el doble clic y contra dos
+> Administradores que se pisan. Por eso se dejan **dos tablas**, y todo este documento está escrito así.
 
 **`public.member_catalog_scopes`**: una fila por miembro que tiene una regla. Si no hay fila, significa «todos».
 
@@ -131,7 +128,7 @@ p_expected_revision)`. Es `SECURITY DEFINER` (corre con permisos elevados) con `
    después, la cantidad antes y después, los ids agregados y quitados (hasta 50 de cada uno) y `truncated`. Nunca lleva nombres de
    personas. **Sigue la convención de «persona afectada» de H-010**: el miembro afectado queda como recurso y su nombre se resuelve al
    leer (con `UNKNOWN_SUBJECT` si no se puede), como en `src/lib/audit/labels.ts` del PR #28. Respeta el tope de 8 KB del detalle. No se usa `audit_row_change('diff')`. No hace falta otra tabla de historial: la
-   auditoría la ve el Dueño (H-014) y la ficha muestra quién cambió la regla por última vez.
+   auditoría la ve el Dueño (H-014) y la ficha muestra quién cambió la regla por última vez, leyendo `updated_by/at` de la tabla (no de la auditoría).
 
 ### Qué significa cada caso
 
@@ -142,7 +139,7 @@ p_expected_revision)`. Es `SECURITY DEFINER` (corre con permisos elevados) con `
 | **Servicio que se desactiva** | Sigue en la lista, pero nadie lo cotiza (la regla de activo ya existe). Si se reactiva, vuelve a estar disponible para quien lo tenía. En la ficha aparece aparte, como «Desactivado en el catálogo», con opción de quitarlo |
 | **Servicio que se «borra»** | Hoy no existe borrar, solo desactivar. Si algún día se borra la organización completa, la lista se borra en cascada |
 | **Servicio nuevo** | Quien tiene «lista» **no lo ve** hasta que un Administrador lo agregue: la lista es cerrada y lo no elegido no se cotiza. La ficha lo dice: «Los servicios nuevos no se suman solos». Decisión D3, fijada por Aarón: los servicios nuevos **no** se agregan automáticamente a listas restringidas (lo más seguro) |
-| **Comercial quitado del equipo (H-010)** | Pierde el acceso, así que la regla deja de importar. La fila **se conserva**. Si vuelve como Comercial por invitación (H-009 reactiva la misma membresía, `invitation_accept.sql:314`), **la lista vieja vuelve a aplicar**. Es seguro, porque solo restringe, pero sorprende: al invitar de nuevo a alguien que tuvo una regla, la pantalla de invitación avisa «Esta persona estuvo antes en el equipo con una lista de servicios; volverá a aplicarse. Revísala en su ficha». Decisión D4 |
+| **Comercial quitado del equipo (H-010)** | Pierde el acceso, así que la regla deja de importar. La fila **se conserva**. Si vuelve como Comercial por invitación (H-009 reactiva la misma membresía, `invitation_accept.sql:314`), **la lista vieja vuelve a aplicar**. Es seguro, porque solo restringe, pero sorprende: al invitar de nuevo a alguien que tuvo una regla, la pantalla de invitación avisa (aviso incluido en el PR 2, ver §8) «Esta persona estuvo antes en el equipo con una lista de servicios; volverá a aplicarse. Revísala en su ficha». Decisión D4 |
 | **Cambio de rol** | Si pasa a Administrador, la fila se conserva pero no aplica (§4). Si vuelve a Comercial, aplica otra vez. La ficha lo muestra. Decisión D4 |
 
 ---
@@ -245,7 +242,7 @@ regla**. Nota para esas historias:
 |---|---|
 | **Comercial** | El único limitado |
 | **Dueño, Administrador** | Nunca limitados: tienen `catalog.manage` y ya manejan el catálogo entero, así que una lista no tiene sentido para ellos. No se les puede crear una regla (`member_not_limitable`) |
-| **Aprobador, Observador** | No cotizan (sin `quote.edit`). No se les puede crear una regla |
+| **Aprobador, Observador** | No cotizan (sin `quote.create`). No se les puede crear una regla |
 
 **Por qué no hay acción nueva en la matriz.**
 
@@ -417,16 +414,17 @@ al mezclar.
 2. **Aislamiento** (0,5 día).
 3. Con este PR solo, nadie tiene regla y nada cambia de comportamiento.
 
-**PR 2, lo que se ve (unos 1,75 días)**
+**PR 2, lo que se ve (unos 2 días)**
 4. **Aplicación** (0,5 día):
    - `src/lib/quotes/catalog-source.ts`, `src/lib/intake/convert-lines.ts` y `src/lib/quotes/actions.ts` (mensaje);
    - nuevos: `src/lib/team/catalog-scope-model.ts` (puro), `catalog-scope-queries.ts` y `catalog-scope-actions.ts`;
    - la etiqueta de auditoría en `src/lib/audit/labels.ts` y la semilla (Carla con «todos»).
-5. **Pantallas** (0,75 día): `src/components/team/catalog-scope-form.tsx`, la sección en la ficha y el aviso y los vacíos en
-   `src/app/o/[tenantId]/cotizaciones/[quoteId]/page.tsx` y `quote-editor.tsx`.
+5. **Pantallas** (1 día): `src/components/team/catalog-scope-form.tsx`, la sección en la ficha, el aviso y los vacíos en
+   `src/app/o/[tenantId]/cotizaciones/[quoteId]/page.tsx` y `quote-editor.tsx`, y el aviso «estuvo antes en el equipo» en la pantalla
+   de invitación de H-009/H-010 (0,25 día; consulta si la membresía quitada tenía una regla, solo a quien tiene `team.manage`).
 6. **Punta a punta y revisión del `revisor`** (0,5 día).
 
-**Total**: unos 3,25 días (la ficha mínima ya la trae H-010 en el PR #28, así que no se cuenta). Más 0,5 si va por el Camino B. Pasa de los dos días de `PROCESO.md`, por
+**Total**: 1,75 + 2 = unos 3,75 días (la ficha mínima ya la trae H-010 en el PR #28, así que su costo no entra en la suma). Más 0,5 si va por el Camino B. Pasa de los dos días de `PROCESO.md`, por
 eso los dos PR.
 
 **Documentos a actualizar al construir:**
@@ -455,7 +453,7 @@ con candado en `HISTORIAS.md`.
 
 ---
 
-## 10. Decisiones (supuestos aplicados por José el 2026-11-05; D2, D3, D7 y D10 fijadas por Aarón el mismo día)
+## 10. Decisiones (supuestos aplicados por José el 2026-11-05; D2, D3, D7, D10 y D13 fijadas por Aarón el mismo día)
 
 | # | Bloquea | Qué decidir | Quién | Supuesto | Costo |
 |---|---|---|---|---|---|
@@ -465,12 +463,13 @@ con candado en `HISTORIAS.md`.
 | D4 | No | Al cambiar de rol o volver al equipo, ¿se conserva la lista? | José | Se conserva y aplica solo mientras sea Comercial; la ficha lo muestra | Alternativa: borrarla con un disparador en `members` (~0,25 día, sin reescribir funciones de H-010). Quien vuelve partiría con «todos», que es menos restrictivo |
 | D5 | No | Un borrador con un servicio que salió de la lista, ¿se puede enviar? | José | Sí (criterio 3) | Bloquearlo obliga a tocar `prepare_quote_send`, chocando con H-041 y H-040: +1 día |
 | D6 | No | ¿Se permite una lista vacía? | José | No; para que alguien no cotice, se cambia su rol a Observador | Ninguno |
-| D7 | Pantalla | ¿Quién crea la ficha `/equipo/[memberId]`? | Aarón: decisión por defecto aplicada por Aarón el 2026-11-05 | **Resuelta:** H-010 ya construye la ficha mínima (PR #28, `/equipo/[memberId]/page.tsx`) | Ninguno: se quitaron los 0,5 día |
+| D7 | Pantalla | ¿Quién crea la ficha `/equipo/[memberId]`? | Aarón: decisión por defecto aplicada por Aarón el 2026-11-05 | **Resuelta:** H-010 ya construye la ficha mínima (PR #28, `/equipo/[memberId]/page.tsx`) | Ninguno: la ficha de H-010 no se cuenta en el total, porque los 0,5 día nunca estuvieron en la base de la suma |
 | D8 | Mezclar | Marcar H-042 como delicada y esperar a Aarón | José | Sí | Espera a Aarón |
 | D9 | No | ¿Dos PR (base y pantallas)? | José | Sí | Ninguno |
 | D10 | No (lo hereda H-069/H-070) | Una versión nueva o un duplicado con servicios no permitidos | Aarón: decisión por defecto aplicada por Aarón el 2026-11-05 | La versión nueva conserva las líneas **solo si es la misma cotización y el mismo autor**; el duplicado omite con aviso los servicios no permitidos (si no, duplicar la cotización de un colega saltaría el límite) | Anotarlo ahora no cuesta nada |
 | D11 | No | Tope de servicios por lista | José | 500 | Ninguno |
 | D12 | No | ¿Avisar al Comercial cuando cambia su lista? | José | No | Un correo o aviso: +0,5 día, mejor con H-047 |
+| D13 | Construir | ¿Una tabla o dos para la regla? | Aarón: decisión por defecto aplicada por Aarón el 2026-11-05 | **Dos tablas** (`member_catalog_scopes` y `member_catalog_scope_items`). El «Cambiado por» no puede salir de la auditoría (`audit.read` es solo del Dueño) y la columna `revision` protege del doble clic | Una tabla: se ahorra una tabla y un disparador, pero se pierde `mode`, `revision` y el «Cambiado por» sin consultar la auditoría |
 
 **Nota sobre D7:** el diseño de H-010 del sprint 5 no definía una ficha por miembro, pero el PR #28 la construyó (mínima), tal como se
 recomendaba. H-042 solo agrega su sección.

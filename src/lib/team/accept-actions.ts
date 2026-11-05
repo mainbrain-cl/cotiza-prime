@@ -9,10 +9,14 @@ import { acceptInvitation } from "./accept-service";
 import {
   DEAD_RESULTS,
   type AcceptState,
+  INVITATION_ACCEPT_PATH,
   INVITATION_GENERIC_FAILURE,
+  INVITATION_NOTICES,
+  INVITATION_VIEW_FIELD,
   MISSING_CODE_MESSAGE,
   messageForResult,
 } from "./accept-model";
+import { matchesInvitationView } from "./invitation-code";
 import { clearInvitationCode, readInvitationCode } from "./invitation-cookie";
 
 /**
@@ -22,11 +26,21 @@ import { clearInvitationCode, readInvitationCode } from "./invitation-cookie";
  * el de la invitación. La persona todavía no es miembro, así que estas acciones no tienen organización activa.
  */
 
-/** «Unirme»: acepta la invitación y entra a la organización. */
-export async function acceptInvitationAction(): Promise<AcceptState> {
+/**
+ * «Unirme»: acepta la invitación y entra a la organización.
+ *
+ * El formulario trae una sola cosa: la huella de la invitación que se MOSTRÓ (`invitationViewFingerprint`, nunca el
+ * código). Si la cookie ya tiene otro código —otra página abrió `/invitacion/<otro código>` entre que la persona
+ * miró y pulsó—, no se acepta nada, no se llama a la base (no suma un fallo) y se vuelve a mostrar la invitación
+ * que hay ahora, con el aviso «La invitación cambió».
+ */
+export async function acceptInvitationAction(formData: FormData): Promise<AcceptState> {
   await requireUser();
   const code = await readInvitationCode();
   if (!code) return { status: "error", message: MISSING_CODE_MESSAGE, dead: true };
+  if (!matchesInvitationView(code, formData.get(INVITATION_VIEW_FIELD))) {
+    redirect(`${INVITATION_ACCEPT_PATH}?aviso=${INVITATION_NOTICES.changed}`);
+  }
 
   const outcome = await acceptInvitation(code);
   if (outcome.status === "no_session") redirect(LOGIN_PATH);

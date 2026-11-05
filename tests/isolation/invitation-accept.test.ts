@@ -343,9 +343,10 @@ describe("Ataque 6 · por GET no se pueden probar códigos saltándose el límit
       expect(res.text, `${fn} por GET`).not.toContain("result");
       expect(res.text, `${fn} por GET`).not.toContain("revoked");
     }
-    // Por POST, en cambio, sí contesta.
+    // Por POST, en cambio, sí contesta; y como Dante no es la persona invitada, no se entera de que está cancelada
+    // (la misma respuesta que con una invitación pendiente).
     const viaPost = await call("dante", "invitation_preview", sha);
-    expect(viaPost.json).toEqual({ result: "revoked" });
+    expect(viaPost.json).toEqual({ result: "wrong_email" });
   });
 });
 

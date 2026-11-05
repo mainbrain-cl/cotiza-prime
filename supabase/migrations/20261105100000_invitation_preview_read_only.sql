@@ -1,4 +1,5 @@
 -- Sprint 5 · H-009 · Corrección I1 de la revisión adversarial · la vista previa de una invitación es SOLO LECTURA
+-- y a quien NO es la persona invitada no le cuenta en qué estado está la invitación
 -- Entorno: PRUEBAS (Supabase local). Deshacer: supabase/rollbacks/20261105100000_invitation_preview_read_only.down.sql
 -- Especificación: docs/arquitectura/sprint-5-equipo-y-permisos.md, «Corrección I1 de la revisión adversarial».
 --
@@ -10,19 +11,97 @@
 --   · Bloqueo: abriendo 11 códigos inventados, la cuenta de la víctima quedaba bloqueada 10 minutos y su invitación
 --     legítima daba `rate_limited`.
 --
--- Qué cambia: `invitation_preview` ya no cuenta fallos, no escribe auditoría y no toca ninguna tabla. SÍ lee el
--- estado del tope de la cuenta para devolver `rate_limited` si ya estaba bloqueada (leer no daña). Contar fallos y
--- auditar quedan SOLO en `accept_invitation` (el botón «Unirme», una acción de servidor = POST con revisión de
--- origen). Los códigos tienen 256 bits: contar los fallos de la vista previa no protegía nada real.
+-- 1. `invitation_preview` ya no cuenta fallos, no escribe auditoría y no toca ninguna tabla. SÍ lee el estado del
+--    tope de la cuenta para devolver `rate_limited` si ya estaba bloqueada (leer no daña). Contar fallos y auditar
+--    quedan SOLO en `accept_invitation` (el botón «Unirme», una acción de servidor = POST con revisión de origen).
+--    Los códigos tienen 256 bits: contar los fallos de la vista previa no protegía nada real.
+--    Qué NO cambia: la firma, los campos de cada resultado y los permisos (solo `authenticated`; `anon` y `public`
+--    no la ejecutan). Sigue siendo `SECURITY DEFINER` con `search_path = ''`. Sigue rechazando una transacción de
+--    solo lectura (25006), como `accept_invitation`: ya no hace falta para la vista previa, pero se mantiene para no
+--    cambiar quién puede llamarla. Ya no toma el candado por cuenta (solo servía para contar).
 --
--- Qué NO cambia: la firma, lo que devuelve (cada resultado y sus campos) y los permisos (solo `authenticated`;
--- `anon` y `public` no la ejecutan). Sigue siendo `SECURITY DEFINER` con `search_path = ''`. Sigue rechazando una
--- transacción de solo lectura (25006), como `accept_invitation`: ya no hace falta para la vista previa, pero se
--- mantiene para no cambiar quién puede llamarla. Ya no toma el candado por cuenta (solo servía para contar).
+-- 2. `app.invitation_state` compara PRIMERO quién pregunta (antes respondía el estado y recién al final comparaba
+--    el correo). Antes, quien tenía el enlace de OTRA persona sabía si la invitación seguía pendiente, se había usado,
+--    la habían cancelado, había vencido, la organización estaba archivada o quien invitó ya no podía invitar (era
+--    M-2), y con la vista previa de solo lectura podía preguntarlo sin límite y sin dejar rastro. Ahora:
+--      · aceptada: solo la cuenta que la aceptó (`accepted_by`) ve `accepted_by_you` o `used`;
+--      · pendiente o cancelada (el vínculo del correo se guarda hasta aceptarla): solo la cuenta cuyo correo
+--        corresponde al vínculo ve su estado;
+--      · cualquier otra cuenta recibe `wrong_email`, SEA CUAL SEA el estado: la misma respuesta, sin más campos.
+--    Como hay una sola definición, cambia también `accept_invitation`: una cuenta ajena recibe `wrong_email` en todos
+--    los estados y por eso ese intento CUENTA como fallo y deja `invitation.accept_denied` (antes, con una
+--    invitación ya cancelada, vencida o usada, la cuenta ajena recibía el estado sin contar ni dejar registro: era
+--    el mismo oráculo, por POST). Para la persona invitada nada cambia.
+--    Lo que queda: `not_found` (el código no existe: nunca existió, se reemplazó al reenviar o se borró 30 días
+--    después de vencer o cancelarse) se distingue de `wrong_email`. Sin la fila no se puede saber quién es la
+--    persona invitada, así que unirlos le diría «cambia de cuenta» a la invitada de un enlace viejo. Es un bit, y
+--    solo sobre un código real que la persona ya tenía.
 --
 -- Consecuencia consciente: la pantalla «Cambia de cuenta para unirte» (correo equivocado) ya NO deja fila en la
 -- auditoría al verse; solo la deja un intento real de aceptar (`accept_invitation`, motivo `wrong_email`).
 
+-- 1. El estado de una invitación para esta persona (la misma firma, los mismos permisos) -------------------------
+-- Devuelve (para la cuenta invitada o la que la aceptó):
+--   accepted_by_you · la aceptó ESTA persona y sigue siendo miembro activa (repetir el clic no falla)
+--   used            · la aceptó ESTA persona, pero ya no es miembro
+--   revoked         · cancelada
+--   inviter_inactive · quien invitó ya no está en la organización o ya no maneja el equipo (también si H-010 la
+--                     canceló por eso: `revoke_reason = 'inviter_removed'`). La persona debe pedirle a OTRA persona
+--                     de la organización que la invite de nuevo
+--   expired         · pasó su vigencia
+--   archived        · la organización ya no está activa
+--   ok
+-- y, para cualquier otra cuenta, SIEMPRE `wrong_email` (también si la aceptó otra persona).
+-- El correo se compara con el vínculo que dejó H-008: sha256(huella del código | correo normalizado).
+create or replace function app.invitation_state(i public.invitations, p_user_id uuid, p_email text) returns text
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  -- Quién pregunta, antes que nada. Una aceptada ya no guarda el vínculo del correo (se vació al aceptarla): la
+  -- persona es la cuenta que la aceptó.
+  if i.status = 'accepted' then
+    if i.accepted_by is distinct from p_user_id then
+      return 'wrong_email';
+    end if;
+    if exists (
+         select 1 from public.members m
+          where m.tenant_id = i.tenant_id and m.user_id = p_user_id and m.status = 'active') then
+      return 'accepted_by_you';
+    end if;
+    return 'used';
+  end if;
+  -- Pendiente o cancelada: el vínculo sigue guardado (`invitations_email_shape`).
+  if i.email_binding is null or i.email_binding is distinct from app.invitation_binding(i.token_sha256, p_email) then
+    return 'wrong_email';
+  end if;
+  -- Desde aquí, solo la persona invitada.
+  if i.status = 'revoked' then
+    return case when i.revoke_reason = 'inviter_removed' then 'inviter_inactive' else 'revoked' end;
+  end if;
+  if i.expires_at <= now() then
+    return 'expired';
+  end if;
+  if not exists (
+       select 1 from public.tenants t
+        where t.tenant_id = i.tenant_id and t.status = 'active' and t.kind = 'organization') then
+    return 'archived';
+  end if;
+  -- Si quien invitó ya no está en la organización (o ya no maneja el equipo), su invitación pendiente no vale:
+  -- H-010 las cancelará al quitarlo o bajarlo de rol; esta revisión cubre el tiempo intermedio.
+  if not exists (
+       select 1 from public.members m
+        where m.tenant_id = i.tenant_id and m.user_id = i.invited_by and m.status = 'active'
+          and app.role_can(m.role, 'team.manage')) then
+    return 'inviter_inactive';
+  end if;
+  return 'ok';
+end $$;
+revoke all on function app.invitation_state(public.invitations, uuid, text) from public, anon, authenticated;
+
+-- 2. invitation_preview: solo lectura --------------------------------------------------------------------------
+-- result: ok (con organización, quien invita, rol y vigencia; si ya eres miembro activo, además `already_member` y tu
+-- `current_role`) · accepted (con la organización a la que entrar) · unverified · rate_limited · not_found ·
+-- wrong_email · y, solo para la persona invitada, revoked · inviter_inactive · expired · used · archived.
+-- Solo `ok` y `accepted` entregan datos, y solo a la persona invitada (o a la que la aceptó).
 create or replace function public.invitation_preview(p_token_sha256 text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -61,6 +140,7 @@ begin
   if not found then
     return jsonb_build_object('result', 'not_found');
   end if;
+  -- Para una cuenta que no es la invitada, `wrong_email` en cualquier estado (ver `app.invitation_state`).
   v_state := app.invitation_state(v_inv, v_uid, v_email);
   if v_state = 'wrong_email' then
     return jsonb_build_object('result', 'wrong_email');

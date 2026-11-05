@@ -23,6 +23,8 @@ export const INVITATION_ACCEPT_PATH = "/invitacion";
 export const INVITATION_NOTICES = {
   malformed: "enlace-no-valido",
   tooMany: "muchos-intentos",
+  /** «Unirme» llegó con otra invitación guardada que la que se mostró: se vuelve a mostrar la que hay ahora. */
+  changed: "invitacion-cambio",
 } as const;
 
 /** Aviso de la dirección → cómo se le explica a la persona. */
@@ -31,7 +33,11 @@ export const INVITATION_NOTICE_MESSAGES: Readonly<Record<string, string>> = {
     "Este enlace de invitación no es válido. Revisa que lo hayas abierto completo desde el correo, o pide que te envíen otra invitación.",
   [INVITATION_NOTICES.tooMany]:
     "Se abrieron muchos enlaces de invitación en poco tiempo. Espera un minuto y vuelve a abrir el enlace del correo.",
+  [INVITATION_NOTICES.changed]: "La invitación cambió. Revísala de nuevo antes de unirte.",
 };
+
+/** El campo oculto del formulario de «Unirme» con la huella de la invitación que se mostró (no es el código). */
+export const INVITATION_VIEW_FIELD = "invitacion";
 
 /** ¿La cookie trae algo con la forma de un código? Todo lo demás se ignora (no se consulta la base). */
 export const invitationCodeSchema = z.string().refine(isWellFormedInvitationToken, {

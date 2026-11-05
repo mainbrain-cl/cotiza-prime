@@ -1,8 +1,48 @@
 -- Deshace 20261105100000_invitation_preview_read_only.sql
--- Devuelve `public.invitation_preview` a su definición de 20261103100000_invitation_accept.sql (la que cuenta fallos
--- por cuenta, toma el candado por cuenta y escribe `invitation.accept_denied` al ver la pantalla de correo
--- equivocado), con la misma firma y los mismos permisos. No toca datos. («Ver arriba» en los comentarios remite a
--- esa migración.)
+-- Devuelve `app.invitation_state` y `public.invitation_preview` a sus definiciones de
+-- 20261103100000_invitation_accept.sql, con las mismas firmas y los mismos permisos. No toca datos.
+--   · `app.invitation_state` vuelve a responder el estado (usada, cancelada, vencida, archivada, quien invitó ya no
+--     puede) ANTES de comparar el correo.
+--   · `public.invitation_preview` vuelve a contar fallos por cuenta, a tomar el candado por cuenta y a escribir
+--     `invitation.accept_denied` al ver la pantalla de correo equivocado.
+-- («Ver arriba» en los comentarios remite a esa migración.)
+create or replace function app.invitation_state(i public.invitations, p_user_id uuid, p_email text) returns text
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  if i.status = 'accepted' then
+    if i.accepted_by = p_user_id and exists (
+         select 1 from public.members m
+          where m.tenant_id = i.tenant_id and m.user_id = p_user_id and m.status = 'active') then
+      return 'accepted_by_you';
+    end if;
+    return 'used';
+  end if;
+  if i.status = 'revoked' then
+    return case when i.revoke_reason = 'inviter_removed' then 'inviter_inactive' else 'revoked' end;
+  end if;
+  if i.expires_at <= now() then
+    return 'expired';
+  end if;
+  if not exists (
+       select 1 from public.tenants t
+        where t.tenant_id = i.tenant_id and t.status = 'active' and t.kind = 'organization') then
+    return 'archived';
+  end if;
+  -- Si quien invitó ya no está en la organización (o ya no maneja el equipo), su invitación pendiente no vale:
+  -- H-010 las cancelará al quitarlo o bajarlo de rol; esta revisión cubre el tiempo intermedio.
+  if not exists (
+       select 1 from public.members m
+        where m.tenant_id = i.tenant_id and m.user_id = i.invited_by and m.status = 'active'
+          and app.role_can(m.role, 'team.manage')) then
+    return 'inviter_inactive';
+  end if;
+  if i.email_binding is null or i.email_binding is distinct from app.invitation_binding(i.token_sha256, p_email) then
+    return 'wrong_email';
+  end if;
+  return 'ok';
+end $$;
+revoke all on function app.invitation_state(public.invitations, uuid, text) from public, anon, authenticated;
+
 create or replace function public.invitation_preview(p_token_sha256 text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare

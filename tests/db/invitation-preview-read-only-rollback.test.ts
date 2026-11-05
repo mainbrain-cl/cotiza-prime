@@ -1,6 +1,7 @@
-// H-009 · corrección I1 · El «deshacer» de `invitation_preview_read_only` deja la función exactamente como la dejó
-// `20261103100000_invitation_accept.sql` (la que cuenta fallos y audita), con la misma firma y los mismos permisos,
-// y la migración se puede volver a aplicar. Se ejecutan los archivos reales dentro de una transacción que se
+// H-009 · corrección I1 · El «deshacer» de `invitation_preview_read_only` deja `public.invitation_preview` (la que
+// cuenta fallos y audita) y `app.invitation_state` (la que responde el estado antes de comparar el correo)
+// exactamente como las dejó `20261103100000_invitation_accept.sql`, con las mismas firmas y los mismos permisos, y la
+// migración se puede volver a aplicar. Se ejecutan los archivos reales dentro de una transacción que se
 // deshace; el deshacer completo y en orden lo prueba `npm run test:db:rollbacks`.
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -23,9 +24,9 @@ afterAll(async () => {
   await db.end();
 });
 
-/** El cuerpo (lo que hay entre los `$$`) de `invitation_preview` en una migración. */
-function bodyIn(sql: string): string {
-  const start = sql.indexOf("function public.invitation_preview(");
+/** El cuerpo (lo que hay entre los `$$`) de una función en una migración. */
+function bodyIn(sql: string, name = "public.invitation_preview"): string {
+  const start = sql.indexOf(`function ${name}(`);
   expect(start, "no encontré la función").toBeGreaterThan(-1);
   const open = sql.indexOf("$$", start) + 2;
   const close = sql.indexOf("end $$;", open);
@@ -55,6 +56,34 @@ async function definition(): Promise<Definition> {
             has_function_privilege('authenticated', p.oid, 'execute') as auth,
             p.provolatile as volatility
        from pg_proc p where p.oid = 'public.invitation_preview(text)'::regprocedure`,
+  );
+  return rows[0];
+}
+
+type StateDefinition = {
+  count: number;
+  src: string;
+  secdef: boolean;
+  cfg: string[] | null;
+  args: string;
+  returns: string;
+  volatility: string;
+  anon: boolean;
+  pub: boolean;
+  auth: boolean;
+};
+async function stateDefinition(): Promise<StateDefinition> {
+  const { rows } = await db.query<StateDefinition>(
+    `select (select count(*)::int from pg_proc q join pg_namespace s on s.oid = q.pronamespace
+              where s.nspname = 'app' and q.proname = 'invitation_state') as count,
+            p.prosrc as src, p.prosecdef as secdef, p.proconfig as cfg,
+            pg_get_function_arguments(p.oid) as args, pg_get_function_result(p.oid) as returns,
+            p.provolatile as volatility,
+            has_function_privilege('anon', p.oid, 'execute') as anon,
+            has_function_privilege('public', p.oid, 'execute') as pub,
+            has_function_privilege('authenticated', p.oid, 'execute') as auth
+       from pg_proc p
+      where p.oid = 'app.invitation_state(public.invitations, uuid, text)'::regprocedure`,
   );
   return rows[0];
 }
@@ -90,14 +119,49 @@ describe("el deshacer de invitation_preview_read_only", () => {
       }
     }));
 
+  it("deja `app.invitation_state` con la definición de 20261103100000: misma firma, mismos permisos", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      const current = await stateDefinition();
+      expect(current.count).toBe(1);
+      expect(current.src.trim()).toBe(bodyIn(up, "app.invitation_state").trim());
+      // La versión actual compara quién pregunta ANTES que el estado.
+      expect(current.src.indexOf("invitation_binding")).toBeLessThan(
+        current.src.indexOf("'revoked'"),
+      );
+
+      await db.query(down);
+      const restored = await stateDefinition();
+      expect(restored.count).toBe(1);
+      expect(restored.src.trim()).toBe(bodyIn(oldMigration, "app.invitation_state").trim());
+      expect(restored.src.indexOf("invitation_binding")).toBeGreaterThan(
+        restored.src.indexOf("'revoked'"),
+      );
+      for (const key of [
+        "secdef",
+        "cfg",
+        "args",
+        "returns",
+        "volatility",
+        "anon",
+        "pub",
+        "auth",
+      ] as const) {
+        expect(restored[key], key).toEqual(current[key]);
+      }
+      expect(restored).toMatchObject({ anon: false, pub: false, auth: false });
+    }));
+
   it("la migración se puede volver a aplicar después de deshacerla y deja la versión de solo lectura", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
       const original = await definition();
+      const originalState = await stateDefinition();
       await db.query(down);
       await db.query(up);
       const again = await definition();
       expect(again).toEqual(original);
       expect(again.src.trim()).toBe(bodyIn(up).trim());
+      expect(await stateDefinition()).toEqual(originalState);
     }));
 });

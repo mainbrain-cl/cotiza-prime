@@ -752,7 +752,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 **Prioridad:** usable
 **Tamaño:** chico
-**Depende de:** H-010, H-020
+**Depende de:** H-010, H-020, H-041
 **Datos personales:** no
 
 ---

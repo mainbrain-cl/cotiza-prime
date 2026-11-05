@@ -3,10 +3,11 @@
 > **Estado: diseño del `planificador` (Opus), 2026-11-05. Sin construir.** Es una historia 🔒 **delicada** (permisos por persona y una
 > función con permisos elevados): por la decisión 020 §5 su PR queda abierto hasta que Aarón lo revise. Las decisiones D1 a D12 (§10)
 > llevan un supuesto por defecto; **José los aplicó el 2026-11-05** (regla de trabajo: lo corriente y reversible se aplica con la
-> opción recomendada y se anota). Lo de producto (D2, D10) queda para que Aarón lo vea en la revisión.
+> opción recomendada y se anota). **Aarón revisó el diseño el 2026-11-05** y fijó D2, D3, D7 y D10 (§10) como «decisión por defecto
+> aplicada por Aarón el 2026-11-05». Esta versión incorpora esa revisión.
 >
-> **Antes de construir:** la fecha de la migración se asigna en ese momento (única y posterior a la última de `main`). La fecha que el
-> diseño del sprint 5 reservó para H-010 (`20261104100000`) quedó por detrás de las de `main`: H-010 debe tomar una nueva.
+> **Antes de construir:** la fecha de la migración se asigna en ese momento (única y posterior a la última de `main`). H-010 ya tomó
+> la suya (`20261105110000`, en el PR #28 abierto), así que la de H-042 debe ser posterior a esa y a la última de `main`.
 
 **Resumen**
 
@@ -18,13 +19,17 @@
 3. Para no pisar a H-041 ni a H-048b, se recomienda que H-041 deje un «gancho»: una llamada a una función que por ahora siempre
    responde «sí». Así H-042 solo reemplaza esa función pequeña y **nunca reescribe `save_quote_draft`**.
 4. Solo afecta al Comercial. Esto se deduce de la matriz sin agregar acciones: limitado = puede cotizar pero no puede manejar el
-   catálogo. Por defecto las líneas escritas a mano no se limitan, igual que en el supuesto 18 de H-041.
-5. Son unos 3,5 días, no «chico». Es **delicada** porque toca permisos y una función con permisos elevados: va con `revisor` y no se
+   catálogo. Por ahora las líneas escritas a mano no se limitan, igual que en el supuesto 18 de H-041. **Con eso, H-042 *ordena* (cada
+   Comercial ve una lista más corta) y *no controla*: un Comercial limitado igual puede escribir una línea libre con cualquier nombre y
+   precio.** La versión que sí controla se decide junto con la pregunta 18 de H-041, para toda la organización y no por persona (D2).
+5. Son unos 3,25 días, no «chico». Es **delicada** porque toca permisos y una función con permisos elevados: va con `revisor` y no se
    mezcla sin Aarón.
 
 ---
 
-## 1. Qué existe hoy (verificado en el código)
+## 1. Qué existe hoy
+
+**Verificado en el código:**
 
 - **El cotizador lee el catálogo en un solo lugar**: `listQuotableCatalogItems` en `src/lib/quotes/catalog-source.ts`. Su comentario ya
   anticipa H-042.
@@ -34,6 +39,11 @@
 - **La versión vigente de `save_quote_draft`** está en `supabase/migrations/20261005130000_brand_server_only_logo.sql`. En cada guardado
   borra y vuelve a insertar todas las líneas. Ya distingue la **línea existente** (mismo id ya guardado en esa cotización: conserva su
   servicio) de la **línea nueva del catálogo** (rama `elsif v_cat_id is not null`, que exige un servicio activo). H-042 se engancha ahí.
+  También están ahí `catalog_item_changed` (reusar el id de una línea con otro servicio) e `item_id_conflict` (reusar el id de una
+  línea de otra cotización).
+- **Nadie escribe directo en las líneas**: no hay permisos de escritura directa (`20261005110000_quotes.sql:190`); todo pasa por
+  `save_quote_draft`.
+- **La conversión de solicitudes (H-090) también guarda por `save_quote_draft`**: `src/lib/intake/convert-lines.ts:94`.
 - **El catálogo nunca se borra**: no hay permiso de borrado, solo se desactiva (`is_active`).
 - **La matriz** (`src/lib/permissions/matrix.ts` y su gemela en la base, `app.role_can` de la migración `role_matrix`) no tiene una
   acción para esto. Agregar una acción obliga a redefinir `app.role_can` en otra migración y rompe
@@ -43,8 +53,16 @@
     de `tests/db/schema-guards.test.ts`).
   - Toda tabla con `tenant_id`, RLS y el disparador `forbid_tenant_change`, y relaciones compuestas (organización + id).
   - Toda acción de servidor llama a `requirePermission(`.
-- **«Tu equipo»** (`src/app/o/[tenantId]/equipo/page.tsx`) hoy lista solo invitaciones. La lista de miembros es de H-010, que no está
-  construida, y **su diseño no define una ficha por miembro**.
+- **«Tu equipo»** (`src/app/o/[tenantId]/equipo/page.tsx`) en `main` lista solo invitaciones. **H-010 ya está construida en el PR #28
+  abierto** (rama `feat/h-010-gestionar-miembros`, commit `1bc5e97`): agrega la lista de miembros y `/equipo/[memberId]/page.tsx` con
+  una ficha mínima comentada «H-042 le agrega después su sección». Su migración es `20261105110000`. Aunque el diseño del sprint 5 no
+  definía la ficha, el PR la trae; H-042 depende de que el PR #28 se mezcle.
+
+**Viene del diseño, no del código:**
+
+- **`app.quote_line_rules_check` no existe todavía en el código.** Que «también corre al enviar» sale del diseño del sprint 5
+  (`sprint-5-equipo-y-permisos.md` §5c), no de una función real. Lo que §3 razona sobre ella vale si H-041 se construye como está
+  diseñada.
 - `docs/arquitectura/modelo-datos.md` §7 esbozaba una tabla `member_catalog_permissions (member_id, catalog_item_id)`. Le falta cómo
   distinguir «todos» de «lista».
 
@@ -53,6 +71,15 @@
 ## 2. Cómo se guarda la regla
 
 ### Tablas (una migración, por ejemplo `<fecha>_member_catalog_scope.sql`, con su deshacer)
+
+> **Simplificación recomendada (a confirmar al construir): una sola tabla.** Bastaría `member_catalog_scope_items`, donde **no tener
+> filas significa «todos los servicios»**. Como D6 prohíbe la lista vacía, no hace falta una fila aparte para distinguir «todos» de
+> «lista». Se ahorra una tabla, un disparador y una relación. La doble pulsación se cubre como en H-010, que compara el rol esperado:
+> `set_member_catalog_scope` recibe la **lista esperada** actual y responde `CP409` si no coincide con lo guardado (eso reemplaza a
+> `revision`). Lo que se pierde: el `mode` explícito, y el «Cambiado por» a nivel de regla (saldría de la auditoría o de
+> `created_by/at` de las filas). Se dejan dos tablas solo si se quiere conservar `revision` y ese «Cambiado por» sin consultar la
+> auditoría. El resto de este documento está escrito con dos tablas; con una, los pasos 5 y 6 de la función se reducen a comparar
+> listas.
 
 **`public.member_catalog_scopes`**: una fila por miembro que tiene una regla. Si no hay fila, significa «todos».
 
@@ -102,7 +129,8 @@ p_expected_revision)`. Es `SECURITY DEFINER` (corre con permisos elevados) con `
 8. Guarda: crea o actualiza la fila, reemplaza la lista y sube la versión. Con `all`, la lista se borra.
 9. **Historial**: registro `member.catalog_scope_changed` en la auditoría, con el miembro como recurso y en el detalle el modo antes y
    después, la cantidad antes y después, los ids agregados y quitados (hasta 50 de cada uno) y `truncated`. Nunca lleva nombres de
-   personas. Respeta el tope de 8 KB del detalle. No se usa `audit_row_change('diff')`. No hace falta otra tabla de historial: la
+   personas. **Sigue la convención de «persona afectada» de H-010**: el miembro afectado queda como recurso y su nombre se resuelve al
+   leer (con `UNKNOWN_SUBJECT` si no se puede), como en `src/lib/audit/labels.ts` del PR #28. Respeta el tope de 8 KB del detalle. No se usa `audit_row_change('diff')`. No hace falta otra tabla de historial: la
    auditoría la ve el Dueño (H-014) y la ficha muestra quién cambió la regla por última vez.
 
 ### Qué significa cada caso
@@ -113,8 +141,8 @@ p_expected_revision)`. Es `SECURITY DEFINER` (corre con permisos elevados) con `
 | **«Solo los que elijas»** | Fila `list` y al menos un servicio. Solo ve y agrega esos |
 | **Servicio que se desactiva** | Sigue en la lista, pero nadie lo cotiza (la regla de activo ya existe). Si se reactiva, vuelve a estar disponible para quien lo tenía. En la ficha aparece aparte, como «Desactivado en el catálogo», con opción de quitarlo |
 | **Servicio que se «borra»** | Hoy no existe borrar, solo desactivar. Si algún día se borra la organización completa, la lista se borra en cascada |
-| **Servicio nuevo** | Quien tiene «lista» **no lo ve** hasta que un Administrador lo agregue: la lista es cerrada y lo no elegido no se cotiza. La ficha lo dice: «Los servicios nuevos no se suman solos». Decisión D3 |
-| **Comercial quitado del equipo (H-010)** | Pierde el acceso, así que la regla deja de importar. La fila **se conserva**. Si vuelve como Comercial por invitación (H-009 reactiva la misma membresía), la lista vuelve a aplicar. Decisión D4 |
+| **Servicio nuevo** | Quien tiene «lista» **no lo ve** hasta que un Administrador lo agregue: la lista es cerrada y lo no elegido no se cotiza. La ficha lo dice: «Los servicios nuevos no se suman solos». Decisión D3, fijada por Aarón: los servicios nuevos **no** se agregan automáticamente a listas restringidas (lo más seguro) |
+| **Comercial quitado del equipo (H-010)** | Pierde el acceso, así que la regla deja de importar. La fila **se conserva**. Si vuelve como Comercial por invitación (H-009 reactiva la misma membresía, `invitation_accept.sql:314`), **la lista vieja vuelve a aplicar**. Es seguro, porque solo restringe, pero sorprende: al invitar de nuevo a alguien que tuvo una regla, la pantalla de invitación avisa «Esta persona estuvo antes en el equipo con una lista de servicios; volverá a aplicarse. Revísala en su ficha». Decisión D4 |
 | **Cambio de rol** | Si pasa a Administrador, la fila se conserva pero no aplica (§4). Si vuelve a Comercial, aplica otra vez. La ficha lo muestra. Decisión D4 |
 
 ---
@@ -173,29 +201,41 @@ El diseño del sprint decía «se engancha en la función de H-041», y no convi
   suma su caso. H-042 suma: «un Comercial limitado que llama directo a `save_quote_draft` con un servicio fuera de su lista recibe
   `CP422`, y una línea existente con ese servicio se sigue guardando». Antes de mezclar se corren `test:db` y `test:db:rollbacks`
   completos sobre `main` al día.
+- **Prueba que vigila el gancho (la entrega H-041).** H-041 entrega además un test que, **dentro de una transacción**, reemplaza la
+  función vacía (siempre «sí») por una que responde «no» y espera `CP422` desde `save_quote_draft`. Así, si alguien reescribe
+  `save_quote_draft` (por ejemplo H-048b) y pierde la llamada al gancho, un test falla. Sin él, el límite podría desaparecer en
+  silencio.
 
 ### Al mostrar (el criterio 2)
 
 - **`public.quotable_catalog_items(p_search text default '', p_ids uuid[] default null)`**:
   - Devuelve los servicios activos de la organización activa que pasan el predicado.
+  - **Corre con los derechos de quien llama (`security invoker`)** y solo usa el predicado `SECURITY DEFINER` para decidir. Así la RLS
+    de `catalog_items` sigue como segunda capa.
   - Con búsqueda, devuelve hasta 20 por nombre parcial. Escapa los comodines `%` y `_` como hoy.
   - Con `p_ids`, devuelve hasta 200, para convertir solicitudes.
   - «¿Tengo límite?» se calcula **una vez por consulta**, con el patrón `(select …)` que ya usan las políticas, y no fila por fila.
   - Se llama con `.rpc()` (POST). **Nunca** se mandan 500 ids en la dirección de un GET.
-- **`public.my_catalog_scope()`** devuelve solo dos datos sobre quien llama: si tiene límite y cuántos servicios tiene permitidos. Sirve
-  para el aviso del editor.
+- **`public.my_catalog_scope()`** devuelve solo dos datos sobre quien llama: si tiene límite y cuántos servicios tiene permitidos.
+  **La cuenta incluye solo servicios activos** (uno desactivado en la lista no cuenta), para que «sin servicios permitidos» del editor
+  sea verdad. Sirve para el aviso del editor.
 - **Cambia `catalog-source.ts`**: llama a `quotable_catalog_items` en vez de leer `catalog_items` directo.
 - **Cambia `convert-lines.ts`**: `loadActiveCatalog` usa la misma función con `p_ids`. Un servicio no permitido queda en «no se cargó»,
   en vez de hacer fallar el guardado entero y dejar la cotización vacía. Esto cubre también las líneas que el panel «Solicitud
   original» ofrece cargar.
+  - **Carrera conocida:** si la lista cambia justo mientras alguien convierte una solicitud, el catálogo ya leído trae un servicio que
+    la base después rechaza. Todo el guardado falla y queda un borrador vacío (comportamiento que ya existe hoy). H-042 no lo
+    arregla; queda anotado.
 
 ### Caminos futuros (anotar en `HISTORIAS.md`)
 
 H-069 (crear versión) y H-070 (duplicar) van a crear líneas. Si las insertan directo, sin pasar por `save_quote_draft`, **se saltan la
 regla**. Nota para esas historias:
 
-- duplicar debe consultar `app.can_quote_catalog_item` y omitir con aviso los servicios no permitidos;
-- la versión nueva conserva las líneas, porque es la misma negociación (decisión D10).
+- **duplicar** debe consultar `app.can_quote_catalog_item` y omitir con aviso los servicios no permitidos; si no, duplicar la
+  cotización de un colega saltaría el límite;
+- **la versión nueva** conserva las líneas solo si es **la misma cotización y el mismo autor** (misma negociación). Si la crea otra
+  persona, se trata como un duplicado: omite con aviso los servicios no permitidos (decisión D10, fijada por Aarón).
 
 ---
 
@@ -204,7 +244,7 @@ regla**. Nota para esas historias:
 | Rol | Efecto |
 |---|---|
 | **Comercial** | El único limitado |
-| **Dueño, Administrador** | Nunca limitados: tienen `catalog.manage` y podrían saltarse cualquier límite cambiando el catálogo. Limitarlos sería teatro. No se les puede crear una regla (`member_not_limitable`) |
+| **Dueño, Administrador** | Nunca limitados: tienen `catalog.manage` y ya manejan el catálogo entero, así que una lista no tiene sentido para ellos. No se les puede crear una regla (`member_not_limitable`) |
 | **Aprobador, Observador** | No cotizan (sin `quote.edit`). No se les puede crear una regla |
 
 **Por qué no hay acción nueva en la matriz.**
@@ -220,9 +260,15 @@ regla**. Nota para esas historias:
 **H-004c** (dos pasos obligatorios): un Dueño o Administrador sin el segundo paso actúa como Observador y no cotiza, así que no hay
 interacción.
 
-**Líneas libres con precio a mano** (pregunta 18 de H-041). Supuesto: **no se limitan**, igual que en H-041, porque `PROYECTO.md` §6.0
-las pide para negociar. Es un agujero conocido: un Comercial limitado a «Fletes» puede escribir a mano «Mudanza». La ficha lo dice con
-honestidad: «Las líneas escritas a mano no se limitan». La alternativa está en la decisión D2.
+**Líneas libres con precio a mano** (pregunta 18 de H-041). Supuesto que Aarón mantiene por ahora (D2): **no se limitan**, igual que
+en H-041, porque `PROYECTO.md` §6.0 las pide para negociar. Dicho sin rodeos: **con este supuesto H-042 ordena y no controla.** Cada
+Comercial ve una lista más corta, pero uno limitado a «Fletes» puede escribir a mano «Mudanza» con el precio que quiera. La ficha lo
+dice con honestidad: «Las líneas escritas a mano no se limitan». La versión que sí controla (cerrar las líneas escritas a mano para
+los Comerciales limitados) se decide **junto con la pregunta 18 de H-041, para toda la organización y no por persona**.
+
+**Línea existente de un servicio que ya no está permitido.** Se puede **renombrar y cambiar de precio**, porque las líneas existentes
+no se revisan. Con D2 como está es inofensivo (igual podría escribir una línea libre); si D2 pasa a «controlar», se vuelve un
+agujero y habría que revisarlo. Para que no pase inadvertida, el editor avisa en esas líneas (§5).
 
 **La pantalla «Catálogo»** sigue mostrando todo a todos (decisión 009, «ver todo»). El límite es sobre **qué se cotiza**, no sobre qué
 se ve.
@@ -233,7 +279,8 @@ se ve.
 
 ### Ficha del miembro: `/o/[tenantId]/equipo/[memberId]`
 
-La crea H-010 o, si no la crea, H-042 (decisión D7). Exige `pagePermission(active, "team.manage")` antes de leer cualquier dato. Un
+La crea H-010 (PR #28, ya construida como ficha mínima; decisión D7). H-042 solo agrega su sección en el lugar que H-010 dejó
+comentado. Exige `pagePermission(active, "team.manage")` antes de leer cualquier dato. Un
 miembro de otra organización da «No encontrado».
 
 Sección **«Servicios que puede cotizar»**, sobre superficie sólida y sin vidrio (es una pantalla de trabajo):
@@ -276,6 +323,8 @@ Sección **«Servicios que puede cotizar»**, sobre superficie sólida y sin vid
 - **Sin servicios permitidos y sin búsqueda**: «No tienes servicios del catálogo para cotizar. Pide a un Administrador que te asigne
   servicios. Puedes agregar una línea libre.» Hoy dice «Tu catálogo no tiene servicios activos», que aquí sería falso.
 - **Búsqueda sin resultados**: «Ninguno de tus servicios coincide con ese nombre.»
+- **Línea existente cuyo servicio ya no está permitido**: no se bloquea, pero se marca con un aviso junto a la línea, parecido al de
+  los servicios desactivados (`queries.ts:188`): «Este servicio ya no está entre los que puedes cotizar. La línea se conserva.»
 - **Si el guardado vuelve con `catalog_item_not_allowed`** (le cambiaron la lista con el editor abierto):
   - mensaje junto a la línea: «Ya no puedes cotizar este servicio: un Administrador cambió tu lista. Quita la línea para guardar.»;
   - el editor vuelve a pedir el catálogo;
@@ -377,7 +426,7 @@ al mezclar.
    `src/app/o/[tenantId]/cotizaciones/[quoteId]/page.tsx` y `quote-editor.tsx`.
 6. **Punta a punta y revisión del `revisor`** (0,5 día).
 
-**Total**: unos 3,5 días. Más 0,5 si va por el Camino B y más 0,5 si H-010 no deja la ficha. Pasa de los dos días de `PROCESO.md`, por
+**Total**: unos 3,25 días (la ficha mínima ya la trae H-010 en el PR #28, así que no se cuenta). Más 0,5 si va por el Camino B. Pasa de los dos días de `PROCESO.md`, por
 eso los dos PR.
 
 **Documentos a actualizar al construir:**
@@ -385,8 +434,8 @@ eso los dos PR.
 - `docs/HISTORIAS.md`: H-042 marcada con candado; notas en H-069 y H-070; quitar «chico».
 - El documento del sprint 5.
 
-**Hallazgo de paso**: la fecha reservada para H-010 (`20261104100000`) ya quedó por detrás de la de H-048a en `main`
-(`20261104110000`). Por la regla 1, H-010 debe tomar una fecha nueva.
+**Hallazgo de paso (ya resuelto)**: la fecha reservada para H-010 (`20261104100000`) quedó por detrás de la de H-048a en `main`
+(`20261104110000`). El PR #28 ya lo resolvió: usa `20261105110000`.
 
 ---
 
@@ -406,25 +455,25 @@ con candado en `HISTORIAS.md`.
 
 ---
 
-## 10. Decisiones (supuestos aplicados por José el 2026-11-05; lo de producto lo revisa Aarón)
+## 10. Decisiones (supuestos aplicados por José el 2026-11-05; D2, D3, D7 y D10 fijadas por Aarón el mismo día)
 
 | # | Bloquea | Qué decidir | Quién | Supuesto | Costo |
 |---|---|---|---|---|---|
 | D1 | Construir | Gancho en H-041 (A) o reescribir `save_quote_draft` en H-042 (B) | José | **A**; H-042 después de H-041 | A: unos 15 minutos más en H-041 y una función vacía a la espera. B: +0,5 día y una tercera reescritura de la función más delicada |
-| D2 | No | ¿Las líneas escritas a mano se saltan el límite? | José (Aarón puede revisarlo: es producto) | Sí, igual que la pregunta 18 de H-041, con aviso en la ficha | Alternativa: casilla por persona «También puede agregar líneas escritas a mano» (columna `allow_free_lines` y un control para líneas libres nuevas), +0,5 día. Si H-041 decide «solo desde el catálogo» para toda la organización, H-042 lo hereda |
-| D3 | No | ¿Los servicios nuevos se suman solos a las listas? | José | No (la lista es cerrada) | Alternativa: al crear un servicio, elegir a qué Comerciales se suma, +0,5 a 1 día en las pantallas del catálogo. Futuro: limitar por categoría cuando existan |
+| D2 | No | ¿Las líneas escritas a mano se saltan el límite? | Aarón: decisión por defecto aplicada por Aarón el 2026-11-05 | Sí, igual que la pregunta 18 de H-041, con aviso en la ficha. **Se mantiene por ahora: H-042 ordena (lista más corta) y no controla (se puede escribir cualquier línea libre).** La versión que controla se decide junto con la pregunta 18 de H-041, para toda la organización y no por persona | Alternativa por persona (casilla `allow_free_lines`, +0,5 día) descartada: el control se decide para toda la organización. Si H-041 decide «solo desde el catálogo», H-042 lo hereda |
+| D3 | No | ¿Los servicios nuevos se suman solos a las listas? | Aarón: decisión por defecto aplicada por Aarón el 2026-11-05 | No (la lista es cerrada; es lo más seguro) | Alternativa: al crear un servicio, elegir a qué Comerciales se suma, +0,5 a 1 día en las pantallas del catálogo. Futuro: limitar por categoría cuando existan |
 | D4 | No | Al cambiar de rol o volver al equipo, ¿se conserva la lista? | José | Se conserva y aplica solo mientras sea Comercial; la ficha lo muestra | Alternativa: borrarla con un disparador en `members` (~0,25 día, sin reescribir funciones de H-010). Quien vuelve partiría con «todos», que es menos restrictivo |
 | D5 | No | Un borrador con un servicio que salió de la lista, ¿se puede enviar? | José | Sí (criterio 3) | Bloquearlo obliga a tocar `prepare_quote_send`, chocando con H-041 y H-040: +1 día |
 | D6 | No | ¿Se permite una lista vacía? | José | No; para que alguien no cotice, se cambia su rol a Observador | Ninguno |
-| D7 | Pantalla | ¿Quién crea la ficha `/equipo/[memberId]`? | José | H-010 | Si no, +0,5 día en H-042 |
+| D7 | Pantalla | ¿Quién crea la ficha `/equipo/[memberId]`? | Aarón: decisión por defecto aplicada por Aarón el 2026-11-05 | **Resuelta:** H-010 ya construye la ficha mínima (PR #28, `/equipo/[memberId]/page.tsx`) | Ninguno: se quitaron los 0,5 día |
 | D8 | Mezclar | Marcar H-042 como delicada y esperar a Aarón | José | Sí | Espera a Aarón |
 | D9 | No | ¿Dos PR (base y pantallas)? | José | Sí | Ninguno |
-| D10 | No (lo hereda H-069/H-070) | Una versión nueva o un duplicado con servicios no permitidos | José; Aarón si lo ve como producto | La versión conserva las líneas; el duplicado las omite con aviso | Anotarlo ahora no cuesta nada |
+| D10 | No (lo hereda H-069/H-070) | Una versión nueva o un duplicado con servicios no permitidos | Aarón: decisión por defecto aplicada por Aarón el 2026-11-05 | La versión nueva conserva las líneas **solo si es la misma cotización y el mismo autor**; el duplicado omite con aviso los servicios no permitidos (si no, duplicar la cotización de un colega saltaría el límite) | Anotarlo ahora no cuesta nada |
 | D11 | No | Tope de servicios por lista | José | 500 | Ninguno |
 | D12 | No | ¿Avisar al Comercial cuando cambia su lista? | José | No | Un correo o aviso: +0,5 día, mejor con H-047 |
 
-**Nota sobre D7:** el diseño de H-010 del sprint 5 no define una ficha por miembro. Al construir H-010 con la lista de miembros, conviene
-dejar la ficha `/equipo/[memberId]` (aunque sea mínima) para que H-042 solo agregue su sección.
+**Nota sobre D7:** el diseño de H-010 del sprint 5 no definía una ficha por miembro, pero el PR #28 la construyó (mínima), tal como se
+recomendaba. H-042 solo agrega su sección.
 
 ---
 
@@ -451,8 +500,11 @@ dejar la ficha `/equipo/[memberId]` (aunque sea mínima) para que H-042 solo agr
 
 - **H-041 no está construida.** No se sabe si aceptará el gancho, qué convención de número de línea usará (`@n`) ni el formato de error
   por línea que espera el editor. El Camino A depende de eso.
-- **H-010 no está construida**: si habrá ficha, su dirección, la forma de `list_members` y si `change_member_role` o `remove_member`
-  harán algo con datos de otras tablas.
+- **H-010 está construida pero no mezclada** (PR #28 abierto): si cambia antes de mezclarse (dirección de la ficha, forma de
+  `list_members`, o si `change_member_role` o `remove_member` tocan datos de otras tablas), hay que revisar este diseño. Aquí se leyó
+  la rama, no `main`.
+- **`app.quote_line_rules_check` no existe en el código** (solo en el diseño del sprint 5 §5c), así que el Camino A también depende de
+  cómo se construya H-041.
 - **`tests/db/save-quote-draft-contract.test.ts` todavía no existe**: lo crea quien llegue primero.
 - **El tamaño real de los catálogos**: no hay tope en `catalog_items`. Se supuso unos cientos. Con miles, el selector necesitaría
   paginación y virtualización.

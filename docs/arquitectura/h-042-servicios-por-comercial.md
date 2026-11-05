@@ -337,7 +337,7 @@ El texto de «no se cargaron» pasa a decir: «ya no están activos en el catál
 
 | Riesgo | Cómo se evita |
 |---|---|
-| **Filtración entre organizaciones** | La organización sale siempre de `current_tenant_id()`, nunca de un parámetro. El miembro se busca dentro de la organización activa. Los servicios están amarrados por la relación compuesta. El predicado exige que el servicio sea de la organización activa. Las dos tablas y las cuatro funciones públicas van al registro de aislamiento |
+| **Filtración entre organizaciones** | La organización sale siempre de `current_tenant_id()`, nunca de un parámetro. El miembro se busca dentro de la organización activa. Los servicios están amarrados por la relación compuesta. El predicado exige que el servicio sea de la organización activa. Las dos tablas y las tres funciones públicas van al registro de aislamiento |
 | **Permisos saltados** | El límite vive en la base, en `save_quote_draft`, y no solo en la pantalla. Nadie escribe directo en las tablas. Hay que tener `team.manage` en la acción (`requirePermission`) y en la base (`app.can`). Un Comercial no puede cambiar su propia regla. No se usa la llave maestra |
 | **Rehacer cotizaciones ya enviadas** | **Nunca.** No hay migración de datos, ni disparador en `quote_items`, y la función de la regla no toca `quotes`. Una enviada ya no se edita (`CP423`) y las líneas existentes no se revisan |
 | **Doble clic** | Si lo pedido es igual a lo guardado, se responde «listo» sin cambiar nada, más la versión esperada y el botón deshabilitado mientras guarda |
@@ -429,7 +429,7 @@ eso los dos PR.
 
 **Documentos a actualizar al construir:**
 - `docs/arquitectura/modelo-datos.md`: la fila `member_catalog_permissions` pasa a las dos tablas nuevas.
-- `docs/HISTORIAS.md`: H-042 marcada con candado; notas en H-069 y H-070; quitar «chico».
+- `docs/HISTORIAS.md`: notas en H-069 y H-070 (el candado de H-042 y el tamaño ya quedaron en este PR).
 - El documento del sprint 5.
 
 **Hallazgo de paso (ya resuelto)**: la fecha reservada para H-010 (`20261104100000`) quedó por detrás de la de H-048a en `main`
@@ -448,7 +448,7 @@ eso los dos PR.
 | Envío | No: a propósito, no toca `prepare_quote_send` |
 | `save_quote_draft` | Con el Camino A no la reescribe (solo la función del gancho). Con el B, sí |
 
-**Conclusión: delicada.** Lleva diseño del `planificador`, revisión del `revisor` (Opus) y **no se mezcla sin Aarón**. Hay que marcarla
+**Conclusión: delicada.** Lleva diseño del `planificador`, revisión del `revisor` (Opus) y **no se mezcla sin Aarón**. Ya quedó marcada
 con candado en `HISTORIAS.md`.
 
 ---

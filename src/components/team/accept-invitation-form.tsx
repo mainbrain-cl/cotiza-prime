@@ -7,20 +7,25 @@ import { acceptInvitationAction, leaveInvitationAction } from "@/lib/team/accept
 import {
   INITIAL_ACCEPT_STATE,
   INVITATION_OFFLINE_MESSAGE,
+  INVITATION_VIEW_FIELD,
   type AcceptState,
 } from "@/lib/team/accept-model";
 import { Button } from "@/components/ui/button";
 
 /**
  * El botón «Unirme» de la invitación (H-009). Unirse exige un clic: abrir el enlace nunca acepta nada. El código
- * viaja en una cookie, no en este formulario, y el rol lo decide la invitación: aquí no se manda ni se muestra
- * nada que se pueda cambiar. Si el código ya no sirve, ofrece salir en vez de reintentar.
+ * viaja en una cookie, no en este formulario, y el rol lo decide la invitación. El formulario solo lleva la huella
+ * de la invitación que se mostró (`viewFingerprint`, nunca el código): así el clic acepta ESA invitación y no otra
+ * que una página ajena haya dejado en la cookie entre medio. Si el código ya no sirve, ofrece salir.
  */
 export function AcceptInvitationForm({
+  viewFingerprint,
   label = "Unirme",
   pendingLabel = "Uniéndote…",
   offerLeave = true,
 }: {
+  /** Huella de la invitación que muestra la pantalla (`invitationViewFingerprint`). */
+  viewFingerprint: string;
   label?: string;
   pendingLabel?: string;
   /** Falso cuando la persona ya es parte de la organización: «Seguir sin unirme» no tendría sentido. */
@@ -28,9 +33,9 @@ export function AcceptInvitationForm({
 }) {
   // Si la petición no llega al servidor (sin red), se queda en esta pantalla con un mensaje claro: dejarla
   // subir a la pantalla de error diría «problema de nuestro lado» cuando el problema es la conexión.
-  const [state, formAction] = useActionState<AcceptState, FormData>(async () => {
+  const [state, formAction] = useActionState<AcceptState, FormData>(async (_previous, formData) => {
     try {
-      return await acceptInvitationAction();
+      return await acceptInvitationAction(formData);
     } catch {
       return { status: "error", message: INVITATION_OFFLINE_MESSAGE };
     }
@@ -44,6 +49,7 @@ export function AcceptInvitationForm({
         data-testid="accept-invitation-form"
         className="flex flex-col gap-3"
       >
+        <input type="hidden" name={INVITATION_VIEW_FIELD} value={viewFingerprint} />
         <OfflineNotice />
         {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
         {state.dead ? null : <SubmitButton pendingLabel={pendingLabel}>{label}</SubmitButton>}

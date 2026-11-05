@@ -63,12 +63,15 @@ const nextConfig: NextConfig = {
       })),
       // La invitación (H-009): `/invitacion/:código` lleva el código secreto de la invitación. Nada se guarda en
       // cachés ni en buscadores, y al salir no se manda la dirección a ningún sitio.
+      // `Cross-Origin-Opener-Policy: same-origin` (corrección I1): si otro sitio abre esta pantalla en una ventana
+      // nueva, esa ventana queda en su propio grupo y el sitio que la abrió ya no puede controlarla ni verla.
       {
         source: "/invitacion/:path*",
         headers: [
           { key: "Cache-Control", value: "private, no-store, max-age=0" },
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
         ],
       },
       // El enlace del cliente (H-030) y el formulario público (H-087) los abre cualquiera: nada se guarda en

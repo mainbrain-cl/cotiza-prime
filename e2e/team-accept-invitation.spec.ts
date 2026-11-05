@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { Browser, BrowserContext, Page } from "@playwright/test";
 import { generateRut } from "../src/lib/chile/rut";
 import { connect } from "../tests/db/helpers";
@@ -50,21 +50,56 @@ async function invitationMails(address: string): Promise<MailDetail[]> {
   return details;
 }
 
-/** Espera el correo de la invitación y devuelve el enlace tal como lo recibe la persona. */
-async function waitForInviteLink(address: string): Promise<{ link: string; token: string }> {
+/**
+ * Espera el correo de la invitación y devuelve el enlace tal como lo recibe la persona. Si a ese correo llegan
+ * varias invitaciones, `nth` dice cuál (1 = la primera) y se espera a que hayan llegado justo esas.
+ */
+async function waitForInviteLink(
+  address: string,
+  nth = 1,
+): Promise<{ link: string; token: string }> {
   let found: MailDetail[] = [];
   await expect
     .poll(async () => (found = await invitationMails(address)).length, {
       message: `Esperaba el correo de la invitación a ${address}`,
       timeout: 30_000,
     })
-    .toBe(1);
-  const match = /href="(https?:\/\/[^"]*\/invitacion\/([A-Za-z0-9_-]{43}))"/.exec(found[0].HTML);
+    .toBe(nth);
+  const match = /href="(https?:\/\/[^"]*\/invitacion\/([A-Za-z0-9_-]{43}))"/.exec(
+    found[nth - 1].HTML,
+  );
   if (!match) throw new Error("El correo no trae el enlace de la invitación");
   return { link: match[1], token: match[2] };
 }
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+
+/** Fallos de aceptación que lleva una cuenta (el contador guarda una huella del id de la cuenta). */
+async function failuresOfAccount(db: import("pg").Client, email: string): Promise<number> {
+  const { rows } = await db.query<{ failures: number }>(
+    `select l.failures from public.auth_rate_limits l
+      where l.scope = 'invite_accept_user'
+        and l.key_hash = (select encode(sha256(convert_to('invite_accept_user|' || id::text, 'UTF8')), 'hex')
+                            from auth.users where email = $1)`,
+    [email],
+  );
+  return rows[0]?.failures ?? 0;
+}
+
+/**
+ * Filas de auditoría que dejó ESTA cuenta, en cualquier organización. Solo las suyas: con `fullyParallel` y dos
+ * trabajadores, otros archivos escriben en la auditoría al mismo tiempo y contar todas las filas fallaba al azar.
+ */
+const auditRowsOf = async (db: import("pg").Client, email: string) =>
+  Number(
+    (
+      await db.query<{ n: string }>(
+        `select count(*) as n from public.audit_log a join auth.users u on u.id = a.actor_user_id
+          where u.email = $1`,
+        [email],
+      )
+    ).rows[0].n,
+  );
 
 async function newContext(browser: Browser, baseURL: string | undefined): Promise<BrowserContext> {
   return browser.newContext({ baseURL, extraHTTPHeaders: { "x-forwarded-for": randomTestIp() } });
@@ -395,6 +430,15 @@ test("con otro correo: se le dice sin mostrar nada de la organización, puede ce
         [tenantId, other],
       );
       expect(member.rowCount).toBe(0);
+      // Corrección I1: ver esta pantalla no deja registro en la auditoría ni suma un fallo a la cuenta
+      // (solo un intento real de aceptar lo haría; aquí no hay botón para aceptar).
+      const denied = await db.query(
+        `select 1 from public.audit_log a join auth.users u on u.id = a.actor_user_id
+          where a.tenant_id = $1 and a.action = 'invitation.accept_denied' and u.email = $2`,
+        [tenantId, other],
+      );
+      expect(denied.rowCount).toBe(0);
+      expect(await failuresOfAccount(db, other)).toBe(0);
     });
 
     // Cierra sesión (el código se conserva) e ingresa con el correo al que llegó.
@@ -415,6 +459,184 @@ test("con otro correo: se le dice sin mostrar nada de la organización, puede ce
       );
       expect(rows).toEqual([{ role: "admin" }]);
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test("mirar una invitación ajena (o códigos inventados) no deja registro, no bloquea y la propia invitación sigue sirviendo; la ventana queda aislada", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(300_000);
+  const mine = uniqueEmail("acepta-victima");
+  const someoneElse = uniqueEmail("acepta-ajena");
+  await createAccount(browser, baseURL, mine, "Persona Visitante");
+  await invite(ownerPage, tenantId, someoneElse, "admin");
+  const foreign = await waitForInviteLink(someoneElse);
+  await invite(ownerPage, tenantId, mine, "viewer");
+  const own = await waitForInviteLink(mine);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.goto("/ingresar");
+    await login(page, mine);
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+
+    const auditBefore = await withDb((db) => auditRowsOf(db, mine));
+
+    // --- una visita a una invitación AJENA, varias veces (como si otro sitio nos mandara allí) ---
+    for (let n = 0; n < 3; n++) {
+      await page.goto(foreign.link);
+      await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
+        "data-result",
+        "wrong_email",
+      );
+      await page.goto("/invitacion");
+      await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
+        "data-result",
+        "wrong_email",
+      );
+    }
+    // --- y 12 códigos inventados: antes bastaban 11 para dejar a la cuenta bloqueada 10 minutos ---
+    for (let n = 0; n < 12; n++) {
+      await page.goto(`/invitacion/${randomBytes(32).toString("base64url")}`);
+      await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
+        "data-result",
+        "not_found",
+      );
+    }
+    await withDb(async (db) => {
+      // Ni una fila nueva de esta cuenta en la auditoría (de ninguna organización) ni un fallo en la cuenta.
+      expect(await auditRowsOf(db, mine)).toBe(auditBefore);
+      expect(await failuresOfAccount(db, mine)).toBe(0);
+    });
+
+    // --- la invitación propia sigue sirviendo: no está bloqueada ---
+    await page.goto(own.link);
+    await expect(page.getByTestId("invitation-sentence")).toHaveText(
+      `${OWNER_NAME} te invitó a ${ORG_NAME} como Observador.`,
+    );
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+    await withDb(async (db) => {
+      const { rows } = await db.query<{ role: string }>(
+        `select m.role from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email = $2`,
+        [tenantId, mine],
+      );
+      expect(rows).toEqual([{ role: "viewer" }]);
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("«Unirme» acepta la invitación que se mostró: si otra página cambió la cookie entre medio, no entra a ninguna y vuelve a mostrar la de ahora", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(300_000);
+  const victim = uniqueEmail("acepta-cambiada");
+  const otherOrg = "Otra Organización Invitante SpA";
+  await createAccount(browser, baseURL, victim, "Persona Cambiada");
+  // Otra organización (la de quien quiere meter a la persona en la suya) también la invita.
+  const otherContext = await newContext(browser, baseURL);
+  const context = await newContext(browser, baseURL);
+  try {
+    const otherOwner = await otherContext.newPage();
+    await signUpAndVerify(otherOwner, uniqueEmail("acepta-otra-org"), "Dueño Otra Org");
+    const otherTenant = await createTenant(otherOwner, otherOrg, generateRut());
+    await invite(ownerPage, tenantId, victim, "viewer");
+    const shown = await waitForInviteLink(victim, 1);
+    await invite(otherOwner, otherTenant, victim, "admin");
+    const swapped = await waitForInviteLink(victim, 2);
+
+    const page = await context.newPage();
+    await page.goto("/ingresar");
+    await login(page, victim);
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+    await page.goto(shown.link);
+    await expect(page.getByTestId("invitation-sentence")).toHaveText(
+      `${OWNER_NAME} te invitó a ${ORG_NAME} como Observador.`,
+    );
+    // El formulario lleva la huella de lo que se mostró, nunca el código ni la huella que usa la base.
+    const html = await page.content();
+    expect(html).not.toContain(shown.token);
+    expect(html).not.toContain(sha256(shown.token));
+    const auditBefore = await withDb((db) => auditRowsOf(db, victim));
+
+    // Otra pestaña (o una página ajena con una navegación de primer nivel) abre el otro enlace: la cookie cambia.
+    const other = await context.newPage();
+    await other.goto(swapped.link);
+    await other.close();
+    expect((await context.cookies()).find((c) => c.name === COOKIE_NAME)?.value).toBe(
+      swapped.token,
+    );
+
+    // En la pestaña original, la persona pulsa «Unirme» creyendo que entra a la primera.
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(`${baseURL}/invitacion?aviso=invitacion-cambio`);
+    await expect(page.getByTestId("invitation-changed")).toHaveText(
+      "Ahora se muestra otra invitación. Revisa a qué organización te unes.",
+    );
+    // Ahora se muestra la invitación que hay de verdad en la cookie.
+    await expect(page.getByTestId("invitation-sentence")).toContainText(otherOrg);
+    await withDb(async (db) => {
+      const member = await db.query(
+        `select 1 from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id in ($1, $2) and u.email = $3`,
+        [tenantId, otherTenant, victim],
+      );
+      expect(member.rowCount).toBe(0);
+      const pending = await db.query<{ status: string }>(
+        "select status from public.invitations where token_sha256 in ($1, $2)",
+        [sha256(shown.token), sha256(swapped.token)],
+      );
+      expect(pending.rows).toEqual([{ status: "pending" }, { status: "pending" }]);
+      // No llamó a la base: ni un fallo sumado ni una fila en la auditoría.
+      expect(await failuresOfAccount(db, victim)).toBe(0);
+      expect(await auditRowsOf(db, victim)).toBe(auditBefore);
+    });
+
+    // Si, ya viéndola, decide unirse a la que ahora se muestra, el clic sí vale (y es esa, no la primera).
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${otherTenant}$`));
+    await withDb(async (db) => {
+      const { rows } = await db.query<{ tenant_id: string }>(
+        `select m.tenant_id from public.members m join auth.users u on u.id = m.user_id
+          where u.email = $1 and m.tenant_id in ($2, $3)`,
+        [victim, tenantId, otherTenant],
+      );
+      expect(rows).toEqual([{ tenant_id: otherTenant }]);
+    });
+  } finally {
+    await context.close();
+    await otherContext.close();
+  }
+});
+
+test("la invitación manda Cross-Origin-Opener-Policy: same-origin, en el enlace del correo y en la pantalla", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    const code = randomBytes(32).toString("base64url");
+    // La respuesta del enlace (la redirección) y la de la pantalla a la que lleva.
+    const redirect = await page.request.get(`/invitacion/${code}`, { maxRedirects: 0 });
+    expect(redirect.status()).toBe(303);
+    expect(redirect.headers()["cross-origin-opener-policy"]).toBe("same-origin");
+    const screen = await page.goto("/invitacion");
+    expect(screen?.headers()["cross-origin-opener-policy"]).toBe("same-origin");
+    const viaLink = await page.goto(`/invitacion/${code}`);
+    expect(viaLink?.url()).toBe(`${baseURL}/invitacion`);
+    expect(viaLink?.headers()["cross-origin-opener-policy"]).toBe("same-origin");
+    // El resto de la aplicación no cambia.
+    const signIn = await page.goto("/ingresar");
+    expect(signIn?.headers()["cross-origin-opener-policy"]).toBeUndefined();
   } finally {
     await context.close();
   }

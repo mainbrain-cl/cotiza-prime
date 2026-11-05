@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { normalizeEmail } from "@/lib/normalize/email";
 
 /**
@@ -26,6 +26,26 @@ export function isWellFormedInvitationToken(value: string): boolean {
 /** Huella del código (64 caracteres hexadecimales): lo único que se guarda y se compara. */
 export function hashInvitationToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+/**
+ * Huella de «la invitación que se mostró» (H-009). Va oculta en el formulario de «Unirme» para que el clic acepte
+ * la MISMA invitación que la persona vio, aunque otra página haya cambiado la cookie del código entre medio (abrir
+ * `/invitacion/<otro código>` desde otro sitio la reemplaza). Es distinta de `hashInvitationToken` a propósito: esa
+ * huella sirve para llamar a las funciones de la base, así que nunca se escribe en la página. De esta no se puede
+ * sacar ni el código ni la huella de la base.
+ */
+export function invitationViewFingerprint(token: string): string {
+  return createHash("sha256").update(`cp_invitation_view|${token}`, "utf8").digest("hex");
+}
+
+/** ¿Lo que mandó el formulario es la huella de ESTE código? Cualquier otra cosa (falta, otra forma, otra huella): no. */
+export function matchesInvitationView(token: string, submitted: unknown): boolean {
+  if (typeof submitted !== "string" || !/^[0-9a-f]{64}$/.test(submitted)) return false;
+  return timingSafeEqual(
+    Buffer.from(invitationViewFingerprint(token), "hex"),
+    Buffer.from(submitted, "hex"),
+  );
 }
 
 /**

@@ -6,7 +6,9 @@
 //  4. La respuesta es idéntica sea cual sea la organización dueña del código: no delata a cuál pertenece.
 //  5. El límite de aceptaciones fallidas por persona, por la API.
 //  6. Sin sesión, nada responde.
-import { randomBytes } from "node:crypto";
+//  7. (Corrección I1) Ver una invitación ajena (la vista previa) no escribe nada: ni en la auditoría de B ni en el
+//     contador de fallos de la cuenta que mira. Solo intentar aceptar cuenta y deja registro.
+import { createHash, randomBytes } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rest, rpc } from "../support/local-supabase";
@@ -62,6 +64,16 @@ const deniedInB = async (userId: string) =>
     `action = 'invitation.accept_denied' and tenant_id = '${fixture().orgs.B.tenantId}' and actor_user_id = '${userId}'`,
   );
 
+/** Fallos de aceptación que lleva la cuenta (el contador guarda una huella del id, no el id). */
+const failuresOf = async (userId: string): Promise<number> => {
+  const key = createHash("sha256").update(`invite_accept_user|${userId}`).digest("hex");
+  const { rows } = await db.query<{ failures: number }>(
+    "select failures from public.auth_rate_limits where scope = 'invite_accept_user' and key_hash = $1",
+    [key],
+  );
+  return rows[0]?.failures ?? 0;
+};
+
 const call = async (
   persona: PersonaKey,
   fn: "accept_invitation" | "invitation_preview",
@@ -76,9 +88,10 @@ describe("Ataque 1 · usar el código de una invitación de B (dirigida a otro c
       const fx = fixture();
       const b = fx.orgs.B.invitation!;
       const before = await snapshotB();
-      // Una llamada por función: cada intento fallido gasta el cupo de Ana (10 en 10 minutos). La cabecera de B
-      // en una y ninguna en la otra; la de A la prueba Mixta más abajo.
+      // Una llamada por función: aceptar gasta un intento del cupo de Ana (10 en 10 minutos); la vista previa no
+      // gasta ninguno (corrección I1). La cabecera de B en una y ninguna en la otra; la de A la prueba Mixta más abajo.
       const deniedBefore = await deniedInB(fx.personas.ana.userId);
+      const failuresBefore = await failuresOf(fx.personas.ana.userId);
       for (const header of [fn === "accept_invitation" ? fx.orgs.B.tenantId : undefined]) {
         const res = await call("ana", fn, b.tokenSha256, header);
         expect(res.status, `${fn} ${header}`).toBe(200);
@@ -90,8 +103,15 @@ describe("Ataque 1 · usar el código de una invitación de B (dirigida a otro c
       for (const name of BUSINESS_TABLES) {
         expect(await fingerprintB(name), `${name} de B cambió`).toBe(before.get(name));
       }
+      if (fn === "invitation_preview") {
+        // Ver la pantalla no deja NADA: ni registro en B ni un fallo para Ana.
+        expect(await deniedInB(fx.personas.ana.userId)).toBe(deniedBefore);
+        expect(await failuresOf(fx.personas.ana.userId)).toBe(failuresBefore);
+        return;
+      }
       // Lo único que queda en B es el registro de que Ana lo intentó, sin su correo ni el código.
       expect(await deniedInB(fx.personas.ana.userId)).toBe(deniedBefore + 1);
+      expect(await failuresOf(fx.personas.ana.userId)).toBe(failuresBefore + 1);
       const { rows: denied } = await db.query<{ details: unknown; result: string }>(
         `select details, result from public.audit_log
           where action = 'invitation.accept_denied' and tenant_id = $1 and actor_user_id = $2
@@ -323,8 +343,43 @@ describe("Ataque 6 · por GET no se pueden probar códigos saltándose el límit
       expect(res.text, `${fn} por GET`).not.toContain("result");
       expect(res.text, `${fn} por GET`).not.toContain("revoked");
     }
-    // Por POST, en cambio, sí contesta.
+    // Por POST, en cambio, sí contesta; y como Dante no es la persona invitada, no se entera de que está cancelada
+    // (la misma respuesta que con una invitación pendiente).
     const viaPost = await call("dante", "invitation_preview", sha);
-    expect(viaPost.json).toEqual({ result: "revoked" });
+    expect(viaPost.json).toEqual({ result: "wrong_email" });
+  });
+});
+
+describe("Ataque 7 · mirar una invitación ajena (la vista previa) no escribe nada ni bloquea a la víctima", () => {
+  it("Dante abre 15 códigos inventados y 15 veces la invitación de B: ni auditoría, ni fallos, ni cambios en B", async () => {
+    const fx = fixture();
+    const dante = fx.personas.dante.userId;
+    const b = fx.orgs.B.invitation!;
+    const allAudit = () =>
+      db
+        .query<{ n: string; h: string }>(
+          `select count(*) as n, md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
+             from public.audit_log t`,
+        )
+        .then((r) => r.rows[0]);
+    const auditBefore = await allAudit();
+    const failuresBefore = await failuresOf(dante);
+    const before = await snapshotB();
+    for (let n = 0; n < 15; n++) {
+      const invented = await call("dante", "invitation_preview", randomSha());
+      expect(invented.json).toEqual({ result: "not_found" });
+      const foreign = await call("dante", "invitation_preview", b.tokenSha256);
+      expect(foreign.json).toEqual({ result: "wrong_email" });
+    }
+    // Ninguna fila nueva en la auditoría de NINGUNA organización, y el contador de Dante igual.
+    expect(await allAudit()).toEqual(auditBefore);
+    expect(await failuresOf(dante)).toBe(failuresBefore);
+    expect(await deniedInB(dante)).toBe(0);
+    for (const name of BUSINESS_TABLES) {
+      expect(await fingerprintB(name), `${name} de B cambió`).toBe(before.get(name));
+    }
+    // Y sigue sin estar bloqueado: la vista previa de su propia invitación no dice «rate_limited».
+    const own = await call("dante", "invitation_preview", fx.orgs.A.invitation!.tokenSha256);
+    expect((own.json as { result: string }).result).not.toBe("rate_limited");
   });
 });

@@ -20,6 +20,8 @@ type ConfirmActionProps = {
   children?: ReactNode;
   /** Estilo del botón de confirmar. Por defecto, el de una acción destructiva. */
   confirmVariant?: "danger" | "primary";
+  /** Avisa cuando el diálogo se abre o se cierra (por ejemplo, para reiniciar lo que se eligió dentro). */
+  onOpenChange?: (open: boolean) => void;
 };
 
 /** Confirmación antes de una acción que no se puede deshacer, con la consecuencia explicada. */
@@ -33,6 +35,7 @@ export function ConfirmAction({
   testId,
   children,
   confirmVariant = "danger",
+  onOpenChange,
 }: ConfirmActionProps) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -63,6 +66,7 @@ export function ConfirmAction({
         if (pending) return;
         setOpen(next);
         if (!next) setError(null);
+        onOpenChange?.(next);
       }}
     >
       <AlertDialog.Trigger data-testid={`${testId}-open`} render={trigger} />

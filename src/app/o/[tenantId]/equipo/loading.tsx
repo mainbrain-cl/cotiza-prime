@@ -11,7 +11,10 @@ export default function Loading() {
     <SkeletonRegion>
       <HeaderSkeleton />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_26rem]">
-        <ListSkeleton rows={3} columns={3} />
+        <div className="flex flex-col gap-8">
+          <ListSkeleton rows={3} columns={3} />
+          <ListSkeleton rows={2} columns={3} />
+        </div>
         <FormSkeleton fields={3} />
       </div>
     </SkeletonRegion>

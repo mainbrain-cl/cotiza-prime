@@ -10,6 +10,8 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "session.login": "Ingresó a la plataforma",
   "member.created": "Se sumó un miembro",
   "member.updated": "Cambió un miembro",
+  "member.role_changed": "Se cambió el rol de un miembro",
+  "member.removed": "Se quitó a un miembro del equipo",
   "tenant.created": "Se creó la organización",
   "tenant.updated": "Cambió la configuración de la organización",
   "numbering.created": "Se configuró la numeración",
@@ -60,6 +62,8 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   mode: "formato",
   role: "rol",
   status: "estado",
+  removed_at: "salida del equipo",
+  removed_by: "salida del equipo",
   unit_price_clp: "precio",
   unit: "unidad",
   is_active: "activo",
@@ -97,12 +101,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function cancelledNote(details: Record<string, unknown>): string | null {
+  const cancelled = details.cancelled_invitations;
+  if (typeof cancelled !== "number" || cancelled <= 0) return null;
+  return cancelled === 1
+    ? "se canceló 1 invitación que había enviado"
+    : `se cancelaron ${cancelled} invitaciones que había enviado`;
+}
+
+function describeMemberChange(details: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+  if (typeof details.old_role === "string" && typeof details.new_role === "string") {
+    parts.push(`Rol: ${roleLabel(details.old_role)} → ${roleLabel(details.new_role)}`);
+  } else if (
+    typeof details.role === "string" &&
+    typeof details.cancelled_invitations === "number"
+  ) {
+    parts.push(`Rol: ${roleLabel(details.role)}`);
+  }
+  const note = cancelledNote(details);
+  if (parts.length > 0 && note) parts.push(note);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** Cómo se llama a la persona afectada cuando su nombre no se puede leer. */
+export const UNKNOWN_SUBJECT = "una persona del equipo";
+
 /**
  * Una frase corta de qué cambió, sin mostrar valores personales: solo el cambio de rol (con los
  * dos roles) y los nombres de los campos modificados. `null` si no hay nada que agregar.
  */
 export function describeAuditDetails(details: unknown): string | null {
   if (!isRecord(details)) return null;
+
+  // Cambiar el rol o quitar a un miembro (H-010): los roles no son datos personales; nunca viaja un correo.
+  const memberNote = describeMemberChange(details);
+  if (memberNote) return memberNote;
 
   const oldValues = isRecord(details.old) ? details.old : null;
   const newValues = isRecord(details.new) ? details.new : null;
@@ -120,4 +154,44 @@ export function describeAuditDetails(details: unknown): string | null {
   if (fields.length === 0) return null;
   const names = [...new Set(fields.map((field) => FIELD_LABELS[field] ?? "otros datos"))];
   return `Cambió: ${names.join(", ")}`;
+}
+
+/**
+ * La frase del detalle de un registro. Para cambiar el rol de un miembro o quitarlo dice **a quién** afectó
+ * («Quitó a María Pérez del equipo»): con la decisión de no mandar correos, el registro es lo único que se lo
+ * cuenta al Dueño. El nombre se lee al mostrar (nunca se guarda en la auditoría); sin nombre, «una persona del
+ * equipo». Nunca lleva un correo. Para las demás acciones es `describeAuditDetails`.
+ */
+export function describeAuditEntry(entry: {
+  action: string;
+  details: unknown;
+  subjectName?: string | null;
+}): string | null {
+  const details = isRecord(entry.details) ? entry.details : {};
+  const who = entry.subjectName?.trim() || UNKNOWN_SUBJECT;
+  if (
+    entry.action === "member.role_changed" &&
+    typeof details.old_role === "string" &&
+    typeof details.new_role === "string"
+  ) {
+    const sentence = `Cambió el rol de ${who} de ${roleLabel(details.old_role)} a ${roleLabel(details.new_role)}`;
+    return [sentence, cancelledNote(details)].filter(Boolean).join(" · ");
+  }
+  if (entry.action === "member.removed") {
+    const named = entry.subjectName?.trim();
+    // Sin nombre: «Quitó a una persona del equipo» (sin repetir «del equipo»).
+    const sentence = named ? `Quitó a ${named} del equipo` : `Quitó a ${UNKNOWN_SUBJECT}`;
+    return [sentence, cancelledNote(details)].filter(Boolean).join(" · ");
+  }
+  return describeAuditDetails(entry.details);
+}
+
+/** «Sobre qué» de un registro: el tipo de recurso y, si es un miembro, a quién. */
+export function describeAuditSubject(entry: {
+  resourceType: string | null;
+  subjectName?: string | null;
+}): string {
+  const label = resourceLabel(entry.resourceType);
+  if (entry.resourceType !== "member") return label;
+  return `${label}: ${entry.subjectName?.trim() || UNKNOWN_SUBJECT}`;
 }

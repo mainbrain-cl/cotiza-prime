@@ -647,3 +647,94 @@ La migración `20261103100000_invitation_accept.sql` se editó en su lugar (aún
 - **M-1 · la vista previa escribe en la auditoría de otra organización.** La vista previa se ejecuta sola al cargar `/invitacion` y, si el correo no coincide, deja un `invitation.accept_denied` en la auditoría de la organización de la invitación. El Dueño de la organización X puede así saber que una persona con sesión abierta en Cotiza Prime abrió uno de sus enlaces (identificador de la cuenta, IP y navegador). Está relacionado con H-114 (la IP de auditoría es falsificable). Opcional a futuro: escribir esa fila una sola vez por invitación y cuenta.
 - **M-2 · algunos estados se responden antes de comparar el correo.** `inviter_inactive` (igual que `expired` y `archived`) se responde antes de comparar el correo, así que quien tiene el enlace sin ser la persona invitada se entera de que «quien te invitó dejó de poder invitar». Es poca información (hace falta tener un código real), pero no es cero.
 - **M-7 · textos opcionales, no se hacen ahora.** Una invitación cancelada a mano o vencida dice «pide a quien te invitó» aunque esa persona ya no pueda invitar; y en «Ya eres parte de esta organización» la salida dice «Seguir sin unirme».
+
+---
+
+## Registro de construcción — H-010 (2026-11-05)
+
+Construida siguiendo este diseño (§4 y §5). Migración `20261105110000_member_management.sql` (deshacer en `supabase/rollbacks/`).
+
+### Firmas finales
+
+Las tres corren con el pase de la persona (`security definer`, `search_path = ''`, solo `authenticated`), sacan la organización de `app.current_tenant_id()` (no tienen argumento de organización) y deciden con `app.can('team.manage')`:
+
+- `public.list_members() returns jsonb`: arreglo con los miembros **activos**: `member_id`, `user_id`, `full_name`, `email` (de `auth.users`), `role`, `joined_at`, `is_self`. El Dueño primero, luego por fecha de ingreso. Solo Dueño y Administrador (decisión de José: la lista con correos no la ve nadie más).
+- `public.change_member_role(p_member_id uuid, p_new_role text, p_expected_role text) returns jsonb`: `changed` (con `cancelled_invitations`) o `unchanged`.
+- `public.remove_member(p_member_id uuid, p_expected_role text) returns jsonb`: `removed` (con `cancelled_invitations`) o `already_removed`.
+- Ayuda interna `app.cancel_member_invitations(p_tenant, p_user, p_by) returns integer` (nadie con un pase la ejecuta).
+
+### Códigos de error y motivo
+
+| Código | Motivo (`message`) | Cuándo |
+|---|---|---|
+| `CP404` | `not_found` | No es miembro de la organización activa, o no hay organización activa |
+| `42501` | `forbidden` | No maneja el equipo (o dejó de manejarlo mientras esperaba el candado) |
+| `CP422` | `invalid_arguments` · `invalid_role` | Falta un argumento · el rol nuevo no existe o es el del Dueño |
+| `CP404` | `member_not_found` | El miembro no existe en **esta** organización (uno de otra da lo mismo), o ya no está activo al cambiar su rol |
+| `CP423` | `cannot_target_self` | Nadie se cambia el rol ni se quita a sí mismo |
+| `CP423` | `cannot_target_owner` | Nadie toca al Dueño |
+| `CP409` | `role_changed` | El rol real ya no es el que la persona vio (`p_expected_role`) |
+
+### Cómo se cumplen las 8 reglas de §5
+
+1. **Permiso:** `app.can('team.manage')`, y se vuelve a comprobar con el rol de la fila **ya bloqueada** de quien actúa.
+2. **Organización:** el miembro se busca con `tenant_id = app.current_tenant_id()`. Probado con Dueños, Administradores y una persona que está en dos organizaciones, parada en cada una.
+3. **Nadie toca al Dueño ni sube a alguien a Dueño:** el Dueño se reconoce con la matriz (`app.role_can(rol, 'tenant.transfer')`), no con un nombre de rol escrito; el rol nuevo debe ser del dominio `app.invitation_role` (los cuatro asignables).
+4. **Nadie se toca a sí mismo.**
+5. **Nunca queda sin Dueño:** consecuencia de la regla 3 más el índice único `members_one_owner`.
+6. **Concurrencia:** se bloquean las filas del miembro **y** de quien actúa, siempre por orden de id (`order by id for update`); después se vuelve a comprobar que quien actúa sigue activo y con permiso, y que el rol sigue siendo el esperado. Probado con dos conexiones reales: dos Administradores que se quitan a la vez (gana uno, el otro recibe `42501`), dos cambios al mismo miembro (el segundo recibe `CP409`) y quitar mientras otro cambia el rol.
+7. **Auditoría:** `member.role_changed` y `member.removed`, sin correo ni nombre (solo roles, ids y cuántas invitaciones se cancelaron). El disparador general sigue dejando además un `member.updated` con el cambio de rol o de estado (**ruido conocido**: hay dos filas por acción, como con `invitation.updated`). No se construyó ningún correo (ver más abajo).
+8. **`list_members()`:** solo con `team.manage`; el correo sale de `auth.users`.
+
+### Qué se cambió respecto del diseño
+
+- **Sin correos.** El diseño (§5, regla 7) decía que cada cambio avisa por correo al afectado y al Dueño. **Decisión de José (2026-11-05): no se construye en H-010.** Queda solo en la auditoría; el aviso por correo llegará después reutilizando el mecanismo de H-008 (`email_messages`, tarea de avisos). El «Dueño se entera» del supuesto 4 de §8 queda, por ahora, solo en el registro de actividad.
+- **La lista de miembros ya existe:** la pantalla «Tu equipo» tiene la sección «Miembros» (antes solo listaba invitaciones pendientes). El aviso al Dueño de H-008 sigue llevando a «Tu equipo» (ahora con lista).
+- **La ficha del miembro** (`/o/[tenantId]/equipo/[memberId]`) se agregó (el diseño la pide para H-042): nombre, correo, rol con su frase, fecha de ingreso y las mismas acciones, con un lugar anotado para la sección que le sumará H-042.
+
+### Decisiones donde el diseño no decía
+
+- **Resultado idempotente:** cambiar a un rol que el miembro ya tiene es «listo» sin cambios ni auditoría, **aunque el rol esperado sea otro** (el resultado deseado ya está). Quitar a alguien ya quitado es `already_removed`, sin segunda auditoría.
+- **Orden de revisiones:** primero «es de esta organización» y recién después «es el Dueño» o «es uno mismo», para no revelar nada de otras organizaciones; el Dueño se comprueba sobre la fila bloqueada.
+- **Quitado ≠ eliminado:** `list_members()` entrega solo activos (lo más conservador). El nombre de quien se fue lo lee cada cotización por `profiles`, no por esta función.
+- **`profiles_select`:** ahora lee `full_name` de cualquiera con una fila en `members` de la organización activa (activa o quitada). Solo las columnas ya permitidas; el correo no está en `profiles`. Quien fue quitado sigue sin poder leer nada de la organización.
+- **«Sus solicitudes asignadas quedan sin responsable activo»:** la solicitud conserva `assigned_to`. Como ahora el nombre de quien se fue **sí** se puede leer, `loadRequestList` y `loadRequest` (`src/lib/intake/requests-queries.ts`) consultan los nombres de los asignados solo entre los miembros **activos**; si no, una solicitud asignada a un ex miembro habría pasado a mostrar su nombre en vez de «Alguien que ya no está en el equipo». Cambio mínimo, con prueba (`requests-assignees.test.ts`).
+- **Actualizar tras un error:** las acciones solo rehacen la pantalla si funcionaron; un «el rol cambió» no la rehace, para que el aviso quede en el diálogo.
+- **Aviso al quitar:** el diálogo explica las cinco consecuencias (cotizaciones, borradores, invitaciones, solicitudes y que volver exige una invitación nueva).
+- **Fixture de aislamiento:** `OrgData.ownerMemberId` (la fila de `members` de la dueña) para atacar y abrir `/equipo/[memberId]`; `concretePath` ganó un parámetro `memberId`.
+- **Prueba de perfiles del aislamiento (`tables-read`):** ahora acepta que se lea el perfil de quien tuvo una fila en `members` de la organización activa (`peopleOfOrgs`), no solo los activos.
+
+### Límites conocidos
+
+- **Sin aviso por correo** al afectado ni al Dueño al cambiar un rol o quitar a alguien (ver arriba).
+- **«Al instante» = en su siguiente clic o petición.** La pantalla que la persona ya tenía abierta sigue a la vista hasta entonces (no hay avisos en vivo).
+- **Solicitudes asignadas a alguien que dejó de poder cotizar:** quien se quita queda con la solicitud asignada («sin responsable activo»). Quien solo **baja de rol** (por ejemplo de Comercial a Observador) conserva sus solicitudes asignadas con su nombre, y nadie las ve como huérfanas; el Dueño o un Administrador las puede reasignar a mano. La insignia del menú (`loadRequestBadge`) cuenta solo las **nuevas sin asignar**, así que las asignadas a un ex miembro no suman ahí. No se cambió.
+- **Borradores de quien se fue:** quedan en solo lectura y nadie los puede tomar (supuesto 10: se podrán duplicar con H-069).
+- **Un Administrador puede cambiar y quitar a otro Administrador** (pregunta 4, como H-008). Solo el Dueño es intocable.
+- **Verificación en dos pasos (H-004c):** `change_member_role` y `remove_member` deciden con `app.can('team.manage')` y con `app.role_can(rol_de_la_fila, 'team.manage')`; esa segunda forma usa el rol guardado y no `app.effective_role()`. Si H-004c cambia el criterio de quién puede manejar el equipo, hay que revisarlo aquí también.
+- **Dato anotado, no tocado:** `loadAssignableMembers` (`requests-queries.ts`) lee `members` sin filtrar por organización y la política deja ver las propias filas de otras organizaciones; una persona que está en dos organizaciones podría salir repetida en la lista de asignables. No se verificó ni se cambió (fuera de H-010).
+
+### Correcciones de las revisiones (2026-11-05)
+
+Tras la revisión normal y la adversarial (sin bloqueantes). La migración `20261105110000_member_management.sql` se editó **en su lugar** (aún no estaba en `main`) y la base local se dejó al día aplicando el deshacer y la migración corregida en una sola transacción; `supabase_migrations.schema_migrations` tiene `20261105110000` una sola vez.
+
+- **A · invitaciones que escapaban a la cancelación por una carrera.** `create_invitation` revisaba el permiso de quien invita al principio, pero no bloqueaba su fila de `members`: si lo quitaban o le bajaban el rol mientras invitaba, `app.cancel_member_invitations` no veía las invitaciones aún no guardadas y quedaban «pendientes» (el revisor: 5 de 8 con quitarlo, 6 de 6 con bajarlo a Observador), con riesgo de revivir si la persona volvía con un rol que maneja el equipo. Ahora `create_invitation` (misma definición de H-008, más un bloque) hace `perform 1 from members … for share` sobre la fila de quien invita **antes** del candado de la organización y falla con `42501` si ya no está activo o ya no maneja el equipo. **`resend_invitation` recibe el mismo bloque:** no dejaba escapar invitaciones (reenviar y cancelar se ordenan por la fila de `invitations`), pero sí permitía que una persona recién quitada reenviara una invitación ajena y saliera un correo a su nombre; es el mismo bloqueo mínimo. `revoke_invitation` no se tocó (cancelar nunca perjudica). El deshacer restaura las dos definiciones originales (una prueba compara el cuerpo con el de `20261030100000_invitations.sql`).
+- **Orden de bloqueos** (también en el encabezado de la migración): `remove_member` / `change_member_role` → filas de `members` del objetivo y de quien actúa (`for update`, por orden de id) → filas de `invitations` del objetivo. `create_invitation` / `resend_invitation` → fila de `members` de quien actúa (`for share`) → candado de organización (advisory) → filas de `invitations`. Sin ciclo: las funciones de invitaciones piden su fila de `members` **antes** de cualquier otro bloqueo (mientras esperan, no sostienen nada), y quien tiene el candado de organización nunca pide después una fila de `members`. `for update` choca con `for share`, así que `remove_member` espera a las invitaciones en curso, y estas, al despertar, ven la fila ya cambiada y fallan con `42501`.
+- **B · `profiles` solo deja leer `user_id`, `tenant_id` y `full_name`.** La migración 12 concedía además `created_at` y `updated_at`; `updated_at` cambia cada vez que la persona cambia de organización, así que otra empresa habría visto cuándo un ex miembro usa la plataforma. La migración hace `revoke select (created_at, updated_at) on public.profiles from authenticated` (el deshacer los vuelve a conceder). Se comprobó que ningún código de `src/` ni de las pruebas de aislamiento los lee; `last_tenant_id` sigue cerrada.
+- **C · el registro de actividad dice a quién afectó la acción.** `member.role_changed` y `member.removed` guardan como recurso el id de la fila de `members` (verificado). `listAuditEntries` resuelve al leer, con `members` + `profiles.full_name`, el nombre de esa persona (nada nuevo en la base) y la pantalla dice «Cambió el rol de María Pérez de Comercial a Observador» y «Quitó a María Pérez del equipo»; en «Sobre qué» aparece «Miembro: María Pérez». Sin nombre legible: «una persona del equipo». Nunca un correo.
+- **D · el borrador de quien se fue.** Si el autor ya no es miembro activo, la cotización dice «Quien armó este borrador ya no está en el equipo; queda solo para leer.» (antes: «Solo <nombre> puede editar este borrador», falso).
+- **E · menores.** `loadAssignableMembers` filtra por organización (Mixta ya no sale repetida); el aviso al Dueño por una invitación ya aceptada lleva a «Tu equipo» (que desde H-010 muestra a la persona) con el botón «Ver tu equipo»; comentarios obsoletos corregidos; variables y comprobaciones de relleno quitadas de `e2e/member-management.spec.ts`; la prueba del borrador exige `42501` y que no cambie; el cliente falso de `requests-assignees.test.ts` aplica los filtros (quitar uno hace fallar la prueba); las pruebas de concurrencia esperan con `pg_blocking_pids` a que la segunda conexión esté realmente bloqueada; quitar desde la ficha ya no rehace la ficha antes de navegar (la acción de quitar no revalida: la lista se refresca o el navegador va a la lista); «Cambiar rol» reinicia la elección al cerrar el diálogo (`ConfirmAction` ganó `onOpenChange`); los textos del Dueño y de uno mismo viven en una sola constante (`members-model.ts`).
+
+### Límites conocidos (agregados tras las revisiones)
+
+1. **Sin correos, un Administrador puede ascender o bajar a otros Administradores y el Dueño solo se entera si revisa el registro de actividad.** Es decisión de José; **Aarón debe aprobarla por escrito antes de mezclar.**
+2. **Los intentos rechazados no quedan en la auditoría** (`forbidden`, `cannot_target_owner`…): mismo patrón que H-008.
+3. **Carrera residual entre `remove_member` y `accept_invitation`.** Bloquean en orden inverso (`remove_member`: `members` y luego `invitations`; `accept_invitation`: `invitations` y luego la fila de `members` de quien acepta). Solo podrían cruzarse si quien acepta es justo quien actúa o el quitado; el revisor no pudo reproducirla. Si ocurre, la base corta una de las dos con error, sin dañar datos.
+
+### Pruebas de H-010
+
+- **Unitarias:** `members-model.test.ts` (formas, controles, mensajes), `members-actions.test.ts` (un falso miembro de cada rol: los sin permiso reciben el mensaje y la base ni se consulta), `member-list.test.tsx` (lista, diálogos, doble clic, fallo de red sin perder lo elegido), `requests-assignees.test.ts` y las etiquetas de auditoría.
+- **Base de datos:** `tests/db/members.test.ts` (por rol con pases reales, Dueño, uno mismo, otra organización, rol esperado, tres casos de dos conexiones simultáneas, invitaciones canceladas, nombre visible, ex miembro sin acceso, reactivar por invitación, escritura directa rechazada) y `tests/db/member-management-rollback.test.ts` (el deshacer y volver a aplicar).
+- **Aislamiento:** `tests/isolation/members.test.ts` (siete ataques), las tres funciones en `RPC_CASES`, `/o/[tenantId]/equipo/[memberId]` en `APP_ROUTES`, y la prueba A12 del ex miembro (`lifecycle.test.ts`) ahora también llama a las funciones de equipo.
+- **De punta a punta:** `e2e/member-management.spec.ts` (cinco pruebas: cambiar el rol y que desaparezca «Nueva cotización»; quitar con la sesión abierta; Administrador sin acciones sobre el Dueño ni sobre sí mismo, y los demás roles sin permiso; 375 px y sin conexión; dos pestañas).
+- **Nota de operación de las pruebas e2e:** Supabase local limita a 60 ingresos o registros cada 5 minutos desde una misma IP (`sign_in_sign_ups` en `supabase/config.toml`); correr varias especificaciones de equipo seguidas con la máquina cargada puede pasar los 5 s de espera de las pruebas o ese tope. Cada archivo pasa solo.

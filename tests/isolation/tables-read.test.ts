@@ -9,7 +9,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PLATFORM_TENANT_ID } from "@/lib/tenant/constants";
 import { graphql, rest, type HttpResult } from "../support/local-supabase";
 import {
-  activeMembersOf,
   aRowOfB,
   expectedActive,
   fixture,
@@ -136,7 +135,8 @@ async function allowed(spec: TableSpec, row: Row, ctx: Context): Promise<boolean
     case "profiles": {
       if (row.user_id === ctx.me) return true;
       if (!ctx.active) return false;
-      return (await activeMembersOf(db, ctx.active.tenantId)).has(row.user_id as string);
+      // Desde H-010 también se lee el nombre de quien tuvo una fila en `members` de la organización activa y ya se fue.
+      return (await peopleOfOrgs(db, [ctx.active.tenantId])).has(row.user_id as string);
     }
     case "own-user":
       return ctx.me !== null && row.user_id === ctx.me;

@@ -10,7 +10,8 @@ import type { IsolationFixture, PersonaKey, Role } from "./fixture";
  * - `business`: solo filas de la organización activa (y, si se declara, solo ciertos roles).
  * - `selector-tenants`: las organizaciones de las que la persona es miembro (el selector).
  * - `selector-members`: sus propias membresías, más las de la organización activa.
- * - `profiles`: su propio perfil y el de quienes son miembros de la organización activa.
+ * - `profiles`: su propio perfil y el de quienes tienen una fila en `members` de la organización activa, activa o
+ *   quitada (H-010: el nombre de quien se fue sigue visible para que sus cotizaciones lo muestren como autor).
  * - `own-user`: solo filas con su `user_id`.
  * - `public`: cualquiera, hasta sin sesión (los términos vigentes).
  * - `server-only`: nadie con pase; solo la llave maestra del servidor.
@@ -677,6 +678,17 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: true,
   },
   revoke_invitation: { args: { p_invitation_id: randomUUID() }, writesActiveTenant: true },
+  // Sprint 5 · cambiar el rol de un miembro o quitarlo (H-010). Los argumentos son válidos en forma y apuntan a nada propio.
+  // `list_members` no recibe argumentos: la organización sale de la membresía.
+  list_members: { args: {}, writesActiveTenant: true },
+  change_member_role: {
+    args: { p_member_id: randomUUID(), p_new_role: "viewer", p_expected_role: "sales" },
+    writesActiveTenant: true,
+  },
+  remove_member: {
+    args: { p_member_id: randomUUID(), p_expected_role: "sales" },
+    writesActiveTenant: true,
+  },
   // Sprint 5 · textos listos para usar (H-048a). Los argumentos son válidos en forma y apuntan a nada propio.
   create_text_snippet: {
     args: {
@@ -837,6 +849,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/configuracion/textos/[snippetId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/equipo", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/equipo/[memberId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones/nueva", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones/[quoteId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/cotizaciones/[quoteId]/enviar", kind: "page", scope: "tenant" },
@@ -861,6 +874,7 @@ export function concretePath(
   formId: string = itemId,
   requestId: string = itemId,
   snippetId: string = itemId,
+  memberId: string = itemId,
 ): string {
   return route.path
     .replace("[tenantId]", tenantId)
@@ -869,7 +883,8 @@ export function concretePath(
     .replace("[quoteId]", quoteId)
     .replace("[formId]", formId)
     .replace("[requestId]", requestId)
-    .replace("[snippetId]", snippetId);
+    .replace("[snippetId]", snippetId)
+    .replace("[memberId]", memberId);
 }
 
 /** Qué se pide para "ver todo" de una tabla: `*`, o las columnas legibles si hay columnas privadas. */

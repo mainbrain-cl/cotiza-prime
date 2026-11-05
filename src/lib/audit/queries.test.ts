@@ -11,6 +11,7 @@ vi.mock("@/lib/log/server-log", () => ({ serverLog: vi.fn() }));
 
 const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 const USER_ID = "22222222-2222-4222-8222-222222222222";
+const MEMBER_ID = "33333333-3333-4333-8333-333333333333";
 
 /** Cliente falso: anota las llamadas y entrega las filas indicadas para `audit_log`. */
 function fakeActive(role: MemberRole, rows: unknown[] = [], count = rows.length) {
@@ -27,7 +28,7 @@ function fakeActive(role: MemberRole, rows: unknown[] = [], count = rows.length)
       table === "audit_log"
         ? { data: rows, error: null, count }
         : table === "members"
-          ? { data: [{ user_id: USER_ID }], error: null }
+          ? { data: [{ id: MEMBER_ID, user_id: USER_ID }], error: null }
           : { data: [{ user_id: USER_ID, full_name: "Ana Prueba" }], error: null };
     builder.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve);
     return builder;
@@ -100,5 +101,44 @@ describe("filtros del registro", () => {
       action: "member.updated",
     });
     expect(page?.pageCount).toBe(1);
+  });
+});
+
+describe("a quién afectó la acción", () => {
+  const row = (over: Record<string, unknown>) => ({
+    id: 9,
+    occurred_at: "2026-11-05T12:00:00Z",
+    actor_type: "user",
+    actor_user_id: USER_ID,
+    action: "member.removed",
+    resource_type: "member",
+    resource_id: MEMBER_ID,
+    result: "success",
+    origin_ip: null,
+    details: { role: "sales", cancelled_invitations: 0 },
+    ...over,
+  });
+
+  it("resuelve el nombre del miembro afectado al leer, con `members` y `profiles`", async () => {
+    const { active } = fakeActive("owner", [row({})]);
+    const page = await listAuditEntries(active);
+    expect(page?.entries[0].subjectName).toBe("Ana Prueba");
+  });
+
+  it("si el miembro no es de esta organización o no se lee, queda sin nombre", async () => {
+    const { active } = fakeActive("owner", [
+      row({ resource_id: "44444444-4444-4444-8444-444444444444" }),
+      row({ id: 10, resource_id: null }),
+      row({ id: 11, resource_type: "customer" }),
+    ]);
+    const page = await listAuditEntries(active);
+    expect(page?.entries.map((e) => e.subjectName)).toEqual([null, null, null]);
+  });
+
+  it("pide los miembros de esta organización solamente", async () => {
+    const { active, calls } = fakeActive("owner", [row({})]);
+    await listAuditEntries(active);
+    expect(calls).toContainEqual(["members.select", "id, user_id"]);
+    expect(calls).toContainEqual(["members.eq", "tenant_id", TENANT_ID]);
   });
 });

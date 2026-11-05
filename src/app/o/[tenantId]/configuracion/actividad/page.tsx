@@ -7,8 +7,8 @@ import { FormAlert, Select } from "@/components/ui/form-controls";
 import {
   AUDIT_ACTION_LABELS,
   actionLabel,
-  describeAuditDetails,
-  resourceLabel,
+  describeAuditEntry,
+  describeAuditSubject,
 } from "@/lib/audit/labels";
 import {
   listAuditActors,
@@ -151,7 +151,7 @@ export default async function ActivityLogPage({
           {/* Teléfono: tarjetas */}
           <ul className="flex flex-col gap-3 md:hidden" data-testid="audit-cards">
             {result.entries.map((entry) => {
-              const detail = describeAuditDetails(entry.details);
+              const detail = describeAuditEntry(entry);
               const failed = resultText(entry.result);
               return (
                 <li
@@ -164,7 +164,7 @@ export default async function ActivityLogPage({
                   <span className="font-semibold text-fg">{actionLabel(entry.action)}</span>
                   <span className="text-fg">{actorText(entry)}</span>
                   <span className="text-sm text-fg-muted">
-                    {resourceLabel(entry.resourceType)}
+                    {describeAuditSubject(entry)}
                     {detail ? ` · ${detail}` : ""}
                   </span>
                   {failed ? (
@@ -199,7 +199,7 @@ export default async function ActivityLogPage({
               </thead>
               <tbody className="divide-y divide-border">
                 {result.entries.map((entry) => {
-                  const detail = describeAuditDetails(entry.details);
+                  const detail = describeAuditEntry(entry);
                   const failed = resultText(entry.result);
                   return (
                     <tr
@@ -218,7 +218,7 @@ export default async function ActivityLogPage({
                           <span className="block font-semibold text-danger">{failed}</span>
                         ) : null}
                       </td>
-                      <td className="px-4 py-3">{resourceLabel(entry.resourceType)}</td>
+                      <td className="px-4 py-3">{describeAuditSubject(entry)}</td>
                       <td className="px-4 py-3 text-fg-muted tabular-nums">
                         {entry.originIp ?? EMPTY}
                       </td>

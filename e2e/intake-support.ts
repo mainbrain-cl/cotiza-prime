@@ -202,16 +202,18 @@ export const PRICED_SERVICES = [
  */
 export async function prepareOrgForForms(ownerEmail: string, tenantId: string): Promise<string> {
   const token = await passwordToken(ownerEmail);
-  const headers = { [TENANT_HEADER]: tenantId, prefer: "return=minimal" };
+  const headers = { [TENANT_HEADER]: tenantId, prefer: "return=representation" };
   const patched = await rest(token, `tenants?tenant_id=eq.${tenantId}`, {
     method: "PATCH",
     headers,
     body: { contact_email: `contacto-${randomUUID().slice(0, 6)}@ejemplo.test` },
   });
-  expect(patched.status, patched.text).toBeLessThan(300);
+  // Exige la fila de vuelta: si los permisos la bloquearan, PATCH respondería 200 con [] sin aviso.
+  expect(patched.status, patched.text).toBe(200);
+  expect(JSON.parse(patched.text), patched.text).toHaveLength(1);
   const catalog = await rest(token, "catalog_items", {
     method: "POST",
-    headers,
+    headers: { [TENANT_HEADER]: tenantId, prefer: "return=minimal" },
     body: PRICED_SERVICES.map(({ name, unit, price }) => ({ name, unit, unit_price_clp: price })),
   });
   expect(catalog.status, catalog.text).toBeLessThan(300);

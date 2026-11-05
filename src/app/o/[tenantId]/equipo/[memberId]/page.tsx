@@ -7,7 +7,7 @@ import { MemberActions } from "@/components/team/member-actions";
 import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
-import { ROLE_OPTIONS, toMemberItem } from "@/lib/team/members-model";
+import { roleOptionsFor, toMemberItem } from "@/lib/team/members-model";
 import { loadMember } from "@/lib/team/members-queries";
 
 export const metadata: Metadata = { title: "Miembro del equipo · Cotiza Prime" };
@@ -59,7 +59,7 @@ export default async function MemberPage({ params }: PageProps<"/o/[tenantId]/eq
     );
   }
 
-  const item = toMemberItem(lookup.member, active.tenantId);
+  const item = toMemberItem(lookup.member, active.tenantId, active.role);
   const note = lockNote(item);
 
   return (
@@ -117,7 +117,7 @@ export default async function MemberPage({ params }: PageProps<"/o/[tenantId]/eq
             memberId={item.memberId}
             memberName={item.displayName}
             role={item.role}
-            roles={[...ROLE_OPTIONS]}
+            roles={roleOptionsFor(active.role)}
             canChangeRole={item.canChangeRole}
             canRemove={item.canRemove}
             afterRemovePath={teamPath}

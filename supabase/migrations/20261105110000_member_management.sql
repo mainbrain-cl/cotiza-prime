@@ -13,15 +13,24 @@
 --   · `profiles_select`: se puede leer el NOMBRE de cualquier persona con una fila en `members` de la organización
 --     activa, esté activa o quitada, para que las cotizaciones de quien se fue sigan mostrando su nombre como autor.
 --     De `profiles` quedan legibles SOLO `user_id`, `tenant_id` y `full_name` (se quitan `created_at` y `updated_at`).
+--   · `members_select`: las filas de quien ya se fue (con `removed_at` y `removed_by`) solo las lee quien maneja el
+--     equipo; el resto del equipo sigue viendo las filas activas y las propias (sección 8).
 --   · `create_invitation` y `resend_invitation` (H-008) bloquean la fila de miembro de quien invita o reenvía, para
 --     que una invitación en curso no escape a la cancelación de `remove_member` / `change_member_role`.
+--
+-- SOLO EL DUEÑO da o quita un rol que maneja el equipo (decisión por defecto aplicada por Aarón el 2026-11-05): si el
+-- rol actual del miembro o el rol nuevo maneja el equipo (`team.manage`), quien actúa tiene que ser el Dueño (el rol
+-- con `tenant.transfer`). Así un Administrador no puede invitar a alguien como Observador (sin aviso al Dueño) y
+-- después subirlo a Administrador, ni bajar o quitar a otro Administrador.
 --
 -- Nadie escribe directo en `members` (sigue sin permisos de escritura para `authenticated`): solo estas funciones,
 -- `create_tenant` y `accept_invitation`.
 --
--- Códigos de error (SQLSTATE) y motivo (el texto del mensaje). Los fallos se LANZAN: aquí no hay conteo de
--- intentos que perder.
+-- Códigos de error (SQLSTATE) y motivo (el texto del mensaje). Los fallos se LANZAN: el tope de cambios de rol se
+-- cuenta en la auditoría (filas de cambios que SÍ se hicieron), así que un fallo no tiene conteo que perder.
 --   42501  forbidden                   no maneja el equipo (o dejó de manejarlo mientras esperaba el candado)
+--   42501  owner_only                  el miembro tiene, o recibiría, un rol que maneja el equipo y quien actúa no es
+--                                      el Dueño
 --   CP404  not_found                   no es miembro de la organización activa (o no hay organización activa)
 --   CP404  member_not_found            ese miembro no existe en ESTA organización (o ya no está activo, al cambiar su rol)
 --   CP409  role_changed                el rol del miembro cambió desde que la persona abrió la pantalla
@@ -29,7 +38,10 @@
 --   CP422  invalid_role                el rol nuevo no existe o no se puede dar (el Dueño no se asigna jamás)
 --   CP423  cannot_target_owner         nadie toca al Dueño (el traspaso es otra historia, H-111)
 --   CP423  cannot_target_self          nadie se cambia el rol ni se quita a sí mismo
--- Resultados (no son error): changed · unchanged (ya tenía ese rol) · removed · already_removed.
+--   CP429  limit_role_changes          quien actúa ya hizo `app.member_role_change_max_per_hour()` cambios de rol en
+--                                      esta organización en la última hora
+-- Resultados (no son error): changed · unchanged (ya tenía ese rol) · removed (con `assigned_requests`: cuántas
+-- solicitudes quedaron asignadas a esa persona, esperando que alguien las reasigne) · already_removed.
 --
 -- Orden de revisiones (para no revelar nada a quien no corresponde):
 --   1. ¿es miembro de la organización activa?        no → CP404 not_found
@@ -38,9 +50,14 @@
 --   4. ¿el miembro es de ESTA organización?          no → CP404 member_not_found   (uno de otra organización da lo mismo)
 --   5. ¿es la propia persona?                        → CP423 cannot_target_self
 --   6. se bloquean las filas del miembro y de quien actúa, SIEMPRE por orden de id, y se vuelve a comprobar que quien
---      actúa sigue activo y sigue manejando el equipo (dos Administradores que se quitan a la vez: gana el primero)
+--      actúa sigue activo y sigue manejando el equipo (el Dueño quita a un Administrador mientras este quita a otra
+--      persona: gana el primero)
 --   7. ¿es el Dueño?                                 → CP423 cannot_target_owner
---   8. el rol esperado coincide con el real          no → CP409 role_changed
+--   8. ¿el rol actual (o el nuevo) maneja el equipo y quien actúa no es el Dueño?  → 42501 owner_only
+--      (sobre las filas YA bloqueadas: si el Dueño sube a alguien a Administrador mientras un Administrador lo cambia o
+--      lo quita, el Administrador ve el rol nuevo y recibe `owner_only`)
+--   9. el rol esperado coincide con el real          no → CP409 role_changed
+--  10. (solo al cambiar el rol) el tope por hora     → CP429 limit_role_changes
 --
 -- No se escribe ningún nombre de rol entre comillas: todo se decide con la matriz (`app.can`, `app.role_can`), por la
 -- guardia 14 de tests/db/schema-guards.test.ts.
@@ -83,6 +100,11 @@ language sql volatile security definer set search_path = '' as $$
   select count(*)::integer from cancelled
 $$;
 revoke all on function app.cancel_member_invitations(uuid, uuid, uuid) from public, anon, authenticated;
+
+-- Tope de cambios de rol por persona, por organización y por hora. Contra el abuso (llenar el registro de actividad
+-- subiendo y bajando a alguien sin parar), no contra el uso normal: ordenar un equipo entero cabe de sobra.
+create function app.member_role_change_max_per_hour() returns integer language sql immutable as $$ select 30 $$;
+revoke all on function app.member_role_change_max_per_hour() from public, anon, authenticated;
 
 -- 2. list_members -----------------------------------------------------------------------------------------
 -- Una lista (jsonb) de los miembros activos: el Dueño primero y después por fecha de ingreso. Solo para quien maneja
@@ -187,13 +209,27 @@ begin
   if app.role_can(v_target.role, 'tenant.transfer') then
     raise exception 'cannot_target_owner' using errcode = 'CP423';
   end if;
+  -- 8. un rol que maneja el equipo solo lo da o lo quita el Dueño (con los roles de las filas YA bloqueadas). Va antes
+  --    de «ya tiene ese rol»: un Administrador no recibe ni un «listo» sobre otro Administrador.
+  if (app.role_can(v_target.role, 'team.manage') or app.role_can(v_new::text, 'team.manage'))
+     and not app.role_can(v_actor.role, 'tenant.transfer') then
+    raise exception 'owner_only' using errcode = '42501';
+  end if;
   -- Ya tiene ese rol: el resultado que se quería ya está. No cambia nada ni deja registro.
   if v_target.role = v_new::text then
     return jsonb_build_object('result', 'unchanged', 'member_id', v_target.id, 'role', v_target.role);
   end if;
-  -- 8. solo si el rol sigue siendo el que la persona vio
+  -- 9. solo si el rol sigue siendo el que la persona vio
   if v_target.role is distinct from p_expected_role then
     raise exception 'role_changed' using errcode = 'CP409';
+  end if;
+  -- 10. tope por hora. Se cuentan los cambios de rol que esta persona ya hizo en esta organización (su registro de
+  --     auditoría). Su fila de `members` está bloqueada desde el paso 6, así que dos cambios suyos a la vez no pasan
+  --     el tope juntos. «Ya tenía ese rol» no deja registro y no cuenta.
+  if (select count(*) from public.audit_log a
+       where a.tenant_id = v_tenant and a.actor_user_id = v_uid and a.action = 'member.role_changed'
+         and a.occurred_at > now() - interval '1 hour') >= app.member_role_change_max_per_hour() then
+    raise exception 'limit_role_changes' using errcode = 'CP429';
   end if;
 
   update public.members set role = v_new where tenant_id = v_tenant and id = v_target.id;
@@ -213,7 +249,9 @@ grant execute on function public.change_member_role(uuid, text, text) to authent
 -- Quita a un miembro: pasa a «quitado» con cuándo y quién. NO se borra nada de lo que hizo (cotizaciones,
 -- solicitudes asignadas, borradores). Desde su siguiente petición ya no es miembro: `app.current_tenant_id()` exige
 -- el estado activo, así que aunque su pase de sesión siga vigente ve cero filas y toda función le responde «prohibido».
--- result: removed (con `cancelled_invitations`) · already_removed (repetir no falla ni deja otro registro)
+-- result: removed (con `cancelled_invitations` y `assigned_requests`) · already_removed (repetir no falla ni deja
+-- otro registro). `assigned_requests`: cuántas solicitudes siguen asignadas a esa persona (estado «asignada»); NO se
+-- tocan: quedan a su nombre hasta que el Dueño o un Administrador las reasigne. La pantalla lo dice al terminar.
 create function public.remove_member(p_member_id uuid, p_expected_role text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -225,6 +263,7 @@ declare
   v_actor       public.members;
   v_target      public.members;
   v_cancelled   integer;
+  v_assigned    integer;
 begin
   if v_tenant is null or v_uid is null then
     raise exception 'not_found' using errcode = 'CP404';
@@ -264,6 +303,10 @@ begin
   if app.role_can(v_target.role, 'tenant.transfer') then
     raise exception 'cannot_target_owner' using errcode = 'CP423';
   end if;
+  -- A quien maneja el equipo solo lo quita el Dueño (con los roles de las filas YA bloqueadas).
+  if app.role_can(v_target.role, 'team.manage') and not app.role_can(v_actor.role, 'tenant.transfer') then
+    raise exception 'owner_only' using errcode = '42501';
+  end if;
   -- Ya estaba quitado (otra persona lo quitó antes): el resultado que se quería ya está.
   if v_target.status = 'removed' then
     return jsonb_build_object('result', 'already_removed', 'member_id', v_target.id);
@@ -276,9 +319,13 @@ begin
      set status = 'removed', removed_at = now(), removed_by = v_uid
    where tenant_id = v_tenant and id = v_target.id;
   v_cancelled := app.cancel_member_invitations(v_tenant, v_target.user_id, v_uid);
+  select count(*)::integer into v_assigned
+    from public.intake_requests r
+   where r.tenant_id = v_tenant and r.assigned_to = v_target.user_id and r.status = 'assigned';
   perform app.write_audit(v_tenant, 'user', v_uid, 'member.removed', 'member', v_target.id, 'success',
     jsonb_build_object('role', v_target.role, 'cancelled_invitations', v_cancelled));
-  return jsonb_build_object('result', 'removed', 'member_id', v_target.id, 'cancelled_invitations', v_cancelled);
+  return jsonb_build_object('result', 'removed', 'member_id', v_target.id, 'cancelled_invitations', v_cancelled,
+                            'assigned_requests', v_assigned);
 end $$;
 revoke all on function public.remove_member(uuid, text) from public, anon, authenticated;
 grant execute on function public.remove_member(uuid, text) to authenticated;
@@ -286,17 +333,26 @@ grant execute on function public.remove_member(uuid, text) to authenticated;
 -- 5. El nombre de quien se fue sigue visible para su organización --------------------------------------------
 -- Antes solo se leía el perfil de los miembros ACTIVOS: al quitar a alguien, sus cotizaciones mostraban «—» como
 -- autor. Ahora se lee el de cualquiera con una fila en `members` de la organización activa (activa o quitada).
--- Solo salen las columnas ya permitidas (`user_id, tenant_id, full_name, created_at, updated_at`); nunca el correo.
+-- Solo salen las columnas legibles de `profiles`: `user_id`, `tenant_id` y `full_name` (la sección 7 quita
+-- `created_at` y `updated_at`); nunca el correo, que no está en `profiles`.
 -- Quien fue quitado sigue sin poder leer nada de la organización: `app.current_tenant_id()` le da null.
 -- Ley 21.719: que una cotización muestre a su autor es un registro legítimo de la organización; si esa persona pide
 -- suprimir su cuenta (H-109), su nombre pasa a «Ex miembro». Aquí no se copia ningún nombre ni correo a otras tablas.
+-- Las personas se buscan con una ayuda `security definer` y no con una consulta a `members` dentro de la política:
+-- desde la sección 8, `members` solo le muestra las filas de quien se fue a quien maneja el equipo, y el Observador
+-- tiene que seguir leyendo el nombre del autor de una cotización. La ayuda entrega solo identificadores de cuenta de
+-- la organización activa (los mismos que `profiles` ya deja leer), nunca `removed_at` ni `removed_by`.
+create function app.current_tenant_people() returns setof uuid
+language sql stable security definer set search_path = '' as $$
+  select m.user_id from public.members m where m.tenant_id = app.current_tenant_id()
+$$;
+revoke all on function app.current_tenant_people() from public, anon;
+grant execute on function app.current_tenant_people() to authenticated;
+
 alter policy profiles_select on public.profiles
   using (
     user_id = (select auth.uid())
-    or user_id in (
-      select m.user_id from public.members m
-      where m.tenant_id = (select app.current_tenant_id())
-    )
+    or user_id in (select app.current_tenant_people())
   );
 
 -- 6. Quien invita o reenvía tiene que seguir siendo miembro con permiso mientras lo hace ------------------------
@@ -502,3 +558,20 @@ end $$;
 -- ver cuándo un ex miembro usa la plataforma en otra empresa. Quedan legibles `user_id`, `tenant_id` y `full_name`;
 -- `last_tenant_id` sigue cerrada como antes (migración 12). Nada del código lee esas dos columnas.
 revoke select (created_at, updated_at) on public.profiles from authenticated;
+
+-- 8. Las filas de quien se fue, solo para quien maneja el equipo ------------------------------------------------
+-- Antes cualquier miembro (también el Observador) leía por la API todas las filas de `members` de la organización,
+-- incluidas las de quienes ya se fueron con cuándo (`removed_at`) y quién los quitó (`removed_by`). Ahora:
+--   · las filas propias, como antes (el selector de organizaciones y `app.current_tenant_id()` las necesitan);
+--   · las filas ACTIVAS de la organización activa, para todos (todos ven a su equipo: decisión 009);
+--   · las filas de quien se fue, solo con `team.manage` (Dueño y Administradores; el registro de actividad del
+--     Dueño las usa para decir a quién afectó cada cambio).
+-- Nadie del código lee una fila quitada sin ese permiso: las solicitudes y las cotizaciones filtran `status =
+-- 'active'`, el registro de actividad es solo del Dueño y el nombre del autor sale de `profiles` (sección 5). Las
+-- funciones de la base son `security definer` y no pasan por esta política.
+alter policy members_select on public.members
+  using (
+    user_id = (select auth.uid())
+    or (tenant_id = (select app.current_tenant_id())
+        and (status = 'active' or (select app.can('team.manage'))))
+  );

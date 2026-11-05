@@ -22,6 +22,13 @@ type ConfirmActionProps = {
   confirmVariant?: "danger" | "primary";
   /** Avisa cuando el diálogo se abre o se cierra (por ejemplo, para reiniciar lo que se eligió dentro). */
   onOpenChange?: (open: boolean) => void;
+  /**
+   * Tras confirmar con éxito, a dónde va el foco al cerrar. Por defecto vuelve al botón que abrió el diálogo; úsalo
+   * cuando ese botón va a desaparecer (por ejemplo, la fila de alguien a quien se acaba de quitar).
+   */
+  focusAfterSuccess?: () => HTMLElement | null;
+  /** Tras confirmar con éxito, cuando el diálogo ya terminó de cerrarse (con su animación). */
+  onClosedAfterSuccess?: () => void;
 };
 
 /** Confirmación antes de una acción que no se puede deshacer, con la consecuencia explicada. */
@@ -36,11 +43,15 @@ export function ConfirmAction({
   children,
   confirmVariant = "danger",
   onOpenChange,
+  focusAfterSuccess,
+  onClosedAfterSuccess,
 }: ConfirmActionProps) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+  // ¿El último cierre fue por una confirmación exitosa? Se limpia al volver a abrir.
+  const succeeded = useRef(false);
 
   async function confirm() {
     if (busy.current) return;
@@ -50,7 +61,10 @@ export function ConfirmAction({
     try {
       const failure = await onConfirm();
       if (failure) setError(failure);
-      else setOpen(false);
+      else {
+        succeeded.current = true;
+        setOpen(false);
+      }
     } catch {
       setError("No pudimos completar la acción. Revisa tu conexión y vuelve a intentar.");
     } finally {
@@ -64,9 +78,13 @@ export function ConfirmAction({
       open={open}
       onOpenChange={(next) => {
         if (pending) return;
+        if (next) succeeded.current = false;
         setOpen(next);
         if (!next) setError(null);
         onOpenChange?.(next);
+      }}
+      onOpenChangeComplete={(isOpen) => {
+        if (!isOpen && succeeded.current) onClosedAfterSuccess?.();
       }}
     >
       <AlertDialog.Trigger data-testid={`${testId}-open`} render={trigger} />
@@ -75,6 +93,7 @@ export function ConfirmAction({
         <AlertDialog.Viewport className="fixed inset-0 z-50 flex items-end justify-center p-4 md:items-center">
           <AlertDialog.Popup
             data-testid={`${testId}-dialog`}
+            finalFocus={() => (succeeded.current ? (focusAfterSuccess?.() ?? true) : true)}
             className="flex w-full max-w-md flex-col gap-4 rounded-lg border border-border bg-surface p-5 shadow-3 transition-[opacity,transform] duration-(--dur-slow) ease-ios outline-none data-[ending-style]:translate-y-2 data-[ending-style]:opacity-0 data-[starting-style]:translate-y-2 data-[starting-style]:opacity-0 motion-reduce:transition-none"
           >
             <AlertDialog.Title className="text-lg">{title}</AlertDialog.Title>

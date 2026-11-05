@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { MEMBER_ROLES, NO_PERMISSION_MESSAGE, ROLE_DESCRIPTIONS } from "@/lib/permissions/matrix";
+import {
+  MEMBER_ROLES,
+  NO_PERMISSION_MESSAGE,
+  ROLE_DESCRIPTIONS,
+  can,
+} from "@/lib/permissions/matrix";
 import {
   ROLE_OPTIONS,
+  managesTeam,
+  roleOptionsFor,
   changeRoleSchema,
   isOwnerRole,
   mapMemberError,
@@ -15,6 +22,9 @@ import {
 const TENANT = "7f1d6b1c-9f6e-4c57-8c43-3b6a9b8f0001";
 const MEMBER_ID = "7f1d6b1c-9f6e-4c57-8c43-3b6a9b8f0010";
 const USER_ID = "7f1d6b1c-9f6e-4c57-8c43-3b6a9b8f0011";
+
+const OWNER = MEMBER_ROLES[0];
+const ADMIN = MEMBER_ROLES[1];
 
 const record = (over: Partial<MemberRecord> = {}): MemberRecord => ({
   memberId: MEMBER_ID,
@@ -35,9 +45,9 @@ describe("quién es el Dueño", () => {
 });
 
 describe("qué acciones se ofrecen sobre un miembro", () => {
-  it("cualquiera que no sea el Dueño ni uno mismo: cambiar el rol y quitar", () => {
+  it("al Dueño se le ofrecen sobre cualquiera que no sea él mismo, también sobre un Administrador", () => {
     for (const role of MEMBER_ROLES.slice(1)) {
-      expect(memberControls({ role, isSelf: false })).toEqual({
+      expect(memberControls({ role, isSelf: false }, OWNER)).toEqual({
         canChangeRole: true,
         canRemove: true,
         lockedReason: null,
@@ -45,22 +55,60 @@ describe("qué acciones se ofrecen sobre un miembro", () => {
     }
   });
 
+  it("al Administrador, solo sobre quien no maneja el equipo; un Administrador es «solo el Dueño»", () => {
+    for (const role of MEMBER_ROLES.slice(1)) {
+      const controls = memberControls({ role, isSelf: false }, ADMIN);
+      if (managesTeam(role)) {
+        expect(controls).toEqual({
+          canChangeRole: false,
+          canRemove: false,
+          lockedReason: "owner_only",
+        });
+      } else {
+        expect(controls).toEqual({ canChangeRole: true, canRemove: true, lockedReason: null });
+      }
+    }
+    // Hoy, el único rol así es el de Administrador.
+    expect(memberControls({ role: ADMIN, isSelf: false }, ADMIN).lockedReason).toBe("owner_only");
+  });
+
   it("el Dueño no tiene acciones, aunque no sea uno mismo", () => {
-    expect(memberControls({ role: MEMBER_ROLES[0], isSelf: false })).toEqual({
-      canChangeRole: false,
-      canRemove: false,
-      lockedReason: "organization_owner",
-    });
+    for (const viewer of [OWNER, ADMIN]) {
+      expect(memberControls({ role: OWNER, isSelf: false }, viewer)).toEqual({
+        canChangeRole: false,
+        canRemove: false,
+        lockedReason: "organization_owner",
+      });
+    }
   });
 
   it("uno mismo tampoco, sea el rol que sea", () => {
     for (const role of MEMBER_ROLES.slice(1)) {
-      expect(memberControls({ role, isSelf: true })).toEqual({
+      expect(memberControls({ role, isSelf: true }, role)).toEqual({
         canChangeRole: false,
         canRemove: false,
         lockedReason: "yourself",
       });
     }
+  });
+});
+
+describe("qué roles se ofrecen al cambiar el rol", () => {
+  it("el Dueño ve los cuatro; el Administrador, solo los que no manejan el equipo (sin Administrador)", () => {
+    expect(roleOptionsFor(OWNER)).toEqual([...ROLE_OPTIONS]);
+    const forAdmin = roleOptionsFor(ADMIN);
+    expect(forAdmin.map((option) => option.value)).toEqual(
+      ROLE_OPTIONS.filter((option) => !can(option.value, "team.manage")).map((o) => o.value),
+    );
+    expect(forAdmin.map((option) => option.value)).not.toContain(ADMIN);
+    expect(forAdmin).toHaveLength(3);
+  });
+
+  it("cada opción sabe si maneja el equipo (para avisar que se cancelan sus invitaciones)", () => {
+    for (const option of ROLE_OPTIONS) expect(option.managesTeam).toBe(managesTeam(option.value));
+    expect(ROLE_OPTIONS.filter((option) => option.managesTeam).map((o) => o.value)).toEqual([
+      ADMIN,
+    ]);
   });
 });
 
@@ -107,7 +155,7 @@ describe("lo que entrega list_members", () => {
 
 describe("cómo se muestra un miembro", () => {
   it("nombre, rol con su frase, fecha dd-mm-aaaa y la ficha", () => {
-    const item = toMemberItem(record(), TENANT);
+    const item = toMemberItem(record(), TENANT, OWNER);
     expect(item.displayName).toBe("Juan Pérez");
     expect(item.roleLabel).toBe("Comercial");
     expect(item.roleDescription).toBe(ROLE_DESCRIPTIONS.sales);
@@ -122,19 +170,36 @@ describe("cómo se muestra un miembro", () => {
   });
 
   it("sin nombre usa el correo; sin ninguno, «esta persona»", () => {
-    expect(toMemberItem(record({ name: null }), TENANT).displayName).toBe("juan@ejemplo.test");
-    expect(toMemberItem(record({ name: null, email: null }), TENANT).displayName).toBe(
+    expect(toMemberItem(record({ name: null }), TENANT, OWNER).displayName).toBe(
+      "juan@ejemplo.test",
+    );
+    expect(toMemberItem(record({ name: null, email: null }), TENANT, OWNER).displayName).toBe(
       "esta persona",
     );
   });
 
   it("el Dueño queda marcado y sin acciones", () => {
-    const item = toMemberItem(record({ role: MEMBER_ROLES[0] }), TENANT);
+    const item = toMemberItem(record({ role: MEMBER_ROLES[0] }), TENANT, OWNER);
     expect(item).toMatchObject({
       roleLabel: "Dueño",
       isOwner: true,
       canChangeRole: false,
       canRemove: false,
+      lockedReason: "organization_owner",
+    });
+  });
+
+  it("un Administrador visto por otro Administrador: sin acciones y con su motivo", () => {
+    expect(toMemberItem(record({ role: ADMIN }), TENANT, ADMIN)).toMatchObject({
+      isOwner: false,
+      canChangeRole: false,
+      canRemove: false,
+      lockedReason: "owner_only",
+    });
+    expect(toMemberItem(record({ role: ADMIN }), TENANT, OWNER)).toMatchObject({
+      canChangeRole: true,
+      canRemove: true,
+      lockedReason: null,
     });
   });
 
@@ -196,6 +261,17 @@ describe("mensajes de error", () => {
     );
     expect(mapMemberError({ code: "CP422", message: "invalid_role" }).kind).toBe("invalid");
     expect(mapMemberError({ code: "CP422", message: "invalid_arguments" }).kind).toBe("invalid");
+    expect(mapMemberError({ code: "42501", message: "owner_only" })).toEqual({
+      kind: "owner_only",
+      message:
+        "Solo el Dueño puede nombrar Administradores, cambiarles el rol o quitarlos del equipo.",
+    });
+    expect(mapMemberError({ code: "42501", message: "forbidden" }).kind).toBe("forbidden");
+    expect(mapMemberError({ code: "CP429", message: "limit_role_changes" })).toEqual({
+      kind: "rate_limited",
+      message:
+        "Hiciste muchos cambios de rol en la última hora. Espera un rato y vuelve a intentar.",
+    });
   });
 
   it("un código desconocido da un mensaje genérico sin detalle técnico", () => {

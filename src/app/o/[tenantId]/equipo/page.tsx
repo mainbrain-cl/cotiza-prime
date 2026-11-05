@@ -9,7 +9,12 @@ import { roleLabel } from "@/lib/permissions/matrix";
 import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { INVITATION_MAX_PENDING, resendsLeft } from "@/lib/team/invitations-model";
-import { ROLE_OPTIONS, toMemberItem } from "@/lib/team/members-model";
+import {
+  MEMBERS_HEADING_ID,
+  ROLE_OPTIONS,
+  roleOptionsFor,
+  toMemberItem,
+} from "@/lib/team/members-model";
 import { loadMembers } from "@/lib/team/members-queries";
 import { loadInvitations } from "@/lib/team/queries";
 
@@ -23,7 +28,7 @@ export default async function TeamPage({ params }: PageProps<"/o/[tenantId]/equi
 
   const [members, list] = await Promise.all([loadMembers(active), loadInvitations(active)]);
   const memberItems = members.ok
-    ? members.members.map((member) => toMemberItem(member, active.tenantId))
+    ? members.members.map((member) => toMemberItem(member, active.tenantId, active.role))
     : [];
   const items: InvitationItem[] = list.ok
     ? list.rows.map((row) => ({
@@ -54,9 +59,10 @@ export default async function TeamPage({ params }: PageProps<"/o/[tenantId]/equi
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_26rem]">
         <div className="order-2 flex min-w-0 flex-col gap-8 lg:order-1">
-          <section aria-labelledby="members-title" className="flex min-w-0 flex-col gap-4">
+          <section aria-labelledby={MEMBERS_HEADING_ID} className="flex min-w-0 flex-col gap-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 id="members-title" className="text-lg">
+              {/* Tras quitar a alguien su fila desaparece: el foco vuelve aquí (`tabIndex` -1). */}
+              <h2 id={MEMBERS_HEADING_ID} tabIndex={-1} className="text-lg">
                 Miembros
               </h2>
               {members.ok ? (
@@ -85,7 +91,7 @@ export default async function TeamPage({ params }: PageProps<"/o/[tenantId]/equi
               <MemberList
                 tenantId={active.tenantId}
                 items={memberItems}
-                roles={[...ROLE_OPTIONS]}
+                roles={roleOptionsFor(active.role)}
               />
             )}
           </section>

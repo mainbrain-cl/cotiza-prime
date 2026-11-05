@@ -58,31 +58,61 @@ export function isOwnerRole(role: string): boolean {
   return can(role, "tenant.transfer");
 }
 
+/** ¿Este rol maneja el equipo (invita, cambia roles, quita)? Hoy: Dueño y Administrador, según la matriz. */
+export function managesTeam(role: string): boolean {
+  return can(role, "team.manage");
+}
+
+/** El id del título «Miembros» de «Tu equipo»: ahí vuelve el foco cuando una fila desaparece (H-010). */
+export const MEMBERS_HEADING_ID = "members-title";
+
 export type MemberControls = {
   canChangeRole: boolean;
   canRemove: boolean;
   /** Por qué no hay acciones (para decirlo en pantalla); `null` si las hay. */
-  lockedReason: "organization_owner" | "yourself" | null;
+  lockedReason: "organization_owner" | "yourself" | "owner_only" | null;
 };
 
 /**
- * Qué acciones se ofrecen sobre un miembro. Nadie toca al Dueño ni a sí mismo. Es solo para la pantalla: la base
+ * Qué acciones se ofrecen sobre un miembro a quien mira con `viewerRole`. Nadie toca al Dueño ni a sí mismo, y a
+ * quien maneja el equipo (un Administrador) solo lo cambia o lo quita el Dueño. Es solo para la pantalla: la base
  * vuelve a exigir cada regla en cada función.
  */
-export function memberControls(member: Pick<MemberRecord, "role" | "isSelf">): MemberControls {
+export function memberControls(
+  member: Pick<MemberRecord, "role" | "isSelf">,
+  viewerRole: string,
+): MemberControls {
   if (isOwnerRole(member.role))
     return { canChangeRole: false, canRemove: false, lockedReason: "organization_owner" };
   if (member.isSelf) return { canChangeRole: false, canRemove: false, lockedReason: "yourself" };
+  if (managesTeam(member.role) && !isOwnerRole(viewerRole))
+    return { canChangeRole: false, canRemove: false, lockedReason: "owner_only" };
   return { canChangeRole: true, canRemove: true, lockedReason: null };
 }
 
 /** Los roles que se pueden dar, con la frase de qué puede hacer cada uno (salen de la matriz). */
-export type RoleOption = { value: string; label: string; description: string };
+export type RoleOption = {
+  value: string;
+  label: string;
+  description: string;
+  /** El rol maneja el equipo: quien lo pierde ve canceladas sus invitaciones pendientes. */
+  managesTeam: boolean;
+};
 export const ROLE_OPTIONS: readonly RoleOption[] = GRANTABLE_ROLES.map((role) => ({
   value: role,
   label: ROLE_LABELS[role],
   description: ROLE_DESCRIPTIONS[role],
+  managesTeam: managesTeam(role),
 }));
+
+/**
+ * Los roles que `viewerRole` puede dar al CAMBIAR el rol de alguien: el Dueño, todos; los demás, solo los que no
+ * manejan el equipo (un Administrador no nombra Administradores). Al invitar (H-008) se ofrecen todos: invitar a un
+ * Administrador ya avisa al Dueño.
+ */
+export function roleOptionsFor(viewerRole: string): RoleOption[] {
+  return ROLE_OPTIONS.filter((option) => isOwnerRole(viewerRole) || !option.managesTeam);
+}
 
 /** Un miembro listo para mostrar en la lista y en su ficha: todo el texto ya viene armado desde el servidor. */
 export type MemberItem = {
@@ -100,12 +130,19 @@ export type MemberItem = {
   isOwner: boolean;
   canChangeRole: boolean;
   canRemove: boolean;
+  /** Por qué no hay acciones sobre esta persona; `null` si las hay. */
+  lockedReason: MemberControls["lockedReason"];
   /** La ficha del miembro. */
   href: string;
 };
 
-export function toMemberItem(member: MemberRecord, tenantId: string): MemberItem {
-  const controls = memberControls(member);
+/** Un miembro listo para la pantalla de quien mira con `viewerRole` (decide qué acciones se le ofrecen). */
+export function toMemberItem(
+  member: MemberRecord,
+  tenantId: string,
+  viewerRole: string,
+): MemberItem {
+  const controls = memberControls(member, viewerRole);
   return {
     memberId: member.memberId,
     displayName: member.name ?? member.email ?? "esta persona",
@@ -118,6 +155,7 @@ export function toMemberItem(member: MemberRecord, tenantId: string): MemberItem
     isOwner: controls.lockedReason === "organization_owner",
     canChangeRole: controls.canChangeRole,
     canRemove: controls.canRemove,
+    lockedReason: controls.lockedReason,
     href: tenantPath(tenantId, `equipo/${member.memberId}`),
   };
 }
@@ -146,6 +184,16 @@ export const MEMBER_ROLE_CHANGED_MESSAGE =
   "El rol cambió mientras lo editabas. Recarga la página para ver cómo quedó.";
 export const MEMBER_OWNER_MESSAGE = "El Dueño no se puede cambiar ni quitar desde aquí.";
 export const MEMBER_SELF_MESSAGE = "No puedes cambiar tu propio rol ni quitarte del equipo.";
+/** Lo que ve un Administrador en la fila de otro Administrador. */
+export const MEMBER_OWNER_ONLY_NOTE =
+  "Solo el Dueño puede cambiar el rol de un Administrador o quitarlo del equipo.";
+/** Si un Administrador intenta igual nombrar, bajar o quitar a un Administrador (la base lo rechaza). */
+export const MEMBER_OWNER_ONLY_MESSAGE =
+  "Solo el Dueño puede nombrar Administradores, cambiarles el rol o quitarlos del equipo.";
+/** Se muestra ANTES de confirmar que alguien deja de manejar el equipo (`change_member_role` hace exactamente esto). */
+export const MEMBER_DEMOTE_NOTE = "Las invitaciones pendientes que envió se cancelarán.";
+export const MEMBER_RATE_LIMITED_MESSAGE =
+  "Hiciste muchos cambios de rol en la última hora. Espera un rato y vuelve a intentar.";
 export const MEMBER_INVALID_ROLE_MESSAGE = "Ese rol no se puede asignar. Elige uno de la lista.";
 export const MEMBER_GENERIC_FAILURE =
   "No pudimos completar la acción. Intenta de nuevo en unos minutos; si sigue igual, avísanos.";
@@ -153,13 +201,22 @@ export const MEMBER_UNCHANGED_MESSAGE = "Esa persona ya tenía ese rol. No hubo 
 export const MEMBER_ALREADY_REMOVED_MESSAGE = "Esa persona ya no estaba en tu equipo.";
 
 export type MemberErrorKind =
-  "forbidden" | "not_found" | "role_changed" | "target_owner" | "target_self" | "invalid" | "other";
+  | "forbidden"
+  | "owner_only"
+  | "not_found"
+  | "role_changed"
+  | "target_owner"
+  | "target_self"
+  | "invalid"
+  | "rate_limited"
+  | "other";
 export type MemberError = { kind: MemberErrorKind; message: string };
 
 /**
  * Traduce los errores de `change_member_role` y `remove_member` a mensajes claros, sin detalle técnico.
- * Los códigos son los de la base: 42501 sin permiso, CP404 no existe en esta organización, CP409 el rol cambió,
- * CP422 dato inválido y CP423 el Dueño o uno mismo.
+ * Los códigos son los de la base: 42501 sin permiso (con el motivo `owner_only`: solo el Dueño maneja a los
+ * Administradores), CP404 no existe en esta organización, CP409 el rol cambió, CP422 dato inválido, CP423 el Dueño o
+ * uno mismo y CP429 el tope de cambios de rol por hora.
  */
 export function mapMemberError(error: {
   code?: string | null;
@@ -167,7 +224,12 @@ export function mapMemberError(error: {
 }): MemberError {
   const code = error.code ?? "";
   const reason = error.message ?? "";
-  if (code === "42501") return { kind: "forbidden", message: NO_PERMISSION_MESSAGE };
+  if (code === "42501") {
+    return reason === "owner_only"
+      ? { kind: "owner_only", message: MEMBER_OWNER_ONLY_MESSAGE }
+      : { kind: "forbidden", message: NO_PERMISSION_MESSAGE };
+  }
+  if (code === "CP429") return { kind: "rate_limited", message: MEMBER_RATE_LIMITED_MESSAGE };
   if (code === "CP404") return { kind: "not_found", message: MEMBER_NOT_FOUND_MESSAGE };
   if (code === "CP409") return { kind: "role_changed", message: MEMBER_ROLE_CHANGED_MESSAGE };
   if (code === "CP423") {

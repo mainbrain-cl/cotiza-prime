@@ -481,6 +481,9 @@ Si nadie responde, se aplica el supuesto indicado.
 4. ¿Un Administrador puede invitar, cambiar y quitar a otros Administradores? **Supuesto:** sí (así lo dice
    H-008), con aviso al Dueño. *(Decisión de José, 2026-10-30: el aviso sale **al invitar**, ahora; construido en H-008. Los
    avisos de cambiar el rol y quitar llegan con H-010.)* La alternativa más segura es que solo el Dueño maneje a los Administradores.
+   **Decisión por defecto aplicada por Aarón el 2026-11-05 (H-010):** solo el Dueño da o quita un rol que maneja el equipo
+   (nombrar Administrador, bajar a un Administrador o quitarlo). Invitar como Administrador sigue abierto al Administrador,
+   porque ya avisa al Dueño (H-008, sin cambios). Ver el registro de construcción de H-010.
 5. ¿Alguien puede cambiarse el rol o quitarse a sí mismo? **Supuesto:** no. «Salir de la organización» sería
    otra historia.
 6. Vigencia y topes de las invitaciones. **Supuesto:** 7 días; 20 por persona por hora; 50 por organización
@@ -660,8 +663,10 @@ Las tres corren con el pase de la persona (`security definer`, `search_path = ''
 
 - `public.list_members() returns jsonb`: arreglo con los miembros **activos**: `member_id`, `user_id`, `full_name`, `email` (de `auth.users`), `role`, `joined_at`, `is_self`. El Dueño primero, luego por fecha de ingreso. Solo Dueño y Administrador (decisión de José: la lista con correos no la ve nadie más).
 - `public.change_member_role(p_member_id uuid, p_new_role text, p_expected_role text) returns jsonb`: `changed` (con `cancelled_invitations`) o `unchanged`.
-- `public.remove_member(p_member_id uuid, p_expected_role text) returns jsonb`: `removed` (con `cancelled_invitations`) o `already_removed`.
+- `public.remove_member(p_member_id uuid, p_expected_role text) returns jsonb`: `removed` (con `cancelled_invitations` y `assigned_requests`: cuántas solicitudes siguen asignadas a esa persona, esperando que alguien las reasigne) o `already_removed`.
 - Ayuda interna `app.cancel_member_invitations(p_tenant, p_user, p_by) returns integer` (nadie con un pase la ejecuta).
+- Constante `app.member_role_change_max_per_hour()` = 30 (nadie con un pase la ejecuta).
+- Ayuda `app.current_tenant_people() returns setof uuid` (`security definer`, la ejecuta `authenticated` porque la usa la política `profiles_select`): los `user_id` con una fila en `members` de la organización activa, activa o quitada.
 
 ### Códigos de error y motivo
 
@@ -669,6 +674,8 @@ Las tres corren con el pase de la persona (`security definer`, `search_path = ''
 |---|---|---|
 | `CP404` | `not_found` | No es miembro de la organización activa, o no hay organización activa |
 | `42501` | `forbidden` | No maneja el equipo (o dejó de manejarlo mientras esperaba el candado) |
+| `42501` | `owner_only` | El rol actual del miembro, o el nuevo, maneja el equipo y quien actúa no es el Dueño |
+| `CP429` | `limit_role_changes` | Quien actúa ya hizo 30 cambios de rol en esta organización en la última hora (solo `change_member_role`) |
 | `CP422` | `invalid_arguments` · `invalid_role` | Falta un argumento · el rol nuevo no existe o es el del Dueño |
 | `CP404` | `member_not_found` | El miembro no existe en **esta** organización (uno de otra da lo mismo), o ya no está activo al cambiar su rol |
 | `CP423` | `cannot_target_self` | Nadie se cambia el rol ni se quita a sí mismo |
@@ -677,18 +684,18 @@ Las tres corren con el pase de la persona (`security definer`, `search_path = ''
 
 ### Cómo se cumplen las 8 reglas de §5
 
-1. **Permiso:** `app.can('team.manage')`, y se vuelve a comprobar con el rol de la fila **ya bloqueada** de quien actúa.
+1. **Permiso:** `app.can('team.manage')`, y se vuelve a comprobar con el rol de la fila **ya bloqueada** de quien actúa. Además, si el rol actual del miembro o el nuevo maneja el equipo, quien actúa tiene que ser el Dueño (`app.role_can(rol_de_quien_actúa, 'tenant.transfer')`, también sobre las filas ya bloqueadas; si no, `42501 owner_only`).
 2. **Organización:** el miembro se busca con `tenant_id = app.current_tenant_id()`. Probado con Dueños, Administradores y una persona que está en dos organizaciones, parada en cada una.
 3. **Nadie toca al Dueño ni sube a alguien a Dueño:** el Dueño se reconoce con la matriz (`app.role_can(rol, 'tenant.transfer')`), no con un nombre de rol escrito; el rol nuevo debe ser del dominio `app.invitation_role` (los cuatro asignables).
 4. **Nadie se toca a sí mismo.**
 5. **Nunca queda sin Dueño:** consecuencia de la regla 3 más el índice único `members_one_owner`.
-6. **Concurrencia:** se bloquean las filas del miembro **y** de quien actúa, siempre por orden de id (`order by id for update`); después se vuelve a comprobar que quien actúa sigue activo y con permiso, y que el rol sigue siendo el esperado. Probado con dos conexiones reales: dos Administradores que se quitan a la vez (gana uno, el otro recibe `42501`), dos cambios al mismo miembro (el segundo recibe `CP409`) y quitar mientras otro cambia el rol.
+6. **Concurrencia:** se bloquean las filas del miembro **y** de quien actúa, siempre por orden de id (`order by id for update`); después se vuelve a comprobar que quien actúa sigue activo y con permiso, y que el rol sigue siendo el esperado. Probado con dos conexiones reales: el Dueño quita a un Administrador mientras este quita a otra persona (gana el Dueño, el Administrador recibe `42501`), el Dueño sube a alguien a Administrador mientras un Administrador lo quita (el Administrador recibe `owner_only`), dos cambios al mismo miembro (el segundo recibe `CP409`), quitar mientras otro cambia el rol, e invitar o reenviar mientras te quitan o te bajan de rol.
 7. **Auditoría:** `member.role_changed` y `member.removed`, sin correo ni nombre (solo roles, ids y cuántas invitaciones se cancelaron). El disparador general sigue dejando además un `member.updated` con el cambio de rol o de estado (**ruido conocido**: hay dos filas por acción, como con `invitation.updated`). No se construyó ningún correo (ver más abajo).
 8. **`list_members()`:** solo con `team.manage`; el correo sale de `auth.users`.
 
 ### Qué se cambió respecto del diseño
 
-- **Sin correos.** El diseño (§5, regla 7) decía que cada cambio avisa por correo al afectado y al Dueño. **Decisión de José (2026-11-05): no se construye en H-010.** Queda solo en la auditoría; el aviso por correo llegará después reutilizando el mecanismo de H-008 (`email_messages`, tarea de avisos). El «Dueño se entera» del supuesto 4 de §8 queda, por ahora, solo en el registro de actividad.
+- **Sin correos.** El diseño (§5, regla 7) decía que cada cambio avisa por correo al afectado y al Dueño. **Decisión de José (2026-11-05): no se construye en H-010.** Queda solo en la auditoría; el aviso por correo llegará después reutilizando el mecanismo de H-008 (`email_messages`, tarea de avisos). El «Dueño se entera» del supuesto 4 de §8 queda, por ahora, solo en el registro de actividad. **Aarón aceptó «sin correos por ahora» el 2026-11-05**, junto con la regla de que solo el Dueño maneja a los Administradores (ver «Correcciones de la revisión de Aarón»).
 - **La lista de miembros ya existe:** la pantalla «Tu equipo» tiene la sección «Miembros» (antes solo listaba invitaciones pendientes). El aviso al Dueño de H-008 sigue llevando a «Tu equipo» (ahora con lista).
 - **La ficha del miembro** (`/o/[tenantId]/equipo/[memberId]`) se agregó (el diseño la pide para H-042): nombre, correo, rol con su frase, fecha de ingreso y las mismas acciones, con un lugar anotado para la sección que le sumará H-042.
 
@@ -710,7 +717,7 @@ Las tres corren con el pase de la persona (`security definer`, `search_path = ''
 - **«Al instante» = en su siguiente clic o petición.** La pantalla que la persona ya tenía abierta sigue a la vista hasta entonces (no hay avisos en vivo).
 - **Solicitudes asignadas a alguien que dejó de poder cotizar:** quien se quita queda con la solicitud asignada («sin responsable activo»). Quien solo **baja de rol** (por ejemplo de Comercial a Observador) conserva sus solicitudes asignadas con su nombre, y nadie las ve como huérfanas; el Dueño o un Administrador las puede reasignar a mano. La insignia del menú (`loadRequestBadge`) cuenta solo las **nuevas sin asignar**, así que las asignadas a un ex miembro no suman ahí. No se cambió.
 - **Borradores de quien se fue:** quedan en solo lectura y nadie los puede tomar (supuesto 10: se podrán duplicar con H-069).
-- **Un Administrador puede cambiar y quitar a otro Administrador** (pregunta 4, como H-008). Solo el Dueño es intocable.
+- ~~Un Administrador puede cambiar y quitar a otro Administrador~~ **Cerrado el 2026-11-05:** solo el Dueño da o quita un rol que maneja el equipo (ver «Correcciones de la revisión de Aarón»).
 - **Verificación en dos pasos (H-004c):** `change_member_role` y `remove_member` deciden con `app.can('team.manage')` y con `app.role_can(rol_de_la_fila, 'team.manage')`; esa segunda forma usa el rol guardado y no `app.effective_role()`. Si H-004c cambia el criterio de quién puede manejar el equipo, hay que revisarlo aquí también.
 - **Dato anotado, no tocado:** `loadAssignableMembers` (`requests-queries.ts`) lee `members` sin filtrar por organización y la política deja ver las propias filas de otras organizaciones; una persona que está en dos organizaciones podría salir repetida en la lista de asignables. No se verificó ni se cambió (fuera de H-010).
 
@@ -727,14 +734,37 @@ Tras la revisión normal y la adversarial (sin bloqueantes). La migración `2026
 
 ### Límites conocidos (agregados tras las revisiones)
 
-1. **Sin correos, un Administrador puede ascender o bajar a otros Administradores y el Dueño solo se entera si revisa el registro de actividad.** Es decisión de José; **Aarón debe aprobarla por escrito antes de mezclar.**
+1. ~~Sin correos, un Administrador puede ascender o bajar a otros Administradores y el Dueño solo se entera si revisa el registro de actividad.~~ **Resuelto el 2026-11-05:** con la regla «solo el Dueño maneja a los Administradores», Aarón acepta «sin correos por ahora» (solo auditoría) para H-010; ver abajo.
 2. **Los intentos rechazados no quedan en la auditoría** (`forbidden`, `cannot_target_owner`…): mismo patrón que H-008.
 3. **Carrera residual entre `remove_member` y `accept_invitation`.** Bloquean en orden inverso (`remove_member`: `members` y luego `invitations`; `accept_invitation`: `invitations` y luego la fila de `members` de quien acepta). Solo podrían cruzarse si quien acepta es justo quien actúa o el quitado; el revisor no pudo reproducirla. Si ocurre, la base corta una de las dos con error, sin dañar datos.
+
+### Correcciones de la revisión de Aarón (2026-11-05)
+
+Aarón pidió corregir los hallazgos de la revisión sin esperar a José. La migración se editó otra vez **en su lugar** (sigue sin estar en `main`), con su deshacer y la prueba del deshacer al día.
+
+- **Solo el Dueño da o quita un rol que maneja el equipo — decisión por defecto aplicada por Aarón el 2026-11-05.** El hueco: un Administrador podía invitar a un cómplice como Observador (sin aviso al Dueño) y después subirlo a Administrador con `change_member_role`, saltándose el aviso de H-008; también podía bajar o quitar a otros Administradores. Ahora, en `change_member_role` y `remove_member`, si el rol **actual** del miembro o el rol **nuevo** tiene `team.manage`, quien actúa tiene que ser el Dueño (el rol con `tenant.transfer`); si no, `42501` con el motivo `owner_only`, que la pantalla traduce como «Solo el Dueño puede nombrar Administradores, cambiarles el rol o quitarlos del equipo.». Se revisa sobre las filas **ya bloqueadas**, justo después de «nadie toca al Dueño» y antes de «ya tenía ese rol» (un Administrador no recibe ni un «listo» sobre otro Administrador). En pantalla, el Administrador no ve «Cambiar rol» ni «Quitar» en la fila ni en la ficha de otro Administrador (dice «Solo el Dueño puede cambiar el rol de un Administrador o quitarlo del equipo.») y, al cambiar el rol de alguien, no se le ofrece «Administrador» (`roleOptionsFor`). **`create_invitation` (H-008) no cambia:** el Administrador puede seguir invitando como Administrador porque eso ya avisa al Dueño.
+- **Con esa regla, Aarón acepta «sin correos por ahora» para H-010:** cambiar el rol o quitar a alguien queda solo en la auditoría (registro de actividad del Dueño). El aviso por correo sigue pendiente para más adelante, reutilizando el mecanismo de H-008.
+- **Texto de quitar.** El diálogo decía «Sus solicitudes asignadas quedan sin responsable», falso: siguen `assigned` a quien se fue y solo el Dueño o un Administrador las reasigna. Ahora: «Sus solicitudes asignadas quedan esperando que las reasignes.» y, al terminar, el aviso dice cuántas eran («Tenía 2 solicitudes asignadas: quedan esperando que las reasignes.»), con el número que entrega `remove_member` (`assigned_requests`, contado dentro de la misma transacción). No se agregó a la auditoría.
+- **Bajar a un Administrador avisa antes.** En el diálogo de «Cambiar rol», al elegir un rol que no maneja el equipo para alguien que sí lo maneja, aparece «Las invitaciones pendientes que envió se cancelarán.» antes de confirmar (antes solo lo decía el aviso final).
+- **`isActiveMember` ya no inventa que el autor se fue.** Si la consulta falla devuelve «no se sabe» (`null`, con el código en el log, como las demás consultas de `quotes/queries.ts`) y la cotización dice «Solo quien armó este borrador puede editarlo. Tú puedes verlo.», cierto en ambos casos.
+- **Tope de cambios de rol.** `change_member_role` acepta hasta 30 cambios por persona, por organización y por hora (`app.member_role_change_max_per_hour()`); el siguiente da `CP429 limit_role_changes` («Hiciste muchos cambios de rol en la última hora…»). Se cuenta en la propia auditoría (`member.role_changed` de esa persona en la última hora, con el índice `audit_tenant_actor`) y no con `auth_rate_limits`: esa tabla es del servidor con la llave maestra y cuenta **fallos**; aquí hay que contar cambios hechos, y la fila de `members` de quien actúa ya está bloqueada, así que dos cambios simultáneos de la misma persona no pasan el tope juntos. «Ya tenía ese rol» no deja registro y no cuenta. `remove_member` no tiene tope: cada quitada saca a alguien del equipo y volver exige una invitación, que ya tiene topes.
+- **Las filas de quien se fue, solo para quien maneja el equipo.** `members_select` dejaba a cualquier miembro (también al Observador) leer por la API las filas quitadas con `removed_at` y `removed_by`. Ahora: las propias, las **activas** de la organización activa para todos, y las quitadas solo con `team.manage`. Se revisó cada lectura de `members`: en `src/` (`active-tenant.ts` y `auth/actions.ts` leen las propias; `requests-queries.ts` y `quotes/queries.ts` filtran `status = 'active'`; `audit/queries.ts` es del Dueño) y en la base (todas las funciones que leen `members` son `security definer`). El único consumidor que se rompía era la propia `profiles_select`, que consultaba `members` dentro de la política: ahora usa la ayuda `security definer` `app.current_tenant_people()`, así el Observador sigue leyendo el nombre del autor que se fue. La prueba de aislamiento `tables-read` ahora exige esta regla para `members`.
+- **Prueba de concurrencia de `resend_invitation`.** Como la de `create_invitation`: quitar o bajar de rol primero hace esperar al reenvío, que falla con `42501` sin anotar correo; reenviar primero hace esperar a la cancelación, que igual cancela la invitación.
+- **Foco.** Tras quitar a alguien desde la lista, el foco va al título «Miembros» (y la lista se refresca recién con el diálogo ya cerrado); tras cambiar un rol, vuelve al botón «Cambiar rol» de esa fila (se quitó el `key={role}` que rehacía el botón). `ConfirmAction` ganó `focusAfterSuccess` y `onClosedAfterSuccess`. Desde la ficha, quitar sigue llevando a la lista.
+- **Comentarios obsoletos:** el de `profiles` en la migración (decía que `created_at` y `updated_at` seguían legibles) y el de `actorName` en `src/lib/audit/queries.ts` (decía que el nombre de quien ya no está no se lee).
+
+### Límites conocidos (al día tras la revisión de Aarón, 2026-11-05)
+
+1. **Sin aviso por correo** al afectado ni al Dueño al cambiar un rol o quitar a alguien: solo auditoría. Aarón lo aceptó el 2026-11-05 junto con la regla «solo el Dueño maneja a los Administradores», que deja al Administrador sin forma de cambiar a otro Administrador.
+2. **Un Administrador sí puede invitar como Administrador** (H-008, sin cambios): esa invitación avisa al Dueño por correo.
+3. **El tope de cambios de rol es de 30 por persona y hora**, y solo cuenta los cambios hechos (los rechazados no cuentan, como en el punto 2 de la lista anterior). Quitar no tiene tope propio.
+4. **Las solicitudes asignadas a quien se fue no se reasignan solas:** se dice en el diálogo y en el aviso final, con su número; el Dueño o un Administrador las reasigna a mano.
+5. **Quitar desde la ficha** lleva a la lista como una navegación normal: el foco parte del inicio de la página nueva.
 
 ### Pruebas de H-010
 
 - **Unitarias:** `members-model.test.ts` (formas, controles, mensajes), `members-actions.test.ts` (un falso miembro de cada rol: los sin permiso reciben el mensaje y la base ni se consulta), `member-list.test.tsx` (lista, diálogos, doble clic, fallo de red sin perder lo elegido), `requests-assignees.test.ts` y las etiquetas de auditoría.
-- **Base de datos:** `tests/db/members.test.ts` (por rol con pases reales, Dueño, uno mismo, otra organización, rol esperado, tres casos de dos conexiones simultáneas, invitaciones canceladas, nombre visible, ex miembro sin acceso, reactivar por invitación, escritura directa rechazada) y `tests/db/member-management-rollback.test.ts` (el deshacer y volver a aplicar).
+- **Base de datos:** `tests/db/members.test.ts` (por rol con pases reales, Dueño, uno mismo, solo el Dueño maneja a los Administradores, tope de cambios de rol, otra organización, rol esperado, casos de dos conexiones simultáneas —también reenviar mientras te quitan—, invitaciones canceladas, nombre visible, filas de quien se fue solo para quien maneja el equipo, ex miembro sin acceso, reactivar por invitación, escritura directa rechazada) y `tests/db/member-management-rollback.test.ts` (el deshacer y volver a aplicar).
 - **Aislamiento:** `tests/isolation/members.test.ts` (siete ataques), las tres funciones en `RPC_CASES`, `/o/[tenantId]/equipo/[memberId]` en `APP_ROUTES`, y la prueba A12 del ex miembro (`lifecycle.test.ts`) ahora también llama a las funciones de equipo.
 - **De punta a punta:** `e2e/member-management.spec.ts` (cinco pruebas: cambiar el rol y que desaparezca «Nueva cotización»; quitar con la sesión abierta; Administrador sin acciones sobre el Dueño ni sobre sí mismo, y los demás roles sin permiso; 375 px y sin conexión; dos pestañas).
 - **Nota de operación de las pruebas e2e:** Supabase local limita a 60 ingresos o registros cada 5 minutos desde una misma IP (`sign_in_sign_ups` en `supabase/config.toml`); correr varias especificaciones de equipo seguidas con la máquina cargada puede pasar los 5 s de espera de las pruebas o ese tope. Cada archivo pasa solo.

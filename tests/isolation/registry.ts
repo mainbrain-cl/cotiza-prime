@@ -9,7 +9,8 @@ import type { IsolationFixture, PersonaKey, Role } from "./fixture";
  * Quién puede ver cada fila de una tabla:
  * - `business`: solo filas de la organización activa (y, si se declara, solo ciertos roles).
  * - `selector-tenants`: las organizaciones de las que la persona es miembro (el selector).
- * - `selector-members`: sus propias membresías, más las de la organización activa.
+ * - `selector-members`: sus propias membresías, más las de la organización activa (H-010: las de quien ya se fue,
+ *   solo para quien maneja el equipo).
  * - `profiles`: su propio perfil y el de quienes tienen una fila en `members` de la organización activa, activa o
  *   quitada (H-010: el nombre de quien se fue sigue visible para que sus cotizaciones lo muestren como autor).
  * - `own-user`: solo filas con su `user_id`.

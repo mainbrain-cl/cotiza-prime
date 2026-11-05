@@ -1,8 +1,10 @@
 // Sprint 5 · migración 20261105110000 · cambiar el rol de un miembro o quitarlo (H-010).
 // `list_members`, `change_member_role` y `remove_member` con pases reales de cada rol: quién puede, el Dueño y uno
-// mismo intocables, otra organización, rol esperado desactualizado, dos Administradores que se quitan a la vez,
-// dos cambios simultáneos al mismo miembro, invitaciones canceladas, nombre todavía visible, ex miembro sin acceso
-// a nada, reactivar por invitación y escritura directa en `members` rechazada.
+// mismo intocables, solo el Dueño da o quita un rol que maneja el equipo, tope de cambios de rol por hora, otra
+// organización, rol esperado desactualizado, el Dueño quita a un Administrador mientras este actúa, dos cambios
+// simultáneos al mismo miembro, invitar o reenviar mientras te quitan, invitaciones canceladas, nombre todavía
+// visible, filas de quien se fue solo para quien maneja el equipo, ex miembro sin acceso a nada, reactivar por
+// invitación y escritura directa en `members` rechazada.
 // Cada prueba corre en una transacción que se deshace, salvo las de dos conexiones (usan su propia organización y
 // dejan datos ficticios). Todo es ficticio.
 import { randomUUID } from "node:crypto";
@@ -36,6 +38,7 @@ const LIST = "select public.list_members() as r";
 const CHANGE = "select public.change_member_role($1, $2, $3) as r";
 const REMOVE = "select public.remove_member($1, $2) as r";
 const CREATE_INVITATION = "select public.create_invitation($1, $2, $3, $4, $5, $6, $7, $8) as r";
+const RESEND = "select public.resend_invitation($1, $2, $3, $4, $5) as r";
 const ACCEPT = "select public.accept_invitation($1) as r";
 
 const INSUFFICIENT_PRIVILEGE = "42501";
@@ -43,6 +46,9 @@ const NOT_FOUND = "CP404";
 const CONFLICT = "CP409";
 const INVALID = "CP422";
 const NOT_ALLOWED = "CP423";
+const TOO_MANY = "CP429";
+/** El tope de `app.member_role_change_max_per_hour()`. */
+const ROLE_CHANGES_PER_HOUR = 30;
 
 async function call<T = Json>(user: TestUser, tenant: string, sql: string, params: unknown[] = []) {
   await asUser(setup, user, tenant);
@@ -250,23 +256,136 @@ describe("change_member_role · quién puede", () => {
     });
   });
 
-  it("el Administrador puede cambiar el rol de otros, incluso de otro Administrador", async () => {
+  it("el Administrador cambia el rol de quien no maneja el equipo, entre roles que no lo manejan", async () => {
     await withTx(setup, async () => {
       const salesId = await memberIdOf(w.sales);
       expect((await call(w.admin, w.tenantA, CHANGE, [salesId, "approver", "sales"])).result).toBe(
         "changed",
       );
-      const other = await addMember("admin");
-      const demoted = await call(w.admin, w.tenantA, CHANGE, [other.memberId, "sales", "admin"]);
-      expect(demoted.result).toBe("changed");
-      expect((await memberRow(other.memberId)).role).toBe("sales");
-      // Y se puede subir a Administrador.
-      expect(
-        (await call(w.admin, w.tenantA, CHANGE, [other.memberId, "admin", "sales"])).result,
-      ).toBe("changed");
+      expect((await call(w.admin, w.tenantA, CHANGE, [salesId, "viewer", "approver"])).result).toBe(
+        "changed",
+      );
+      expect((await memberRow(salesId)).role).toBe("viewer");
+    });
+  });
+});
+
+describe("solo el Dueño da o quita un rol que maneja el equipo", () => {
+  it("el Administrador no sube a nadie a Administrador (ni a quien invitó como Observador): «solo el Dueño», sin cambios ni registro", async () => {
+    await withTx(setup, async () => {
+      // La jugada que se cierra: invitar a alguien como Observador (sin aviso al Dueño) y después subirlo.
+      const accomplice = await addMember("viewer", w.tenantA, "Complice");
+      const salesId = await memberIdOf(w.sales);
+      for (const [target, expected] of [
+        [accomplice.memberId, "viewer"],
+        [salesId, "sales"],
+      ] as const) {
+        const error = await denied(w.admin, w.tenantA, CHANGE, [target, "admin", expected]);
+        expect(error.code).toBe(INSUFFICIENT_PRIVILEGE);
+        expect(error.message).toBe("owner_only");
+        expect((await memberRow(target)).role).toBe(expected);
+      }
+      expect(await auditRows("member.role_changed")).toHaveLength(0);
     });
   });
 
+  it("el Administrador no baja, no «deja igual» ni quita a otro Administrador", async () => {
+    await withTx(setup, async () => {
+      const other = await addMember("admin", w.tenantA, "Otro Admin");
+      const pending = await inviteAs(other.user);
+      for (const [sql, params] of [
+        [CHANGE, [other.memberId, "sales", "admin"]],
+        [CHANGE, [other.memberId, "viewer", "admin"]],
+        [CHANGE, [other.memberId, "admin", "admin"]],
+        [REMOVE, [other.memberId, "admin"]],
+      ] as const) {
+        const error = await denied(w.admin, w.tenantA, sql, [...params]);
+        expect(error.code).toBe(INSUFFICIENT_PRIVILEGE);
+        expect(error.message).toBe("owner_only");
+      }
+      const row = await memberRow(other.memberId);
+      expect(row.role).toBe("admin");
+      expect(row.status).toBe("active");
+      // Sus invitaciones siguen vivas: no se canceló nada.
+      expect((await invitationStatus(pending.id)).status).toBe("pending");
+      expect(await auditRows("member.role_changed")).toHaveLength(0);
+      expect(await auditRows("member.removed")).toHaveLength(0);
+    });
+  });
+
+  it("el Dueño sí sube a Administrador, baja a un Administrador y lo quita", async () => {
+    await withTx(setup, async () => {
+      const person = await addMember("viewer", w.tenantA, "Sube Y Baja");
+      expect(
+        await call(w.owner, w.tenantA, CHANGE, [person.memberId, "admin", "viewer"]),
+      ).toMatchObject({ result: "changed", role: "admin" });
+      expect(
+        await call(w.owner, w.tenantA, CHANGE, [person.memberId, "sales", "admin"]),
+      ).toMatchObject({ result: "changed", role: "sales" });
+      const other = await addMember("admin", w.tenantA, "Admin Que Sale");
+      expect((await call(w.owner, w.tenantA, REMOVE, [other.memberId, "admin"])).result).toBe(
+        "removed",
+      );
+      expect((await memberRow(other.memberId)).status).toBe("removed");
+      expect(await auditRows("member.role_changed", person.memberId)).toHaveLength(2);
+      expect(await auditRows("member.removed", other.memberId)).toHaveLength(1);
+    });
+  });
+});
+
+describe("tope de cambios de rol por hora", () => {
+  it(`cada persona hace hasta ${ROLE_CHANGES_PER_HOUR} cambios de rol por hora en una organización; el siguiente recibe «tope» y no cambia nada`, async () => {
+    await withTx(setup, async () => {
+      const { memberId } = await addMember("sales", w.tenantA, "Sube Y Baja Mucho");
+      const flip = (role: string) => (role === "sales" ? "viewer" : "sales");
+      let role = "sales";
+      for (let i = 0; i < ROLE_CHANGES_PER_HOUR; i++) {
+        expect((await call(w.admin, w.tenantA, CHANGE, [memberId, flip(role), role])).result).toBe(
+          "changed",
+        );
+        role = flip(role);
+      }
+      // «Ya tenía ese rol» no deja registro y no choca con el tope.
+      expect((await call(w.admin, w.tenantA, CHANGE, [memberId, role, role])).result).toBe(
+        "unchanged",
+      );
+      const error = await denied(w.admin, w.tenantA, CHANGE, [memberId, flip(role), role]);
+      expect(error.code).toBe(TOO_MANY);
+      expect(error.message).toBe("limit_role_changes");
+      expect((await memberRow(memberId)).role).toBe(role);
+      expect(await auditRows("member.role_changed", memberId)).toHaveLength(ROLE_CHANGES_PER_HOUR);
+      // El tope es de cada persona: el Dueño sigue pudiendo.
+      expect((await call(w.owner, w.tenantA, CHANGE, [memberId, flip(role), role])).result).toBe(
+        "changed",
+      );
+      // Quitar no tiene este tope (volver exige otra invitación, y esas sí tienen topes).
+      expect((await call(w.admin, w.tenantA, REMOVE, [memberId, flip(role)])).result).toBe(
+        "removed",
+      );
+    });
+  });
+
+  it("los cambios de hace más de una hora no cuentan", async () => {
+    await withTx(setup, async () => {
+      const { memberId } = await addMember("sales", w.tenantA, "Cambios Viejos");
+      // Registros viejos de esta persona (montaje directo): no cuentan para el tope.
+      await actAsPostgres(setup);
+      for (let i = 0; i < ROLE_CHANGES_PER_HOUR; i++) {
+        await setup.query(
+          `insert into public.audit_log
+             (tenant_id, occurred_at, actor_type, actor_user_id, action, resource_type, resource_id, result)
+           values ($1, now() - interval '61 minutes', 'user', $2, 'member.role_changed', 'member', $3, 'success')`,
+          [w.tenantA, w.admin.id, memberId],
+        );
+      }
+      expect((await call(w.admin, w.tenantA, CHANGE, [memberId, "viewer", "sales"])).result).toBe(
+        "changed",
+      );
+    });
+  });
+});
+
+describe("change_member_role · sin permiso", () => {
   it("el Aprobador, el Comercial y el Observador reciben «sin permiso» y no cambia nada", async () => {
     await withTx(setup, async () => {
       const salesId = await memberIdOf(w.sales);
@@ -491,6 +610,7 @@ describe("remove_member", () => {
           result: "removed",
           member_id: memberId,
           cancelled_invitations: 0,
+          assigned_requests: 0,
         });
         const row = await memberRow(memberId);
         expect(row.status).toBe("removed");
@@ -662,7 +782,9 @@ describe("remove_member", () => {
           where id = $1`,
         [requestId, user.id, w.owner.id],
       );
-      await call(w.owner, w.tenantA, REMOVE, [memberId, "sales"]);
+      // El resultado dice cuántas quedaron esperando que alguien las reasigne.
+      const removed = await call(w.owner, w.tenantA, REMOVE, [memberId, "sales"]);
+      expect(removed.assigned_requests).toBe(1);
       await actAsPostgres(setup);
       const request = (
         await setup.query("select status, assigned_to from public.intake_requests where id = $1", [
@@ -978,26 +1100,42 @@ describe("dos personas a la vez (dos conexiones reales)", () => {
     return { owner, tenant, others };
   }
 
-  it("dos Administradores que se quitan mutuamente a la vez: gana el primero y el otro queda fuera", async () => {
-    const { tenant, others } = await freshTenant(["admin", "admin"]);
-    const [x, y] = others;
+  it("el Dueño quita a un Administrador mientras este quita a otra persona: gana el Dueño y el Administrador ya no quita a nadie", async () => {
+    const { owner, tenant, others } = await freshTenant(["admin", "sales"]);
+    const [admin, target] = others;
     const { firstResult, second, blocked } = await raceBlocking(
-      { user: x.user, tenant, sql: REMOVE, params: [y.memberId, "admin"] },
-      { user: y.user, tenant, sql: REMOVE, params: [x.memberId, "admin"] },
+      { user: owner, tenant, sql: REMOVE, params: [admin.memberId, "admin"] },
+      { user: admin.user, tenant, sql: REMOVE, params: [target.memberId, "sales"] },
     );
     expect(blocked).toBe(true);
     expect(firstResult.result).toBe("removed");
-    // La segunda esperó el bloqueo, volvió a mirar a quien actúa y ya no es Administrador: «sin permiso».
+    // La segunda esperó la fila de quien actúa, volvió a mirarla y ya no está activa: «sin permiso».
     expect(second.ok).toBe(false);
     expect((second as { code?: string }).code).toBe(INSUFFICIENT_PRIVILEGE);
-    expect((await memberRow(x.memberId)).status).toBe("active");
-    expect((await memberRow(y.memberId)).status).toBe("removed");
+    expect((await memberRow(admin.memberId)).status).toBe("removed");
+    expect((await memberRow(target.memberId)).status).toBe("active");
     expect(
       await count(
         "select count(*) as n from public.members where tenant_id = $1 and status = 'active'",
         [tenant],
       ),
     ).toBe(2);
+  });
+
+  it("el Dueño sube a alguien a Administrador mientras un Administrador lo quita: el Administrador recibe «solo el Dueño»", async () => {
+    const { owner, tenant, others } = await freshTenant(["admin", "sales"]);
+    const [admin, target] = others;
+    const { firstResult, second, blocked } = await raceBlocking(
+      { user: owner, tenant, sql: CHANGE, params: [target.memberId, "admin", "sales"] },
+      { user: admin.user, tenant, sql: REMOVE, params: [target.memberId, "sales"] },
+    );
+    expect(blocked).toBe(true);
+    expect(firstResult.role).toBe("admin");
+    // La regla se mira sobre la fila ya bloqueada: el rol nuevo ya maneja el equipo.
+    expect(second.ok).toBe(false);
+    expect((second as { code?: string }).code).toBe(INSUFFICIENT_PRIVILEGE);
+    expect((second as { message: string }).message).toContain("owner_only");
+    expect(await memberRow(target.memberId)).toMatchObject({ status: "active", role: "admin" });
   });
 
   it("dos cambios al mismo miembro a la vez, cada uno con el rol que vio: gana el primero y el otro recibe «el rol cambió»", async () => {
@@ -1218,6 +1356,163 @@ describe("invitar mientras te quitan o te bajan de rol (carrera de H-008 con H-0
   });
 });
 
+describe("reenviar mientras te quitan o te bajan de rol (el bloqueo de resend_invitation)", () => {
+  /** Una organización propia con un Administrador que ya tiene una invitación pendiente lista para reenviar. */
+  async function teamWithPendingInvitation() {
+    const owner = await createUser(setup);
+    await setup.query("begin");
+    const tenant = await createTenantAs(setup, owner, "76086428-5", "Carrera de reenvíos");
+    const inviter = await createUser(setup, { meta: { full_name: "Admin Que Reenvía" } });
+    const { rows } = await setup.query<{ id: string }>(
+      "insert into public.members (tenant_id, user_id, role) values ($1, $2, 'admin') returning id",
+      [tenant, inviter.id],
+    );
+    const invite = prepareInvitation(`reenvio-${randomUUID().slice(0, 8)}@ejemplo.test`, "viewer");
+    expect((await call(inviter, tenant, CREATE_INVITATION, invite.params)).result).toBe("created");
+    // Ya pasó el tiempo mínimo entre un envío y el siguiente.
+    await setup.query(
+      "update public.invitations set last_sent_at = now() - interval '1 hour' where id = $1",
+      [invite.id],
+    );
+    await setup.query("commit");
+    return { owner, tenant, inviter, inviterMemberId: rows[0].id, invite };
+  }
+  type Team = Awaited<ReturnType<typeof teamWithPendingInvitation>>;
+
+  const resendCall = (team: Team) => {
+    const { sha } = newToken();
+    const mailId = randomUUID();
+    return {
+      mailId,
+      call: {
+        user: team.inviter,
+        tenant: team.tenant,
+        sql: RESEND,
+        params: [
+          team.invite.id,
+          invitationEmailBinding(sha, team.invite.email),
+          sha,
+          mailId,
+          `v1.cifrado.correo.${mailId}`,
+        ],
+      },
+    };
+  };
+  const ownerAction = (action: "remove" | "demote", team: Team) => ({
+    user: team.owner,
+    tenant: team.tenant,
+    sql: action === "remove" ? REMOVE : CHANGE,
+    params:
+      action === "remove"
+        ? [team.inviterMemberId, "admin"]
+        : [team.inviterMemberId, "viewer", "admin"],
+  });
+  const mailsOf = (invitationId: string) =>
+    count(
+      "select count(*) as n from public.email_messages where invitation_id = $1 and kind = 'invitation'",
+      [invitationId],
+    );
+
+  it.each(["remove", "demote"] as const)(
+    "%s ANTES: quien reenviaba espera, recibe «sin permiso» y no sale ningún correo a su nombre",
+    async (action) => {
+      const team = await teamWithPendingInvitation();
+      const resend = resendCall(team);
+      const { firstResult, second, blocked } = await raceBlocking(
+        ownerAction(action, team),
+        resend.call,
+      );
+      // El reenvío esperó la fila de quien reenvía (la tiene bloqueada quien lo quita o le baja el rol).
+      expect(blocked).toBe(true);
+      expect(["removed", "changed"]).toContain(firstResult.result);
+      expect(firstResult.cancelled_invitations).toBe(1);
+      expect(second.ok).toBe(false);
+      expect((second as { code?: string }).code).toBe(INSUFFICIENT_PRIVILEGE);
+      // Solo queda el correo de la invitación original; el del reenvío nunca se anotó.
+      expect(await mailsOf(team.invite.id)).toBe(1);
+      expect(
+        await count("select count(*) as n from public.email_messages where id = $1", [
+          resend.mailId,
+        ]),
+      ).toBe(0);
+      expect(await invitationStatus(team.invite.id)).toMatchObject({
+        status: "revoked",
+        revoke_reason: "inviter_removed",
+      });
+    },
+  );
+
+  it.each(["remove", "demote"] as const)(
+    "el reenvío en curso termina ANTES (%s espera): la cancelación lo ve y la invitación queda cancelada",
+    async (action) => {
+      const team = await teamWithPendingInvitation();
+      const resend = resendCall(team);
+      const { firstResult, second, blocked } = await raceBlocking(
+        resend.call,
+        ownerAction(action, team),
+      );
+      expect(firstResult.result).toBe("resent");
+      expect(blocked).toBe(true);
+      expect(second.ok).toBe(true);
+      expect((second as { ok: true; result: Json }).result.cancelled_invitations).toBe(1);
+      expect(await invitationStatus(team.invite.id)).toMatchObject({
+        status: "revoked",
+        revoke_reason: "inviter_removed",
+      });
+    },
+  );
+});
+
+describe("las filas de quien se fue, solo para quien maneja el equipo", () => {
+  it("el Aprobador, el Comercial y el Observador no ven la fila de un ex miembro (ni cuándo ni quién lo quitó), pero sí a su equipo activo y el nombre del ex miembro", async () => {
+    await withTx(setup, async () => {
+      const gone = await addMember("sales", w.tenantA, "Fila Reservada");
+      await call(w.owner, w.tenantA, REMOVE, [gone.memberId, "sales"]);
+      const active = await count(
+        "select count(*) as n from public.members where tenant_id = $1 and status = 'active'",
+        [w.tenantA],
+      );
+      for (const reader of [w.approver, w.sales, w.viewer]) {
+        await asUser(setup, reader, w.tenantA);
+        const removedRow = await setup.query(
+          "select removed_at, removed_by from public.members where id = $1",
+          [gone.memberId],
+        );
+        expect(removedRow.rowCount).toBe(0);
+        const team = await setup.query<{ status: string }>(
+          "select status from public.members where tenant_id = $1",
+          [w.tenantA],
+        );
+        expect(team.rowCount).toBe(active);
+        expect(team.rows.every((row) => row.status === "active")).toBe(true);
+        // El nombre de quien se fue se sigue leyendo (lo usa la cotización como autor).
+        const name = await setup.query<{ full_name: string }>(
+          "select full_name from public.profiles where user_id = $1",
+          [gone.user.id],
+        );
+        expect(name.rows).toEqual([{ full_name: "Fila Reservada" }]);
+        await actAsPostgres(setup);
+      }
+      // El Dueño y los Administradores sí la ven (el registro de actividad dice a quién afectó cada cambio).
+      for (const reader of [w.owner, w.admin]) {
+        await asUser(setup, reader, w.tenantA);
+        const rows = await setup.query<{ removed_by: string }>(
+          "select removed_by from public.members where id = $1",
+          [gone.memberId],
+        );
+        expect(rows.rows).toEqual([{ removed_by: w.owner.id }]);
+        await actAsPostgres(setup);
+      }
+      // Quien se fue sigue viendo su propia fila (el selector de organizaciones la necesita).
+      await asUser(setup, gone.user, w.tenantA);
+      expect(
+        (await setup.query("select 1 from public.members where id = $1", [gone.memberId])).rowCount,
+      ).toBe(1);
+      await actAsPostgres(setup);
+    });
+  });
+});
+
 describe("de profiles, solo el nombre", () => {
   it("la Dueña lee el nombre de un ex miembro y de un miembro activo, pero created_at, updated_at y last_tenant_id le dan «sin permiso»", async () => {
     await withTx(setup, async () => {
@@ -1294,6 +1589,17 @@ describe("estructura", () => {
               has_function_privilege('anon', 'app.cancel_member_invitations(uuid, uuid, uuid)', 'EXECUTE') as anon`,
     );
     expect(helper.rows[0]).toEqual({ auth: false, anon: false });
+    // El tope tampoco; las personas de la organización sí (las usa la política de `profiles`), nunca anon.
+    const more = await setup.query<{
+      cap_auth: boolean;
+      people_auth: boolean;
+      people_anon: boolean;
+    }>(
+      `select has_function_privilege('authenticated', 'app.member_role_change_max_per_hour()', 'EXECUTE') as cap_auth,
+              has_function_privilege('authenticated', 'app.current_tenant_people()', 'EXECUTE') as people_auth,
+              has_function_privilege('anon', 'app.current_tenant_people()', 'EXECUTE') as people_anon`,
+    );
+    expect(more.rows[0]).toEqual({ cap_auth: false, people_auth: true, people_anon: false });
   });
 
   it("ninguna de las funciones recibe una organización como argumento", async () => {

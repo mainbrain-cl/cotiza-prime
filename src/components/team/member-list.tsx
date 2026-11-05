@@ -3,6 +3,7 @@ import Link from "next/link";
 import { MemberActions } from "@/components/team/member-actions";
 import {
   MEMBER_OWNER_MESSAGE,
+  MEMBER_OWNER_ONLY_NOTE,
   MEMBER_SELF_MESSAGE,
   type MemberItem,
   type RoleOption,
@@ -24,16 +25,27 @@ export function RoleBadge({ label, owner }: { label: string; owner: boolean }) {
   );
 }
 
-/** Por qué no hay botones sobre este miembro (solo el Dueño y uno mismo). */
-export function lockNote(item: Pick<MemberItem, "isOwner" | "isSelf">): string | null {
-  if (item.isOwner) return MEMBER_OWNER_MESSAGE;
-  if (item.isSelf) return `Este eres tú. ${MEMBER_SELF_MESSAGE}`;
-  return null;
+/**
+ * Por qué no hay botones sobre este miembro: es el Dueño, es uno mismo, o es un Administrador y quien mira no es el
+ * Dueño.
+ */
+export function lockNote(item: Pick<MemberItem, "lockedReason">): string | null {
+  switch (item.lockedReason) {
+    case "organization_owner":
+      return MEMBER_OWNER_MESSAGE;
+    case "yourself":
+      return `Este eres tú. ${MEMBER_SELF_MESSAGE}`;
+    case "owner_only":
+      return MEMBER_OWNER_ONLY_NOTE;
+    default:
+      return null;
+  }
 }
 
 /**
  * La lista de miembros activos de «Tu equipo» (H-010). En teléfono cada fila es una tarjeta. Los botones de cada
- * fila son los de `MemberActions`; el Dueño y la propia persona no tienen ninguno.
+ * fila son los de `MemberActions`; el Dueño y la propia persona no tienen ninguno, y los Administradores solo los
+ * tienen cuando quien mira es el Dueño.
  */
 export function MemberList({
   tenantId,

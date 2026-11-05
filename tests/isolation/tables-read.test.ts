@@ -6,6 +6,7 @@
 // (`pg`) solo se usa para saber, en vivo, qué DEBERÍA ver cada persona y comparar.
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { can } from "@/lib/permissions/matrix";
 import { PLATFORM_TENANT_ID } from "@/lib/tenant/constants";
 import { graphql, rest, type HttpResult } from "../support/local-supabase";
 import {
@@ -117,6 +118,16 @@ async function contextOf(spec: TableSpec, s: Scenario): Promise<Context> {
 
 type Row = Record<string, unknown>;
 
+/** El estado de una fila de `members` (las columnas pedidas pueden no traerlo: se lee de la base). */
+async function memberStatus(row: Row): Promise<unknown> {
+  if (row.status !== undefined) return row.status;
+  const { rows } = await db.query<{ status: string }>(
+    "select status from public.members where id = $1",
+    [row.id],
+  );
+  return rows[0]?.status;
+}
+
 /** ¿Esta fila le corresponde a esta persona en esta tabla? Es la regla de cada tipo de visibilidad. */
 async function allowed(spec: TableSpec, row: Row, ctx: Context): Promise<boolean> {
   switch (spec.visibility) {
@@ -128,10 +139,12 @@ async function allowed(spec: TableSpec, row: Row, ctx: Context): Promise<boolean
       );
     case "selector-tenants":
       return ctx.memberOrgs.has(row.tenant_id as string);
-    case "selector-members":
-      return (
-        row.user_id === ctx.me || (ctx.active !== null && row.tenant_id === ctx.active.tenantId)
-      );
+    case "selector-members": {
+      if (row.user_id === ctx.me) return true;
+      if (ctx.active === null || row.tenant_id !== ctx.active.tenantId) return false;
+      // Desde H-010, las filas de quien ya se fue solo las ve quien maneja el equipo.
+      return (await memberStatus(row)) === "active" || can(ctx.active.role, "team.manage");
+    }
     case "profiles": {
       if (row.user_id === ctx.me) return true;
       if (!ctx.active) return false;

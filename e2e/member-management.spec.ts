@@ -12,7 +12,8 @@ import { createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
 
 // H-010: el Dueño y los Administradores ven a su equipo, cambian el rol de un miembro (se aplica en su siguiente
 // clic) y lo quitan (pierde el acceso en su siguiente clic aunque tenga la sesión abierta; lo que hizo se
-// conserva). Nadie toca al Dueño ni a sí mismo. Los demás roles no ven nada. Todo es ficticio (@ejemplo.test) y
+// conserva). Nadie toca al Dueño ni a sí mismo, y a un Administrador solo lo nombra, lo cambia o lo quita el Dueño.
+// Los demás roles no ven nada. Todo es ficticio (@ejemplo.test) y
 // cada prueba crea sus propias cuentas y su propia organización.
 
 // El registro de cuentas bajo carga supera los 5 s de espera: este archivo corre en orden.
@@ -123,7 +124,7 @@ test("el Dueño ve a su equipo y cambia a una Comercial a Observadora: al recarg
   test.setTimeout(300_000);
   const { ownerName, ownerEmail, tenantId } = await startOrganization(page, "Roles");
   // Tres personas más para armar un equipo de cinco (no se usan por separado).
-  await addPerson(tenantId, "admin", "Admin Uno");
+  const adminOne = await addPerson(tenantId, "admin", "Admin Uno");
   await addPerson(tenantId, "approver", "Aprobador Uno");
   const sales = await addPerson(tenantId, "sales", "Comercial Uno");
   await addPerson(tenantId, "viewer", "Observador Uno");
@@ -150,8 +151,19 @@ test("el Dueño ve a su equipo y cambia a una Comercial a Observadora: al recarg
   await expect(salesRow.getByTestId("member-joined")).toHaveText(
     `Ingresó el ${formatDate(new Date())}`,
   );
+  // El Dueño tiene botones sobre los cuatro, también sobre el Administrador.
   await expect(page.getByTestId("member-change-role")).toHaveCount(4);
   await expect(page.getByTestId("member-remove")).toHaveCount(4);
+
+  // --- bajar a un Administrador: ANTES de confirmar dice que sus invitaciones pendientes se cancelan ---
+  await openRoleDialog(page, adminOne);
+  await expect(roleDialog(page, adminOne).getByTestId("member-role-demote-note")).toHaveCount(0);
+  await roleDialog(page, adminOne).getByTestId("member-role-option-viewer").click();
+  await expect(roleDialog(page, adminOne).getByTestId("member-role-demote-note")).toHaveText(
+    "Las invitaciones pendientes que envió se cancelarán.",
+  );
+  await page.getByTestId(`member-role-${adminOne.memberId}-cancel`).click();
+  expect((await dbRole(adminOne.memberId)).role).toBe("admin");
   // El formulario de invitar y las invitaciones siguen ahí.
   await expect(page.getByTestId("invite-form")).toBeVisible();
 
@@ -176,8 +188,11 @@ test("el Dueño ve a su equipo y cambia a una Comercial a Observadora: al recarg
 
     // --- cambiar a Observador, con doble clic: se aplica una sola vez ---
     await dialog.getByTestId("member-role-option-viewer").click();
+    await expect(dialog.getByTestId("member-role-demote-note")).toHaveCount(0);
     await page.getByTestId(`member-role-${sales.memberId}-confirm`).dblclick();
     await expect(salesRow.getByTestId("member-role")).toHaveText("Observador");
+    // El foco vuelve al botón «Cambiar rol» de esa fila (no salta al inicio de la página).
+    await expect(salesRow.getByTestId("member-change-role")).toBeFocused();
     await expect(
       page.getByText("El rol ahora es Observador. Se aplica en su siguiente clic."),
     ).toBeVisible();
@@ -280,7 +295,7 @@ test("quitar a alguien con la sesión abierta: su siguiente clic le muestra «No
       "Sus cotizaciones siguen existiendo con su nombre.",
       "Sus borradores quedan solo para leer.",
       "Las invitaciones que envió se cancelan.",
-      "Sus solicitudes asignadas quedan sin responsable.",
+      "Sus solicitudes asignadas quedan esperando que las reasignes.",
     ]) {
       await expect(dialog.getByText(phrase)).toBeVisible();
     }
@@ -296,6 +311,8 @@ test("quitar a alguien con la sesión abierta: su siguiente clic le muestra «No
     await expect(
       page.getByText("La persona salió del equipo. Pierde el acceso en su siguiente clic."),
     ).toBeVisible();
+    // Su fila ya no existe: el foco queda en el título «Miembros», no al inicio de la página.
+    await expect(page.getByRole("heading", { name: "Miembros", level: 2 })).toBeFocused();
 
     // --- en la otra sesión, que seguía abierta, el siguiente clic ya no encuentra nada ---
     await salesPage.getByRole("link", { name: "Clientes", exact: true }).first().click();
@@ -364,7 +381,7 @@ test("quitar a alguien con la sesión abierta: su siguiente clic le muestra «No
   await expect(removed).not.toContainText("@");
 });
 
-test("el Administrador no tiene acciones sobre el Dueño ni sobre sí mismo; los demás roles ven «No tienes permiso»; la ficha del miembro", async ({
+test("el Administrador no tiene acciones sobre el Dueño, sobre sí mismo ni sobre otro Administrador, y no nombra Administradores; los demás roles ven «No tienes permiso»; la ficha del miembro", async ({
   page,
   browser,
   baseURL,
@@ -375,6 +392,7 @@ test("el Administrador no tiene acciones sobre el Dueño ni sobre sí mismo; los
     "Permisos",
   );
   const admin = await addPerson(tenantId, "admin", "Admin Permisos");
+  const otherAdmin = await addPerson(tenantId, "admin", "Otro Admin Permisos");
   const approver = await addPerson(tenantId, "approver", "Aprobador Permisos");
   const sales = await addPerson(tenantId, "sales", "Comercial Permisos");
   const viewer = await addPerson(tenantId, "viewer", "Observador Permisos");
@@ -410,13 +428,13 @@ test("el Administrador no tiene acciones sobre el Dueño ni sobre sí mismo; los
     }
   }
 
-  // --- el Administrador: acciones sobre otros, ninguna sobre el Dueño ni sobre sí mismo ---
+  // --- el Administrador: acciones sobre otros, ninguna sobre el Dueño, sobre sí mismo ni sobre otro Administrador ---
   const adminContext = await newContext(browser, baseURL);
   try {
     const adminPage = await adminContext.newPage();
     await login(adminPage, admin.email, tenantId);
     await adminPage.goto(`/o/${tenantId}/equipo`);
-    await expect(adminPage.getByTestId("member-row")).toHaveCount(5);
+    await expect(adminPage.getByTestId("member-row")).toHaveCount(6);
     const ownerRow = adminPage.getByTestId("member-row").filter({ hasText: ownerEmail });
     await expect(ownerRow.getByTestId("member-role")).toHaveText("Dueño");
     await expect(ownerRow.getByTestId("member-change-role")).toHaveCount(0);
@@ -432,6 +450,19 @@ test("el Administrador no tiene acciones sobre el Dueño ni sobre sí mismo; los
       await expect(rowOf(adminPage, person).getByTestId("member-change-role")).toBeVisible();
       await expect(rowOf(adminPage, person).getByTestId("member-remove")).toBeVisible();
     }
+    const otherAdminRow = rowOf(adminPage, otherAdmin);
+    await expect(otherAdminRow.getByTestId("member-change-role")).toHaveCount(0);
+    await expect(otherAdminRow.getByTestId("member-remove")).toHaveCount(0);
+    await expect(otherAdminRow.getByTestId("member-lock-note")).toHaveText(
+      "Solo el Dueño puede cambiar el rol de un Administrador o quitarlo del equipo.",
+    );
+    // Al cambiar el rol de alguien, el Administrador no ve «Administrador» entre las opciones.
+    await openRoleDialog(adminPage, sales);
+    await expect(roleDialog(adminPage, sales).getByRole("radio")).toHaveCount(3);
+    await expect(roleDialog(adminPage, sales).getByTestId("member-role-option-admin")).toHaveCount(
+      0,
+    );
+    await adminPage.getByTestId(`member-role-${sales.memberId}-cancel`).click();
 
     // --- la ficha del Dueño y la propia: sin botones; las de otros, con ellos ---
     await adminPage.goto(`/o/${tenantId}/equipo/${ownerMemberId}`);
@@ -440,6 +471,11 @@ test("el Administrador no tiene acciones sobre el Dueño ni sobre sí mismo; los
     await expect(adminPage.getByTestId("member-change-role")).toHaveCount(0);
     await adminPage.goto(`/o/${tenantId}/equipo/${admin.memberId}`);
     await expect(adminPage.getByTestId("member-title")).toContainText("(tú)");
+    await expect(adminPage.getByTestId("member-remove")).toHaveCount(0);
+    await adminPage.goto(`/o/${tenantId}/equipo/${otherAdmin.memberId}`);
+    await expect(adminPage.getByTestId("member-title")).toHaveText(otherAdmin.name);
+    await expect(adminPage.getByTestId("member-lock-note")).toContainText("Solo el Dueño");
+    await expect(adminPage.getByTestId("member-change-role")).toHaveCount(0);
     await expect(adminPage.getByTestId("member-remove")).toHaveCount(0);
 
     // --- un miembro de otra organización, un id inventado o uno mal escrito: «No encontrado» ---
@@ -466,12 +502,12 @@ test("el Administrador no tiene acciones sobre el Dueño ni sobre sí mismo; los
     await adminPage.getByTestId("member-remove").click();
     await adminPage.getByTestId(`member-remove-${viewer.memberId}-confirm`).click();
     await expect(adminPage).toHaveURL(new RegExp(`/o/${tenantId}/equipo$`));
-    await expect(adminPage.getByTestId("member-row")).toHaveCount(4);
+    await expect(adminPage.getByTestId("member-row")).toHaveCount(5);
     await expect(rowOf(adminPage, viewer)).toHaveCount(0);
     expect((await dbRole(viewer.memberId)).status).toBe("removed");
 
-    // --- un Administrador puede cambiar el rol de otro: aquí, sube a la Comercial. Primero se captura la petición
-    //     (sin dejarla salir) para repetirla con la sesión de un Aprobador ---
+    // --- un Administrador puede cambiar el rol de quien no maneja el equipo: aquí, la Comercial pasa a Aprobadora.
+    //     Primero se captura la petición (sin dejarla salir) para repetirla con la sesión de un Aprobador ---
     type Replay = { url: string; headers: Record<string, string>; body: Buffer | null };
     let replay: Replay | null = null;
     await adminPage.route("**/*", async (route) => {
@@ -492,7 +528,7 @@ test("el Administrador no tiene acciones sobre el Dueño ni sobre sí mismo; los
       await route.continue();
     });
     await openRoleDialog(adminPage, sales);
-    await roleDialog(adminPage, sales).getByTestId("member-role-option-admin").click();
+    await roleDialog(adminPage, sales).getByTestId("member-role-option-approver").click();
     await adminPage.getByTestId(`member-role-${sales.memberId}-confirm`).click();
     await expect(roleDialog(adminPage, sales)).toContainText("Revisa tu conexión");
     await adminPage.unroute("**/*");
@@ -517,12 +553,14 @@ test("el Administrador no tiene acciones sobre el Dueño ni sobre sí mismo; los
 
     // Con la sesión del Administrador, la misma acción sí se aplica.
     await adminPage.getByTestId(`member-role-${sales.memberId}-confirm`).click();
-    await expect(rowOf(adminPage, sales).getByTestId("member-role")).toHaveText("Administrador");
+    await expect(rowOf(adminPage, sales).getByTestId("member-role")).toHaveText("Aprobador");
   } finally {
     await adminContext.close();
   }
 
-  expect((await dbRole(sales.memberId)).role).toBe("admin");
+  expect((await dbRole(sales.memberId)).role).toBe("approver");
+  // El otro Administrador sigue intacto.
+  expect(await dbRole(otherAdmin.memberId)).toEqual({ role: "admin", status: "active" });
 });
 
 test("en teléfono la lista y los diálogos caben sin desplazarse y con botones de 44 px; sin conexión el aviso sale en el diálogo y no se pierde lo elegido", async ({

@@ -1,6 +1,7 @@
-// H-010 · El «deshacer» de la migración `member_management` hace lo que dice: borra las tres funciones y su ayuda,
-// devuelve `profiles_select` a la regla de antes (solo el nombre de los miembros ACTIVOS) y NO toca a los miembros
-// ya quitados ni a las invitaciones ya canceladas. Se ejecuta el archivo real dentro de una transacción que se
+// H-010 · El «deshacer» de la migración `member_management` hace lo que dice: borra las tres funciones y sus ayudas,
+// devuelve `profiles_select` a la regla de antes (solo el nombre de los miembros ACTIVOS) y `members_select` a la de la
+// migración 2 (todas las filas de la organización activa), y NO toca a los miembros ya quitados ni a las invitaciones
+// ya canceladas. Se ejecuta el archivo real dentro de una transacción que se
 // deshace; el deshacer completo y en orden lo prueba `npm run test:db:rollbacks`.
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -59,15 +60,19 @@ const FUNCTIONS = [
   "public.change_member_role(uuid, text, text)",
   "public.remove_member(uuid, text)",
   "app.cancel_member_invitations(uuid, uuid, uuid)",
+  "app.member_role_change_max_per_hour()",
+  "app.current_tenant_people()",
 ];
 
-/** La definición actual de la política, para compararla antes y después. */
-const policy = async () =>
+/** La definición actual de una política de lectura, para compararla antes y después. */
+const policyOf = async (table: "profiles" | "members") =>
   (
     await db.query<{ qual: string }>(
-      "select qual from pg_policies where schemaname = 'public' and tablename = 'profiles' and policyname = 'profiles_select'",
+      "select qual from pg_policies where schemaname = 'public' and tablename = $1 and policyname = $2",
+      [table, `${table}_select`],
     )
   ).rows[0].qual;
+const policy = () => policyOf("profiles");
 
 describe("el deshacer de member_management", () => {
   it("existe el archivo y cada función de la migración aparece en él", () => {
@@ -83,6 +88,9 @@ describe("el deshacer de member_management", () => {
       await actAsPostgres(db);
       for (const signature of FUNCTIONS) expect(await exists(signature), signature).toBe(true);
       expect(await policy()).not.toContain("'active'");
+      expect(await policy()).toContain("current_tenant_people");
+      // `members_select`: las filas de quien se fue, solo con `team.manage`.
+      expect(await policyOf("members")).toContain("team.manage");
       // Con la migración puesta, las dos funciones bloquean la fila de quien actúa y `profiles` deja solo el nombre.
       for (const fn of ["create_invitation", "resend_invitation"]) {
         expect(await bodyOf(fn), fn).toContain("for share");
@@ -90,7 +98,7 @@ describe("el deshacer de member_management", () => {
       }
       expect(await readableProfileColumns()).toEqual(["full_name", "tenant_id", "user_id"]);
 
-      // Un miembro quitado con su nombre visible (política nueva).
+      // Un miembro quitado con su nombre visible (política nueva), y su fila de `members` oculta al Observador.
       const person = await createUser(db, { meta: { full_name: "Persona Que Se Fue" } });
       await db.query(
         `insert into public.members (tenant_id, user_id, role, status, removed_at, removed_by)
@@ -101,12 +109,17 @@ describe("el deshacer de member_management", () => {
       expect(
         (await db.query("select 1 from public.profiles where user_id = $1", [person.id])).rowCount,
       ).toBe(1);
+      await asUser(db, w.viewer, w.tenantA);
+      expect(
+        (await db.query("select 1 from public.members where user_id = $1", [person.id])).rowCount,
+      ).toBe(0);
       await actAsPostgres(db);
 
       await db.query(down);
 
       for (const signature of FUNCTIONS) expect(await exists(signature), signature).toBe(false);
       expect(await policy()).toContain("'active'");
+      expect(await policyOf("members")).not.toContain("team.manage");
       // `create_invitation` y `resend_invitation` vuelven EXACTAMENTE a como las dejó H-008 (sin el bloqueo nuevo).
       for (const fn of ["create_invitation", "resend_invitation"]) {
         expect(await bodyOf(fn), fn).toBe(originalBody(fn));
@@ -128,6 +141,11 @@ describe("el deshacer de member_management", () => {
       expect(
         (await db.query("select 1 from public.profiles where user_id = $1", [w.sales.id])).rowCount,
       ).toBe(1);
+      // Con la política de antes, el Observador vuelve a ver la fila de quien se fue.
+      await asUser(db, w.viewer, w.tenantA);
+      expect(
+        (await db.query("select 1 from public.members where user_id = $1", [person.id])).rowCount,
+      ).toBe(1);
       await actAsPostgres(db);
       // El miembro quitado sigue quitado.
       const row = await db.query(
@@ -141,10 +159,12 @@ describe("el deshacer de member_management", () => {
     withTx(db, async () => {
       await actAsPostgres(db);
       const before = await policy();
+      const membersBefore = await policyOf("members");
       await db.query(down);
       await db.query(up);
       for (const signature of FUNCTIONS) expect(await exists(signature), signature).toBe(true);
       expect(await policy()).toBe(before);
+      expect(await policyOf("members")).toBe(membersBefore);
       expect(await readableProfileColumns()).toEqual(["full_name", "tenant_id", "user_id"]);
       expect(await bodyOf("create_invitation")).toContain("for share");
     }));

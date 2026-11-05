@@ -22,15 +22,26 @@ vi.mock("next/navigation", () => ({
 vi.mock("sonner", () => ({ toast: { success: mocks.toastSuccess, error: vi.fn() } }));
 
 import { MEMBER_ROLES } from "@/lib/permissions/matrix";
-import { ROLE_OPTIONS, toMemberItem, type MemberItem } from "@/lib/team/members-model";
+import {
+  MEMBERS_HEADING_ID,
+  ROLE_OPTIONS,
+  roleOptionsFor,
+  toMemberItem,
+  type MemberItem,
+} from "@/lib/team/members-model";
 import { MemberActions } from "./member-actions";
 import { MemberList } from "./member-list";
 
 const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 const MEMBER_ID = "22222222-2222-4222-8222-222222222222";
 const roles = [...ROLE_OPTIONS];
+const OWNER = MEMBER_ROLES[0];
+const ADMIN = MEMBER_ROLES[1];
 
-const item = (over: Partial<Parameters<typeof toMemberItem>[0]> = {}): MemberItem =>
+const item = (
+  over: Partial<Parameters<typeof toMemberItem>[0]> = {},
+  viewerRole: string = OWNER,
+): MemberItem =>
   toMemberItem(
     {
       memberId: MEMBER_ID,
@@ -43,6 +54,7 @@ const item = (over: Partial<Parameters<typeof toMemberItem>[0]> = {}): MemberIte
       ...over,
     },
     TENANT_ID,
+    viewerRole,
   );
 
 let host: HTMLDivElement;
@@ -70,12 +82,12 @@ async function click(element: Element | null) {
     element!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
 }
-async function mountList(items: MemberItem[]) {
+async function mountList(items: MemberItem[], options = roles) {
   await act(async () => {
-    root.render(createElement(MemberList, { tenantId: TENANT_ID, items, roles }));
+    root.render(createElement(MemberList, { tenantId: TENANT_ID, items, roles: options }));
   });
 }
-async function mountActions(role: string = MEMBER_ROLES[3]) {
+async function mountActions(role: string = MEMBER_ROLES[3], options = roles) {
   await act(async () => {
     root.render(
       createElement(MemberActions, {
@@ -83,7 +95,7 @@ async function mountActions(role: string = MEMBER_ROLES[3]) {
         memberId: MEMBER_ID,
         memberName: "Juan Pérez",
         role,
-        roles,
+        roles: options,
         canChangeRole: true,
         canRemove: true,
         afterRemovePath: `/o/${TENANT_ID}/equipo`,
@@ -125,6 +137,28 @@ describe("la lista de miembros", () => {
     expect(q("member-lock-note")?.textContent).toContain("No puedes cambiar tu propio rol");
   });
 
+  it("visto por un Administrador, otro Administrador no tiene botones y dice que solo el Dueño puede", async () => {
+    await mountList(
+      [
+        item({ role: ADMIN }, ADMIN),
+        item({ memberId: "44444444-4444-4444-8444-444444444444" }, ADMIN),
+      ],
+      roleOptionsFor(ADMIN),
+    );
+    expect(all("member-change-role")).toHaveLength(1);
+    expect(all("member-remove")).toHaveLength(1);
+    expect(q("member-lock-note")?.textContent).toBe(
+      "Solo el Dueño puede cambiar el rol de un Administrador o quitarlo del equipo.",
+    );
+  });
+
+  it("visto por el Dueño, un Administrador sí tiene botones", async () => {
+    await mountList([item({ role: ADMIN })]);
+    expect(q("member-change-role")).not.toBeNull();
+    expect(q("member-remove")).not.toBeNull();
+    expect(q("member-lock-note")).toBeNull();
+  });
+
   it("varias filas, cada una con sus botones", async () => {
     await mountList([
       item({ role: MEMBER_ROLES[0] }),
@@ -147,6 +181,35 @@ describe("cambiar el rol", () => {
     expect(q<HTMLInputElement>("member-role-option-sales")!.querySelector("input")!.checked).toBe(
       true,
     );
+  });
+
+  it("a un Administrador se le ofrecen solo los roles que no manejan el equipo (sin Administrador)", async () => {
+    await mountActions(MEMBER_ROLES[3], roleOptionsFor(ADMIN));
+    await click(q("member-change-role"));
+    expect(all("member-role-choices")[0].querySelectorAll("label")).toHaveLength(3);
+    expect(q(`member-role-option-${ADMIN}`)).toBeNull();
+  });
+
+  it("al bajar a un Administrador, avisa ANTES de confirmar que sus invitaciones pendientes se cancelan", async () => {
+    await mountActions(ADMIN);
+    await click(q("member-change-role"));
+    // Con el rol actual elegido, no hay aviso.
+    expect(q("member-role-demote-note")).toBeNull();
+    await click(q("member-role-option-viewer")!.querySelector("input"));
+    expect(q("member-role-demote-note")?.textContent).toBe(
+      "Las invitaciones pendientes que envió se cancelarán.",
+    );
+    // Subir o cambiar entre roles que no manejan el equipo no lo muestra.
+    await click(q(`member-role-option-${ADMIN}`)!.querySelector("input"));
+    expect(q("member-role-demote-note")).toBeNull();
+    expect(mocks.changeMemberRoleAction).not.toHaveBeenCalled();
+  });
+
+  it("subir a alguien a Administrador no muestra el aviso", async () => {
+    await mountActions();
+    await click(q("member-change-role"));
+    await click(q(`member-role-option-${ADMIN}`)!.querySelector("input"));
+    expect(q("member-role-demote-note")).toBeNull();
   });
 
   it("elegir el mismo rol no llama a la base y lo explica", async () => {
@@ -177,6 +240,19 @@ describe("cambiar el rol", () => {
       expect.anything(),
     );
     expect(q(`member-role-${MEMBER_ID}-dialog`)).toBeNull();
+  });
+
+  it("tras cambiar el rol (y llegar el rol nuevo), el foco vuelve a «Cambiar rol» de esa fila", async () => {
+    mocks.changeMemberRoleAction.mockResolvedValue({ status: "ok", message: "Listo." });
+    await mountActions();
+    const trigger = q("member-change-role");
+    await click(trigger);
+    await click(q("member-role-option-viewer")!.querySelector("input"));
+    await click(q(`member-role-${MEMBER_ID}-confirm`));
+    // La página se rehace con el rol nuevo: el botón sigue siendo el mismo (no se vuelve a montar).
+    await mountActions(MEMBER_ROLES[4]);
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(q("member-change-role")).toBe(trigger);
   });
 
   it("si la base responde «el rol cambió», el aviso sale en el diálogo y la elección no se pierde", async () => {
@@ -248,7 +324,7 @@ describe("quitar del equipo", () => {
       "Sus cotizaciones siguen existiendo con su nombre.",
       "Sus borradores quedan solo para leer.",
       "Las invitaciones que envió se cancelan.",
-      "Sus solicitudes asignadas quedan sin responsable.",
+      "Sus solicitudes asignadas quedan esperando que las reasignes.",
     ]) {
       expect(consequences).toContain(phrase);
     }
@@ -273,9 +349,17 @@ describe("quitar del equipo", () => {
         }),
       );
     });
+    // El título «Miembros» de la página: ahí vuelve el foco, porque la fila va a desaparecer.
+    const heading = document.createElement("h2");
+    heading.id = MEMBERS_HEADING_ID;
+    heading.tabIndex = -1;
+    document.body.prepend(heading);
     await click(q("member-remove"));
     await click(q(`member-remove-${MEMBER_ID}-confirm`));
-    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    // La lista se refresca recién con el diálogo ya cerrado (si la fila se fuera antes, el foco se perdería).
+    await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
+    expect(q(`member-remove-${MEMBER_ID}-dialog`)).toBeNull();
+    expect(document.activeElement).toBe(heading);
     expect(mocks.push).not.toHaveBeenCalled();
   });
 
@@ -290,6 +374,7 @@ describe("quitar del equipo", () => {
     expect(mocks.removeMemberAction).toHaveBeenCalledWith(TENANT_ID, MEMBER_ID, "sales");
     expect(mocks.toastSuccess).toHaveBeenCalled();
     expect(mocks.push).toHaveBeenCalledWith(`/o/${TENANT_ID}/equipo`);
+    expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
   it("si falla, el aviso queda en el diálogo y no se navega", async () => {

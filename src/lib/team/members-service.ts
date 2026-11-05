@@ -32,6 +32,7 @@ const changedSchema = z.object({
 const removedSchema = z.object({
   result: z.enum(["removed", "already_removed"]),
   cancelled_invitations: z.number().int().optional(),
+  assigned_requests: z.number().int().optional(),
 });
 
 function failure(error: { code?: string | null; message?: string | null }, logName: string) {
@@ -53,6 +54,14 @@ function invitationsNote(count: number | undefined): string {
   return count === 1
     ? " Se canceló 1 invitación que esa persona había enviado."
     : ` Se cancelaron ${count} invitaciones que esa persona había enviado.`;
+}
+
+/** Las solicitudes que quedaron asignadas a quien se fue: no se reasignan solas. */
+function assignedNote(count: number | undefined): string {
+  if (!count) return "";
+  return count === 1
+    ? " Tenía 1 solicitud asignada: queda esperando que la reasignes."
+    : ` Tenía ${count} solicitudes asignadas: quedan esperando que las reasignes.`;
 }
 
 export async function changeMemberRole(
@@ -92,6 +101,6 @@ export async function removeMember(
   }
   return {
     status: "ok",
-    message: `La persona salió del equipo. Pierde el acceso en su siguiente clic.${invitationsNote(parsed.data.cancelled_invitations)}`,
+    message: `La persona salió del equipo. Pierde el acceso en su siguiente clic.${invitationsNote(parsed.data.cancelled_invitations)}${assignedNote(parsed.data.assigned_requests)}`,
   };
 }

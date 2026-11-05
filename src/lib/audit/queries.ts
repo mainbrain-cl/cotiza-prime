@@ -21,7 +21,10 @@ export type AuditEntry = {
   id: number;
   occurredAt: string;
   actorType: "user" | "service" | "system" | "public";
-  /** Nombre de quien lo hizo; `null` si no hay persona o ya no es parte del equipo. */
+  /**
+   * Nombre de quien lo hizo, también si ya no está en el equipo (desde H-010 se lee el nombre de quien tuvo una fila
+   * en `members`); `null` si no hay persona (el sistema, un cliente) o si su perfil no se puede leer.
+   */
   actorName: string | null;
   /**
    * Nombre de la persona del equipo sobre la que se hizo la acción (cuando el recurso es un miembro: cambiarle el rol,
@@ -79,7 +82,8 @@ export function sanitizeAuditFilters(filters: AuditFilters): {
 
 /**
  * Las personas que tienen o tuvieron una fila en el equipo: su nombre (desde H-010 también se lee el de quien ya no
- * está) y de qué persona es cada fila de `members` (el recurso de `member.role_changed` y `member.removed`).
+ * está) y de qué persona es cada fila de `members` (el recurso de `member.role_changed` y `member.removed`). Las filas de
+ * quien se fue solo las entrega `members_select` a quien maneja el equipo; el registro es del Dueño, que lo maneja.
  */
 async function memberDirectory(active: ActiveTenant): Promise<{
   names: Map<string, string>;

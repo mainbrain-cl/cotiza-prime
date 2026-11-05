@@ -119,6 +119,33 @@ describe("cambiar el rol", () => {
     expect(await changeMemberRoleAction(...changeArgs)).toMatchObject({ kind: "target_self" });
   });
 
+  it("un Administrador que intenta nombrar o bajar a un Administrador: «solo el Dueño», sin rehacer la pantalla", async () => {
+    role = MEMBER_ROLES[1];
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "owner_only" } });
+    const result = await changeMemberRoleAction(
+      TENANT_ID,
+      MEMBER_ID,
+      MEMBER_ROLES[1],
+      MEMBER_ROLES[3],
+    );
+    expect(result).toEqual({
+      status: "error",
+      kind: "owner_only",
+      message:
+        "Solo el Dueño puede nombrar Administradores, cambiarles el rol o quitarlos del equipo.",
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+    // Lo esperado no se escribe en el log.
+    expect(logged.join("\n")).not.toContain("member_role_change_failed");
+  });
+
+  it("el tope de cambios de rol por hora tiene su mensaje", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "CP429", message: "limit_role_changes" } });
+    const result = await changeMemberRoleAction(...changeArgs);
+    expect(result).toMatchObject({ status: "error", kind: "rate_limited" });
+    expect(result.message).toContain("muchos cambios de rol en la última hora");
+  });
+
   it("un error desconocido no filtra detalle técnico y deja solo el código en el log", async () => {
     rpc.mockResolvedValue({
       data: null,
@@ -163,8 +190,26 @@ describe("quitar del equipo", () => {
     expect(result.status).toBe("ok");
     expect(result.message).toContain("Pierde el acceso en su siguiente clic.");
     expect(result.message).toContain("Se cancelaron 2 invitaciones");
+    expect(result.message).not.toContain("solicitud");
     // Rehacer la ficha de alguien que ya no está daría «No encontrado» antes de navegar a la lista.
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("dice cuántas solicitudes quedaron asignadas a esa persona, esperando que se reasignen", async () => {
+    rpc.mockResolvedValue({
+      data: { result: "removed", cancelled_invitations: 0, assigned_requests: 1 },
+      error: null,
+    });
+    expect((await removeMemberAction(...removeArgs)).message).toContain(
+      "Tenía 1 solicitud asignada: queda esperando que la reasignes.",
+    );
+    rpc.mockResolvedValue({
+      data: { result: "removed", cancelled_invitations: 0, assigned_requests: 3 },
+      error: null,
+    });
+    expect((await removeMemberAction(...removeArgs)).message).toContain(
+      "Tenía 3 solicitudes asignadas: quedan esperando que las reasignes.",
+    );
   });
 
   it("quitar a alguien que ya no estaba es un «listo» tranquilo", async () => {
@@ -182,6 +227,8 @@ describe("quitar del equipo", () => {
     expect(await removeMemberAction(...removeArgs)).toMatchObject({ kind: "role_changed" });
     rpc.mockResolvedValue({ data: null, error: { code: "CP423", message: "cannot_target_owner" } });
     expect(await removeMemberAction(...removeArgs)).toMatchObject({ kind: "target_owner" });
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "owner_only" } });
+    expect(await removeMemberAction(...removeArgs)).toMatchObject({ kind: "owner_only" });
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 

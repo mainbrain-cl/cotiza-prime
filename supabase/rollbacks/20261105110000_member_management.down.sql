@@ -1,6 +1,7 @@
 -- Deshace 20261105110000_member_management.sql
--- Borra las tres funciones de H-010 y su ayuda, y devuelve `profiles_select` a la regla de antes (solo el nombre de los
--- miembros ACTIVOS). No toca miembros ni invitaciones: lo que ya se quitó o canceló queda así (el estado de `members`
+-- Borra las tres funciones de H-010 y sus ayudas (cancelar invitaciones, el tope de cambios de rol y las personas de la
+-- organización activa), devuelve `profiles_select` a la regla de antes (solo el nombre de los miembros ACTIVOS) y
+-- `members_select` a la de la migración 2 (todas las filas de la organización activa, para cualquier miembro). No toca miembros ni invitaciones: lo que ya se quitó o canceló queda así (el estado de `members`
 -- y de `invitations` es de las historias anteriores). Las filas de auditoría `member.role_changed` y `member.removed`
 -- se conservan (la auditoría es de solo agregar).
 -- Las dos funciones de H-008 vuelven a su definición original (sin el bloqueo de la fila de quien invita).
@@ -178,11 +179,7 @@ end $$;
 -- `profiles` vuelve a conceder `created_at` y `updated_at` (migración 12).
 grant select (created_at, updated_at) on public.profiles to authenticated;
 
-drop function if exists public.remove_member(uuid, text);
-drop function if exists public.change_member_role(uuid, text, text);
-drop function if exists public.list_members();
-drop function if exists app.cancel_member_invitations(uuid, uuid, uuid);
-
+-- Las políticas primero: `profiles_select` usa `app.current_tenant_people()`, que se borra después.
 alter policy profiles_select on public.profiles
   using (
     user_id = (select auth.uid())
@@ -191,3 +188,12 @@ alter policy profiles_select on public.profiles
       where m.tenant_id = (select app.current_tenant_id()) and m.status = 'active'
     )
   );
+alter policy members_select on public.members
+  using (user_id = (select auth.uid()) or tenant_id = (select app.current_tenant_id()));
+
+drop function if exists public.remove_member(uuid, text);
+drop function if exists public.change_member_role(uuid, text, text);
+drop function if exists public.list_members();
+drop function if exists app.cancel_member_invitations(uuid, uuid, uuid);
+drop function if exists app.member_role_change_max_per_hour();
+drop function if exists app.current_tenant_people();

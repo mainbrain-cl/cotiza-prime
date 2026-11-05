@@ -8,18 +8,20 @@ import { ConfirmAction } from "@/components/intake/confirm-action";
 import { Button } from "@/components/ui/button";
 import { OfflineNotice } from "@/components/ui/offline-notice";
 import { changeMemberRoleAction, removeMemberAction } from "@/lib/team/members-actions";
-import type { RoleOption } from "@/lib/team/members-model";
+import { MEMBER_DEMOTE_NOTE, MEMBERS_HEADING_ID, type RoleOption } from "@/lib/team/members-model";
 import { cn } from "@/lib/utils";
 
 const RESULT_TOAST_ID = "member-result";
 const SAME_ROLE_MESSAGE = "Elige un rol distinto del actual.";
+/** El título «Miembros» de la lista: tras quitar a alguien, su fila desaparece y el foco vuelve ahí. */
+const membersHeading = () => document.getElementById(MEMBERS_HEADING_ID);
 
 /** Lo que pasa al quitar a alguien, dicho en simple. La base de datos hace exactamente esto (`remove_member`). */
 const REMOVAL_CONSEQUENCES = [
   "Sus cotizaciones siguen existiendo con su nombre.",
   "Sus borradores quedan solo para leer.",
   "Las invitaciones que envió se cancelan.",
-  "Sus solicitudes asignadas quedan sin responsable.",
+  "Sus solicitudes asignadas quedan esperando que las reasignes.",
   "Para que vuelva, tendrás que invitar de nuevo a esa persona.",
 ];
 
@@ -57,9 +59,8 @@ export function MemberActions({
   return (
     <div className="flex flex-wrap gap-2" data-testid="member-actions">
       {canChangeRole ? (
-        // La clave cambia con el rol: tras un cambio, la elección parte de nuevo desde el rol actual.
+        // Sin `key` por rol: así el botón «Cambiar rol» sigue siendo el mismo tras un cambio y el foco vuelve a él.
         <RoleChanger
-          key={role}
           tenantId={tenantId}
           memberId={memberId}
           memberName={memberName}
@@ -84,11 +85,21 @@ export function MemberActions({
             const result = await removeMemberAction(tenantId, memberId, role);
             if (result.status !== "ok") return result.message;
             toast.success(result.message, { id: RESULT_TOAST_ID });
-            // La ficha de quien se fue ya no existe: se va a la lista. En la lista, se refresca.
+            // La ficha de quien se fue ya no existe: se va a la lista.
             if (afterRemovePath) router.push(afterRemovePath);
-            else router.refresh();
             return null;
           }}
+          // En la lista, la fila (con este botón) va a desaparecer: el foco va al título «Miembros» y recién con el
+          // diálogo ya cerrado se refresca la lista (si la fila se fuera antes, el foco caería al inicio de la página).
+          focusAfterSuccess={afterRemovePath ? undefined : membersHeading}
+          onClosedAfterSuccess={
+            afterRemovePath
+              ? undefined
+              : () => {
+                  membersHeading()?.focus();
+                  router.refresh();
+                }
+          }
         >
           <OfflineNotice />
           <ul
@@ -119,14 +130,16 @@ function RoleChanger({
   roles: RoleOption[];
 }) {
   const [selected, setSelected] = useState(role);
+  // Bajar a alguien de un rol que maneja el equipo cancela sus invitaciones pendientes: se dice ANTES de confirmar.
+  const managesTeam = (value: string) =>
+    roles.find((option) => option.value === value)?.managesTeam ?? false;
+  const demotes = managesTeam(role) && !managesTeam(selected);
   return (
     <ConfirmAction
       testId={`member-role-${memberId}`}
       confirmVariant="primary"
-      // Al cerrar sin confirmar, la elección vuelve al rol actual (no se recuerda lo que se canceló).
-      onOpenChange={(open) => {
-        if (!open) setSelected(role);
-      }}
+      // Al abrir, y al cerrar sin confirmar, la elección parte del rol actual (no se recuerda lo que se canceló).
+      onOpenChange={() => setSelected(role)}
       trigger={
         <Button type="button" variant="secondary" size="sm" data-testid="member-change-role">
           <UserCog aria-hidden />
@@ -146,37 +159,43 @@ function RoleChanger({
       }}
     >
       <OfflineNotice />
-      <fieldset className="flex flex-col gap-2" data-testid="member-role-choices">
-        <legend className="sr-only">Rol nuevo de {memberName}</legend>
-        {roles.map((option) => (
-          <label
-            key={option.value}
-            data-testid={`member-role-option-${option.value}`}
-            className={cn(
-              "flex min-h-11 cursor-pointer items-start gap-3 rounded-md border border-border-strong bg-surface p-3 transition-[border-color,background-color] duration-(--dur-fast) ease-ios hover:bg-surface-2",
-              "has-[:checked]:border-accent has-[:checked]:bg-accent-soft has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/30",
-            )}
-          >
-            <input
-              type="radio"
-              name={`role-${memberId}`}
-              value={option.value}
-              checked={selected === option.value}
-              onChange={() => setSelected(option.value)}
-              className="mt-1 size-4 shrink-0 accent-(--accent)"
-            />
-            <span className="flex min-w-0 flex-col gap-0.5">
-              <span className="font-semibold text-fg">
-                {option.label}
-                {option.value === role ? (
-                  <span className="ml-2 text-xs font-medium text-fg-subtle">(rol actual)</span>
-                ) : null}
+      <div className="flex flex-col">
+        <fieldset className="flex flex-col gap-2" data-testid="member-role-choices">
+          <legend className="sr-only">Rol nuevo de {memberName}</legend>
+          {roles.map((option) => (
+            <label
+              key={option.value}
+              data-testid={`member-role-option-${option.value}`}
+              className={cn(
+                "flex min-h-11 cursor-pointer items-start gap-3 rounded-md border border-border-strong bg-surface p-3 transition-[border-color,background-color] duration-(--dur-fast) ease-ios hover:bg-surface-2",
+                "has-[:checked]:border-accent has-[:checked]:bg-accent-soft has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/30",
+              )}
+            >
+              <input
+                type="radio"
+                name={`role-${memberId}`}
+                value={option.value}
+                checked={selected === option.value}
+                onChange={() => setSelected(option.value)}
+                className="mt-1 size-4 shrink-0 accent-(--accent)"
+              />
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="font-semibold text-fg">
+                  {option.label}
+                  {option.value === role ? (
+                    <span className="ml-2 text-xs font-medium text-fg-subtle">(rol actual)</span>
+                  ) : null}
+                </span>
+                <span className="text-sm text-fg-muted">{option.description}</span>
               </span>
-              <span className="text-sm text-fg-muted">{option.description}</span>
-            </span>
-          </label>
-        ))}
-      </fieldset>
+            </label>
+          ))}
+        </fieldset>
+        {/* Siempre presente (vacío si no aplica) para que el lector de pantalla anuncie el aviso al aparecer. */}
+        <p aria-live="polite" className="text-sm font-medium text-fg not-empty:mt-3">
+          {demotes ? <span data-testid="member-role-demote-note">{MEMBER_DEMOTE_NOTE}</span> : null}
+        </p>
+      </div>
     </ConfirmAction>
   );
 }

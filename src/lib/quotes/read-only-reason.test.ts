@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUTHOR_GONE_MESSAGE, readOnlyReason } from "./read-only-reason";
+import { AUTHOR_GONE_MESSAGE, AUTHOR_UNKNOWN_MESSAGE, readOnlyReason } from "./read-only-reason";
 
 const base = {
   editable: false,
@@ -24,6 +24,14 @@ describe("por qué una cotización queda solo para leer", () => {
     const text = readOnlyReason({ ...base, authorIsActive: false });
     expect(text).toBe(AUTHOR_GONE_MESSAGE);
     expect(text).toBe("Quien armó este borrador ya no está en el equipo; queda solo para leer.");
+    expect(text).not.toContain("María Pérez");
+  });
+
+  it("si no se pudo saber si el autor sigue (la consulta falló), no dice que se fue ni nombra a nadie", () => {
+    const text = readOnlyReason({ ...base, authorIsActive: null });
+    expect(text).toBe(AUTHOR_UNKNOWN_MESSAGE);
+    expect(text).toBe("Solo quien armó este borrador puede editarlo. Tú puedes verlo.");
+    expect(text).not.toBe(AUTHOR_GONE_MESSAGE);
     expect(text).not.toContain("María Pérez");
   });
 

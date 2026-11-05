@@ -149,6 +149,43 @@ describe("unirme", () => {
     expect(accept).not.toHaveBeenCalled();
   });
 
+  it("si el campo no es texto (un archivo con la huella correcta dentro), tampoco acepta", async () => {
+    const code = newInvitationToken();
+    readCode.mockResolvedValue(code);
+    const form = new FormData();
+    form.set(INVITATION_VIEW_FIELD, new Blob([invitationViewFingerprint(code)]), "huella.txt");
+    expect(await redirectOf(() => acceptInvitationAction(form))).toBe(
+      "/invitacion?aviso=invitacion-cambio",
+    );
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  // Cada caso trae la huella CORRECTA cuando puede: lo que se rechaza es que no llegue un formulario.
+  it.each([
+    ["nada", () => undefined],
+    ["null", () => null],
+    ["la huella suelta", (code: string) => invitationViewFingerprint(code)],
+    [
+      "un objeto con el campo",
+      (code: string) => ({ [INVITATION_VIEW_FIELD]: invitationViewFingerprint(code) }),
+    ],
+    [
+      "un objeto con un `get` propio",
+      (code: string) => ({ get: () => invitationViewFingerprint(code) }),
+    ],
+  ] as const)(
+    "llamada desde fuera con %s en vez de un formulario: rechaza igual, sin romperse ni llamar a la base",
+    async (_label, argumentFor) => {
+      const code = newInvitationToken();
+      readCode.mockResolvedValue(code);
+      expect(await redirectOf(() => acceptInvitationAction(argumentFor(code)))).toBe(
+        "/invitacion?aviso=invitacion-cambio",
+      );
+      expect(accept).not.toHaveBeenCalled();
+      expect(clearCode).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["not_found", "revoked", "inviter_inactive", "expired", "used", "archived"] as const)(
     "«%s»: el código ya no sirve y se ofrece salir; la cookie se borra al salir, no antes (si no, el motivo se pierde)",
     async (result) => {

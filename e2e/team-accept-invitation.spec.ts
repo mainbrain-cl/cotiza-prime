@@ -579,7 +579,7 @@ test("«Unirme» acepta la invitación que se mostró: si otra página cambió l
     await page.getByRole("button", { name: "Unirme", exact: true }).click();
     await expect(page).toHaveURL(`${baseURL}/invitacion?aviso=invitacion-cambio`);
     await expect(page.getByTestId("invitation-changed")).toHaveText(
-      "La invitación cambió. Revísala de nuevo antes de unirte.",
+      "Ahora se muestra otra invitación. Revisa a qué organización te unes.",
     );
     // Ahora se muestra la invitación que hay de verdad en la cookie.
     await expect(page.getByTestId("invitation-sentence")).toContainText(otherOrg);

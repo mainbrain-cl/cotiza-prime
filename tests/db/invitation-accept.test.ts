@@ -1374,7 +1374,14 @@ describe("la vista previa es de SOLO LECTURA (corrección I1 de la revisión adv
       const anyone = cases[0].invitee;
       const before = await snapshot(anyone);
       for (const c of cases) {
-        expect(await preview(c.invitee, c.p.tokenSha), c.state).toMatchObject(c.expected);
+        const answer = await preview(c.invitee, c.p.tokenSha);
+        // `ok` y `accepted` traen además los datos de la organización; los demás estados traen SOLO `result`
+        // (un `tenant_id` de más en una cancelada o vencida sería una fuga y debe hacer fallar la prueba).
+        if (c.expected.result === "ok" || c.expected.result === "accepted") {
+          expect(answer, c.state).toMatchObject(c.expected);
+        } else {
+          expect(answer, c.state).toEqual(c.expected);
+        }
       }
       expect(await preview(anyone, randomSha())).toEqual({ result: "not_found" });
       expect(await snapshot(anyone)).toEqual(before);

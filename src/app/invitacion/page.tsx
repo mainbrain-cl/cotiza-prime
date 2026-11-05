@@ -29,6 +29,7 @@ import {
   invitationSentence,
   invitedRole,
   messageForResult,
+  noticeMessage,
 } from "@/lib/team/accept-model";
 import { invitationViewFingerprint } from "@/lib/team/invitation-code";
 import { readInvitationCode } from "@/lib/team/invitation-cookie";
@@ -50,7 +51,7 @@ export const metadata: Metadata = {
  */
 export default async function InvitationPage({ searchParams }: PageProps<"/invitacion">) {
   const { aviso } = await searchParams;
-  const notice = typeof aviso === "string" ? INVITATION_NOTICE_MESSAGES[aviso] : undefined;
+  const notice = noticeMessage(aviso);
   const code = await readInvitationCode();
   const sessionUser = await getOptionalUser();
 

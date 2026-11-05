@@ -34,8 +34,12 @@
 --    el mismo oráculo, por POST). Para la persona invitada nada cambia.
 --    Lo que queda: `not_found` (el código no existe: nunca existió, se reemplazó al reenviar o se borró 30 días
 --    después de vencer o cancelarse) se distingue de `wrong_email`. Sin la fila no se puede saber quién es la
---    persona invitada, así que unirlos le diría «cambia de cuenta» a la invitada de un enlace viejo. Es un bit, y
---    solo sobre un código real que la persona ya tenía.
+--    persona invitada, así que unirlos le diría «cambia de cuenta» a la invitada de un enlace viejo. Solo lo ve
+--    quien ya tenía un código real, pero no es un solo bit: consultando cada día, CUÁNDO pasa a `not_found` dice si
+--    se reenvió, venció, se canceló o (si nunca pasa) se aceptó. Es un límite conocido, anotado en M-2 del
+--    documento del sprint con su arreglo posible; no se corrige aquí.
+--    Para no abrir otra fuga por el tiempo de respuesta, `app.invitation_state` calcula SIEMPRE el vínculo del correo
+--    y compara `accepted_by` antes de mirar el estado: una aceptada no responde `wrong_email` antes que una pendiente.
 --
 -- Consecuencia consciente: la pantalla «Cambia de cuenta para unirte» (correo equivocado) ya NO deja fila en la
 -- auditoría al verse; solo la deja un intento real de aceptar (`accept_invitation`, motivo `wrong_email`).
@@ -55,11 +59,19 @@
 -- El correo se compara con el vínculo que dejó H-008: sha256(huella del código | correo normalizado).
 create or replace function app.invitation_state(i public.invitations, p_user_id uuid, p_email text) returns text
 language plpgsql stable security definer set search_path = '' as $$
+declare
+  -- Quién pregunta, antes que nada, y SIEMPRE las dos comparaciones, sea cual sea el estado: calcular el vínculo
+  -- (normalizar el correo + sha256) solo en las pendientes o canceladas haría que una aceptada respondiera
+  -- `wrong_email` un poco antes, y quien no es la persona invitada podría medir esa diferencia repitiendo la vista
+  -- previa para saber si la invitación ya se aceptó. Se calcula aparte (no dentro de un `and`) para que se calcule
+  -- también cuando el vínculo está vacío.
+  v_binding     text    := app.invitation_binding(i.token_sha256, p_email);
+  v_bind_ok     boolean := i.email_binding is not null and i.email_binding is not distinct from v_binding;
+  v_accepter_ok boolean := i.accepted_by is not distinct from p_user_id;
 begin
-  -- Quién pregunta, antes que nada. Una aceptada ya no guarda el vínculo del correo (se vació al aceptarla): la
-  -- persona es la cuenta que la aceptó.
+  -- Una aceptada ya no guarda el vínculo del correo (se vació al aceptarla): la persona es la cuenta que la aceptó.
   if i.status = 'accepted' then
-    if i.accepted_by is distinct from p_user_id then
+    if not v_accepter_ok then
       return 'wrong_email';
     end if;
     if exists (
@@ -70,7 +82,7 @@ begin
     return 'used';
   end if;
   -- Pendiente o cancelada: el vínculo sigue guardado (`invitations_email_shape`).
-  if i.email_binding is null or i.email_binding is distinct from app.invitation_binding(i.token_sha256, p_email) then
+  if not v_bind_ok then
     return 'wrong_email';
   end if;
   -- Desde aquí, solo la persona invitada.

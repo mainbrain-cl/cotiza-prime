@@ -14,6 +14,7 @@ import {
   INVITATION_NOTICES,
   INVITATION_VIEW_FIELD,
   MISSING_CODE_MESSAGE,
+  invitationViewSchema,
   messageForResult,
 } from "./accept-model";
 import { matchesInvitationView } from "./invitation-code";
@@ -32,13 +33,20 @@ import { clearInvitationCode, readInvitationCode } from "./invitation-cookie";
  * El formulario trae una sola cosa: la huella de la invitación que se MOSTRÓ (`invitationViewFingerprint`, nunca el
  * código). Si la cookie ya tiene otro código —otra página abrió `/invitacion/<otro código>` entre que la persona
  * miró y pulsó—, no se acepta nada, no se llama a la base (no suma un fallo) y se vuelve a mostrar la invitación
- * que hay ahora, con el aviso «La invitación cambió».
+ * que hay ahora, con el aviso «Ahora se muestra otra invitación».
+ *
+ * Una acción de servidor se puede llamar desde fuera con cualquier argumento: si no llega un `FormData`, o el
+ * campo no es texto con la forma de una huella, se rechaza por el mismo camino que una huella que no coincide.
  */
-export async function acceptInvitationAction(formData: FormData): Promise<AcceptState> {
+export async function acceptInvitationAction(formData: unknown): Promise<AcceptState> {
   await requireUser();
   const code = await readInvitationCode();
   if (!code) return { status: "error", message: MISSING_CODE_MESSAGE, dead: true };
-  if (!matchesInvitationView(code, formData.get(INVITATION_VIEW_FIELD))) {
+  const view =
+    formData instanceof FormData
+      ? invitationViewSchema.safeParse(formData.get(INVITATION_VIEW_FIELD))
+      : null;
+  if (!view?.success || !matchesInvitationView(code, view.data)) {
     redirect(`${INVITATION_ACCEPT_PATH}?aviso=${INVITATION_NOTICES.changed}`);
   }
 

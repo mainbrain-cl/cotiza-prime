@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { Browser, BrowserContext, Page } from "@playwright/test";
 import { generateRut } from "../src/lib/chile/rut";
 import { connect } from "../tests/db/helpers";
@@ -65,6 +65,21 @@ async function waitForInviteLink(address: string): Promise<{ link: string; token
 }
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+
+/** Fallos de aceptación que lleva una cuenta (el contador guarda una huella del id de la cuenta). */
+async function failuresOfAccount(db: import("pg").Client, email: string): Promise<number> {
+  const { rows } = await db.query<{ failures: number }>(
+    `select l.failures from public.auth_rate_limits l
+      where l.scope = 'invite_accept_user'
+        and l.key_hash = (select encode(sha256(convert_to('invite_accept_user|' || id::text, 'UTF8')), 'hex')
+                            from auth.users where email = $1)`,
+    [email],
+  );
+  return rows[0]?.failures ?? 0;
+}
+
+const auditRowsOf = async (db: import("pg").Client) =>
+  Number((await db.query<{ n: string }>("select count(*) as n from public.audit_log")).rows[0].n);
 
 async function newContext(browser: Browser, baseURL: string | undefined): Promise<BrowserContext> {
   return browser.newContext({ baseURL, extraHTTPHeaders: { "x-forwarded-for": randomTestIp() } });
@@ -395,6 +410,15 @@ test("con otro correo: se le dice sin mostrar nada de la organización, puede ce
         [tenantId, other],
       );
       expect(member.rowCount).toBe(0);
+      // Corrección I1: ver esta pantalla no deja registro en la auditoría ni suma un fallo a la cuenta
+      // (solo un intento real de aceptar lo haría; aquí no hay botón para aceptar).
+      const denied = await db.query(
+        `select 1 from public.audit_log a join auth.users u on u.id = a.actor_user_id
+          where a.tenant_id = $1 and a.action = 'invitation.accept_denied' and u.email = $2`,
+        [tenantId, other],
+      );
+      expect(denied.rowCount).toBe(0);
+      expect(await failuresOfAccount(db, other)).toBe(0);
     });
 
     // Cierra sesión (el código se conserva) e ingresa con el correo al que llegó.
@@ -415,6 +439,100 @@ test("con otro correo: se le dice sin mostrar nada de la organización, puede ce
       );
       expect(rows).toEqual([{ role: "admin" }]);
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test("mirar una invitación ajena (o códigos inventados) no deja registro, no bloquea y la propia invitación sigue sirviendo; la ventana queda aislada", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(300_000);
+  const mine = uniqueEmail("acepta-victima");
+  const someoneElse = uniqueEmail("acepta-ajena");
+  await createAccount(browser, baseURL, mine, "Persona Visitante");
+  await invite(ownerPage, tenantId, someoneElse, "admin");
+  const foreign = await waitForInviteLink(someoneElse);
+  await invite(ownerPage, tenantId, mine, "viewer");
+  const own = await waitForInviteLink(mine);
+
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    await page.goto("/ingresar");
+    await login(page, mine);
+    await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+
+    const auditBefore = await withDb(auditRowsOf);
+
+    // --- una visita a una invitación AJENA, varias veces (como si otro sitio nos mandara allí) ---
+    for (let n = 0; n < 3; n++) {
+      await page.goto(foreign.link);
+      await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
+        "data-result",
+        "wrong_email",
+      );
+      await page.goto("/invitacion");
+      await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
+        "data-result",
+        "wrong_email",
+      );
+    }
+    // --- y 12 códigos inventados: antes bastaban 11 para dejar a la cuenta bloqueada 10 minutos ---
+    for (let n = 0; n < 12; n++) {
+      await page.goto(`/invitacion/${randomBytes(32).toString("base64url")}`);
+      await expect(page.getByTestId("invitation-unavailable")).toHaveAttribute(
+        "data-result",
+        "not_found",
+      );
+    }
+    await withDb(async (db) => {
+      // Ni una fila nueva en la auditoría (de ninguna organización) ni un fallo en la cuenta.
+      expect(await auditRowsOf(db)).toBe(auditBefore);
+      expect(await failuresOfAccount(db, mine)).toBe(0);
+    });
+
+    // --- la invitación propia sigue sirviendo: no está bloqueada ---
+    await page.goto(own.link);
+    await expect(page.getByTestId("invitation-sentence")).toHaveText(
+      `${OWNER_NAME} te invitó a ${ORG_NAME} como Observador.`,
+    );
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${tenantId}$`));
+    await withDb(async (db) => {
+      const { rows } = await db.query<{ role: string }>(
+        `select m.role from public.members m join auth.users u on u.id = m.user_id
+          where m.tenant_id = $1 and u.email = $2`,
+        [tenantId, mine],
+      );
+      expect(rows).toEqual([{ role: "viewer" }]);
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("la invitación manda Cross-Origin-Opener-Policy: same-origin, en el enlace del correo y en la pantalla", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await newContext(browser, baseURL);
+  try {
+    const page = await context.newPage();
+    const code = randomBytes(32).toString("base64url");
+    // La respuesta del enlace (la redirección) y la de la pantalla a la que lleva.
+    const redirect = await page.request.get(`/invitacion/${code}`, { maxRedirects: 0 });
+    expect(redirect.status()).toBe(303);
+    expect(redirect.headers()["cross-origin-opener-policy"]).toBe("same-origin");
+    const screen = await page.goto("/invitacion");
+    expect(screen?.headers()["cross-origin-opener-policy"]).toBe("same-origin");
+    const viaLink = await page.goto(`/invitacion/${code}`);
+    expect(viaLink?.url()).toBe(`${baseURL}/invitacion`);
+    expect(viaLink?.headers()["cross-origin-opener-policy"]).toBe("same-origin");
+    // El resto de la aplicación no cambia.
+    const signIn = await page.goto("/ingresar");
+    expect(signIn?.headers()["cross-origin-opener-policy"]).toBeUndefined();
   } finally {
     await context.close();
   }

@@ -1165,11 +1165,12 @@ describe("dos conexiones reales a la vez", () => {
           },
           150, // se mantiene la transacción abierta un instante: sin el candado, todas verían «no bloqueada»
         );
+      // Solo `accept_invitation` cuenta fallos y toma el candado; la vista previa ya no (corrección I1).
       const results = await Promise.all([
         run(setup, ACCEPT),
         run(others[0], ACCEPT),
-        run(others[1], PREVIEW),
-        run(others[2], PREVIEW),
+        run(others[1], ACCEPT),
+        run(others[2], ACCEPT),
       ]);
       expect(results.filter((r) => r.result === "wrong_email")).toHaveLength(1);
       expect(results.filter((r) => r.result === "rate_limited")).toHaveLength(3);
@@ -1261,6 +1262,185 @@ describe("solo lectura: un GET de PostgREST no puede probar códigos", () => {
   });
 });
 
+describe("la vista previa es de SOLO LECTURA (corrección I1 de la revisión adversarial)", () => {
+  /** Lo que una visita podría cambiar: toda la auditoría, el contador de fallos de la cuenta y lo de la invitación. */
+  async function snapshot(user: TestUser, invitationId?: string) {
+    await actAsPostgres(setup);
+    const audit = (
+      await setup.query<{ n: string; h: string }>(
+        `select count(*) as n, md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
+           from public.audit_log t`,
+      )
+    ).rows[0];
+    const limits = (
+      await setup.query<{ n: string; h: string }>(
+        `select count(*) as n, md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as h
+           from public.auth_rate_limits t where scope = 'invite_accept_user'`,
+      )
+    ).rows[0];
+    return {
+      auditRows: Number(audit.n),
+      auditHash: audit.h,
+      limitRows: Number(limits.n),
+      limitHash: limits.h,
+      failures: await failuresOf(user),
+      invitation: invitationId ? await rowOf(invitationId) : null,
+      members: await count("select count(*) as n from public.members"),
+    };
+  }
+
+  it("llamarla muchas veces con códigos inventados y con un código ajeno no cambia ninguna tabla", () =>
+    withTx(setup, async () => {
+      const invited = await newPerson();
+      const victim = await newPerson();
+      const p = await inviteAs(w.ownerB, invited.email, "admin", w.tenantB);
+      const before = await snapshot(victim, p.id);
+      for (let n = 0; n < MAX_FAILURES + 5; n++) {
+        expect(await preview(victim, randomSha()), `inventado ${n}`).toEqual({
+          result: "not_found",
+        });
+        expect(await preview(victim, p.tokenSha), `ajeno ${n}`).toEqual({ result: "wrong_email" });
+      }
+      const after = await snapshot(victim, p.id);
+      expect(after).toEqual(before);
+      expect(after.failures).toEqual({ failures: 0, locked: false });
+      // Y la cuenta de la víctima sigue pudiendo aceptar su propia invitación.
+      const own = await inviteAs(w.owner, victim.email, "viewer");
+      expect((await preview(victim, own.tokenSha)).result).toBe("ok");
+      expect((await accept(victim, own.tokenSha)).result).toBe("accepted");
+    }));
+
+  it("sigue respondiendo lo mismo en cada caso: válida, vencida, cancelada, otro correo, usada, código inexistente", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const other = await newPerson();
+      const ok = await inviteAs(w.owner, person.email, "approver");
+      const revoked = await inviteAs(w.owner, `cancelada-${randomUUID().slice(0, 8)}@ejemplo.test`);
+      const expired = await inviteAs(w.owner, `vencida-${randomUUID().slice(0, 8)}@ejemplo.test`);
+      const used = await inviteAs(w.owner, other.email, "viewer");
+      await asUser(setup, w.owner, w.tenantA);
+      await setup.query(REVOKE, [revoked.id]);
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.invitations set expires_at = now() - interval '1 second' where id = $1",
+        [expired.id],
+      );
+      expect((await accept(other, used.tokenSha)).result).toBe("accepted");
+      const before = await snapshot(person);
+      expect(await preview(person, ok.tokenSha)).toMatchObject({
+        result: "ok",
+        tenant_id: w.tenantA,
+        role: "approver",
+        already_member: false,
+      });
+      expect(await preview(person, revoked.tokenSha)).toEqual({ result: "revoked" });
+      expect(await preview(person, expired.tokenSha)).toEqual({ result: "expired" });
+      expect(await preview(person, used.tokenSha)).toEqual({ result: "used" });
+      expect(await preview(person, randomSha())).toEqual({ result: "not_found" });
+      // Otro correo: solo el resultado, sin datos de la organización.
+      const wrong = await preview(other, ok.tokenSha);
+      expect(wrong).toEqual({ result: "wrong_email" });
+      expect(await snapshot(person)).toEqual(before);
+    }));
+
+  it("si la cuenta ya estaba bloqueada, contesta rate_limited sin cambiar el contador", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      for (let n = 1; n <= MAX_FAILURES; n++) await accept(person, randomSha());
+      const before = await snapshot(person, p.id);
+      expect(before.failures).toEqual({ failures: MAX_FAILURES, locked: true });
+      for (let n = 0; n < 5; n++) {
+        expect(await preview(person, p.tokenSha)).toEqual({ result: "rate_limited" });
+        expect(await preview(person, randomSha())).toEqual({ result: "rate_limited" });
+      }
+      expect(await snapshot(person, p.id)).toEqual(before);
+    }));
+
+  it("`accept_invitation` SÍ cuenta el fallo y SÍ audita (código inventado, otro correo), y a los 10 bloquea", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const stranger = await newPerson();
+      const p = await inviteAs(w.ownerB, person.email, "admin", w.tenantB);
+      expect(await accept(stranger, randomSha())).toEqual({ result: "not_found" });
+      expect(await failuresOf(stranger)).toEqual({ failures: 1, locked: false });
+      const auditBefore = await count("select count(*) as n from public.audit_log");
+      expect(await accept(stranger, p.tokenSha)).toEqual({ result: "wrong_email" });
+      expect(await failuresOf(stranger)).toEqual({ failures: 2, locked: false });
+      expect(
+        await count(
+          `select count(*) as n from public.audit_log
+            where action = 'invitation.accept_denied' and tenant_id = $1 and actor_user_id = $2
+              and resource_id = $3 and details = '{"reason": "wrong_email", "step": "accept"}'::jsonb`,
+          [w.tenantB, stranger.id, p.id],
+        ),
+      ).toBe(1);
+      expect(await count("select count(*) as n from public.audit_log")).toBeGreaterThan(
+        auditBefore,
+      );
+      for (let n = 3; n <= MAX_FAILURES; n++) await accept(stranger, randomSha());
+      expect(await failuresOf(stranger)).toEqual({ failures: MAX_FAILURES, locked: true });
+      expect(await accept(stranger, p.tokenSha)).toEqual({ result: "rate_limited" });
+      expect(await preview(stranger, p.tokenSha)).toEqual({ result: "rate_limited" });
+    }));
+
+  it("una aceptación correcta sigue funcionando", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "sales");
+      expect((await preview(person, p.tokenSha)).result).toBe("ok");
+      expect(await accept(person, p.tokenSha)).toMatchObject({
+        result: "accepted",
+        tenant_id: w.tenantA,
+        role: "sales",
+      });
+      expect((await memberOf(w.tenantA, person))?.role).toBe("sales");
+    }));
+
+  it("la función conserva SECURITY DEFINER, `search_path = ''`, no escribe y `anon` no la ejecuta", async () => {
+    await actAsPostgres(setup);
+    const { rows } = await setup.query<{
+      secdef: boolean;
+      cfg: string[];
+      src: string;
+      anon: boolean;
+      pub: boolean;
+      auth: boolean;
+      args: string;
+      returns: string;
+    }>(
+      `select p.prosecdef as secdef, p.proconfig as cfg, p.prosrc as src,
+              has_function_privilege('anon', p.oid, 'execute') as anon,
+              has_function_privilege('public', p.oid, 'execute') as pub,
+              has_function_privilege('authenticated', p.oid, 'execute') as auth,
+              pg_get_function_arguments(p.oid) as args, pg_get_function_result(p.oid) as returns
+         from pg_proc p where p.oid = 'public.invitation_preview(text)'::regprocedure`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      secdef: true,
+      anon: false,
+      pub: false,
+      auth: true,
+      args: "p_token_sha256 text",
+      returns: "jsonb",
+    });
+    expect(rows[0].cfg).toContain('search_path=""');
+    // Nada de escribir: ni contar fallos, ni auditar, ni tomar el candado de conteo.
+    for (const forbidden of [
+      "invitation_accept_fail",
+      "invitation_audit_wrong_email",
+      "write_audit",
+      "pg_advisory",
+      "insert into",
+      "update public",
+      "delete from",
+    ]) {
+      expect(rows[0].src, forbidden).not.toContain(forbidden);
+    }
+  });
+});
+
 describe("la auditoría de quien prueba un código con otro correo (invitation.accept_denied)", () => {
   type AuditRow = {
     action: string;
@@ -1287,9 +1467,10 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
       const stranger = await newPerson();
       const p = await inviteAs(w.ownerB, person.email, "admin", w.tenantB);
       expect((await accept(stranger, p.tokenSha)).result).toBe("wrong_email");
+      // Ver la pantalla («vista previa») NO deja registro: solo intentar aceptar lo deja (corrección I1).
       expect((await preview(stranger, p.tokenSha)).result).toBe("wrong_email");
       const rows = await deniedBy(stranger);
-      expect(rows).toHaveLength(2);
+      expect(rows).toHaveLength(1);
       for (const row of rows) {
         expect(row).toMatchObject({
           result: "denied",
@@ -1298,10 +1479,7 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
           resource_id: p.id,
         });
       }
-      expect(rows.map((r) => r.details)).toEqual([
-        { reason: "wrong_email", step: "accept" },
-        { reason: "wrong_email", step: "preview" },
-      ]);
+      expect(rows.map((r) => r.details)).toEqual([{ reason: "wrong_email", step: "accept" }]);
       const everything = JSON.stringify(rows);
       for (const secret of [person.email, stranger.email, p.tokenSha, "@ejemplo.test"]) {
         expect(everything).not.toContain(secret);

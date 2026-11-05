@@ -39,7 +39,7 @@ async function functionExists(signature: string): Promise<boolean> {
 
 /**
  * Las migraciones POSTERIORES a role_matrix que ya decidieron con `app.can(...)` (las invitaciones del sprint 5,
- * H-008) dependen de esa función: aquí, dentro de la transacción de la prueba, se les quita esa dependencia para
+ * H-008, y la política `members_select` de H-010) dependen de esa función: aquí, dentro de la transacción de la prueba, se les quita esa dependencia para
  * poder deshacer SOLO role_matrix. (El deshacer completo y en orden, que primero deshace las más nuevas, lo
  * prueba `npm run test:db:rollbacks`.)
  */
@@ -48,6 +48,10 @@ async function releaseLaterMigrations(): Promise<void> {
   await db.query(
     `alter policy email_messages_select on public.email_messages
        using (tenant_id = (select app.current_tenant_id()))`,
+  );
+  await db.query(
+    `alter policy members_select on public.members
+       using (user_id = (select auth.uid()) or tenant_id = (select app.current_tenant_id()))`,
   );
 }
 

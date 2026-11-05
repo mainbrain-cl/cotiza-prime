@@ -1,20 +1,29 @@
 import "../tests/support/stub-server-only"; // debe ir primero
 import { randomUUID } from "node:crypto";
+import { generateRut } from "../src/lib/chile/rut";
 import { TENANT_HEADER } from "../src/lib/tenant/constants";
-import { localEnv, rest, rpc } from "../tests/support/local-supabase";
+import { rest, rpc } from "../tests/support/local-supabase";
 import { expect, randomTestIp, test, type Page } from "./fixtures";
+import { TEST_PASSWORD, createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
+import {
+  PRICED_SERVICES,
+  addMember,
+  newPerson,
+  passwordToken,
+  prepareOrgForForms,
+} from "./intake-support";
 
-// H-086: crear mi formulario público (el constructor). Usa las cuentas de la semilla local
-// (`ana` es Dueña y `carla` es Comercial de Negocio Demo 1) y deja sus formularios archivados al final.
+// H-086: crear mi formulario público (el constructor). Arma su propia organización por corrida (una Dueña,
+// «Ana», y una Comercial, «Carla», con el catálogo de precios de la semilla): no depende de `npm run
+// db:seed`, que CI no corre. Deja sus formularios archivados al final.
 // La página pública, el envío y el QR son otras historias y no se prueban aquí.
 
-const SEED_PASSWORD = "Prueba-Cotiza-2026";
 const MOBILE = { width: 375, height: 812 };
 const DESKTOP = { width: 1440, height: 900 };
-/** Precios de la semilla (`scripts/seed.ts`): ninguno puede aparecer en el constructor. */
-const SEED_PRICES = [45000, 280000, 1200, 18000, 6500];
+/** Precios del catálogo de la organización: ninguno puede aparecer en el constructor. */
+const CATALOG_PRICES = PRICED_SERVICES.map((service) => service.price);
 /** Cada monto, entero y con puntos de miles, aislado de otras cifras (`12000` no es `1200`). */
-const SEED_PRICE_PATTERNS = SEED_PRICES.flatMap((amount) => {
+const CATALOG_PRICE_PATTERNS = CATALOG_PRICES.flatMap((amount) => {
   const dotted = String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return [String(amount), dotted].map((text) => ({
     text,
@@ -27,9 +36,9 @@ const MONEY_WORDS =
 /** Hojas de estilo y estilos en línea: ahí `margin` es CSS, no dinero. */
 const STYLE_PARTS = /<style[\s\S]*?<\/style>|\sstyle="[^"]*"/gi;
 
-/** Un texto (HTML o respuesta de una acción) sin ningún monto de la semilla ni palabra de dinero. */
+/** Un texto (HTML o respuesta de una acción) sin ningún monto del catálogo ni palabra de dinero. */
 function expectNoMoney(body: string, where: string) {
-  for (const { text, pattern } of SEED_PRICE_PATTERNS) {
+  for (const { text, pattern } of CATALOG_PRICE_PATTERNS) {
     expect(pattern.test(body), `monto ${text} en ${where}`).toBe(false);
   }
   const bare = body.replace(STYLE_PARTS, " ");
@@ -44,7 +53,7 @@ let pricedCatalogItem: { id: string; tenantId: string; token: string } | null = 
 async function login(page: Page, email: string): Promise<string> {
   await page.goto("/ingresar");
   await page.getByLabel("Correo").fill(email);
-  await page.getByLabel("Contraseña").fill(SEED_PASSWORD);
+  await page.getByLabel("Contraseña").fill(TEST_PASSWORD);
   await page.getByRole("button", { name: "Ingresar" }).click();
   await expect(page).toHaveURL(/\/o\/[0-9a-f-]{36}/);
   return page.url().split("/o/")[1].split(/[/?#]/)[0];
@@ -110,17 +119,6 @@ async function createForm(page: Page, tenantId: string, name: string): Promise<s
   return page.url().split("/formularios/")[1];
 }
 
-async function passwordToken(email: string): Promise<string> {
-  const { apiUrl, publishableKey } = localEnv();
-  const res = await fetch(`${apiUrl}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: { apikey: publishableKey, "content-type": "application/json" },
-    body: JSON.stringify({ email, password: SEED_PASSWORD }),
-  });
-  expect(res.status).toBe(200);
-  return ((await res.json()) as { access_token: string }).access_token;
-}
-
 test.afterEach(async () => {
   // El servicio de catálogo con precio que creó la prueba se desactiva (el catálogo nunca se borra).
   if (!pricedCatalogItem) return;
@@ -147,8 +145,17 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   const actionResponses = collectActionBodies(page);
 
-  // --- Ana entra y llega a Formularios desde el menú ------------------------------------------
-  const tenantId = await login(page, "ana@ejemplo.test");
+  // --- Ana crea su cuenta y su organización; Carla entra como Comercial -------------------------
+  const orgName = `Negocio Fletes ${suffix}`;
+  const anaEmail = uniqueEmail("ana");
+  await signUpAndVerify(page, anaEmail, "Ana Prueba");
+  const tenantId = await createTenant(page, orgName, generateRut());
+  await prepareOrgForForms(anaEmail, tenantId);
+  const carlaPerson = await newPerson(browser, "carla", "Carla Prueba");
+  await carlaPerson.context.close();
+  await addMember({ tenantId }, carlaPerson, "sales");
+
+  // --- Ana llega a Formularios desde el menú ---------------------------------------------------
   await page.getByRole("link", { name: "Formularios" }).first().click();
   await expect(page).toHaveURL(new RegExp(`/o/${tenantId}/formularios$`));
   await expect(page.getByRole("heading", { level: 1, name: "Formularios" })).toBeVisible();
@@ -242,13 +249,13 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   // --- Vista previa con la marca de la organización -------------------------------------------
   const preview = page.getByTestId("form-view");
   await expect(preview).toBeVisible();
-  await expect(preview).toContainText("Negocio Demo 1");
+  await expect(preview).toContainText(orgName);
   await expect(preview).toContainText("Pide tu cotización de flete");
   await expect(preview).toContainText("Cuéntanos qué necesitas");
   await expect(preview).toContainText("Flete urbano");
   await expect(preview).toContainText("Dentro de la Región Metropolitana");
   await expect(preview).toContainText("Teléfono");
-  await expect(preview).toContainText("Tus datos los recibirá Negocio Demo 1");
+  await expect(preview).toContainText(`Tus datos los recibirá ${orgName}`);
   await expect(preview.getByText("Mensaje")).toHaveCount(0);
   await expect(preview).toHaveClass(/customer-light/);
   const brandColor = await preview.evaluate((el) =>
@@ -262,7 +269,7 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await page.getByLabel("Mensaje al enviar (opcional)").fill("Gracias, te respondemos hoy mismo.");
   await page.getByTestId("preview-tab-sent").click();
   const sent = page.getByTestId("success-view");
-  await expect(sent).toContainText("Negocio Demo 1");
+  await expect(sent).toContainText(orgName);
   await expect(sent).toContainText("Gracias, te respondemos hoy mismo.");
   await expect(page.getByTestId("form-view")).toHaveCount(0);
   await page.getByTestId("preview-tab-form").click();
@@ -323,7 +330,7 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
     viewport: DESKTOP,
   });
   const otherPage = await other.newPage();
-  await login(otherPage, "ana@ejemplo.test");
+  await login(otherPage, anaEmail);
   await otherPage.goto(`/o/${tenantId}/formularios/${formId}`);
   await otherPage.getByLabel("Título del formulario").fill("Otro título guardado antes");
   await otherPage.getByTestId("save-form").click();
@@ -375,7 +382,7 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await expect(page.getByTestId("intake-form-row").filter({ hasText: nameOne })).toBeVisible();
 
   // --- Un texto copiado del catálogo con un precio escrito avisa, sin bloquear -----------------
-  const token = await passwordToken("ana@ejemplo.test");
+  const token = await passwordToken(anaEmail);
   const pricedName = `Viaje con precio ${suffix}`;
   const created = await rest(token, "catalog_items", {
     method: "POST",
@@ -435,7 +442,7 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
     viewport: DESKTOP,
   });
   const carla = await carlaContext.newPage();
-  const carlaTenant = await login(carla, "carla@ejemplo.test");
+  const carlaTenant = await login(carla, carlaPerson.email);
   expect(carlaTenant).toBe(tenantId);
   await carla.goto(`/o/${tenantId}/formularios`);
   await expect(carla.getByTestId("intake-form-row").filter({ hasText: nameOne })).toBeVisible();
@@ -464,7 +471,7 @@ test("Ana arma, publica, pausa y regenera su formulario; Carla (Comercial) solo 
   await expect(carla.getByLabel(/^Nombre interno/)).toHaveCount(0);
 
   // y el servidor rechaza su intento directo, sin pasar por la pantalla
-  const carlaToken = await passwordToken("carla@ejemplo.test");
+  const carlaToken = carlaPerson.token;
   const header = { [TENANT_HEADER]: tenantId };
   const attempts: [string, object][] = [
     ["create_intake_form", { p_form_id: randomUUID(), p_name: "Intento de Carla" }],

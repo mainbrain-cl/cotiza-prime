@@ -2,15 +2,17 @@ import "../tests/support/stub-server-only"; // debe ir primero
 import { randomUUID } from "node:crypto";
 import jsQR from "jsqr";
 import sharp from "sharp";
+import { generateRut } from "../src/lib/chile/rut";
 import { TENANT_HEADER } from "../src/lib/tenant/constants";
-import { localEnv, rpc } from "../tests/support/local-supabase";
+import { rpc } from "../tests/support/local-supabase";
 import { expect, randomTestIp, test, type Page } from "./fixtures";
+import { TEST_PASSWORD, createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
+import { addMember, newPerson, passwordToken, prepareOrgForForms } from "./intake-support";
 
-// H-091: descargar el código QR del formulario público. Usa las cuentas de la semilla local (`ana` es
-// Dueña de Negocio Demo 1, `carla` Comercial de la misma, `beto` Dueño de Negocio Demo 2) y deja sus
-// formularios archivados al final. Todo ficticio.
+// H-091: descargar el código QR del formulario público. Arma sus propias organizaciones por corrida
+// («Ana» Dueña de A, «Carla» Comercial de A, «Beto» Dueño de B, con el catálogo de la semilla): no
+// depende de `npm run db:seed`, que CI no corre. Deja sus formularios archivados al final. Todo ficticio.
 
-const SEED_PASSWORD = "Prueba-Cotiza-2026";
 const MOBILE = { width: 375, height: 812 };
 const DESKTOP = { width: 1440, height: 900 };
 const PUBLIC_ID = /[A-Za-z0-9_-]{22}/;
@@ -20,21 +22,10 @@ const created: { token: string; tenantId: string; formId: string }[] = [];
 async function login(page: Page, email: string): Promise<string> {
   await page.goto("/ingresar");
   await page.getByLabel("Correo").fill(email);
-  await page.getByLabel("Contraseña").fill(SEED_PASSWORD);
+  await page.getByLabel("Contraseña").fill(TEST_PASSWORD);
   await page.getByRole("button", { name: "Ingresar" }).click();
   await expect(page).toHaveURL(/\/o\/[0-9a-f-]{36}/);
   return page.url().split("/o/")[1].split(/[/?#]/)[0];
-}
-
-async function passwordToken(email: string): Promise<string> {
-  const { apiUrl, publishableKey } = localEnv();
-  const res = await fetch(`${apiUrl}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: { apikey: publishableKey, "content-type": "application/json" },
-    body: JSON.stringify({ email, password: SEED_PASSWORD }),
-  });
-  expect(res.status).toBe(200);
-  return ((await res.json()) as { access_token: string }).access_token;
 }
 
 async function dismissToasts(page: Page) {
@@ -115,8 +106,22 @@ test("Ana descarga el QR en PNG y SVG; apunta a su formulario, sigue igual en pa
   const baseURL = test.info().project.use.baseURL as string;
   await page.setViewportSize(DESKTOP);
 
-  const tenantId = await login(page, "ana@ejemplo.test");
-  const formId = await createAndPublish(page, tenantId, name, "ana@ejemplo.test");
+  // Ana crea su cuenta y la organización A; Carla es Comercial de A y Beto es Dueño de otra (B)
+  const anaEmail = uniqueEmail("ana");
+  await signUpAndVerify(page, anaEmail, "Ana Prueba");
+  const tenantId = await createTenant(page, `Negocio QR ${suffix}`, generateRut());
+  await prepareOrgForForms(anaEmail, tenantId);
+  const carlaPerson = await newPerson(browser, "carla", "Carla Prueba");
+  await carlaPerson.context.close();
+  await addMember({ tenantId }, carlaPerson, "sales");
+  const betoPerson = await newPerson(browser, "beto", "Beto Prueba");
+  await prepareOrgForForms(
+    betoPerson.email,
+    await createTenant(betoPerson.page, `Negocio Otro ${suffix}`, generateRut()),
+  );
+  await betoPerson.context.close();
+
+  const formId = await createAndPublish(page, tenantId, name, anaEmail);
   const publicId = await publicIdOf(page);
   const link = (await page.getByTestId("public-link").innerText()).trim();
 
@@ -222,7 +227,7 @@ test("Ana descarga el QR en PNG y SVG; apunta a su formulario, sigue igual en pa
     viewport: DESKTOP,
   });
   const carla = await carlaCtx.newPage();
-  const carlaTenant = await login(carla, "carla@ejemplo.test");
+  const carlaTenant = await login(carla, carlaPerson.email);
   expect(carlaTenant).toBe(tenantId);
   await carla.goto(`/o/${tenantId}/formularios/${formId}`);
   await expect(carla.getByTestId("public-link")).toBeVisible();
@@ -244,9 +249,9 @@ test("Ana descarga el QR en PNG y SVG; apunta a su formulario, sigue igual en pa
     viewport: DESKTOP,
   });
   const beto = await betoCtx.newPage();
-  const tenantB = await login(beto, "beto@ejemplo.test");
+  const tenantB = await login(beto, betoPerson.email);
   expect(tenantB).not.toBe(tenantId);
-  const formB = await createAndPublish(beto, tenantB, `QR de B ${suffix}`, "beto@ejemplo.test");
+  const formB = await createAndPublish(beto, tenantB, `QR de B ${suffix}`, betoPerson.email);
   const publicIdB = await publicIdOf(beto);
   // Beto sí puede bajar el suyo
   const own = await beto.request.get(qrUrl(tenantB, formB, "format=png"));

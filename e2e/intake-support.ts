@@ -187,7 +187,44 @@ export async function newOrg(
   return org;
 }
 
-export async function addMember(org: Org, person: Person, role: "admin" | "sales" | "viewer") {
+/** Servicios con precio, los mismos de la semilla (`scripts/seed.ts`): nombre, unidad y monto. */
+export const PRICED_SERVICES = [
+  { name: "Flete urbano", unit: "service", price: 45000 },
+  { name: "Mudanza completa", unit: "day", price: 280000 },
+  { name: "Traslado por kilómetro", unit: "km", price: 1200 },
+  { name: "Instalación técnica", unit: "hour", price: 18000 },
+  { name: "Embalaje de muebles", unit: "unit", price: 6500 },
+] as const;
+
+/**
+ * Deja lista para formularios una organización recién creada por pantalla: correo de contacto (publicar
+ * lo pide) y los servicios con precio en su catálogo. Devuelve el pase de su Dueño.
+ */
+export async function prepareOrgForForms(ownerEmail: string, tenantId: string): Promise<string> {
+  const token = await passwordToken(ownerEmail);
+  const headers = { [TENANT_HEADER]: tenantId, prefer: "return=representation" };
+  const patched = await rest(token, `tenants?tenant_id=eq.${tenantId}`, {
+    method: "PATCH",
+    headers,
+    body: { contact_email: `contacto-${randomUUID().slice(0, 6)}@ejemplo.test` },
+  });
+  // Exige la fila de vuelta: si los permisos la bloquearan, PATCH respondería 200 con [] sin aviso.
+  expect(patched.status, patched.text).toBe(200);
+  expect(JSON.parse(patched.text), patched.text).toHaveLength(1);
+  const catalog = await rest(token, "catalog_items", {
+    method: "POST",
+    headers: { [TENANT_HEADER]: tenantId, prefer: "return=minimal" },
+    body: PRICED_SERVICES.map(({ name, unit, price }) => ({ name, unit, unit_price_clp: price })),
+  });
+  expect(catalog.status, catalog.text).toBeLessThan(300);
+  return token;
+}
+
+export async function addMember(
+  org: Pick<Org, "tenantId">,
+  person: Pick<Person, "userId">,
+  role: "admin" | "sales" | "viewer",
+) {
   await withDb((db) =>
     db.query("insert into public.members (tenant_id, user_id, role) values ($1, $2, $3)", [
       org.tenantId,

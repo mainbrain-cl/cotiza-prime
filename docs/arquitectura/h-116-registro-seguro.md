@@ -1,6 +1,7 @@
 # B1 · Secuestro de cuenta por registro previo — diseño del cierre (historia propuesta H-116, delicada)
 
-> **Estado: diseño del `planificador` (Opus), 2026-11-05. Sin construir.** Nace de la revisión adversarial de H-009 (regla cero de
+> **Estado: diseño del `planificador` (Opus), 2026-11-05, con la revisión adversarial aplicada y las decisiones de Aarón del
+> 2026-11-05 registradas (§6). Sin construir.** Nace de la revisión adversarial de H-009 (regla cero de
 > Aarón, 2026-11-03), que encontró este hallazgo **bloqueante para el piloto**; el hallazgo se reprodujo dos veces (el revisor y la
 > sesión principal). **H-116 es una historia propuesta, todavía no está en `docs/HISTORIAS.md`**: cambia los criterios de H-001 y lo
 > que ve quien se registra, así que la aprueba Aarón (Compuerta 2 de `PROCESO.md`). Por la decisión 020 §5 es delicada y **no se
@@ -14,10 +15,13 @@
    La contraseña, el nombre y la aceptación de términos se piden después de que la persona abre el enlace del correo.
 3. **Segunda defensa en la base de datos.** Una cuenta «sin terminar» no puede crear organizaciones ni aceptar invitaciones. Solo
    se puede terminar desde una sesión que nació del enlace del correo.
-4. **Costo.** Entre 4,5 y 5,5 días, incluido medio día de prueba exploratoria para confirmar cómo se comporta Supabase. Cambia lo
-   que ve quien se registra, así que Aarón tiene que aprobarlo.
-5. **Bloquea el piloto,** junto con una lista de 16 ajustes del Supabase de producción (§5). Parte se puede comprobar con un guion;
-   el resto se revisa a mano en el panel.
+4. **Costo.** Entre 5,5 y 7 días, incluido medio día de prueba exploratoria para confirmar cómo se comporta Supabase (motivos en
+   §3.8). Aarón ya aprobó el cambio de lo que ve quien se registra (§6).
+5. **Bloquea el piloto,** junto con una lista de 17 ajustes del Supabase de producción (§5). Casi todos se comprueban con un guion
+   que usa la API de gestión de Supabase; el resto se revisa a mano en el panel. Si producción tiene el registro abierto, la
+   aplicación bloquea el formulario de registro.
+6. **Cierre del cambio de correo.** La cuenta guarda con qué correo se terminó; si el correo cambia, deja de estar «terminada»
+   (§3.4).
 
 ---
 
@@ -51,6 +55,15 @@ sirviendo.**
 | **(v) Configuración.** «Confirm email» ya está encendido: es la condición del ataque, no lo arregla. «Secure email change» no toca este camino. El captcha de Supabase frena programas, pero no a una persona | — | No basta |
 | **«El último registro gana»** con la llave maestra (que se salta todas las reglas de la base) | Hay carrera. Además invierte el ataque: el atacante se registra después que la víctima, pisa su contraseña y la víctima termina verificando una cuenta con la contraseña del atacante | Descartada |
 
+### ¿Hay una opción más simple?
+
+Sí, y se evaluó: una versión de unos 3 días con solo la primera capa (registro público apagado, pasarela del servidor y guion de
+configuración), **sin** la segunda capa en la base de datos (cuenta «terminada», `amr`, `complete_account_setup`). **Se descarta:**
+toda la defensa quedaría apoyada en que producción tenga el registro apagado. Una producción mal configurada (un interruptor mal
+puesto en el panel, o un cambio futuro) reabriría el ataque completo, sin ninguna segunda barrera, y el guion y la alerta solo
+avisan después. La segunda capa es lo que hace que ese error sea un incidente acotado y no un secuestro de cuentas, y además es la
+que cierra la variante por cambio de correo (§4). El costo extra es de 2 a 4 días (§3.8).
+
 ## 3. Recomendación: opción (i) en tres capas
 
 ### 3.1 Las tres capas
@@ -69,29 +82,35 @@ sirviendo.**
    - El correo sale por nuestra capa de correo (`src/lib/email`) con un enlace a **nuestra** aplicación, armado siempre con
      `APP_ORIGIN` y nunca con la dirección que trae la petición.
 2. **Solo la sesión del enlace puede terminar la cuenta, y la base no deja usar una cuenta sin terminar.**
-   - Nueva columna `profiles.account_ready_at`.
+   - Nuevas columnas `profiles.account_ready_at` y `profiles.account_ready_email` (el correo con el que se terminó la cuenta).
    - Nueva función `complete_account_setup`, que exige que la sesión venga de un enlace del correo.
-   - `create_tenant`, `invitation_preview` y `accept_invitation` exigen cuenta terminada.
+   - `create_tenant`, `invitation_preview` y `accept_invitation` exigen cuenta terminada, y «terminada» solo vale mientras el correo
+     de la cuenta siga siendo el que había al terminarla: **cambiar el correo deja la cuenta sin terminar** y obliga a terminarla de
+     nuevo desde un enlace del correo (cierra la variante del cambio de correo, §4).
    - Por qué basta con esas tres: a los datos de una organización solo se llega siendo miembro, y solo `create_tenant` y
      `accept_invitation` crean membresías. Una cuenta sin terminar no ve ni toca nada de nadie.
 3. **Se vigila la configuración.**
-   - Guion `npm run check:auth-config` que lee la configuración pública de Supabase (`GET /auth/v1/settings`). Falla si el registro
-     está abierto, si la confirmación de correo está apagada o si hay proveedores externos o ingreso anónimo.
+   - Guion `npm run check:auth-config`. `GET /auth/v1/settings` muestra solo una parte de la configuración (no incluye, por ejemplo,
+     el cambio seguro de correo ni el largo del código), así que el guion usa además la API de gestión de Supabase
+     (`/v1/projects/{ref}/config/auth`, con un token de operador que vive solo en la máquina de quien corre el guion, nunca en la
+     aplicación) y verifica casi toda la lista de §5. Falla si algo no coincide.
    - Una prueba que lee `config.toml`.
-   - Una alerta al arrancar en producción (supuesto J5).
+   - Una comprobación al arrancar y cada 5 minutos en producción, con la parte pública (`/auth/v1/settings`): si el registro está
+     abierto, **se bloquea el formulario de registro** (responde «El registro no está disponible por ahora») y se alerta (decisión
+     J5). Si no se puede leer la respuesta, no se bloquea por eso: sin Supabase el registro tampoco funciona.
 
 ### 3.2 Recorridos
 
 | Recorrido | Qué pasa |
 |---|---|
-| **Registro** | `/registro`: correo (más anti-robot, decisión A4) → «Enviarme el enlace». Revisa los topes por IP y por correo → pasarela → correo. La respuesta en pantalla es idéntica exista o no la cuenta |
+| **Registro** | `/registro`: correo (más anti-robot, decisión A4) → «Enviarme el enlace». Revisa los topes por IP y por correo → pasarela → correo. La respuesta en pantalla es idéntica exista o no la cuenta, y el trabajo caro (cambiar la contraseña y enviar el correo) se hace después de responder y con una duración mínima fija (§3.6) |
 | **Verificación** | El enlace abre `/confirmar-correo?token_hash=…&type=invite`. Al abrirla no se gasta el código, porque los antivirus de correo abren los enlaces antes que la persona: la pantalla solo muestra «Continuar». El clic manda un POST: el servidor llama `verifyOtp({ token_hash, type })`, se abre la sesión y la persona va a `/crear-cuenta`. Funciona en otro dispositivo, cosa que hoy no pasa porque el canje actual exige el navegador donde empezó el registro |
-| **Terminar la cuenta (primer ingreso)** | `/crear-cuenta`: nombre, contraseña dos veces y la casilla de términos, con el correo a la vista. El servidor, en este orden: (1) `hasEmailLinkSession()`; (2) `updateUser({ password })`; (3) `signOut({ scope: "others" })`; (4) llama `complete_account_setup`. Luego va a `/invitacion` si hay una invitación guardada en el navegador; si no, a «Crea tu primera organización» |
+| **Terminar la cuenta (primer ingreso)** | `/crear-cuenta`: nombre, contraseña dos veces y la casilla de términos, con el correo a la vista. El servidor, en este orden: (1) `hasEmailLinkSession()`; (2) **validar sin escribir** con `account_setup_preflight` (los mismos chequeos de `complete_account_setup`: `factor_present`, `legal_changed`, nombre); (3) `updateUser({ password })`; (4) `signOut({ scope: "others" })`; (5) llama `complete_account_setup`. Así, si la base va a rechazar, la contraseña no se llega a fijar. Luego va a `/invitacion` si hay una invitación guardada en el navegador; si no, a «Crea tu primera organización» |
 | **Ingreso normal** | Sin cambios. Una cuenta sin terminar no tiene contraseña, así que no entra. La pantalla de ingreso agrega ayuda para ese caso |
 | **Recuperar contraseña** | Sin cambios para cuentas terminadas. Si la cuenta no está terminada, `/auth/recuperar` lleva a `/crear-cuenta` en vez de `/restablecer-contrasena`: un solo lugar fija la primera contraseña |
-| **Cambio de correo** | No hay pantalla todavía (H-109). Requisito anotado para H-109: cerrar las demás sesiones al cambiar el correo y advertir en el correo de confirmación. Hay una variante relacionada, ver §4 |
+| **Cambio de correo** | No hay pantalla todavía (H-109), pero la API de Supabase sí lo permite. Al cambiar el correo la cuenta deja de estar «terminada» (§3.4): la persona debe terminarla de nuevo desde un enlace del correo, con contraseña nueva. Requisito anotado para H-109: cerrar las demás sesiones al cambiar el correo y advertir en el correo de confirmación |
 | **Registro desde una invitación (H-009)** | `/invitacion` → «Crear mi cuenta» → `/registro` con el aviso actual → enlace → «Continuar» → `/crear-cuenta` → `/invitacion` → «Unirme». La cookie de la invitación dura 1 hora; si vence o la persona termina en otro dispositivo, el inicio ya dice «¿Te invitaron? Abre de nuevo el enlace» |
-| **Correo que ya tiene cuenta verificada** | `generateLink` responde «ya existe». No se envía nada (supuesto A2) y la pantalla responde igual que hoy |
+| **Correo que ya tiene cuenta verificada** | `generateLink` responde «ya existe». No se envía nada (decisión A2) y la pantalla responde igual que hoy |
 | **Enlaces de verificación viejos** (enviados antes del cambio) | Siguen llegando a `/auth/callback` durante su hora de vida. De ahí la persona pasa al inicio, y el control de entrada de la sesión la manda a terminar la cuenta |
 
 ### 3.3 Pantallas y textos (español de Chile; Aarón los aprueba)
@@ -121,13 +140,22 @@ sirviendo.**
 
 ### 3.4 Base de datos
 
-Una migración: `supabase/migrations/2026110X100000_account_setup.sql`, con su deshacer en `supabase/rollbacks/` (la fecha se asigna al
-construir: única y posterior a la última de `main`).
+Una migración: `supabase/migrations/<fecha>_account_setup.sql`, con su deshacer en `supabase/rollbacks/`. La fecha se asigna al
+construir: única y **posterior a `20261105100000` (I1, PR #27) y a `20261105110000` (H-010, PR #28)**, y a la última de `main` en ese
+momento (por ejemplo `20261105120000` o más tarde).
 
 - **`profiles.account_ready_at timestamptz`.** Vacía quiere decir «sin terminar». No hace falta tabla nueva: `profiles` ya tiene
   `tenant_id` (la organización de la plataforma). Las personas no reciben permiso para leer ni escribir esta columna, porque la
   lectura de `profiles` es por columnas desde `20261001150000`. No hacen falta índices nuevos: todo se busca por la llave principal.
-- **`app.account_ready(uid)`.** Interna.
+- **`profiles.account_ready_email text`.** El correo (en minúsculas) con el que se terminó la cuenta; la escribe solo
+  `complete_account_setup`. Mismo permiso que la columna anterior: las personas no la leen ni la escriben.
+- **`app.account_ready(uid)`.** Interna. Es verdadera solo si `account_ready_at` no está vacía **y** `account_ready_email` es igual
+  al correo actual de `auth.users` (en minúsculas). Cambiar el correo la vuelve falsa sin tocar nada más. *Por qué:*
+  `accept_invitation` compara con el correo actual de la cuenta (confirmado leyendo el código); sin esto, un atacante termina su
+  propia cuenta (incluso inscribe su segundo factor), pide cambiar el correo al de la víctima, la víctima confirma el cambio
+  esperando un correo de Cotiza, y la cuenta queda con el correo de la víctima, la contraseña del atacante y marcada como terminada.
+- **`public.account_setup_preflight(p_full_name, p_terms_version, p_privacy_version)`.** Solo lectura, para `authenticated`. Hace los
+  chequeos 1 a 6 de `complete_account_setup` sin escribir nada; la usa `/crear-cuenta` antes de fijar la contraseña.
 - **`public.my_account_ready()`.** Solo sobre la cuenta propia; la usa `requireUser`.
 - **`app.session_from_email_link()`.** Lee `auth.jwt() -> 'amr'` y acepta los dos formatos que puede traer esa marca: lista de
   textos o de objetos con `method`. Es verdadera si hay un método de enlace del correo y ninguno `password`. La lista exacta
@@ -140,21 +168,26 @@ construir: única y posterior a la última de `main`).
     2. Que la sesión venga del enlace del correo. Si no, error 42501 y auditoría `account.setup_denied`.
     3. Que el correo esté verificado.
     4. Que la cuenta no tenga ninguna verificación en dos pasos inscrita (`auth.mfa_factors`). Si la tiene, se rechaza con
-       `factor_present` y se audita. En el diseño normal es imposible; solo pasa con la configuración mal puesta.
+       `factor_present` y se audita. En el diseño normal es imposible; solo pasa con la configuración mal puesta o tras un cambio de
+       correo hecho por un atacante (la cuenta queda bloqueada, que es lo seguro; soporte la resuelve, decisión J1).
     5. Nombre de 1 a 120 caracteres, sin caracteres de control.
     6. Versiones de los documentos iguales a las vigentes. Si no, `legal_changed`.
-  - Luego guarda el nombre y las aceptaciones con contexto `signup`, IP (`x-cp-client-ip`) y navegador; pone `account_ready_at` si
-    estaba vacía; y audita `account.setup_completed`.
-  - Repetirla no cambia nada ni falla.
+  - Luego guarda el nombre y las aceptaciones con contexto `signup`, IP (`x-cp-client-ip`) y navegador. **Las aceptaciones de
+    términos y privacidad que ya existieran para esa cuenta se sobrescriben** (no `on conflict do nothing`): si el registro se
+    hubiera abierto por error, la aceptación del atacante no sobrevive y queda la real, con la fecha, IP y navegador de quien
+    termina la cuenta. Pone `account_ready_at` y `account_ready_email` (el correo actual, en minúsculas) y audita
+    `account.setup_completed`.
+  - Repetirla con el mismo correo no cambia nada ni falla; con un correo distinto al guardado vuelve a terminar la cuenta (es el
+    camino tras un cambio de correo).
 - **`app.handle_new_user`.** Se quita la rama que registraba la aceptación desde `raw_user_meta_data.accepted_legal`: esos datos los
   escribe quien crea la cuenta, que puede no ser la persona.
-- **`create_tenant`, `invitation_preview` y `accept_invitation`.** Se agrega `app.account_ready(v_uid)` junto al chequeo de
+- **`create_tenant`, `invitation_preview` y `accept_invitation`.** Se agrega `app.account_ready(v_uid)` (que incluye la comparación del correo) junto al chequeo de
   `email_confirmed_at`. El cuerpo se copia de la **última** migración que define cada una (al construir: `20261001140100` para
   `create_tenant`, y las de H-009 y su corrección I1 para las otras dos). `create_tenant` responde 42501 «Termina de crear tu cuenta
   antes de crear una organización»; las de invitación responden `unverified`, sin resultado nuevo.
 - **Topes.** Se amplía la lista de valores permitidos de `auth_rate_limits.scope` con `signup_email`.
-- **Relleno de datos existentes.** Cuentas ya verificadas y con contraseña pasan a terminadas. Solo afecta la base local, porque no
-  hay producción.
+- **Relleno de datos existentes.** Cuentas ya verificadas y con contraseña pasan a terminadas, con su correo actual en
+  `account_ready_email`. Solo afecta la base local, porque no hay producción.
 
 ### 3.5 Archivos
 
@@ -164,7 +197,10 @@ construir: única y posterior a la última de `main`).
 - `src/lib/auth/signup-service.ts`: arma el enlace y envía el correo.
 - `src/lib/email/account-link.ts`: el correo, con los textos escapados, como `invitation.ts`.
 - `src/app/(auth)/confirmar-correo/` y `src/app/(auth)/crear-cuenta/`: páginas, formularios y acciones.
-- `scripts/check-auth-config.ts`.
+- `scripts/check-auth-config.ts`: lee la configuración pública y la API de gestión de Supabase (token de operador por variable de
+  entorno, solo en `scripts/`).
+- `src/lib/auth/signup-open-guard.ts`: consulta `GET /auth/v1/settings` (con caché de 5 minutos) y bloquea `/registro` y su acción
+  si en producción el registro de Supabase está abierto (J5).
 
 **Se modifican**
 - `src/lib/auth/actions.ts`: `signUpAction` pide solo el correo y nunca llama a `supabase.auth.signUp`. Se agregan
@@ -179,7 +215,9 @@ construir: única y posterior a la última de `main`).
 - `src/lib/security/login-rate-limit.ts`: tope `signup_email`.
 - `next.config.ts`: `/confirmar-correo` con `no-store`, `no-referrer`, `noindex` y `Cross-Origin-Opener-Policy`; `/crear-cuenta` con
   `no-store`.
-- `supabase/config.toml`.
+- `supabase/config.toml`: `[auth] enable_signup = false` y `[auth.email] otp_length = 10`. El enlace equivale a un código de 6
+  dígitos más un correo conocido, y se puede adivinar contra `/auth/v1/verify` (unos 30 intentos por 5 minutos por IP, con
+  códigos nuevos a voluntad del atacante); con 10 dígitos deja de ser práctico. La persona solo ve el enlace, no el código.
 - `eslint.config.mjs`, `tests/isolation/static-guards.test.ts` y el comentario de `src/lib/supabase/admin-client.ts`, para permitir
   la pasarela nueva.
 - `scripts/seed.ts`.
@@ -190,7 +228,9 @@ construir: única y posterior a la última de `main`).
 - Los e2e que llenan `/registro` a mano: `e2e/auth-tenants.spec.ts`, `e2e/team-accept-invitation.spec.ts` y
   `e2e/login-rate-limit.spec.ts`.
 - Documentación: `README.md` (despliegue), `CLAUDE.md` (lista del piloto), `docs/HISTORIAS.md` (H-116 y los criterios de H-001) y
-  `docs/arquitectura/`.
+  `docs/arquitectura/`, incluido `docs/arquitectura/modelo-datos.md` §4.6: la lista de archivos que pueden importar la llave
+  maestra suma `src/lib/auth/signup-gateway.ts` (la pasarela de H-116). Esa entrada ya se agregó en este PR; al construir, la regla
+  de `eslint.config.mjs` y las guardias deben coincidir con ella.
 
 Antes de programar, el agente que construya debe leer la guía de Next que viene en `node_modules/next/dist/docs/`: los parámetros de
 una página y las acciones de servidor cambiaron en esta versión.
@@ -207,6 +247,8 @@ una página y las acciones de servidor cambiaron en esta versión.
   - Doble clic en «Enviarme el enlace»: el botón queda deshabilitado mientras envía y hay un tope de 1 enlace por minuto y 3 por
     hora por correo. Supuestamente cada enlace nuevo anula el anterior (por confirmar).
   - Doble envío de «Crear mi cuenta»: la función es repetible, y el error `same_password` se trata como éxito.
+  - `/resend` de Supabase: sigue abierto con la llave pública y reenvía el correo de una cuenta sin verificar. No crea cuentas ni
+    contraseñas, pero ver el límite de spam en §4.
 - **Datos personales expuestos.**
   - El enlace, su código y `email_otp` nunca van a registros del servidor, auditoría ni `email_messages`; lo vigila una guardia
     estática.
@@ -217,17 +259,27 @@ una página y las acciones de servidor cambiaron en esta versión.
 - **«Login CSRF»** (alguien te hace entrar, sin que lo notes, a una cuenta que es suya). El canje es una acción de servidor y Next
   revisa el origen, pero un enlace del atacante que la víctima abra y luego pulse sigue siendo posible. Se mitiga con el correo en
   grande y «¿No es tu correo? Salir».
-- **Falla a mitad de terminar la cuenta.** La contraseña ya cambió pero la base falló: la persona reintenta y `same_password` sigue
-  adelante.
+- **Falla a mitad de terminar la cuenta.** Los rechazos previsibles de la base (`legal_changed`, `factor_present`, nombre inválido)
+  se detectan antes con `account_setup_preflight`, sin fijar la contraseña, así no queda una cuenta con contraseña y sin terminar.
+  Si aun así falla `complete_account_setup` (por ejemplo, por un cambio de versión de términos justo en ese momento), la persona
+  reintenta y `same_password` sigue adelante.
 - **Sesión de más de 24 h.** Con `secure_password_change`, `updateUser` pide reautenticación. Mensaje: «Tu enlace venció, pide uno
   nuevo».
-- **Revelar si un correo tiene cuenta.** La respuesta en pantalla es la misma en todos los casos.
+- **Revelar si un correo tiene cuenta.** La respuesta en pantalla es la misma en todos los casos. Los **tiempos**, en cambio,
+  podrían delatarla (plausible, no medido): una cuenta sin verificar implica cambiar la contraseña y enviar un correo; una
+  verificada, nada. Mitigación: la acción responde enseguida y hace ese trabajo después de responder (`after()` de Next), con una
+  duración mínima fija de la respuesta (por ejemplo 800 ms) para tapar la diferencia de la llamada a `generateLink`. En la etapa 0
+  se miden los tres casos. **Límite conocido:** el tope por IP y el anti-robot limitan cuántos correos se pueden sondear, pero no lo
+  impiden del todo.
 - **Redondeo.** No aplica.
 
 ### 3.7 Pruebas que deben existir
 
-**Prueba del ataque: `e2e/account-prehijack.spec.ts`.** Debe fallar en `main` hoy y pasar después; ese contraste rojo→verde queda en
-el PR.
+**Prueba del ataque: `e2e/account-prehijack.spec.ts`.** El contraste rojo→verde se demuestra así, porque la prueba nueva, tal cual,
+no fallaría en `main` por el ataque sino porque `/crear-cuenta` no existe. (a) La salida del guion `prehijack.cjs` corrido contra
+`main` queda en el PR como evidencia roja. (b) La prueba aísla el único paso que cambia, la forma en que la víctima verifica y
+fija su contraseña (`victimVerifies()` en `e2e/helpers.ts`); todo lo demás (ataque, invitación, comprobaciones) es idéntico. Con
+el helper antiguo corre en `main` y falla en la comprobación de la contraseña del atacante; con el nuevo pasa.
 
 1. El atacante hace `POST /auth/v1/signup` con la llave pública, el correo E, `Clave-Del-Atacante` y metadatos «Atacante» con
    términos aceptados. Se anota la respuesta, pero no se corta la prueba ahí.
@@ -241,6 +293,12 @@ el PR.
    - las aceptaciones de términos son posteriores a la verificación y traen el navegador de la víctima;
    - `POST /auth/v1/signup` responde 422 `signup_disabled`.
 
+**Variante «cambio de correo».** El atacante termina su propia cuenta (en una de las pruebas, con segundo factor inscrito), pide
+cambiar el correo al de la víctima y la víctima confirma el cambio. Después: `accept_invitation` y `create_tenant` fallan por cuenta
+sin terminar; la contraseña del atacante no sirve para terminarla de nuevo (`complete_account_setup` exige sesión del enlace del
+correo); si había segundo factor del atacante, terminarla se rechaza con `factor_present`; sin él, la víctima la termina con un
+enlace de recuperación y su propia contraseña.
+
 **Variante «registro abierto por error».** El atacante se crea con la llave maestra, con contraseña y sin confirmar, que es lo mismo
 que haría un registro público. Un bucle intenta entrar con su contraseña cada 200 ms durante todo el flujo de la víctima. Ningún
 intento obtiene sesión. Si alguno la obtuviera, `create_tenant`, `accept_invitation` y `complete_account_setup` con ese pase fallan.
@@ -249,6 +307,11 @@ intento obtiene sesión. Si alguno la obtuviera, `create_tenant`, `accept_invita
 - `complete_account_setup` rechaza `amr` de contraseña, sin `amr` y con factor inscrito; acepta un `amr` de enlace del correo;
   repetirla no falla; rechaza versiones viejas.
 - Las tres funciones rechazan una cuenta sin terminar.
+- `app.account_ready` pasa a falso al cambiar el correo en `auth.users`; `accept_invitation` falla tras el cambio de correo; volver a
+  terminar la cuenta desde un enlace del correo la deja lista con el correo nuevo.
+- Aceptación de términos preexistente (la que escribiría un registro abierto por error): `complete_account_setup` la sobrescribe con
+  la real (fecha, IP y navegador de quien termina).
+- `account_setup_preflight` rechaza lo mismo que `complete_account_setup` y no escribe nada.
 - La columna no se puede escribir.
 - `handle_new_user` ya no registra consentimiento; se reescribe la prueba de `tests/db/behavior.test.ts:423`.
 - El relleno y el deshacer.
@@ -256,40 +319,54 @@ intento obtiene sesión. Si alguno la obtuviera, `create_tenant`, `accept_invita
 **Aislamiento**
 - Funciones nuevas en el registro.
 - Ataques nuevos X7 y X8: `/auth/v1/signup` y `/auth/v1/otp` con `create_user` deben ser rechazados.
+- Ataque nuevo X9: `/auth/v1/resend` no puede crear cuentas ni fijar contraseñas (solo reenvía a cuentas existentes).
+- Ataque nuevo X10: cambio de correo seguido de `accept_invitation` debe fallar.
 - Ana, con pase de contraseña, no puede llamar `complete_account_setup`.
 
 **Guardias estáticas**
 - `supabase.auth.signUp(` y `signInWithOtp(` no aparecen en `src/`.
 - La llave maestra en `src/lib/auth/` solo está en la pasarela.
 - La pasarela nunca llama `createUser`, `email_confirm`, `listUsers`, `deleteUser`, `.from(` ni `.rpc(`.
-- `config.toml` tiene `[auth] enable_signup = false`, `enable_confirmations = true`, `double_confirm_changes = true`, sin ingreso
+- `config.toml` tiene `[auth] enable_signup = false`, `enable_confirmations = true`, `double_confirm_changes = true`, `otp_length = 10`, sin ingreso
   anónimo, sin enlace manual de cuentas y sin proveedores externos encendidos.
 
 **Unitarias**
 - Esquemas; mensajes; `hasEmailLinkSession` con cada combinación de `amr`.
-- El orden de `completeAccountSetupAction`: contraseña → cerrar otras sesiones → base.
+- El orden de `completeAccountSetupAction`: validar (`preflight`) → contraseña → cerrar otras sesiones → base; y que un rechazo del
+  `preflight` no llame a `updateUser`.
+- La acción de registro responde con la misma forma y duración mínima en cuenta nueva, sin verificar y verificada (con reloj
+  simulado), y hace el trabajo caro después de responder.
+- `signup-open-guard`: bloquea con registro abierto en producción y no bloquea con registro cerrado.
 - El correo escapa el texto y lleva `APP_ORIGIN`.
-- El guion de configuración, con respuestas simuladas.
+- El guion de configuración, con respuestas simuladas de ambas API (pública y de gestión).
 
 **E2e de regresión**
 - Registro sin invitación y desde invitación, incluido otro dispositivo.
+- `/resend` con la llave pública sobre una cuenta sin verificar: no cambia la contraseña ni crea cuentas.
 - Un GET de antivirus no gasta el enlace.
 - Recuperar contraseña de una cuenta sin terminar lleva a `/crear-cuenta`.
 - Tope por IP y por correo.
 - Móvil a 375 px.
 - Suites completas en local, porque el CI no corre: `test`, `test:db`, `test:isolation`, `test:db:rollbacks`, y luego
-  `npm run db:seed`, `E2E_PROD=1 npx playwright test --project=chromium` y `--project=isolation`.
+  `npm run db:seed`, `E2E_PROD=1 npx playwright test --project=chromium` y `--project=isolation`. Cambiar `signUpAndVerify` toca
+  unos 25 e2e que lo usan.
 
 ### 3.8 Etapas y días
 
 | Etapa | Días |
 |---|---|
 | 0. Prueba exploratoria contra GoTrue local (los 10 puntos de §8) | 0,5 |
-| 1. Migración y pruebas de base de datos | 1 |
-| 2. Pasarela, correo, acciones, pantallas y control de entrada de la sesión | 1,5–2 |
-| 3. E2e, incluida la del ataque; aislamiento; guardias; guion; documentos | 1 |
+| 1. Migración (con la columna del correo y el `preflight`) y pruebas de base de datos | 1–1,25 |
+| 2. Pasarela, correo, acciones, dos pantallas nuevas al estándar premium con su revisión visual, y control de entrada de la sesión | 2–2,5 |
+| 3. E2e (cambio de `signUpAndVerify`, unos 25 e2e) y la del ataque; aislamiento; guardias; guion con API de gestión; documentos; suites completas en local | 1,5–1,75 |
 | 4. Revisión adversarial y correcciones | 0,5–1 |
-| **Total** | **4,5–5,5** |
+| **Total** | **5,5–7** |
+
+**Por qué sube respecto del diseño inicial (4,5–5,5):** (a) hay dos pantallas nuevas, `/confirmar-correo` y `/crear-cuenta`, que
+deben quedar al estándar premium y pasar por la revisión visual de Aarón; (b) cambiar `signUpAndVerify` en `e2e/helpers.ts` toca
+unos 25 e2e; (c) las suites completas se corren en local mientras el CI tenga cuota limitada; (d) la prueba exploratoria de la
+etapa 0 puede cambiar el diseño (§8), y eso se paga en las etapas siguientes; (e) el cierre del cambio de correo (columna,
+`preflight`, pruebas) y el guion con la API de gestión.
 
 Pasa de 2 días. Partirla deja un estado intermedio roto o inseguro: con el control de cuenta terminada pero sin la pantalla de
 terminar, nadie nuevo podría crear organizaciones. Por eso se propone una rama y un PR con commits por etapa (decisión J0).
@@ -300,7 +377,8 @@ terminar, nadie nuevo podría crear organizaciones. Por eso se propone una rama 
 - Un ensayo con `enable_signup = true` en una copia local, para probar la segunda capa.
 - «Login CSRF», antivirus, cabecera `Host`, el código del enlace en registros, los topes por correo e IP.
 - Lectura de `amr` con pases de distintas formas, el relleno, el cambio en `handle_new_user`, el camino viejo de `/auth/callback` y
-  la variante del cambio de correo.
+  la variante del cambio de correo (ahora cerrada por `account_ready_email`; se intenta romper).
+- Tiempos de respuesta del registro, adivinar el código del enlace con `otp_length = 10`, y `/resend`.
 
 ---
 
@@ -308,26 +386,35 @@ terminar, nadie nuevo podría crear organizaciones. Por eso se propone una rama 
 
 - **Correo de la víctima comprometido.** Fuera de alcance: todo se apoya en el correo, igual que recuperar la contraseña. Lo
   atenúan los dos pasos (H-004).
-- **Correos de verificación a terceros (spam).** Ahora solo salen por nuestro formulario: tope por IP, tope por correo y anti-robot
-  (decisión 019). Antes había además la puerta directa de Supabase. Pedir enlaces para un correo ajeno manda mensajes no pedidos y,
-  cada vez, anula el enlace anterior: es una molestia, acotada por el tope por correo. Mientras 019 no se decida, solo hay topes.
+- **Correos de verificación a terceros (spam).** Los correos de **registro** salen por nuestro formulario (tope por IP, tope por
+  correo y anti-robot, decisión 019), pero **no es la única puerta**: `/recover`, `/otp` (para cuentas que ya existen) y `/resend`
+  siguen abiertos con la llave pública de Supabase, y con ella cualquiera puede pedir esos correos para un tercero. Es un
+  comportamiento conocido de Supabase y no se probó aquí. Pedir enlaces para un correo ajeno manda mensajes no pedidos y, cada vez,
+  anula el enlace anterior: es una molestia, acotada por el tope por correo en nuestro formulario y por los límites propios de
+  Supabase en las demás. Hasta que exista el verificador anti-robot real, en local rige `memory` y solo frenan los topes.
 - **Cuentas sin verificar.** Quedan en `auth.users` hasta una limpieza. Hoy guardan nombre y consentimiento falsos; después solo
   guardan el correo. La limpieza (7 días sin verificar, 30 verificadas sin terminar) va en una historia aparte, que depende de la
   decisión pendiente nº 17 (cómo se programan las tareas en producción).
 - **Pase vigente hasta 15 minutos después de cerrar la sesión.** En el diseño normal ya no aplica a B1, pero sí si producción queda
   mal configurada. Es un problema general, que también contradice `SEGURIDAD.md` §1 («cierre efectivo»). Se propone una historia
   aparte: que `app.current_tenant_id()` rechace pases cuyo `session_id` ya no esté en `auth.sessions`.
-- **Variante por cambio de correo (no reproducida).** El atacante, con su propia cuenta, pide cambiar su correo al de la víctima.
-  Con «Secure email change» él confirma su lado y solo falta que la víctima haga clic en «confirma el cambio». Exige engañar a la
-  víctima y el daño queda acotado: la víctima recupera la contraseña y las demás sesiones se cierran. Mitigación: plantilla en
-  español con advertencia. Bloquearlo del todo es la decisión J4.
+- **Variante por cambio de correo: cerrada en este diseño.** Se confirmó leyendo el código que `accept_invitation` compara con el
+  correo actual de la cuenta. El atacante terminaba su cuenta (incluso con segundo factor), pedía cambiar el correo al de la
+  víctima y la víctima, esperando un correo de Cotiza, confirmaba: quedaba una cuenta terminada con el correo de la víctima y la
+  contraseña del atacante. Ahora la cuenta guarda con qué correo se terminó y `app.account_ready` exige que siga igual (§3.4): al
+  cambiar el correo deja de estar terminada y hay que terminarla de nuevo desde un enlace del correo. El riesgo no se acepta: se
+  cierra (decisión J4). Sigue la plantilla en español con advertencia, como aviso adicional. Falta reproducirla en `main` en la
+  etapa 0 (§8, punto 10).
 - **«Login CSRF»** residual: ver §3.6.
 - **H-114, IP falsificable.** Afecta el tope por IP del registro y la IP guardada con el consentimiento.
 - **Que nadie corra el guion de configuración.** Por eso queda en la lista del piloto y como alerta al arrancar.
 
 ## 5. Requisitos de producción y del piloto (Supabase de producción)
 
-Los nombres del panel pueden variar.
+Los nombres del panel pueden variar. `npm run check:auth-config` verifica casi todo lo de esta lista con la API de gestión de
+Supabase (`/v1/projects/{ref}/config/auth`, con un token de operador): los puntos 1 a 8, el 9 en lo que toca a que haya SMTP
+configurado, el 11, el 12 y el 17. Quedan a mano en el panel: SPF, DKIM y DMARC (9), las plantillas (10) y el plan (16). Los
+nombres exactos de los campos de esa API se fijan en la etapa 0.
 
 1. «Allow new users to sign up»: **OFF**.
 2. Proveedor Email: **encendido**, porque es el ingreso con contraseña y la recuperación.
@@ -349,21 +436,27 @@ Los nombres del panel pueden variar.
 14. `npm run check:auth-config` en verde, con la salida guardada.
 15. Cero cuentas sin verificar antes de abrir el piloto.
 16. Protección de contraseñas filtradas si el plan la incluye (decisión de Aarón).
+17. Largo del código de correo (`mailer_otp_length`; `[auth.email] otp_length` en local): **10**. La persona solo ve el enlace; con
+    6 dígitos el código se podría adivinar contra `/auth/v1/verify`.
 
-La lista actual de `CLAUDE.md` y `README.md` («Confirm email ON, Secure email change ON…») se reemplaza por esta.
+La lista actual de `CLAUDE.md` y `README.md` («Confirm email ON, Secure email change ON…») se reemplaza por esta. Si al correr el guion
+el registro de producción está abierto, el guion falla y, además, la aplicación bloquea el formulario de registro (J5).
 
 ## 6. Decisiones
 
 **De Aarón** (producto, proveedores y lo que ve la persona; además, por ser delicada, no se mezcla sin él, decisión 020 §5)
 
-| # | Pregunta | Opciones y costo | Supuesto |
+Todas las de esta tabla quedan como **«decisión por defecto aplicada por Aarón el 2026-11-05»** (reemplaza al supuesto de la
+propuesta).
+
+| # | Pregunta | Opciones y costo | Decisión |
 |---|---|---|---|
-| A1 | ¿Registro en dos pasos? Cambia los criterios de H-001 | (a) Sí: un paso más para quien se registra. (b) No hay forma segura en un solo paso con contraseña | (a) |
-| A2 | Si el correo ya tiene cuenta | (a) No enviar nada, como hoy: quien verificó y no terminó usa «Olvidé mi contraseña». (b) Correo «ya tienes cuenta; entra o recupera»: mejor experiencia, un correo más por intento. (c) Enlace para entrar sin contraseña: más cómodo, pero abre una puerta nueva sin contraseña | (a) |
-| A3 | Proveedor de correo (016) | El correo de registro sale por nuestro proveedor, y Supabase necesita SMTP propio. Ambos bloquean el piloto, como ya lo hacían las invitaciones | Resend, como propone 016 |
-| A4 | ¿Anti-robot en el paso 1? (019) | Sí: con el verificador intercambiable; en local, `memory`. No: el freno queda solo en los topes | Sí |
-| A5 | ¿Registro solo con lista de correos durante el piloto? `PROYECTO.md` §15.3 dice «sin registro abierto al público» | Sí: superficie mínima, pero el equipo da de alta a cada empresa. No: abierto | No (no hace falta para B1) |
-| A6 | Textos de §3.3 | — | Los propuestos |
+| A1 | ¿Registro en dos pasos? Cambia los criterios de H-001 | (a) Sí: un paso más para quien se registra. (b) No hay forma segura en un solo paso con contraseña | **(a) Sí.** Decisión por defecto aplicada por Aarón el 2026-11-05 |
+| A2 | Si el correo ya tiene cuenta | (a) No enviar nada, como hoy: quien verificó y no terminó usa «Olvidé mi contraseña». (b) Correo «ya tienes cuenta; entra o recupera»: mejor experiencia, un correo más por intento. (c) Enlace para entrar sin contraseña: más cómodo, pero abre una puerta nueva sin contraseña | **(a) No enviar nada, como está.** Decisión por defecto aplicada por Aarón el 2026-11-05 |
+| A3 | Proveedor de correo (016) | El correo de registro sale por nuestro proveedor, y Supabase necesita SMTP propio. Ambos bloquean el piloto, como ya lo hacían las invitaciones | **Resend, según la decisión 016.** Decisión por defecto aplicada por Aarón el 2026-11-05. Contratarlo sigue siendo una decisión de dinero aparte |
+| A4 | ¿Anti-robot en el paso 1? (019) | Sí: con el verificador intercambiable; en local, `memory`. No: el freno queda solo en los topes | **Sí** (decisión 019). Decisión por defecto aplicada por Aarón el 2026-11-05 |
+| A5 | ¿Registro solo con lista de correos durante el piloto? `PROYECTO.md` §15.3 dice «sin registro abierto al público» | Sí: superficie mínima, pero el equipo da de alta a cada empresa. No: abierto | **No hace falta** para B1. Decisión por defecto aplicada por Aarón el 2026-11-05 |
+| A6 | Textos de §3.3 | — | **Se aprueban los propuestos;** se revisan en la revisión visual. Decisión por defecto aplicada por Aarón el 2026-11-05 |
 
 **De José** (lo corriente, decisión 020 §1)
 
@@ -373,8 +466,8 @@ La lista actual de `CLAUDE.md` y `README.md` («Confirm email ON, Secure email c
 | J1 | Cuenta con verificación en dos pasos inscrita al terminar | Rechazar y auditar. Costo: soporte manual en un caso que solo pasa con la configuración mal puesta |
 | J2 | Vigencia del enlace y topes | 1 h; 1 enlace por minuto y 3 por hora por correo; por IP, el tope actual |
 | J3 | Limpieza de cuentas sin verificar | Historia aparte antes del lanzamiento (depende de la decisión nº 17) |
-| J4 | Cambio de correo hasta H-109 | Plantilla con advertencia más una prueba que documenta la variante. Bloquearlo con un disparador en `auth.users` es más fuerte, pero frágil |
-| J5 | Configuración insegura detectada al arrancar | Solo alerta, sin impedir el arranque, más el guion obligatorio en la lista del piloto |
+| J4 | Cambio de correo hasta H-109 | **Se cierra, no se acepta el riesgo** (decisión por defecto aplicada por Aarón el 2026-11-05): `profiles.account_ready_email` y `app.account_ready` exigen que el correo siga igual (§3.4), con pruebas y en la estimación. Se mantiene la plantilla con advertencia. Bloquearlo con un disparador en `auth.users` es más fuerte, pero frágil |
+| J5 | Producción con el registro abierto | **Se bloquea el formulario de registro,** no solo se avisa (decisión por defecto aplicada por Aarón el 2026-11-05), más alerta y el guion obligatorio en la lista del piloto (§3.1) |
 | J6 | ¿`supabase config push` para producción? | No: a mano, con el guion. `config.toml` tiene valores solo para local |
 
 ## 7. Qué NO hacer
@@ -383,6 +476,10 @@ La lista actual de `CLAUDE.md` y `README.md` («Confirm email ON, Secure email c
 - Pedir la contraseña «de nuevo» dejando el registro público abierto.
 - «El último registro gana» con la llave maestra.
 - Apagar `[auth.email] enable_signup` en vez de `[auth] enable_signup`.
+- Dejar el código del enlace en 6 dígitos (`otp_length` debe ser 10).
+- Tratar una cuenta como terminada sin comprobar que su correo sigue siendo el de cuando se terminó.
+- Fijar la contraseña antes de validar en la base lo que la base puede rechazar.
+- Responder igual en pantalla pero hacer el trabajo caro antes de responder (delata si el correo tiene cuenta).
 - Usar `generateLink({ type: "signup" })` con contraseña, `createUser({ email_confirm: true })` o `inviteUserByEmail` con su plantilla
   de serie, que deja los datos de la sesión en la parte de la dirección después de `#`, que el servidor no ve.
 - Gastar el código del enlace al abrir la página (GET).
@@ -408,12 +505,15 @@ Todos estos puntos los cierra la prueba exploratoria de la etapa 0, con llamadas
    confirmada responda `email_exists`.
 5. Cuánto vive un enlace de tipo invite (¿`otp_expiry`?).
 6. Si el aviso «tu contraseña cambió» sale al fijar la primera contraseña. Si sale, hay que ajustar el texto de la plantilla.
-7. Qué campos entrega `GET /auth/v1/settings`. Se cree que incluye `disable_signup`, `mailer_autoconfirm` y los proveedores, pero no
-   el cambio seguro de correo.
+7. Qué campos entrega `GET /auth/v1/settings` (se cree que incluye `disable_signup`, `mailer_autoconfirm` y los proveedores, pero no
+   el cambio seguro de correo) y cuáles entrega la API de gestión `/v1/projects/{ref}/config/auth`, con sus nombres exactos.
 8. En el Supabase alojado: el plan que exigen los ganchos de contraseña y los límites de sesión, y la restricción del SMTP de serie.
 9. Si una función de la base puede leer `auth.mfa_factors` en el proyecto alojado, como hoy lee `auth.users`.
 10. Qué hace GoTrue al verificar un invite sobre una cuenta que ya tenía contraseña. La reproducción del revisor solo probó el tipo
-    `signup`. También queda sin reproducir la variante del cambio de correo.
+    `signup`. También queda sin reproducir la variante del cambio de correo
+    (hay que reproducirla en `main` y comprobar que el cierre de §3.4 la detiene).
+11. Que `otp_length = 10` valga para los enlaces de tipo invite y que el enlace siga funcionando con ese largo.
+12. Tiempos de la acción de registro con cuenta nueva, sin verificar y verificada, para fijar la duración mínima de la respuesta.
 
 ---
 

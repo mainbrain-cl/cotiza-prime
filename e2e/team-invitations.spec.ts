@@ -439,11 +439,14 @@ test("el Observador y el Aprobador tampoco ven «Tu equipo»", async ({ page, br
   }
 });
 
-test("si alguien que no es el Dueño invita a un Administrador, el Dueño recibe un aviso sin el correo del invitado", async ({
+test("solo el Dueño invita a un Administrador o reenvía esa invitación: el Administrador no ve la opción ni el botón, y nadie recibe un aviso", async ({
   page,
   browser,
   baseURL,
 }) => {
+  // H-010: antes un Administrador podía invitar a un Administrador y el Dueño recibía un aviso por correo. Ahora solo
+  // el Dueño invita o reenvía a un rol que maneja el equipo (la base responde «owner_only»), así que ese aviso ya no
+  // se genera para invitaciones nuevas. El contenido del aviso sigue probado en invitation-owner-notice.test.ts.
   test.setTimeout(240_000);
   const ownerEmail = uniqueEmail("equipo-aviso-dueno");
   const adminEmail = uniqueEmail("equipo-aviso-admin");
@@ -467,61 +470,59 @@ test("si alguien que no es el Dueño invita a un Administrador, el Dueño recibe
   const notices = async () =>
     (await mailsAll(ownerEmail)).filter((mail) => mail.Subject.includes("invitó a una persona a"));
 
+  // El Dueño invita a un Administrador: sin aviso (ya lo sabe).
+  await page.goto(`/o/${tenantId}/equipo`);
+  await expect(page.getByTestId("invite-role-admin")).toBeVisible();
+  await expect(page.getByTestId("invite-roles-note")).toHaveCount(0);
+  const ownInvitee = uniqueEmail("equipo-aviso-del-dueno");
+  await invite(page, ownInvitee, "admin");
+  await expect(page.getByText(`Enviamos la invitación a ${ownInvitee}.`)).toBeVisible();
+  await waitForMails(ownInvitee, 1);
+  await expect(rowOf(page, ownInvitee).getByTestId("invitation-resend")).toBeVisible();
+
   const adminContext = await newContext(browser, baseURL);
   try {
     const adminPage = await adminContext.newPage();
     await login(adminPage, adminEmail, tenantId);
     await adminPage.goto(`/o/${tenantId}/equipo`);
 
-    // Admin invita a un Comercial: sin aviso.
+    // El Administrador no ve «Administrador» entre los roles para invitar, y la pantalla dice por qué.
+    await expect(adminPage.getByTestId("invite-role-sales")).toBeVisible();
+    await expect(adminPage.getByTestId("invite-role-admin")).toHaveCount(0);
+    await expect(adminPage.getByTestId("invite-roles-note")).toHaveText(
+      "Solo el Dueño puede invitar Administradores.",
+    );
+
+    // En la invitación a Administrador de la Dueña no hay «Reenviar» (sí «Cancelar invitación»).
+    const ownerRow = rowOf(adminPage, ownInvitee);
+    await expect(ownerRow.getByTestId("invitation-resend")).toHaveCount(0);
+    await expect(ownerRow.getByTestId("invitation-resend-locked")).toHaveText(
+      "Solo el Dueño puede reenviar la invitación de un Administrador. Tú puedes cancelarla.",
+    );
+    await expect(ownerRow.getByTestId("invitation-revoke")).toBeVisible();
+
+    // Invitar a un Comercial sigue igual, y su invitación sí se puede reenviar.
     const salesInvitee = uniqueEmail("equipo-aviso-comercial");
     await invite(adminPage, salesInvitee, "sales");
     await expect(adminPage.getByText(`Enviamos la invitación a ${salesInvitee}.`)).toBeVisible();
     await waitForMails(salesInvitee, 1);
-    expect(await notices()).toHaveLength(0);
-
-    // Admin invita a un Administrador: el Dueño recibe el aviso.
-    const adminInvitee = uniqueEmail("equipo-aviso-nuevo-admin");
-    await invite(adminPage, adminInvitee, "admin");
-    await expect(adminPage.getByText(`Enviamos la invitación a ${adminInvitee}.`)).toBeVisible();
-    await waitForMails(adminInvitee, 1);
-    await expect.poll(async () => (await notices()).length, { timeout: 30_000 }).toBe(1);
-    const [notice] = await notices();
-    expect(notice.Subject).toBe(
-      "Admin Aviso invitó a una persona a Equipo Aviso Ltda como Administrador",
-    );
-    for (const body of [notice.Text, notice.HTML]) {
-      expect(body).toContain("Admin Aviso invitó a una persona a Equipo Aviso Ltda");
-      expect(body).toContain("con el rol de Administrador");
-      expect(body).toContain(formatDate(new Date()));
-      // Nada del invitado: ni su correo ni la parte de antes de la arroba.
-      expect(body).not.toContain(adminInvitee);
-      expect(body).not.toContain(adminInvitee.split("@")[0]);
-    }
-    expect(notice.HTML).toContain(`href="${baseURL}/o/${tenantId}/equipo"`);
+    await expect(rowOf(adminPage, salesInvitee).getByTestId("invitation-resend")).toBeVisible();
   } finally {
     await adminContext.close();
   }
 
-  // El Dueño invita a un Administrador: sin aviso (ya lo sabe).
-  await page.goto(`/o/${tenantId}/equipo`);
-  const ownInvitee = uniqueEmail("equipo-aviso-del-dueno");
-  await invite(page, ownInvitee, "admin");
-  await expect(page.getByText(`Enviamos la invitación a ${ownInvitee}.`)).toBeVisible();
-  await waitForMails(ownInvitee, 1);
-  expect(await notices()).toHaveLength(1);
-  // El registro del aviso quedó anotado, una sola vez y enviado.
+  // Ningún aviso al Dueño, y nada quedó anotado para la tarea.
+  expect(await notices()).toHaveLength(0);
   await withDb(async (db) => {
-    const { rows } = await db.query<{ status: string }>(
-      "select status from public.email_messages where tenant_id = $1 and kind = 'invitation_notice'",
+    const { rows } = await db.query<{ n: string }>(
+      "select count(*) as n from public.email_messages where tenant_id = $1 and kind = 'invitation_notice'",
       [tenantId],
     );
-    expect(rows).toEqual([{ status: "sent" }]);
-    // El aviso quedó anotado al invitar: el que correspondía, enviado; los demás, sin aviso.
+    expect(Number(rows[0].n)).toBe(0);
     const states = await db.query<{ owner_notice_state: string }>(
-      "select owner_notice_state from public.invitations where tenant_id = $1 order by owner_notice_state",
+      "select owner_notice_state from public.invitations where tenant_id = $1",
       [tenantId],
     );
-    expect(states.rows.map((r) => r.owner_notice_state)).toEqual(["none", "none", "sent"]);
+    expect(states.rows.map((r) => r.owner_notice_state)).toEqual(["none", "none"]);
   });
 });

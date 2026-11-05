@@ -89,8 +89,11 @@ export function MemberActions({
             if (afterRemovePath) router.push(afterRemovePath);
             return null;
           }}
-          // En la lista, la fila (con este botón) va a desaparecer: el foco va al título «Miembros» y recién con el
-          // diálogo ya cerrado se refresca la lista (si la fila se fuera antes, el foco caería al inicio de la página).
+          // En la lista, la fila (con este botón) va a desaparecer, así que al cerrar el foco va al título «Miembros»
+          // (`focusAfterSuccess`). `removeMemberAction` NO revalida nada, a propósito (desde la ficha, rehacerla daría
+          // «No encontrado» antes de ir a la lista): este `router.refresh()` es lo único que saca la fila de la lista.
+          // Va recién con el diálogo ya cerrado: si la fila desapareciera con el diálogo abierto, el foco caería al
+          // inicio de la página. Antes de refrescar se deja el foco en el título otra vez, por si el cierre lo movió.
           focusAfterSuccess={afterRemovePath ? undefined : membersHeading}
           onClosedAfterSuccess={
             afterRemovePath

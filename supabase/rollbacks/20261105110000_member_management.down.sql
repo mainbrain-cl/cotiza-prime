@@ -1,10 +1,11 @@
 -- Deshace 20261105110000_member_management.sql
--- Borra las tres funciones de H-010 y sus ayudas (cancelar invitaciones, el tope de cambios de rol y las personas de la
--- organización activa), devuelve `profiles_select` a la regla de antes (solo el nombre de los miembros ACTIVOS) y
+-- Borra las tres funciones de H-010 y sus ayudas (cancelar invitaciones, el tope de cambios en el equipo y su conteo,
+-- y las personas de la organización activa), devuelve `profiles_select` a la regla de antes (solo el nombre de los miembros ACTIVOS) y
 -- `members_select` a la de la migración 2 (todas las filas de la organización activa, para cualquier miembro). No toca miembros ni invitaciones: lo que ya se quitó o canceló queda así (el estado de `members`
 -- y de `invitations` es de las historias anteriores). Las filas de auditoría `member.role_changed` y `member.removed`
 -- se conservan (la auditoría es de solo agregar).
--- Las dos funciones de H-008 vuelven a su definición original (sin el bloqueo de la fila de quien invita).
+-- Las dos funciones de H-008 vuelven a su definición original (sin el bloqueo de la fila de quien invita ni la regla
+-- «solo el Dueño invita o reenvía a un rol que maneja el equipo»).
 create or replace function public.create_invitation(
   p_invitation_id uuid, p_email_enc text, p_email_hash text, p_email_binding text, p_token_sha256 text,
   p_role text, p_email_message_id uuid, p_to_email_enc text
@@ -195,5 +196,6 @@ drop function if exists public.remove_member(uuid, text);
 drop function if exists public.change_member_role(uuid, text, text);
 drop function if exists public.list_members();
 drop function if exists app.cancel_member_invitations(uuid, uuid, uuid);
-drop function if exists app.member_role_change_max_per_hour();
+drop function if exists app.member_changes_exhausted(uuid, uuid);
+drop function if exists app.member_change_max_per_hour();
 drop function if exists app.current_tenant_people();

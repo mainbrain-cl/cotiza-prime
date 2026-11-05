@@ -139,11 +139,18 @@ describe("cambiar el rol", () => {
     expect(logged.join("\n")).not.toContain("member_role_change_failed");
   });
 
-  it("el tope de cambios de rol por hora tiene su mensaje", async () => {
-    rpc.mockResolvedValue({ data: null, error: { code: "CP429", message: "limit_role_changes" } });
+  it("el tope de cambios en el equipo por hora tiene su mensaje", async () => {
+    rpc.mockResolvedValue({
+      data: null,
+      error: { code: "CP429", message: "limit_member_changes" },
+    });
     const result = await changeMemberRoleAction(...changeArgs);
     expect(result).toMatchObject({ status: "error", kind: "rate_limited" });
-    expect(result.message).toContain("muchos cambios de rol en la última hora");
+    expect(result.message).toContain("muchos cambios en tu equipo en la última hora");
+    // Quitar suma al mismo tope: mismo mensaje.
+    const removed = await removeMemberAction(...removeArgs);
+    expect(removed).toMatchObject({ status: "error", kind: "rate_limited" });
+    expect(removed.message).toContain("muchos cambios en tu equipo en la última hora");
   });
 
   it("un error desconocido no filtra detalle técnico y deja solo el código en el log", async () => {

@@ -60,7 +60,8 @@ const FUNCTIONS = [
   "public.change_member_role(uuid, text, text)",
   "public.remove_member(uuid, text)",
   "app.cancel_member_invitations(uuid, uuid, uuid)",
-  "app.member_role_change_max_per_hour()",
+  "app.member_change_max_per_hour()",
+  "app.member_changes_exhausted(uuid, uuid)",
   "app.current_tenant_people()",
 ];
 
@@ -91,9 +92,11 @@ describe("el deshacer de member_management", () => {
       expect(await policy()).toContain("current_tenant_people");
       // `members_select`: las filas de quien se fue, solo con `team.manage`.
       expect(await policyOf("members")).toContain("team.manage");
-      // Con la migración puesta, las dos funciones bloquean la fila de quien actúa y `profiles` deja solo el nombre.
+      // Con la migración puesta, las dos funciones bloquean la fila de quien actúa y exigen al Dueño para un rol que
+      // maneja el equipo (`owner_only`), y `profiles` deja solo el nombre.
       for (const fn of ["create_invitation", "resend_invitation"]) {
         expect(await bodyOf(fn), fn).toContain("for share");
+        expect(await bodyOf(fn), fn).toContain("owner_only");
         expect(await bodyOf(fn), fn).not.toBe(originalBody(fn));
       }
       expect(await readableProfileColumns()).toEqual(["full_name", "tenant_id", "user_id"]);
@@ -124,6 +127,7 @@ describe("el deshacer de member_management", () => {
       for (const fn of ["create_invitation", "resend_invitation"]) {
         expect(await bodyOf(fn), fn).toBe(originalBody(fn));
         expect(await bodyOf(fn), fn).not.toContain("for share");
+        expect(await bodyOf(fn), fn).not.toContain("owner_only");
       }
       // `profiles` vuelve a conceder `created_at` y `updated_at` (migración 12).
       expect(await readableProfileColumns()).toEqual([
@@ -166,6 +170,9 @@ describe("el deshacer de member_management", () => {
       expect(await policy()).toBe(before);
       expect(await policyOf("members")).toBe(membersBefore);
       expect(await readableProfileColumns()).toEqual(["full_name", "tenant_id", "user_id"]);
-      expect(await bodyOf("create_invitation")).toContain("for share");
+      for (const fn of ["create_invitation", "resend_invitation"]) {
+        expect(await bodyOf(fn), fn).toContain("for share");
+        expect(await bodyOf(fn), fn).toContain("owner_only");
+      }
     }));
 });

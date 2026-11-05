@@ -80,6 +80,27 @@ async function inviteAs(inviter: TestUser, email: string, role = "sales", tenant
   return p;
 }
 
+/**
+ * Una invitación a Administrador hecha por un Administrador, con el aviso al Dueño anotado, como las que H-008 dejaba
+ * crear antes de H-010. Desde H-010 eso da `owner_only` (solo el Dueño invita a un rol que maneja el equipo), así que
+ * la crea el Dueño y se reescribe, como montaje, quién invitó y el aviso (sin disparadores, solo en esta transacción).
+ */
+async function legacyAdminInvite(email: string) {
+  const p = await inviteAs(w.owner, email, "admin");
+  await actAsPostgres(setup);
+  await setup.query("set local session_replication_role = replica");
+  await setup.query(
+    "update public.invitations set invited_by = $2, owner_notice_state = 'pending' where id = $1",
+    [p.id, w.admin.id],
+  );
+  await setup.query("update public.email_messages set created_by = $2 where invitation_id = $1", [
+    p.id,
+    w.admin.id,
+  ]);
+  await setup.query("set local session_replication_role = origin");
+  return p;
+}
+
 /** Una cuenta nueva con el correo confirmado (o no). Siempre como postgres. */
 async function newPerson(confirmed = true): Promise<TestUser> {
   await actAsPostgres(setup);
@@ -748,8 +769,8 @@ describe("el aviso al Dueño sale aunque la invitación ya esté aceptada", () =
   it("aceptar no borra ni toca las filas `invitation_notice` ni `owner_notice_*`; los correos de la invitación siguen", () =>
     withTx(setup, async () => {
       const person = await newPerson();
-      // Un Administrador invita a otro Administrador: el aviso al Dueño queda anotado como pendiente.
-      const p = await inviteAs(w.admin, person.email, "admin");
+      // Un Administrador invitó a otro Administrador antes de H-010: el aviso al Dueño quedó anotado como pendiente.
+      const p = await legacyAdminInvite(person.email);
       const before = await rowOf(p.id);
       expect(before.owner_notice_state).toBe("pending");
 
@@ -798,7 +819,7 @@ describe("el aviso al Dueño sale aunque la invitación ya esté aceptada", () =
   it("un aviso todavía pendiente (sin reservar) se puede reservar y enviar después de aceptar", () =>
     withTx(setup, async () => {
       const person = await newPerson();
-      const p = await inviteAs(w.admin, person.email, "admin");
+      const p = await legacyAdminInvite(person.email);
       expect((await accept(person, p.tokenSha)).result).toBe("accepted");
       const after = await rowOf(p.id);
       expect(after.owner_notice_state).toBe("pending");

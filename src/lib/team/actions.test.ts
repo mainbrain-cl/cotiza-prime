@@ -286,6 +286,8 @@ describe("invitar", () => {
 
   it.each([
     ["42501", "", NO_PERMISSION_MESSAGE],
+    // H-010: quien no es el Dueño invita a un Administrador (llamando la acción a mano: la pantalla no lo ofrece).
+    ["42501", "owner_only", "Solo el Dueño puede invitar o nombrar Administradores."],
     ["CP429", "limit_user_hour", "Enviaste muchas invitaciones en la última hora"],
     ["CP429", "limit_tenant_day", "máximo de 50 invitaciones por día"],
     ["CP429", "limit_pending", "50 invitaciones pendientes"],
@@ -388,6 +390,18 @@ describe("reenviar", () => {
     expect(result.status).toBe("error");
     expect(result.message).toContain("Cancélala y crea una nueva");
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("reenviar la invitación de un Administrador sin ser el Dueño: la base lo rechaza y se dice por qué, sin enviar nada", async () => {
+    readRow({ id: INVITATION_ID, email_enc: storedEmail(), role: "admin", status: "pending" });
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "owner_only" } });
+    const result = await resendInvitationAction(TENANT_ID, INVITATION_ID);
+    expect(result).toEqual({
+      status: "error",
+      kind: "owner_only",
+      message: "Solo el Dueño puede invitar o nombrar Administradores.",
+    });
+    expect(deliver).not.toHaveBeenCalled();
   });
 
   it("los topes de reenvío se explican", async () => {

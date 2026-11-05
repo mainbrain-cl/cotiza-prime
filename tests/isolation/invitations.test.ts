@@ -4,6 +4,8 @@
 //  3. Nadie, ni el Administrador, lee la huella del código, el vínculo ni la huella del correo.
 //  4. Ninguna persona de A ve invitaciones de B (ni el correo de B), y quien no maneja el equipo no ve ninguna.
 //  5. El correo de la invitación (registro de correos) tampoco se filtra a quien no maneja el equipo.
+//  6. (H-010) Un Administrador no invita Administradores ni redirige, reenviándola con otro vínculo, la invitación a
+//     Administrador del Dueño: «solo el Dueño» (`owner_only`) y nada cambia.
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -339,5 +341,59 @@ describe("Ataque 5 · el registro de correos no filtra el correo de la invitaci�
       },
     );
     expect(res.json).toEqual([]);
+  });
+});
+
+describe("Ataque 6 · un Administrador redirige a un cómplice la invitación a Administrador del Dueño (H-010)", () => {
+  it("Mixta (Administradora de A) no puede invitar a un Administrador ni reenviar con otro vínculo la invitación a Administrador de Ana: «solo el Dueño» y nada cambia", async () => {
+    const fx = fixture();
+    const { buildNewInvitation, buildResend } = await import("@/lib/team/record");
+    const ana = await tokenOf("ana");
+    const mixta = await tokenOf("mixta");
+    const headers = tenantHeader(fx.orgs.A.tenantId);
+
+    // Directo por la API: invitar como Administrador.
+    const direct = buildNewInvitation(
+      fx.orgs.A.tenantId,
+      `complice-${fx.runId}@ejemplo.test`.toLowerCase(),
+      "admin",
+    );
+    const denied = await rpc(mixta, "create_invitation", direct.params, headers);
+    expect(denied.status).toBe(403);
+    expect(codeOf(denied)).toBe("42501");
+    expect((denied.json as { message?: string }).message).toBe("owner_only");
+    expect(await countWhere(db, "invitations", `id = '${direct.invitationId}'`)).toBe(0);
+
+    // La Dueña invita a un Administrador; Mixta intenta reenviarla atada al correo de un cómplice.
+    const owners = buildNewInvitation(
+      fx.orgs.A.tenantId,
+      `admin-de-ana-${fx.runId}@ejemplo.test`.toLowerCase(),
+      "admin",
+    );
+    const created = await rpc(ana, "create_invitation", owners.params, headers);
+    expect(created.status, created.text).toBe(200);
+    try {
+      const before = await fingerprint(db, spec("invitations"));
+      const forged = buildResend(
+        fx.orgs.A.tenantId,
+        owners.invitationId,
+        `complice-${fx.runId}@ejemplo.test`.toLowerCase(),
+      );
+      const resend = await rpc(mixta, "resend_invitation", forged.params, headers);
+      expect(resend.status).toBe(403);
+      expect(codeOf(resend)).toBe("42501");
+      expect((resend.json as { message?: string }).message).toBe("owner_only");
+      expect(await fingerprint(db, spec("invitations"))).toBe(before);
+      expect(await countWhere(db, "email_messages", `id = '${forged.emailMessageId}'`)).toBe(0);
+    } finally {
+      // Se deja la fixture como estaba: Mixta sí puede cancelarla.
+      const cancel = await rpc(
+        mixta,
+        "revoke_invitation",
+        { p_invitation_id: owners.invitationId },
+        headers,
+      );
+      expect(cancel.status, cancel.text).toBe(200);
+    }
   });
 });

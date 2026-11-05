@@ -16,21 +16,34 @@
 --   · `members_select`: las filas de quien ya se fue (con `removed_at` y `removed_by`) solo las lee quien maneja el
 --     equipo; el resto del equipo sigue viendo las filas activas y las propias (sección 8).
 --   · `create_invitation` y `resend_invitation` (H-008) bloquean la fila de miembro de quien invita o reenvía, para
---     que una invitación en curso no escape a la cancelación de `remove_member` / `change_member_role`.
+--     que una invitación en curso no escape a la cancelación de `remove_member` / `change_member_role`, y solo el
+--     Dueño invita o reenvía una invitación con un rol que maneja el equipo (ver abajo).
 --
 -- SOLO EL DUEÑO da o quita un rol que maneja el equipo (decisión por defecto aplicada por Aarón el 2026-11-05): si el
 -- rol actual del miembro o el rol nuevo maneja el equipo (`team.manage`), quien actúa tiene que ser el Dueño (el rol
 -- con `tenant.transfer`). Así un Administrador no puede invitar a alguien como Observador (sin aviso al Dueño) y
 -- después subirlo a Administrador, ni bajar o quitar a otro Administrador.
+-- LO MISMO AL INVITAR (decisión por defecto aplicada por Aarón el 2026-11-05, segunda revisión): solo el Dueño llama
+-- `create_invitation` o `resend_invitation` sobre una invitación cuyo rol maneja el equipo; si no, `42501 owner_only`.
+-- Cierra dos caminos que quedaban abiertos:
+--   (a) `resend_invitation` guarda el vínculo de correo que manda quien llama (sha256 de «huella del código | correo»,
+--       sin secreto). Un Administrador podía llamarla directo sobre una invitación a Administrador hecha por el Dueño,
+--       con el vínculo del correo de un cómplice y un código suyo: el cómplice entraba como Administrador y, como
+--       quien invitó era el Dueño, no se anotaba ningún aviso.
+--   (b) un Administrador podía invitar directo a un Administrador; el aviso al Dueño quedaba solo anotado, y en
+--       producción nadie lo envía mientras no se resuelva la decisión #17 (cómo se programa la tarea de avisos).
+-- Los Administradores siguen invitando, reenviando y cancelando invitaciones con roles que NO manejan el equipo:
+-- redirigir una de esas a otro correo no es peor que invitar directo.
 --
 -- Nadie escribe directo en `members` (sigue sin permisos de escritura para `authenticated`): solo estas funciones,
 -- `create_tenant` y `accept_invitation`.
 --
--- Códigos de error (SQLSTATE) y motivo (el texto del mensaje). Los fallos se LANZAN: el tope de cambios de rol se
--- cuenta en la auditoría (filas de cambios que SÍ se hicieron), así que un fallo no tiene conteo que perder.
+-- Códigos de error (SQLSTATE) y motivo (el texto del mensaje). Los fallos se LANZAN: el tope de cambios en el equipo
+-- se cuenta en la auditoría (filas de cambios que SÍ se hicieron), así que un fallo no tiene conteo que perder.
 --   42501  forbidden                   no maneja el equipo (o dejó de manejarlo mientras esperaba el candado)
 --   42501  owner_only                  el miembro tiene, o recibiría, un rol que maneja el equipo y quien actúa no es
---                                      el Dueño
+--                                      el Dueño (en `create_invitation` / `resend_invitation`: el rol de la
+--                                      invitación maneja el equipo y quien invita o reenvía no es el Dueño)
 --   CP404  not_found                   no es miembro de la organización activa (o no hay organización activa)
 --   CP404  member_not_found            ese miembro no existe en ESTA organización (o ya no está activo, al cambiar su rol)
 --   CP409  role_changed                el rol del miembro cambió desde que la persona abrió la pantalla
@@ -38,8 +51,8 @@
 --   CP422  invalid_role                el rol nuevo no existe o no se puede dar (el Dueño no se asigna jamás)
 --   CP423  cannot_target_owner         nadie toca al Dueño (el traspaso es otra historia, H-111)
 --   CP423  cannot_target_self          nadie se cambia el rol ni se quita a sí mismo
---   CP429  limit_role_changes          quien actúa ya hizo `app.member_role_change_max_per_hour()` cambios de rol en
---                                      esta organización en la última hora
+--   CP429  limit_member_changes        quien actúa ya hizo `app.member_change_max_per_hour()` cambios en esta
+--                                      organización en la última hora (cambios de rol y quitadas, sumados)
 -- Resultados (no son error): changed · unchanged (ya tenía ese rol) · removed (con `assigned_requests`: cuántas
 -- solicitudes quedaron asignadas a esa persona, esperando que alguien las reasigne) · already_removed.
 --
@@ -53,11 +66,15 @@
 --      actúa sigue activo y sigue manejando el equipo (el Dueño quita a un Administrador mientras este quita a otra
 --      persona: gana el primero)
 --   7. ¿es el Dueño?                                 → CP423 cannot_target_owner
---   8. ¿el rol actual (o el nuevo) maneja el equipo y quien actúa no es el Dueño?  → 42501 owner_only
+--   8. ¿ya está hecho?  ya tenía ese rol → `unchanged` · ya estaba quitado → `already_removed` (sin cambios ni
+--      registro). Va ANTES de `owner_only`, para que una pantalla vieja reciba el mensaje cierto. No revela nada: quien
+--      llega aquí sigue manejando el equipo de ESTA organización (comprobado sobre su fila ya bloqueada), así que ya ve
+--      los roles en `list_members()` y las filas de quien se fue en `members`; y no cambia nada.
+--   9. ¿el rol actual (o el nuevo) maneja el equipo y quien actúa no es el Dueño?  → 42501 owner_only
 --      (sobre las filas YA bloqueadas: si el Dueño sube a alguien a Administrador mientras un Administrador lo cambia o
 --      lo quita, el Administrador ve el rol nuevo y recibe `owner_only`)
---   9. el rol esperado coincide con el real          no → CP409 role_changed
---  10. (solo al cambiar el rol) el tope por hora     → CP429 limit_role_changes
+--  10. el rol esperado coincide con el real          no → CP409 role_changed
+--  11. el tope por hora, cambios de rol y quitadas sumados → CP429 limit_member_changes
 --
 -- No se escribe ningún nombre de rol entre comillas: todo se decide con la matriz (`app.can`, `app.role_can`), por la
 -- guardia 14 de tests/db/schema-guards.test.ts.
@@ -68,6 +85,7 @@
 --                                        id) → filas de `invitations` de ese miembro (`app.cancel_member_invitations`)
 --   create_invitation / resend_invitation : fila de `members` de quien invita o reenvía (`for share`) → candado de
 --                                        organización `invitations:<tenant>` (advisory) → filas de `invitations`
+--                                        (`owner_only` se decide con el rol de esa fila de `members` ya bloqueada)
 --   revoke_invitation                  : candado de organización → fila de `invitations`
 -- Por qué no hay ciclo:
 --   · `create_invitation` / `resend_invitation` toman su fila de `members` ANTES de cualquier otra cosa, así que mientras
@@ -101,10 +119,24 @@ language sql volatile security definer set search_path = '' as $$
 $$;
 revoke all on function app.cancel_member_invitations(uuid, uuid, uuid) from public, anon, authenticated;
 
--- Tope de cambios de rol por persona, por organización y por hora. Contra el abuso (llenar el registro de actividad
--- subiendo y bajando a alguien sin parar), no contra el uso normal: ordenar un equipo entero cabe de sobra.
-create function app.member_role_change_max_per_hour() returns integer language sql immutable as $$ select 30 $$;
-revoke all on function app.member_role_change_max_per_hour() from public, anon, authenticated;
+-- Tope de cambios en el equipo por persona, por organización y por hora: cambios de rol y quitadas SUMADOS. Contra el
+-- abuso (llenar el registro de actividad subiendo y bajando a alguien sin parar, o vaciar el equipo de una vez), no
+-- contra el uso normal: ordenar un equipo entero cabe de sobra.
+create function app.member_change_max_per_hour() returns integer language sql immutable as $$ select 30 $$;
+revoke all on function app.member_change_max_per_hour() from public, anon, authenticated;
+
+-- ¿Quien actúa ya llegó al tope? Cuenta en la auditoría los cambios que YA hizo en esta organización en la última hora
+-- (`member.role_changed` y `member.removed`, con el índice `audit_tenant_actor`). Quien la llama tiene bloqueada la
+-- fila de `members` de quien actúa (`for update`), así que dos cambios suyos a la vez no pasan el tope juntos.
+create function app.member_changes_exhausted(p_tenant uuid, p_actor uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select count(*) >= app.member_change_max_per_hour()
+    from public.audit_log a
+   where a.tenant_id = p_tenant and a.actor_user_id = p_actor
+     and a.action in ('member.role_changed', 'member.removed')
+     and a.occurred_at > now() - interval '1 hour'
+$$;
+revoke all on function app.member_changes_exhausted(uuid, uuid) from public, anon, authenticated;
 
 -- 2. list_members -----------------------------------------------------------------------------------------
 -- Una lista (jsonb) de los miembros activos: el Dueño primero y después por fecha de ingreso. Solo para quien maneja
@@ -209,27 +241,26 @@ begin
   if app.role_can(v_target.role, 'tenant.transfer') then
     raise exception 'cannot_target_owner' using errcode = 'CP423';
   end if;
-  -- 8. un rol que maneja el equipo solo lo da o lo quita el Dueño (con los roles de las filas YA bloqueadas). Va antes
-  --    de «ya tiene ese rol»: un Administrador no recibe ni un «listo» sobre otro Administrador.
+  -- 8. Ya tiene ese rol: el resultado que se quería ya está. No cambia nada ni deja registro. Va antes de `owner_only`
+  --    (una pantalla vieja recibe el mensaje cierto) y no revela nada: quien actúa maneja el equipo de esta
+  --    organización y ya ve el rol de cada miembro activo en `list_members()`.
+  if v_target.role = v_new::text then
+    return jsonb_build_object('result', 'unchanged', 'member_id', v_target.id, 'role', v_target.role);
+  end if;
+  -- 9. un rol que maneja el equipo solo lo da o lo quita el Dueño (con los roles de las filas YA bloqueadas).
   if (app.role_can(v_target.role, 'team.manage') or app.role_can(v_new::text, 'team.manage'))
      and not app.role_can(v_actor.role, 'tenant.transfer') then
     raise exception 'owner_only' using errcode = '42501';
   end if;
-  -- Ya tiene ese rol: el resultado que se quería ya está. No cambia nada ni deja registro.
-  if v_target.role = v_new::text then
-    return jsonb_build_object('result', 'unchanged', 'member_id', v_target.id, 'role', v_target.role);
-  end if;
-  -- 9. solo si el rol sigue siendo el que la persona vio
+  -- 10. solo si el rol sigue siendo el que la persona vio
   if v_target.role is distinct from p_expected_role then
     raise exception 'role_changed' using errcode = 'CP409';
   end if;
-  -- 10. tope por hora. Se cuentan los cambios de rol que esta persona ya hizo en esta organización (su registro de
+  -- 11. tope por hora: cambios de rol y quitadas de esta persona en esta organización, sumados (su registro de
   --     auditoría). Su fila de `members` está bloqueada desde el paso 6, así que dos cambios suyos a la vez no pasan
   --     el tope juntos. «Ya tenía ese rol» no deja registro y no cuenta.
-  if (select count(*) from public.audit_log a
-       where a.tenant_id = v_tenant and a.actor_user_id = v_uid and a.action = 'member.role_changed'
-         and a.occurred_at > now() - interval '1 hour') >= app.member_role_change_max_per_hour() then
-    raise exception 'limit_role_changes' using errcode = 'CP429';
+  if app.member_changes_exhausted(v_tenant, v_uid) then
+    raise exception 'limit_member_changes' using errcode = 'CP429';
   end if;
 
   update public.members set role = v_new where tenant_id = v_tenant and id = v_target.id;
@@ -252,6 +283,7 @@ grant execute on function public.change_member_role(uuid, text, text) to authent
 -- result: removed (con `cancelled_invitations` y `assigned_requests`) · already_removed (repetir no falla ni deja
 -- otro registro). `assigned_requests`: cuántas solicitudes siguen asignadas a esa persona (estado «asignada»); NO se
 -- tocan: quedan a su nombre hasta que el Dueño o un Administrador las reasigne. La pantalla lo dice al terminar.
+-- Tiene el mismo tope por hora que `change_member_role`, sumado con él (`limit_member_changes`).
 create function public.remove_member(p_member_id uuid, p_expected_role text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -303,16 +335,23 @@ begin
   if app.role_can(v_target.role, 'tenant.transfer') then
     raise exception 'cannot_target_owner' using errcode = 'CP423';
   end if;
+  -- Ya estaba quitado (otra persona lo quitó antes): el resultado que se quería ya está. Va antes de `owner_only`, para
+  -- que una pantalla vieja reciba el mensaje cierto; no revela nada: quien actúa maneja el equipo de esta organización
+  -- y ya lee las filas de quien se fue (`members_select`, sección 8). No cambia nada ni deja registro.
+  if v_target.status = 'removed' then
+    return jsonb_build_object('result', 'already_removed', 'member_id', v_target.id);
+  end if;
   -- A quien maneja el equipo solo lo quita el Dueño (con los roles de las filas YA bloqueadas).
   if app.role_can(v_target.role, 'team.manage') and not app.role_can(v_actor.role, 'tenant.transfer') then
     raise exception 'owner_only' using errcode = '42501';
   end if;
-  -- Ya estaba quitado (otra persona lo quitó antes): el resultado que se quería ya está.
-  if v_target.status = 'removed' then
-    return jsonb_build_object('result', 'already_removed', 'member_id', v_target.id);
-  end if;
   if v_target.role is distinct from p_expected_role then
     raise exception 'role_changed' using errcode = 'CP409';
+  end if;
+  -- Tope por hora, el mismo de `change_member_role` y sumado con él: sin esto un Administrador podía sacar de una vez
+  -- a todos los Comerciales y Aprobadores sin que nadie lo frene. «Ya estaba quitado» no deja registro y no cuenta.
+  if app.member_changes_exhausted(v_tenant, v_uid) then
+    raise exception 'limit_member_changes' using errcode = 'CP429';
   end if;
 
   update public.members
@@ -357,7 +396,8 @@ alter policy profiles_select on public.profiles
 
 -- 6. Quien invita o reenvía tiene que seguir siendo miembro con permiso mientras lo hace ------------------------
 -- `create_invitation` y `resend_invitation` (H-008), idénticas a las de `20261030100000_invitations.sql` salvo por
--- el bloqueo de la fila de miembro de quien actúa (marcado «H-010»). El deshacer restaura las originales.
+-- el bloqueo de la fila de miembro de quien actúa y la regla «solo el Dueño, si el rol maneja el equipo» (marcados
+-- «H-010»). El deshacer restaura las originales.
 create or replace function public.create_invitation(
   p_invitation_id uuid, p_email_enc text, p_email_hash text, p_email_binding text, p_token_sha256 text,
   p_role text, p_email_message_id uuid, p_to_email_enc text
@@ -367,6 +407,7 @@ declare
   v_tenant  uuid := app.current_tenant_id();
   v_uid     uuid := auth.uid();
   v_role    app.invitation_role;
+  v_actor_role text;
   v_pending uuid;
   v_expires timestamptz := now() + make_interval(days => app.invitation_ttl_days());
 begin
@@ -397,12 +438,17 @@ begin
   --    se comprueba aquí que sigue activo y con permiso. Sin esto, si lo quitan o le bajan el rol mientras invita,
   --    `app.cancel_member_invitations` (que corre dentro de `remove_member` / `change_member_role`) no ve las
   --    invitaciones que todavía no se guardaron y esas quedan «pendientes». Ver el orden de bloqueos en el encabezado.
-  perform 1 from public.members m
+  select m.role into v_actor_role from public.members m
    where m.tenant_id = v_tenant and m.user_id = v_uid and m.status = 'active'
      and app.role_can(m.role, 'team.manage')
      for share;
   if not found then
     raise exception 'forbidden' using errcode = '42501';
+  end if;
+  -- H-010: una invitación con un rol que maneja el equipo solo la hace el Dueño (con el rol de la fila YA bloqueada).
+  --    Antes del candado y de los topes: no se espera ni se cuenta nada para una invitación que no se va a crear.
+  if app.role_can(v_role::text, 'team.manage') and not app.role_can(v_actor_role, 'tenant.transfer') then
+    raise exception 'owner_only' using errcode = '42501';
   end if;
 
   -- 4. topes, contados con un candado por organización: dos invitaciones a la vez no pasan el tope juntas.
@@ -447,7 +493,9 @@ begin
       (p_invitation_id, v_tenant, p_email_enc, p_email_hash, p_email_binding, v_role, p_token_sha256,
        'pending', v_expires, v_uid,
        -- El aviso al Dueño queda anotado AQUÍ, en la misma operación: aunque alguien llame la función directo,
-       -- sin pasar por la pantalla, la tarea lo enviará (ver 7b).
+       -- sin pasar por la pantalla, la tarea lo enviará (ver 7b). H-010: con la regla `owner_only` de arriba ya no
+       -- se cumple para una invitación nueva (solo el Dueño invita a un rol que maneja el equipo); se deja como
+       -- defensa por si esa regla cambia.
        case when app.invitation_notice_applies(v_role, v_uid, v_tenant) then 'pending' else 'none' end);
     insert into public.email_messages
       (id, tenant_id, invitation_id, kind, to_email_enc, to_email_hash, provider, status, created_by)
@@ -479,6 +527,7 @@ declare
   v_uid     uuid := auth.uid();
   v_inv     public.invitations;
   v_mail    public.email_messages;
+  v_actor_role text;
   v_expires timestamptz := now() + make_interval(days => app.invitation_ttl_days());
 begin
   if v_tenant is null or v_uid is null then
@@ -497,7 +546,7 @@ begin
   -- H-010: la fila de miembro de QUIEN REENVÍA se bloquea (en modo compartido) ANTES del candado de la organización
   --    y se comprueba aquí que sigue activo y con permiso: así no sale un correo a nombre de alguien que ya lo
   --    quitaron o a quien le bajaron el rol. Ver el orden de bloqueos en el encabezado.
-  perform 1 from public.members m
+  select m.role into v_actor_role from public.members m
    where m.tenant_id = v_tenant and m.user_id = v_uid and m.status = 'active'
      and app.role_can(m.role, 'team.manage')
      for share;
@@ -512,6 +561,13 @@ begin
   end if;
   if v_inv.status <> 'pending' then
     raise exception 'not_pending' using errcode = 'CP423';
+  end if;
+  -- H-010: una invitación con un rol que maneja el equipo solo la reenvía el Dueño (con el rol de su fila de `members`
+  --    YA bloqueada). Reenviar guarda el vínculo de correo que manda quien llama, así que reenviar es, en la práctica,
+  --    poder cambiar a quién va la invitación: sin esto un Administrador redirigía a un cómplice una invitación a
+  --    Administrador hecha por el Dueño, sin aviso. Antes de los topes: no revela cuántos reenvíos quedan.
+  if app.role_can(v_inv.role::text, 'team.manage') and not app.role_can(v_actor_role, 'tenant.transfer') then
+    raise exception 'owner_only' using errcode = '42501';
   end if;
   if v_inv.send_count - 1 >= app.invitation_max_resends() then
     raise exception 'limit_resends' using errcode = 'CP429';

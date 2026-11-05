@@ -7,6 +7,7 @@ import {
 } from "@/lib/permissions/matrix";
 import {
   ROLE_OPTIONS,
+  canResendInvitation,
   managesTeam,
   roleOptionsFor,
   changeRoleSchema,
@@ -93,7 +94,7 @@ describe("qué acciones se ofrecen sobre un miembro", () => {
   });
 });
 
-describe("qué roles se ofrecen al cambiar el rol", () => {
+describe("qué roles se ofrecen al cambiar el rol y al invitar", () => {
   it("el Dueño ve los cuatro; el Administrador, solo los que no manejan el equipo (sin Administrador)", () => {
     expect(roleOptionsFor(OWNER)).toEqual([...ROLE_OPTIONS]);
     const forAdmin = roleOptionsFor(ADMIN);
@@ -109,6 +110,16 @@ describe("qué roles se ofrecen al cambiar el rol", () => {
     expect(ROLE_OPTIONS.filter((option) => option.managesTeam).map((o) => o.value)).toEqual([
       ADMIN,
     ]);
+  });
+});
+
+describe("quién reenvía una invitación (H-010)", () => {
+  it("la de un rol que maneja el equipo, solo el Dueño; las demás, también el Administrador", () => {
+    for (const option of ROLE_OPTIONS) {
+      expect(canResendInvitation(option.value, OWNER), option.value).toBe(true);
+      expect(canResendInvitation(option.value, ADMIN), option.value).toBe(!option.managesTeam);
+    }
+    expect(canResendInvitation(ADMIN, ADMIN)).toBe(false);
   });
 });
 
@@ -267,10 +278,10 @@ describe("mensajes de error", () => {
         "Solo el Dueño puede nombrar Administradores, cambiarles el rol o quitarlos del equipo.",
     });
     expect(mapMemberError({ code: "42501", message: "forbidden" }).kind).toBe("forbidden");
-    expect(mapMemberError({ code: "CP429", message: "limit_role_changes" })).toEqual({
+    expect(mapMemberError({ code: "CP429", message: "limit_member_changes" })).toEqual({
       kind: "rate_limited",
       message:
-        "Hiciste muchos cambios de rol en la última hora. Espera un rato y vuelve a intentar.",
+        "Hiciste muchos cambios en tu equipo en la última hora (cambios de rol y personas quitadas). Espera un rato y vuelve a intentar.",
     });
   });
 

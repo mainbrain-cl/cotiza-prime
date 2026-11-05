@@ -106,13 +106,29 @@ export const ROLE_OPTIONS: readonly RoleOption[] = GRANTABLE_ROLES.map((role) =>
 }));
 
 /**
- * Los roles que `viewerRole` puede dar al CAMBIAR el rol de alguien: el Dueño, todos; los demás, solo los que no
- * manejan el equipo (un Administrador no nombra Administradores). Al invitar (H-008) se ofrecen todos: invitar a un
- * Administrador ya avisa al Dueño.
+ * Los roles que `viewerRole` puede dar, al CAMBIAR el rol de alguien y al INVITAR: el Dueño, todos; los demás, solo
+ * los que no manejan el equipo (un Administrador no nombra ni invita Administradores). La base exige lo mismo en
+ * `change_member_role`, `create_invitation` y `resend_invitation` (`owner_only`).
  */
 export function roleOptionsFor(viewerRole: string): RoleOption[] {
   return ROLE_OPTIONS.filter((option) => isOwnerRole(viewerRole) || !option.managesTeam);
 }
+
+/** Lo que ve bajo los roles del formulario de invitar quien no es el Dueño (no se le ofrece «Administrador»). */
+export const INVITE_OWNER_ONLY_NOTE = "Solo el Dueño puede invitar Administradores.";
+
+/**
+ * ¿Quien mira con `viewerRole` puede reenviar una invitación con el rol `invitationRole`? Si ese rol maneja el
+ * equipo, solo el Dueño: reenviar vuelve a fijar el código y el correo al que queda atada la invitación, así que es casi lo
+ * mismo que invitar. Cancelarla sí puede cualquiera que maneje el equipo. La base exige lo mismo (`owner_only`).
+ */
+export function canResendInvitation(invitationRole: string, viewerRole: string): boolean {
+  return isOwnerRole(viewerRole) || !managesTeam(invitationRole);
+}
+
+/** Lo que ve quien no es el Dueño en una invitación a Administrador, en lugar del botón «Reenviar». */
+export const INVITATION_RESEND_OWNER_ONLY_NOTE =
+  "Solo el Dueño puede reenviar la invitación de un Administrador. Tú puedes cancelarla.";
 
 /** Un miembro listo para mostrar en la lista y en su ficha: todo el texto ya viene armado desde el servidor. */
 export type MemberItem = {
@@ -193,7 +209,7 @@ export const MEMBER_OWNER_ONLY_MESSAGE =
 /** Se muestra ANTES de confirmar que alguien deja de manejar el equipo (`change_member_role` hace exactamente esto). */
 export const MEMBER_DEMOTE_NOTE = "Las invitaciones pendientes que envió se cancelarán.";
 export const MEMBER_RATE_LIMITED_MESSAGE =
-  "Hiciste muchos cambios de rol en la última hora. Espera un rato y vuelve a intentar.";
+  "Hiciste muchos cambios en tu equipo en la última hora (cambios de rol y personas quitadas). Espera un rato y vuelve a intentar.";
 export const MEMBER_INVALID_ROLE_MESSAGE = "Ese rol no se puede asignar. Elige uno de la lista.";
 export const MEMBER_GENERIC_FAILURE =
   "No pudimos completar la acción. Intenta de nuevo en unos minutos; si sigue igual, avísanos.";

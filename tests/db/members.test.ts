@@ -1,6 +1,7 @@
 // Sprint 5 · migración 20261105110000 · cambiar el rol de un miembro o quitarlo (H-010).
 // `list_members`, `change_member_role` y `remove_member` con pases reales de cada rol: quién puede, el Dueño y uno
-// mismo intocables, solo el Dueño da o quita un rol que maneja el equipo, tope de cambios de rol por hora, otra
+// mismo intocables, solo el Dueño da o quita un rol que maneja el equipo, tope de cambios por hora (cambios de rol y
+// quitadas sumados), otra
 // organización, rol esperado desactualizado, el Dueño quita a un Administrador mientras este actúa, dos cambios
 // simultáneos al mismo miembro, invitar o reenviar mientras te quitan, invitaciones canceladas, nombre todavía
 // visible, filas de quien se fue solo para quien maneja el equipo, ex miembro sin acceso a nada, reactivar por
@@ -47,8 +48,8 @@ const CONFLICT = "CP409";
 const INVALID = "CP422";
 const NOT_ALLOWED = "CP423";
 const TOO_MANY = "CP429";
-/** El tope de `app.member_role_change_max_per_hour()`. */
-const ROLE_CHANGES_PER_HOUR = 30;
+/** El tope de `app.member_change_max_per_hour()`: cambios de rol y quitadas, sumados. */
+const MEMBER_CHANGES_PER_HOUR = 30;
 
 async function call<T = Json>(user: TestUser, tenant: string, sql: string, params: unknown[] = []) {
   await asUser(setup, user, tenant);
@@ -135,6 +136,50 @@ async function inviteAs(inviter: TestUser, role = "viewer", tenant = w.tenantA) 
   const result = await call(inviter, tenant, CREATE_INVITATION, p.params);
   expect(result.result).toBe("created");
   return p;
+}
+
+/**
+ * Una invitación a un rol que maneja el equipo a nombre de `inviter` (que no es el Dueño), con el aviso al Dueño
+ * anotado: como las que H-008 dejaba crear antes de H-010. Desde H-010 eso da `owner_only`, así que la crea el Dueño y
+ * se reescribe, como montaje, quién invitó y el aviso (sin disparadores, solo en esta transacción).
+ */
+async function legacyInviteAs(inviter: TestUser, role = "admin") {
+  const p = await inviteAs(w.owner, role);
+  await actAsPostgres(setup);
+  await setup.query("set local session_replication_role = replica");
+  await setup.query(
+    "update public.invitations set invited_by = $2, owner_notice_state = 'pending' where id = $1",
+    [p.id, inviter.id],
+  );
+  await setup.query("update public.email_messages set created_by = $2 where invitation_id = $1", [
+    p.id,
+    inviter.id,
+  ]);
+  await setup.query("set local session_replication_role = origin");
+  return p;
+}
+
+/** Registros de auditoría de cambios en el equipo hechos por `actor` (montaje directo), para llegar al tope. */
+async function seedMemberChanges(
+  actor: TestUser,
+  n: number,
+  opts: { tenant?: string; action?: string; ago?: string } = {},
+) {
+  await actAsPostgres(setup);
+  for (let i = 0; i < n; i++) {
+    await setup.query(
+      `insert into public.audit_log
+         (tenant_id, occurred_at, actor_type, actor_user_id, action, resource_type, resource_id, result)
+       values ($1, now() - $4::interval, 'user', $2, $3, 'member', $5, 'success')`,
+      [
+        opts.tenant ?? w.tenantA,
+        actor.id,
+        opts.action ?? "member.role_changed",
+        opts.ago ?? "1 minute",
+        randomUUID(),
+      ],
+    );
+  }
 }
 
 const invitationStatus = async (id: string) => {
@@ -289,14 +334,13 @@ describe("solo el Dueño da o quita un rol que maneja el equipo", () => {
     });
   });
 
-  it("el Administrador no baja, no «deja igual» ni quita a otro Administrador", async () => {
+  it("el Administrador no baja ni quita a otro Administrador", async () => {
     await withTx(setup, async () => {
       const other = await addMember("admin", w.tenantA, "Otro Admin");
       const pending = await inviteAs(other.user);
       for (const [sql, params] of [
         [CHANGE, [other.memberId, "sales", "admin"]],
         [CHANGE, [other.memberId, "viewer", "admin"]],
-        [CHANGE, [other.memberId, "admin", "admin"]],
         [REMOVE, [other.memberId, "admin"]],
       ] as const) {
         const error = await denied(w.admin, w.tenantA, sql, [...params]);
@@ -310,6 +354,33 @@ describe("solo el Dueño da o quita un rol que maneja el equipo", () => {
       expect((await invitationStatus(pending.id)).status).toBe("pending");
       expect(await auditRows("member.role_changed")).toHaveLength(0);
       expect(await auditRows("member.removed")).toHaveLength(0);
+    });
+  });
+
+  it("lo que ya está hecho se dice antes que «solo el Dueño»: «ya tenía ese rol» y «ya estaba quitado», sin cambios ni registro", async () => {
+    await withTx(setup, async () => {
+      // Una pantalla vieja (o una llamada directa): el Administrador «deja» de Administrador a otro Administrador.
+      const other = await addMember("admin", w.tenantA, "Admin Igual");
+      expect(await call(w.admin, w.tenantA, CHANGE, [other.memberId, "admin", "admin"])).toEqual({
+        result: "unchanged",
+        member_id: other.memberId,
+        role: "admin",
+      });
+      // El Dueño quitó a un Administrador y otro Administrador, con la lista vieja, intenta quitarlo también.
+      const gone = await addMember("admin", w.tenantA, "Admin Que Ya Se Fue");
+      expect((await call(w.owner, w.tenantA, REMOVE, [gone.memberId, "admin"])).result).toBe(
+        "removed",
+      );
+      expect(await call(w.admin, w.tenantA, REMOVE, [gone.memberId, "admin"])).toEqual({
+        result: "already_removed",
+        member_id: gone.memberId,
+      });
+      expect((await memberRow(other.memberId)).role).toBe("admin");
+      expect(await auditRows("member.role_changed")).toHaveLength(0);
+      expect(await auditRows("member.removed", gone.memberId)).toHaveLength(1);
+      // Con un cambio de verdad sigue siendo «solo el Dueño».
+      const error = await denied(w.admin, w.tenantA, CHANGE, [other.memberId, "sales", "admin"]);
+      expect(error.message).toBe("owner_only");
     });
   });
 
@@ -333,13 +404,13 @@ describe("solo el Dueño da o quita un rol que maneja el equipo", () => {
   });
 });
 
-describe("tope de cambios de rol por hora", () => {
-  it(`cada persona hace hasta ${ROLE_CHANGES_PER_HOUR} cambios de rol por hora en una organización; el siguiente recibe «tope» y no cambia nada`, async () => {
+describe("tope de cambios en el equipo por hora (cambios de rol y quitadas, sumados)", () => {
+  it(`cada persona hace hasta ${MEMBER_CHANGES_PER_HOUR} cambios por hora en una organización; el siguiente cambio de rol, y también quitar, recibe «tope» y no cambia nada`, async () => {
     await withTx(setup, async () => {
       const { memberId } = await addMember("sales", w.tenantA, "Sube Y Baja Mucho");
       const flip = (role: string) => (role === "sales" ? "viewer" : "sales");
       let role = "sales";
-      for (let i = 0; i < ROLE_CHANGES_PER_HOUR; i++) {
+      for (let i = 0; i < MEMBER_CHANGES_PER_HOUR; i++) {
         expect((await call(w.admin, w.tenantA, CHANGE, [memberId, flip(role), role])).result).toBe(
           "changed",
         );
@@ -351,17 +422,96 @@ describe("tope de cambios de rol por hora", () => {
       );
       const error = await denied(w.admin, w.tenantA, CHANGE, [memberId, flip(role), role]);
       expect(error.code).toBe(TOO_MANY);
-      expect(error.message).toBe("limit_role_changes");
+      expect(error.message).toBe("limit_member_changes");
       expect((await memberRow(memberId)).role).toBe(role);
-      expect(await auditRows("member.role_changed", memberId)).toHaveLength(ROLE_CHANGES_PER_HOUR);
+      expect(await auditRows("member.role_changed", memberId)).toHaveLength(
+        MEMBER_CHANGES_PER_HOUR,
+      );
+      // Quitar suma al mismo tope: tampoco puede quitar.
+      const removal = await denied(w.admin, w.tenantA, REMOVE, [memberId, role]);
+      expect(removal.code).toBe(TOO_MANY);
+      expect(removal.message).toBe("limit_member_changes");
+      expect((await memberRow(memberId)).status).toBe("active");
       // El tope es de cada persona: el Dueño sigue pudiendo.
       expect((await call(w.owner, w.tenantA, CHANGE, [memberId, flip(role), role])).result).toBe(
         "changed",
       );
-      // Quitar no tiene este tope (volver exige otra invitación, y esas sí tienen topes).
-      expect((await call(w.admin, w.tenantA, REMOVE, [memberId, flip(role)])).result).toBe(
+      expect((await call(w.owner, w.tenantA, REMOVE, [memberId, flip(role)])).result).toBe(
         "removed",
       );
+    });
+  });
+
+  it("quitar cuenta para el tope: un Administrador no vacía el equipo de una vez", async () => {
+    await withTx(setup, async () => {
+      // Ya quitó a 29 personas en la última hora (montaje directo).
+      await seedMemberChanges(w.admin, MEMBER_CHANGES_PER_HOUR - 1, { action: "member.removed" });
+      const one = await addMember("sales", w.tenantA, "Comercial Uno");
+      const two = await addMember("approver", w.tenantA, "Aprobador Dos");
+      const three = await addMember("viewer", w.tenantA, "Observador Tres");
+      // La número 30 pasa; la 31 no, ni tampoco un cambio de rol.
+      expect((await call(w.admin, w.tenantA, REMOVE, [one.memberId, "sales"])).result).toBe(
+        "removed",
+      );
+      const error = await denied(w.admin, w.tenantA, REMOVE, [two.memberId, "approver"]);
+      expect(error.code).toBe(TOO_MANY);
+      expect(error.message).toBe("limit_member_changes");
+      expect(
+        (await denied(w.admin, w.tenantA, CHANGE, [three.memberId, "sales", "viewer"])).message,
+      ).toBe("limit_member_changes");
+      expect((await memberRow(two.memberId)).status).toBe("active");
+      expect((await memberRow(three.memberId)).role).toBe("viewer");
+      expect(await auditRows("member.removed", two.memberId)).toHaveLength(0);
+      // «Ya estaba quitado» no deja registro y no choca con el tope.
+      expect((await call(w.admin, w.tenantA, REMOVE, [one.memberId, "sales"])).result).toBe(
+        "already_removed",
+      );
+    });
+  });
+
+  it("cambios de rol y quitadas se suman: 15 y 15 llegan al tope", async () => {
+    await withTx(setup, async () => {
+      const half = MEMBER_CHANGES_PER_HOUR / 2;
+      await seedMemberChanges(w.admin, half, { action: "member.removed" });
+      await seedMemberChanges(w.admin, half, { action: "member.role_changed" });
+      const person = await addMember("sales", w.tenantA, "Comercial Tope Mixto");
+      expect(
+        (await denied(w.admin, w.tenantA, CHANGE, [person.memberId, "viewer", "sales"])).code,
+      ).toBe(TOO_MANY);
+      expect((await denied(w.admin, w.tenantA, REMOVE, [person.memberId, "sales"])).code).toBe(
+        TOO_MANY,
+      );
+    });
+  });
+
+  it("el tope es por organización: quien llegó al tope en A sigue pudiendo en B, y A sigue con su tope", async () => {
+    await withTx(setup, async () => {
+      // Una Administradora de A y de B, con 30 cambios en A en la última hora.
+      const mixed = await addMember("admin", w.tenantA, "Mixta Con Tope");
+      await actAsPostgres(setup);
+      await setup.query(
+        "insert into public.members (tenant_id, user_id, role) values ($1, $2, 'admin')",
+        [w.tenantB, mixed.user.id],
+      );
+      await seedMemberChanges(mixed.user, MEMBER_CHANGES_PER_HOUR, { tenant: w.tenantA });
+      const inA = await addMember("sales", w.tenantA, "Comercial de A");
+      const inB = await addMember("sales", w.tenantB, "Comercial de B");
+      // En A, tope.
+      expect(
+        (await denied(mixed.user, w.tenantA, CHANGE, [inA.memberId, "viewer", "sales"])).code,
+      ).toBe(TOO_MANY);
+      // En B no cuenta lo que hizo en A: cambia y quita.
+      expect(
+        (await call(mixed.user, w.tenantB, CHANGE, [inB.memberId, "viewer", "sales"])).result,
+      ).toBe("changed");
+      expect((await call(mixed.user, w.tenantB, REMOVE, [inB.memberId, "viewer"])).result).toBe(
+        "removed",
+      );
+      // Lo que hizo en B tampoco libera nada en A.
+      expect((await denied(mixed.user, w.tenantA, REMOVE, [inA.memberId, "sales"])).code).toBe(
+        TOO_MANY,
+      );
+      expect((await memberRow(inA.memberId)).status).toBe("active");
     });
   });
 
@@ -370,7 +520,7 @@ describe("tope de cambios de rol por hora", () => {
       const { memberId } = await addMember("sales", w.tenantA, "Cambios Viejos");
       // Registros viejos de esta persona (montaje directo): no cuentan para el tope.
       await actAsPostgres(setup);
-      for (let i = 0; i < ROLE_CHANGES_PER_HOUR; i++) {
+      for (let i = 0; i < MEMBER_CHANGES_PER_HOUR; i++) {
         await setup.query(
           `insert into public.audit_log
              (tenant_id, occurred_at, actor_type, actor_user_id, action, resource_type, resource_id, result)
@@ -857,8 +1007,8 @@ describe("invitaciones de quien sale o baja de rol", () => {
   it("el aviso al Dueño por una invitación cancelada sale de la cola", async () => {
     await withTx(setup, async () => {
       const inviter = await addMember("admin");
-      // Un Administrador invita a otro Administrador: queda un aviso pendiente para el Dueño.
-      const p = await inviteAs(inviter.user, "admin");
+      // Un Administrador invitó a otro Administrador antes de H-010: quedó un aviso pendiente para el Dueño.
+      const p = await legacyInviteAs(inviter.user);
       expect((await invitationStatus(p.id)).owner_notice_state).toBe("pending");
       await call(w.owner, w.tenantA, REMOVE, [inviter.memberId, "admin"]);
       const row = await invitationStatus(p.id);
@@ -889,7 +1039,8 @@ describe("invitaciones de quien sale o baja de rol", () => {
     await withTx(setup, async () => {
       const inviter = await addMember("admin");
       const p1 = await inviteAs(inviter.user);
-      const p2 = await inviteAs(inviter.user, "admin");
+      // Una a Administrador hecha antes de H-010 (desde H-010 solo el Dueño invita Administradores).
+      const p2 = await legacyInviteAs(inviter.user);
       const result = await call(w.owner, w.tenantA, CHANGE, [inviter.memberId, "sales", "admin"]);
       expect(result).toMatchObject({ result: "changed", role: "sales", cancelled_invitations: 2 });
       for (const p of [p1, p2]) {
@@ -1208,6 +1359,43 @@ describe("dos personas a la vez (dos conexiones reales)", () => {
       role: "viewer",
     });
   });
+
+  it.each(["change", "remove"] as const)(
+    "con 29 cambios en la hora, dos cambios a la vez de la misma persona (el segundo: %s): pasa solo uno, el otro recibe «tope»",
+    async (secondAction) => {
+      const { tenant, others } = await freshTenant(["admin", "sales", "sales"]);
+      const [admin, first, second] = others;
+      // 29 cambios ya hechos en la última hora (datos confirmados: las dos conexiones tienen que verlos).
+      await seedMemberChanges(admin.user, MEMBER_CHANGES_PER_HOUR - 1, { tenant });
+      const raced = await raceBlocking(
+        { user: admin.user, tenant, sql: CHANGE, params: [first.memberId, "viewer", "sales"] },
+        {
+          user: admin.user,
+          tenant,
+          sql: secondAction === "change" ? CHANGE : REMOVE,
+          params:
+            secondAction === "change"
+              ? [second.memberId, "viewer", "sales"]
+              : [second.memberId, "sales"],
+        },
+      );
+      // La segunda esperó la fila de quien actúa (la tiene la primera) y, al despertar, ya ve el cambio número 30.
+      expect(raced.blocked).toBe(true);
+      expect(raced.firstResult.result).toBe("changed");
+      expect(raced.second.ok).toBe(false);
+      expect((raced.second as { code?: string }).code).toBe(TOO_MANY);
+      expect((raced.second as { message: string }).message).toContain("limit_member_changes");
+      expect(await memberRow(first.memberId)).toMatchObject({ status: "active", role: "viewer" });
+      expect(await memberRow(second.memberId)).toMatchObject({ status: "active", role: "sales" });
+      expect(
+        await count(
+          `select count(*) as n from public.audit_log
+            where tenant_id = $1 and actor_user_id = $2 and action in ('member.role_changed', 'member.removed')`,
+          [tenant, admin.user.id],
+        ),
+      ).toBe(MEMBER_CHANGES_PER_HOUR);
+    },
+  );
 });
 
 describe("invitar mientras te quitan o te bajan de rol (carrera de H-008 con H-010)", () => {
@@ -1592,14 +1780,21 @@ describe("estructura", () => {
     // El tope tampoco; las personas de la organización sí (las usa la política de `profiles`), nunca anon.
     const more = await setup.query<{
       cap_auth: boolean;
+      count_auth: boolean;
       people_auth: boolean;
       people_anon: boolean;
     }>(
-      `select has_function_privilege('authenticated', 'app.member_role_change_max_per_hour()', 'EXECUTE') as cap_auth,
+      `select has_function_privilege('authenticated', 'app.member_change_max_per_hour()', 'EXECUTE') as cap_auth,
+              has_function_privilege('authenticated', 'app.member_changes_exhausted(uuid, uuid)', 'EXECUTE') as count_auth,
               has_function_privilege('authenticated', 'app.current_tenant_people()', 'EXECUTE') as people_auth,
               has_function_privilege('anon', 'app.current_tenant_people()', 'EXECUTE') as people_anon`,
     );
-    expect(more.rows[0]).toEqual({ cap_auth: false, people_auth: true, people_anon: false });
+    expect(more.rows[0]).toEqual({
+      cap_auth: false,
+      count_auth: false,
+      people_auth: true,
+      people_anon: false,
+    });
   });
 
   it("ninguna de las funciones recibe una organización como argumento", async () => {

@@ -10,8 +10,11 @@ import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { INVITATION_MAX_PENDING, resendsLeft } from "@/lib/team/invitations-model";
 import {
+  INVITATION_RESEND_OWNER_ONLY_NOTE,
+  INVITE_OWNER_ONLY_NOTE,
   MEMBERS_HEADING_ID,
   ROLE_OPTIONS,
+  canResendInvitation,
   roleOptionsFor,
   toMemberItem,
 } from "@/lib/team/members-model";
@@ -44,8 +47,16 @@ export default async function TeamPage({ params }: PageProps<"/o/[tenantId]/equi
         sentLabel: `Último envío: ${formatDateTime(row.lastSentAt)}`,
         invitedBy: row.invitedByName,
         resendsLeft: resendsLeft(row.sendCount),
+        // H-010: la invitación a un rol que maneja el equipo solo la reenvía el Dueño (la base lo exige igual).
+        resendLockedNote: canResendInvitation(row.role, active.role)
+          ? null
+          : INVITATION_RESEND_OWNER_ONLY_NOTE,
       }))
     : [];
+  // Los roles que esta persona puede dar, al invitar y al cambiar un rol: un Administrador no da el de Administrador (H-010).
+  const grantableRoles = roleOptionsFor(active.role);
+  const rolesNote =
+    grantableRoles.length < ROLE_OPTIONS.length ? INVITE_OWNER_ONLY_NOTE : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -88,11 +99,7 @@ export default async function TeamPage({ params }: PageProps<"/o/[tenantId]/equi
                 description="Cuando alguien acepte una invitación, aparecerá aquí con su rol."
               />
             ) : (
-              <MemberList
-                tenantId={active.tenantId}
-                items={memberItems}
-                roles={roleOptionsFor(active.role)}
-              />
+              <MemberList tenantId={active.tenantId} items={memberItems} roles={grantableRoles} />
             )}
           </section>
 
@@ -131,7 +138,7 @@ export default async function TeamPage({ params }: PageProps<"/o/[tenantId]/equi
         </div>
 
         <div className="order-1 lg:sticky lg:top-6 lg:order-2">
-          <InviteForm tenantId={active.tenantId} roles={[...ROLE_OPTIONS]} />
+          <InviteForm tenantId={active.tenantId} roles={grantableRoles} rolesNote={rolesNote} />
         </div>
       </div>
     </div>

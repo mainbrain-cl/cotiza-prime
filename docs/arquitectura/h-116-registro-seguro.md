@@ -1,7 +1,7 @@
 # B1 · Secuestro de cuenta por registro previo — diseño del cierre (historia propuesta H-116, delicada)
 
-> **Estado: diseño del `planificador` (Opus), 2026-11-05, con la revisión adversarial y su segunda vuelta aplicadas y las
-> decisiones de Aarón del 2026-11-05 registradas (§6). Sin construir.** Nace de la revisión adversarial de H-009 (regla cero de
+> **Estado: diseño del `planificador` (Opus), 2026-11-05, con la revisión adversarial y sus vueltas segunda y tercera
+> aplicadas y las decisiones de Aarón del 2026-11-05 registradas (§6). Sin construir.** Nace de la revisión adversarial de H-009 (regla cero de
 > Aarón, 2026-11-03), que encontró este hallazgo **bloqueante para el piloto**; el hallazgo se reprodujo dos veces (el revisor y la
 > sesión principal). **H-116 es una historia propuesta, todavía no está en `docs/HISTORIAS.md`**: cambia los criterios de H-001 y lo
 > que ve quien se registra, así que la aprueba Aarón (Compuerta 2 de `PROCESO.md`). Por la decisión 020 §5 es delicada y **no se
@@ -41,7 +41,8 @@ contraseña eligió el atacante. Es el ataque conocido como cuentas «pre-secues
 **Qué tiene que ser verdad.** Que el correo esté verificado solo significa que esa persona controla la cuenta si se cumple esto:
 **todo lo que permite entrar como la persona (contraseña, sesiones, segundo factor) y todo lo que se le atribuye (nombre,
 consentimiento) se fija después de verificar, desde la sesión que abrió ese enlace, y nada fijado antes, por quien sea, sigue
-sirviendo.**
+sirviendo.** Tampoco puede cambiarlo después el pase de una sesión ya cerrada: por ejemplo, reescribir el nombre de la
+persona en `profiles.full_name` (§3.4, regla `profiles_update`).
 
 ## 2. Evaluación de las opciones
 
@@ -74,12 +75,17 @@ que cierra la variante por cambio de correo (§4). El costo extra es de 3,25 a 5
      `[auth.email] enable_signup`: ese interruptor es el del proveedor Email completo (el CLI lo pasa como
      `external_email_enabled`), así que apagarlo quita también el ingreso con contraseña y la recuperación.
    - El paso 1 del registro pide solo el correo.
-   - El servidor, a través de una pasarela vigilada (como `src/lib/team/gateway.ts`), llama a
-     `auth.admin.generateLink({ type: "invite", email })`. Esa llamada crea la cuenta sin contraseña si no existía y devuelve el
-     código del enlace.
-   - Si la cuenta existía sin verificar, la pasarela le pone una contraseña aleatoria que nadie conoce
-     (`auth.admin.updateUserById(id, { password })`). Así se neutraliza una contraseña plantada por un registro abierto por error
-     o por una cuenta antigua.
+   - El servidor, a través de una pasarela vigilada (como `src/lib/team/gateway.ts`), hace siempre estos pasos, en este orden:
+     1. `auth.admin.generateLink({ type: "invite", email })`. Crea la cuenta sin contraseña si no existía y devuelve sus datos.
+        Su código **no se envía**: esta llamada solo sirve para obtener la cuenta (la pasarela no puede usar `listUsers`). Si la
+        cuenta ya está verificada, responde «ya existe» y la pasarela termina ahí, sin enviar nada (decisión A2).
+     2. Si la cuenta no está verificada (nueva o antigua), le pone una contraseña aleatoria que nadie conoce
+        (`auth.admin.updateUserById(id, { password })`). Así se neutraliza una contraseña plantada por un registro abierto por
+        error o por una cuenta antigua. Se hace igual en las cuentas nuevas, para que los dos casos cuesten lo mismo (§3.6).
+     3. `generateLink({ type: "invite", email })` de nuevo. **Este** es el código que se envía.
+   - *Por qué la contraseña va antes del enlace que se envía:* es probable que fijar una contraseña en GoTrue borre los códigos de
+     un solo uso pendientes de la cuenta, o cierre sus sesiones (§8, punto 15). Si la contraseña se fijara después, mataría el
+     enlace recién enviado. Con este orden da igual cuál sea el comportamiento: el código enviado nace después.
    - El correo sale por nuestra capa de correo (`src/lib/email`) con un enlace a **nuestra** aplicación, armado siempre con
      `APP_ORIGIN` y nunca con la dirección que trae la petición.
 2. **Solo la sesión del enlace puede terminar la cuenta, y la base no deja usar una cuenta sin terminar.**
@@ -90,8 +96,8 @@ que cierra la variante por cambio de correo (§4). El costo extra es de 3,25 a 5
    - `create_tenant`, `invitation_preview` y `accept_invitation` exigen cuenta terminada, y «terminada» solo vale mientras el correo
      de la cuenta siga siendo el de alta. Además, hasta H-109 un disparador en `auth.users` rechaza todo cambio de correo
      (cierra la variante del cambio de correo, §3.4 y §4).
-   - Esas funciones, `complete_account_setup` y `app.current_tenant_id()` exigen que la sesión del pase siga abierta
-     (`auth.sessions`): un pase de una sesión cerrada no sirve, aunque no haya vencido.
+   - Esas funciones, `complete_account_setup`, `app.current_tenant_id()` y la regla `profiles_update` (cambiar el propio nombre)
+     exigen que la sesión del pase siga abierta (`auth.sessions`): un pase de una sesión cerrada no sirve, aunque no haya vencido.
    - Por qué basta con esas tres: a los datos de una organización solo se llega siendo miembro, y solo `create_tenant` y
      `accept_invitation` crean membresías. Una cuenta sin terminar no ve ni toca nada de nadie.
 3. **Se vigila la configuración.**
@@ -111,10 +117,10 @@ que cierra la variante por cambio de correo (§4). El costo extra es de 3,25 a 5
 
 | Recorrido | Qué pasa |
 |---|---|
-| **Registro** | `/registro`: correo (más anti-robot, decisión A4) → «Enviarme el enlace». Revisa los topes por IP y por correo → pasarela → correo. La respuesta en pantalla es idéntica exista o no la cuenta, y el trabajo caro (cambiar la contraseña y enviar el correo) se hace después de responder y con una duración mínima fija (§3.6) |
+| **Registro** | `/registro`: correo (más anti-robot, decisión A4) → «Enviarme el enlace». Revisa los topes por IP y por correo → pasarela (enlace para obtener la cuenta → contraseña aleatoria → enlace que se envía, §3.1) → correo. La respuesta en pantalla es idéntica exista o no la cuenta, y el trabajo caro (la pasarela y el envío del correo) se hace después de responder y con una duración mínima fija (§3.6) |
 | **Verificación** | El enlace abre `/confirmar-correo?token_hash=…&type=invite`. Al abrirla no se gasta el código, porque los antivirus de correo abren los enlaces antes que la persona: la pantalla solo muestra «Continuar». El clic manda un POST: el servidor llama `verifyOtp({ token_hash, type })`, se abre la sesión y la persona va a `/crear-cuenta`. Funciona en otro dispositivo, cosa que hoy no pasa porque el canje actual exige el navegador donde empezó el registro |
-| **Terminar la cuenta (primer ingreso)** | `/crear-cuenta`: nombre, contraseña dos veces y la casilla de términos, con el correo a la vista. El servidor, en este orden: (1) `hasEmailLinkSession()`; (2) **validar sin escribir** con `account_setup_preflight` (los mismos chequeos de `complete_account_setup`: `factor_present`, `email_changed`, `legal_changed`, nombre); (3) `updateUser({ password })`; (4) `signOut({ scope: "others" })`, que borra de `auth.sessions` todas las demás sesiones de la cuenta; (5) llama `complete_account_setup`, que comprueba que no quede otra sesión abierta. Así, si la base va a rechazar, la contraseña no se llega a fijar, y nadie más que quien termina conserva un pase que sirva. Luego va a `/invitacion` si hay una invitación guardada en el navegador; si no, a «Crea tu primera organización» |
-| **Ingreso normal** | Sin cambios. Una cuenta sin terminar no tiene contraseña, así que no entra. La pantalla de ingreso agrega ayuda para ese caso |
+| **Terminar la cuenta (primer ingreso)** | `/crear-cuenta`: nombre, contraseña dos veces y la casilla de términos, con el correo a la vista. El servidor, en este orden: (1) `hasEmailLinkSession()`; (2) **validar sin escribir** con `account_setup_preflight` (los mismos chequeos de `complete_account_setup`: `factor_present`, `email_changed`, `legal_changed`, nombre); (3) `updateUser({ password })` (la etapa 0 confirma que no cierra la propia sesión, §8 punto 15); (4) `signOut({ scope: "others" })`, que borra de `auth.sessions` todas las demás sesiones de la cuenta; (5) llama `complete_account_setup`, que comprueba que no quede otra sesión abierta. Así, si la base va a rechazar, la contraseña no se llega a fijar, y nadie más que quien termina conserva un pase que sirva. Luego va a `/invitacion` si hay una invitación guardada en el navegador; si no, a «Crea tu primera organización» |
+| **Ingreso normal** | Sin cambios. Una cuenta sin terminar no tiene una contraseña que alguien conozca (solo la aleatoria de la pasarela), así que no entra. La pantalla de ingreso agrega ayuda para ese caso |
 | **Recuperar contraseña** | Sin cambios para cuentas terminadas. Si la cuenta no está terminada, `/auth/recuperar` lleva a `/crear-cuenta` en vez de `/restablecer-contrasena`: un solo lugar fija la primera contraseña |
 | **Cambio de correo** | No hay pantalla todavía (H-109), y la API pública de Supabase (`PUT /auth/v1/user`) sí lo permite. Hasta H-109 la base lo rechaza con un disparador en `auth.users`, y aunque faltara el disparador, una cuenta cuyo correo ya no es el de alta no se puede terminar ni cuenta como terminada (§3.4); soporte resuelve cada caso (J1). Requisitos anotados para H-109: reemplazar el disparador por un flujo revisado que pida reautenticación, cierre las demás sesiones, mueva `signup_email` en la misma operación y advierta en el correo de confirmación |
 | **Registro desde una invitación (H-009)** | `/invitacion` → «Crear mi cuenta» → `/registro` con el aviso actual → enlace → «Continuar» → `/crear-cuenta` → `/invitacion` → «Unirme». La cookie de la invitación dura 1 hora; si vence o la persona termina en otro dispositivo, el inicio ya dice «¿Te invitaron? Abre de nuevo el enlace» |
@@ -156,8 +162,8 @@ momento (por ejemplo `20261105120000` o más tarde).
   `tenant_id` (la organización de la plataforma). Las personas no reciben permiso para leer ni escribir esta columna, porque la
   lectura de `profiles` es por columnas desde `20261001150000`. No hacen falta índices nuevos: todo se busca por la llave principal.
 - **`profiles.signup_email text`.** El correo (en minúsculas) con el que se creó la cuenta. Lo escribe solo `app.handle_new_user`,
-  al insertarse la fila en `auth.users` (en este diseño, cuando la pasarela llama `generateLink`). Mismo permiso que la columna
-  anterior: las personas no la leen ni la escriben (hoy solo tienen `update (full_name, last_tenant_id)`, de
+  al insertarse la fila en `auth.users` (en este diseño, en la primera llamada de la pasarela a `generateLink`). Mismo
+  permiso que la columna anterior: las personas no la leen ni la escriben (hoy solo tienen `update (full_name, last_tenant_id)`, de
   `20261001120200`). Reemplaza a la `account_ready_email` de la primera versión de este diseño: mientras no exista H-109, el
   único correo con que una cuenta puede terminarse es el de alta, así que una segunda columna no agrega nada.
 - **Cambio de correo cerrado hasta H-109.** *El problema (segunda revisión):* con «Secure email change» hacen falta dos clics,
@@ -174,13 +180,23 @@ momento (por ejemplo `20261105120000` o más tarde).
     exigen que el correo actual de `auth.users` (en minúsculas) sea igual a `profiles.signup_email`. Si no, la cuenta no se
     puede terminar (`email_changed`, auditado) ni cuenta como terminada; soporte resuelve cada caso (J1). No depende de cómo
     GoTrue haga el cambio ni de qué `amr` entregue.
-  - **Disparador `before update` en `auth.users`** (`app.forbid_email_change`), que rechaza (42501) si cambia
-    `lower(email)` o si se anota un cambio pendiente (`email_change` deja de estar vacío). Así el cambio ni siquiera ocurre,
-    venga de `PUT /auth/v1/user`, del enlace del correo o de la API de administración. Soporte, si alguna vez lo necesita, lo
-    hace por SQL con un interruptor de sesión, igual que `app.retention_purge` en `audit_log`; las personas no pueden fijar
-    ese interruptor por la API. No es la fragilidad que descartó la opción (iv-b): no reescribe nada ni depende de lo que GoTrue
-    tenga en memoria, solo rechaza; y el proyecto ya depende de un disparador en `auth.users` (`on_auth_user_created`). Queda
-    para la etapa 0 si GoTrue alcanza a enviar los correos antes de fallar (§8).
+  - **Disparador `before update` en `auth.users`** (`app.forbid_email_change`). Rechaza (42501) solo dos cosas:
+    1. Que cambie `lower(email)`.
+    2. Que se anote un cambio pendiente: `email_change` pasa de vacío a tener valor
+       (`coalesce(old.email_change, '') = '' and coalesce(new.email_change, '') <> ''`). `NULL` y el texto vacío cuentan
+       igual como vacío, porque GoTrue puede dejar cualquiera de los dos.
+
+    No mira nada más. Si una fila ya trajera un cambio pendiente, las demás actualizaciones (confirmar el correo, fijar la
+    contraseña, `last_sign_in_at`) siguen pasando; además, el relleno borra esos pendientes (abajo). Así el cambio ni siquiera
+    ocurre, venga de `PUT /auth/v1/user`, del enlace del correo o de la API de administración. No es la fragilidad que descartó
+    la opción (iv-b): no reescribe nada ni depende de lo que GoTrue tenga en memoria, solo rechaza; y el proyecto ya depende de
+    un disparador en `auth.users` (`on_auth_user_created`). Queda para la etapa 0 si GoTrue alcanza a enviar los correos antes
+    de fallar (§8, punto 13); probablemente sí, y por eso `PUT /auth/v1/user` figura entre las puertas de spam (§4).
+  - **Interruptor de soporte: solo para SQL directo.** Tiene nombre propio, `app.allow_email_change`; no se reutiliza
+    `app.retention_purge`, que es de las funciones de retención y no debe abrir nada más. Es un ajuste de sesión
+    (`set local` dentro de una transacción), así que solo vale en la conexión que lo fija: sirve para que soporte corrija un
+    correo con un `update` a mano en el editor SQL, y **no** alcanza a GoTrue, que hace el cambio de correo con su propia
+    conexión. Por eso no sirve para probar el cambio de correo por la API (§3.7). Las personas no pueden fijarlo por la API.
   - **Por qué no por configuración.** Ni `config.toml` ni la API de gestión tienen un interruptor para apagar el cambio de
     correo. `[auth.email] double_confirm_changes` («Secure email change», `mailer_secure_email_change_enabled`) solo decide si
     confirman los dos correos o solo el nuevo, y apagarlo empeora las cosas. Bloquear `PUT /auth/v1/user` antes de que llegue a
@@ -195,12 +211,22 @@ momento (por ejemplo `20261105120000` o más tarde).
   (`auth.jwt() ->> 'session_id'`) existe en `auth.sessions` y es de `auth.uid()`. *Por qué:* PostgREST solo revisa la firma y el
   vencimiento del pase, así que un pase sigue sirviendo hasta 15 minutos después de cerrar su sesión. Sin esto, si un atacante
   llegara a tener un pase de la cuenta (registro abierto por error, §3.7), cuando la víctima termina la cuenta y acepta la
-  invitación ese pase podría llamar `accept_invitation` o leer los datos de la organización hasta que venza. La usan
-  `complete_account_setup`, `account_setup_preflight`, `my_account_ready`, `create_tenant`, `invitation_preview`,
-  `accept_invitation` y **`app.current_tenant_id()`**, que es la puerta de todas las reglas por fila: con eso un pase de sesión
-  cerrada no ve datos de ninguna organización. Es el punto que la primera versión dejaba para otra historia (§4); se trae a
-  H-116 porque sin él el cierre no es efectivo. Costo en consultas: una búsqueda por llave principal más por sentencia, porque
-  las reglas llaman `(select app.current_tenant_id())` una vez.
+  invitación ese pase podría llamar `accept_invitation` o leer los datos de la organización hasta que venza. La usan:
+  - las seis funciones: `complete_account_setup`, `account_setup_preflight`, `my_account_ready`, `create_tenant`,
+    `invitation_preview` y `accept_invitation`;
+  - **`app.current_tenant_id()`**, que es la puerta de todas las reglas por fila: con eso un pase de sesión cerrada no ve datos
+    de ninguna organización;
+  - la regla **`profiles_update`** (abajo), la única regla de escritura de las personas que no pasa por
+    `app.current_tenant_id()` (revisado en `supabase/migrations/` de esta rama; repetir en `main` al construir).
+
+  Es el punto que la primera versión dejaba para otra historia (§4); se trae a H-116 porque sin él el cierre no es efectivo.
+  Costo en consultas: una búsqueda por llave principal más por sentencia, porque las reglas llaman
+  `(select app.current_tenant_id())` una vez.
+- **Regla `profiles_update` de `public.profiles`.** Hoy (`20261001120200_tenants_profiles_members.sql`) es
+  `using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()))`, con permiso sobre
+  `full_name` y `last_tenant_id`. No pasa por `app.current_tenant_id()`, así que un pase de una sesión cerrada todavía podría
+  cambiar `full_name`: por ejemplo, el atacante reescribiendo el nombre de la víctima después de que ella termina la cuenta. Se
+  recrea con `and (select app.session_alive())` en `using` y en `with check`.
 - **`public.account_setup_preflight(p_full_name, p_terms_version, p_privacy_version)`.** Para `authenticated`. Corre con
   permisos elevados (`security definer`), porque lee `auth.mfa_factors` y `auth.users`, con `search_path = ''`; es `stable` y
   no escribe nada. Hace los chequeos 1 a 8 de `complete_account_setup` y devuelve el primer código de rechazo; la usa
@@ -252,13 +278,18 @@ momento (por ejemplo `20261105120000` o más tarde).
   se copia de `20261001120200` (la única que la define en esta rama; revisar `main` al construir).
 - **Topes.** Se amplía la lista de valores permitidos de `auth_rate_limits.scope` con `signup_email`.
 - **Relleno de datos existentes.** Todas las cuentas reciben su correo actual en `signup_email`; las ya verificadas y con
-  contraseña pasan a terminadas. Solo afecta la base local, porque no hay producción.
+  contraseña pasan a terminadas. Además se borran los cambios de correo pendientes, antes de crear el disparador: en
+  `auth.users`, `email_change`, `email_change_token_new` y `email_change_token_current` quedan vacíos y
+  `email_change_confirm_status` en 0, y se borran las filas de cambio de correo de `auth.one_time_tokens` (nombres exactos al
+  construir). Así ninguna cuenta queda con un cambio a medias que el disparador ya no dejaría terminar. Solo afecta la
+  base local, porque no hay producción.
 
 ### 3.5 Archivos
 
 **Nuevos**
 - `src/lib/auth/signup-gateway.ts`: la pasarela. Es el único archivo de `src/lib/auth/` con la llave maestra, y solo llama a
-  `generateLink({ type: "invite" })` y a `updateUserById(id, { password })` cuando `email_confirmed_at` está vacío.
+  `generateLink({ type: "invite" })` y a `updateUserById(id, { password })`, en el orden de §3.1: enlace para obtener la cuenta,
+  contraseña aleatoria (solo si `email_confirmed_at` está vacío) y otro enlace, que es el único que se envía.
 - `src/lib/auth/signup-service.ts`: arma el enlace y envía el correo.
 - `src/lib/email/account-link.ts`: el correo, con los textos escapados, como `invitation.ts`.
 - `src/app/(auth)/confirmar-correo/` y `src/app/(auth)/crear-cuenta/`: páginas, formularios y acciones.
@@ -309,8 +340,8 @@ una página y las acciones de servidor cambiaron en esta versión.
   - Alguien escribe `account_ready_at` o `signup_email` directo: no tiene permiso sobre esas columnas.
   - Alguien cambia su correo con `PUT /auth/v1/user`: el disparador lo rechaza y, si faltara, la cuenta deja de contar como
     terminada.
-  - Alguien usa un pase de una sesión ya cerrada: `app.session_alive()` lo rechaza en las funciones y en
-    `app.current_tenant_id()`, aunque el pase no haya vencido.
+  - Alguien usa un pase de una sesión ya cerrada: `app.session_alive()` lo rechaza en las funciones, en
+    `app.current_tenant_id()` y en la regla `profiles_update` (no puede cambiar el nombre), aunque el pase no haya vencido.
   - Alguien llama `create_tenant` o `accept_invitation` con una cuenta sin terminar: la base lo rechaza.
 - **Aislamiento entre organizaciones.** No cambia ninguna regla por fila; las funciones nuevas no reciben `tenant_id` y van al
   registro de pruebas de aislamiento.
@@ -337,8 +368,9 @@ una página y las acciones de servidor cambiaron en esta versión.
 - **Sesión de más de 24 h.** Con `secure_password_change`, `updateUser` pide reautenticación. Mensaje: «Tu enlace venció, pide uno
   nuevo».
 - **Revelar si un correo tiene cuenta.** La respuesta en pantalla es la misma en todos los casos. Los **tiempos**, en cambio,
-  podrían delatarla (plausible, no medido): una cuenta sin verificar implica cambiar la contraseña y enviar un correo; una
-  verificada, nada. Mitigación: la acción responde enseguida y hace ese trabajo después de responder (`after()` de Next), con una
+  podrían delatarla (plausible, no medido): una cuenta nueva o sin verificar implica dos enlaces, cambiar la contraseña y
+  enviar un correo; una verificada, una sola llamada que falla. Entre cuenta nueva y sin verificar no hay diferencia, porque la
+  pasarela hace los mismos pasos (§3.1). Mitigación: la acción responde enseguida y hace ese trabajo después de responder (`after()` de Next), con una
   duración mínima fija de la respuesta (por ejemplo 800 ms) para tapar la diferencia de la llamada a `generateLink`. En la etapa 0
   se miden los tres casos. **Límite conocido:** el tope por IP y el anti-robot limitan cuántos correos se pueden sondear, pero no lo
   impiden del todo.
@@ -364,16 +396,31 @@ el helper antiguo corre en `main` y falla en la comprobación de la contraseña 
    - las aceptaciones de términos son posteriores a la verificación y traen el navegador de la víctima;
    - `POST /auth/v1/signup` responde 422 `signup_disabled`.
 
+**Cómo se quita el disparador en las pruebas.** Varias pruebas prueban la segunda barrera (correo de alta) sola, con el disparador
+quitado. En las que cambian el correo por la API, el cambio lo hace GoTrue con su propia conexión a la base, así que el
+interruptor de soporte (`app.allow_email_change`, un ajuste de sesión) no lo alcanza. Por eso:
+1. **Por la API (e2e y aislamiento).** La prueba deshabilita el disparador como superusuario de la base local
+   (`alter table auth.users disable trigger …`; qué rol local puede hacerlo se confirma en la etapa 0, §8 punto 9) y lo vuelve a
+   habilitar en un `finally`, también si la prueba falla. Al empezar comprueba que el disparador esté habilitado; si no, una
+   prueba anterior dejó la base mal y se detiene.
+2. **En serie y solas.** El cambio es global: mientras dura, ninguna otra prueba tiene el disparador. En Playwright (que corre
+   con `fullyParallel` y 2 trabajadores) van en un proyecto aparte, `trigger-off`, con 1 trabajador, que se corre después de los
+   demás y nunca a la vez que otra suite. En `test:isolation` los archivos ya corren de a uno (`fileParallelism: false`), pero
+   esas pruebas van igual en un archivo propio, sin pruebas concurrentes.
+3. **Por SQL directo (`test:db`).** Las pruebas que cambian el correo con un `update` a `auth.users` desde la conexión de la
+   prueba usan el interruptor de soporte, que ahí sí vale; además prueban el propio interruptor.
+
 **Variante «el atacante hace el último clic».** El atacante crea una cuenta con su propio correo por `/registro`, abre el enlace y,
 **sin terminarla**, llama `PUT /auth/v1/user { email: E }` con la llave pública y su pase. Se comprueba que la llamada falla (el
-disparador) y que el correo de la cuenta no cambió. Luego, en la misma prueba con el disparador quitado (por el interruptor de
-soporte, para probar la segunda barrera sola): la víctima confirma el cambio en el correo de E, el atacante hace el último clic en
+disparador) y que el correo de la cuenta no cambió. Luego, en una prueba del proyecto `trigger-off`, con el disparador quitado
+(para probar la segunda barrera sola): la víctima confirma el cambio en el correo de E, el atacante hace el último clic en
 el enlace de su buzón antiguo y, con esa sesión y también con la del enlace original, llama `complete_account_setup`: falla con
 `email_changed` y se audita; `accept_invitation` y `create_tenant` fallan por cuenta sin terminar. Se anota el `amr` que trajo la
 sesión del último clic.
 
 **Variante «cambio de correo tras terminar».** El atacante termina su propia cuenta (en una de las pruebas, con segundo factor
-inscrito) y pide cambiar el correo al de la víctima: el disparador lo rechaza. Con el disparador quitado y la víctima confirmando:
+inscrito) y pide cambiar el correo al de la víctima: el disparador lo rechaza. Con el disparador quitado (proyecto
+`trigger-off`) y la víctima confirmando:
 `accept_invitation` y `create_tenant` fallan por cuenta sin terminar, y `complete_account_setup` se rechaza con `email_changed`
 desde cualquier sesión, sea de enlace del correo o de contraseña (la cuenta queda para soporte, J1).
 
@@ -383,20 +430,26 @@ intento obtiene sesión. Además, para el caso en que alguno la obtuviera: despu
 termine, la prueba fija con la llave maestra una contraseña que conoce el atacante (simula que la plantada sobrevivió), el atacante
 entra con ella y guarda su pase. Después de que la víctima termina la cuenta y pulsa
 «Unirme», con ese pase todavía sin vencer: `create_tenant`, `accept_invitation` y `complete_account_setup` fallan, y leer datos de
-la organización con `x-cp-tenant-id` devuelve cero filas, porque su sesión ya no está en `auth.sessions`. Se comprueba también que
+la organización con `x-cp-tenant-id` devuelve cero filas y cambiar `profiles.full_name` no cambia ninguna fila (el nombre sigue
+siendo el de la víctima), porque su sesión ya no está en `auth.sessions`. Se comprueba también que
 tras terminar la cuenta queda una sola sesión, la de la víctima.
 
 **Base de datos (`tests/db/account-setup.test.ts`)**
 - `complete_account_setup` rechaza `amr` de contraseña, sin `amr` y con factor inscrito; acepta un `amr` de enlace del correo;
   repetirla no falla; rechaza versiones viejas.
 - Las tres funciones rechazan una cuenta sin terminar.
-- El disparador rechaza cambiar `email` (también solo en mayúsculas y minúsculas) y anotar `email_change`, y deja pasar las
-  demás actualizaciones de `auth.users` (confirmar el correo, fijar la contraseña, `last_sign_in_at`).
-- Con el disparador quitado: `app.account_ready` pasa a falso al cambiar el correo en `auth.users`; `accept_invitation` falla
-  tras el cambio; `complete_account_setup` y el `preflight` responden `email_changed`, también sobre una cuenta nunca terminada.
+- El disparador rechaza cambiar `email` (también solo en mayúsculas y minúsculas) y anotar `email_change` partiendo de `NULL` o
+  de texto vacío, y deja pasar las demás actualizaciones de `auth.users` (confirmar el correo, fijar la contraseña,
+  `last_sign_in_at`), también sobre una fila que ya trae un cambio pendiente (puesto con el interruptor).
+- El interruptor `app.allow_email_change` deja pasar un `update` directo solo en la conexión que lo fija: otra conexión sigue
+  rechazada.
+- Con el interruptor (cambio por SQL directo): `app.account_ready` pasa a falso al cambiar el correo en `auth.users`;
+  `accept_invitation` falla tras el cambio; `complete_account_setup` y el `preflight` responden `email_changed`, también sobre una
+  cuenta nunca terminada.
 - `handle_new_user` anota `signup_email` en minúsculas.
-- Pase con `session_id` borrado de `auth.sessions`: fallan las seis funciones y `app.current_tenant_id()` devuelve vacío; con
-  otra sesión de la cuenta abierta, `complete_account_setup` responde `other_sessions`.
+- Pase con `session_id` borrado de `auth.sessions`: fallan las seis funciones, `app.current_tenant_id()` devuelve vacío y un
+  `update` de `profiles.full_name` no cambia ninguna fila (regla `profiles_update`); con otra sesión de la cuenta abierta,
+  `complete_account_setup` responde `other_sessions`.
 - Aceptación de términos preexistente (la que escribiría un registro abierto por error): `complete_account_setup` la borra, deja
   `legal.acceptance_discarded` en la auditoría y registra la real (fecha, IP y navegador de quien termina). Repetirla sobre una
   cuenta terminada no borra nada.
@@ -404,16 +457,16 @@ tras terminar la cuenta queda una sola sesión, la de la víctima.
   auditoría.
 - Las columnas no se pueden escribir.
 - `handle_new_user` ya no registra consentimiento; se reescribe la prueba de `tests/db/behavior.test.ts:423`.
-- El relleno y el deshacer.
+- El relleno (incluido que borra los cambios de correo pendientes) y el deshacer.
 
 **Aislamiento**
 - Funciones nuevas en el registro.
 - Ataques nuevos X7 y X8: `/auth/v1/signup` y `/auth/v1/otp` con `create_user` deben ser rechazados.
 - Ataque nuevo X9: `/auth/v1/resend` no puede crear cuentas ni fijar contraseñas (solo reenvía a cuentas existentes).
-- Ataque nuevo X10: `PUT /auth/v1/user` con otro correo debe fallar; con el disparador quitado, el cambio seguido de
-  `complete_account_setup` o `accept_invitation` debe fallar.
-- Ataque nuevo X11: un pase cuya sesión se cerró (`signOut`) no lee datos de su organización ni llama las funciones, aunque no
-  haya vencido.
+- Ataque nuevo X10: `PUT /auth/v1/user` con otro correo debe fallar; con el disparador quitado (en su archivo propio, como se
+  explica arriba), el cambio seguido de `complete_account_setup` o `accept_invitation` debe fallar.
+- Ataque nuevo X11: un pase cuya sesión se cerró (`signOut`) no lee datos de su organización, no llama las funciones ni cambia
+  `profiles.full_name`, aunque no haya vencido.
 - Ana, con pase de contraseña, no puede llamar `complete_account_setup`.
 
 **Guardias estáticas**
@@ -429,6 +482,8 @@ tras terminar la cuenta queda una sola sesión, la de la víctima.
   `preflight` no llame a `updateUser`; y que ante `other_sessions` repita el cierre una vez y reintente.
 - La acción de registro responde con la misma forma y duración mínima en cuenta nueva, sin verificar y verificada (con reloj
   simulado), y hace el trabajo caro después de responder.
+- El orden de la pasarela: con cuenta nueva o sin verificar, `generateLink` → `updateUserById(password)` → `generateLink`, y se
+  envía solo el código del último; con cuenta verificada, no llama a `updateUserById` ni envía nada.
 - `signup-open-guard`: bloquea con registro abierto en producción y no bloquea con registro cerrado.
 - El correo escapa el texto y lleva `APP_ORIGIN`.
 - El guion de configuración, con respuestas simuladas de ambas API (pública y de gestión).
@@ -448,8 +503,8 @@ tras terminar la cuenta queda una sola sesión, la de la víctima.
 
 | Etapa | Días |
 |---|---|
-| 0. Prueba exploratoria contra GoTrue local (los 14 puntos de §8) | 0,5–0,75 |
-| 1. Migración (correo de alta, disparador del cambio de correo, `preflight`, sesión abierta en las funciones y en `app.current_tenant_id()`, borrado auditado de aceptaciones), `actAs` con sesión real y pruebas de base de datos | 1,5–1,75 |
+| 0. Prueba exploratoria contra GoTrue local (los 15 puntos de §8) | 0,5–0,75 |
+| 1. Migración (correo de alta, disparador del cambio de correo, `preflight`, sesión abierta en las funciones, en `app.current_tenant_id()` y en `profiles_update`, borrado auditado de aceptaciones), `actAs` con sesión real y pruebas de base de datos | 1,5–1,75 |
 | 2. Pasarela, correo, acciones, dos pantallas nuevas al estándar premium con su revisión visual, y control de entrada de la sesión | 2–2,5 |
 | 3. E2e (cambio de `signUpAndVerify`, unos 25 e2e) y la del ataque con sus variantes (último clic, pase de sesión cerrada); aislamiento; guardias; guion con API de gestión; documentos; suites completas en local | 1,75–2 |
 | 4. Revisión adversarial y correcciones | 0,5–1 |
@@ -466,6 +521,10 @@ disparador y su prueba e2e), la sesión abierta en las funciones y en `app.curre
 reales, lo que toca todas las pruebas de base y aislamiento), el borrado auditado de aceptaciones, y dos puntos nuevos y uno
 ampliado en la etapa 0.
 
+**Tercera revisión: no cambia la estimación.** Sus ajustes (orden de la pasarela, condición del disparador y relleno, interruptor
+propio, pruebas con el disparador quitado en serie, `profiles_update` y el punto 15 de la etapa 0) caben en los rangos de las
+etapas 0, 1 y 3.
+
 Pasa de 2 días. Partirla deja un estado intermedio roto o inseguro: con el control de cuenta terminada pero sin la pantalla de
 terminar, nadie nuevo podría crear organizaciones. Por eso se propone una rama y un PR con commits por etapa (decisión J0).
 
@@ -477,8 +536,10 @@ terminar, nadie nuevo podría crear organizaciones. Por eso se propone una rama 
 - Lectura de `amr` con pases de distintas formas, el relleno, el cambio en `handle_new_user`, el camino viejo de `/auth/callback` y
   la variante del cambio de correo, incluido «el atacante hace el último clic» (ahora cerrada por el disparador y por
   `signup_email`; se intenta romper cada barrera por separado).
-- Pases de sesiones cerradas contra las funciones y contra las reglas por fila (`app.current_tenant_id()`), y el borrado de
-  aceptaciones previas.
+- Pases de sesiones cerradas contra las funciones, contra las reglas por fila (`app.current_tenant_id()`) y contra
+  `profiles_update`, lo que ese pase todavía puede leer de la propia cuenta (§4), y el borrado de aceptaciones previas.
+- El orden de la pasarela (que ningún enlace enviado muera por la contraseña aleatoria) y el interruptor
+  `app.allow_email_change`.
 - Tiempos de respuesta del registro, adivinar el código del enlace con `otp_length = 10`, y `/resend`.
 
 ---
@@ -490,7 +551,10 @@ terminar, nadie nuevo podría crear organizaciones. Por eso se propone una rama 
 - **Correos de verificación a terceros (spam).** Los correos de **registro** salen por nuestro formulario (tope por IP, tope por
   correo y anti-robot, decisión 019), pero **no es la única puerta**: `/recover`, `/otp` (para cuentas que ya existen) y `/resend`
   siguen abiertos con la llave pública de Supabase, y con ella cualquiera puede pedir esos correos para un tercero. Es un
-  comportamiento conocido de Supabase y no se probó aquí. Pedir enlaces para un correo ajeno manda mensajes no pedidos y, cada vez,
+  comportamiento conocido de Supabase y no se probó aquí. A esas se suma `PUT /auth/v1/user` con un correo nuevo: es probable
+  que GoTrue envíe los correos del cambio antes de que el disparador de §3.4 rechace la escritura, así que, aunque el cambio no
+  ocurra, sirve para mandar un correo no pedido al tercero. Exige una sesión (una cuenta propia terminada o recién verificada) y
+  lo acotan los límites de Supabase; se confirma en la etapa 0 (§8, punto 13). Pedir enlaces para un correo ajeno manda mensajes no pedidos y, cada vez,
   anula el enlace anterior: es una molestia, acotada por el tope por correo en nuestro formulario y por los límites propios de
   Supabase en las demás. Hasta que exista el verificador anti-robot real, en local rige `memory` y solo frenan los topes.
 - **Cuentas sin verificar.** Quedan en `auth.users` hasta una limpieza. Hoy guardan nombre y consentimiento falsos; después solo
@@ -498,9 +562,12 @@ terminar, nadie nuevo podría crear organizaciones. Por eso se propone una rama 
   decisión pendiente nº 17 (cómo se programan las tareas en producción).
 - **Pase vigente hasta 15 minutos después de cerrar la sesión: cerrado en la base.** La primera versión lo dejaba para otra
   historia; la segunda revisión mostró que, sin esto, el pase de un atacante seguía sirviendo después de que la víctima terminaba
-  la cuenta. Ahora `app.session_alive()` lo rechaza en las funciones de registro y membresía y en `app.current_tenant_id()`
-  (§3.4), lo que de paso cumple `SEGURIDAD.md` §1 («cierre efectivo») para todos los datos de organizaciones. Lo que no pasa por
-  la base es la API de Supabase Auth (`/auth/v1/user`, inscribir un segundo factor); se cree que GoTrue ya rechaza ahí los pases
+  la cuenta. Ahora `app.session_alive()` lo rechaza en las funciones de registro y membresía, en `app.current_tenant_id()` y en
+  la regla `profiles_update` (§3.4): sin esta última, ese pase todavía podía reescribir `profiles.full_name`, porque la regla no
+  pasa por `app.current_tenant_id()`. De paso se cumple `SEGURIDAD.md` §1 («cierre efectivo») para todos los datos de
+  organizaciones. Hasta que el pase venza sigue pudiendo **leer** las filas propias que no pasan por `app.current_tenant_id()`
+  (las ramas `user_id = auth.uid()` de `profiles_select` y `members_select`): el nombre de la cuenta y sus membresías, sin datos
+  de organizaciones. Se anota para la revisión adversarial (§3.9). Lo que no pasa por la base es la API de Supabase Auth (`/auth/v1/user`, inscribir un segundo factor); se cree que GoTrue ya rechaza ahí los pases
   de sesiones borradas (`session_not_found`), y se confirma en la etapa 0 (§8, punto 14).
 - **Variante por cambio de correo: cerrada en este diseño.** Se confirmó leyendo el código que `accept_invitation` compara con el
   correo actual de la cuenta. Había dos caminos: el atacante terminaba su cuenta y después pedía el cambio al correo de la
@@ -596,6 +663,8 @@ propuesta).
 - Sobrescribir aceptaciones con `on conflict do update`: `legal_acceptances` no admite cambios.
 - Leer el bloqueo del formulario de registro (J5) como una defensa contra el ataque.
 - Fijar la contraseña antes de validar en la base lo que la base puede rechazar.
+- En la pasarela, fijar la contraseña aleatoria después de generar el enlace que se envía: probablemente lo anula (§8, punto 15).
+- Reutilizar `app.retention_purge` como interruptor del cambio de correo, o creer que un interruptor de sesión alcanza a GoTrue.
 - Responder igual en pantalla pero hacer el trabajo caro antes de responder (delata si el correo tiene cuenta).
 - Usar `generateLink({ type: "signup" })` con contraseña, `createUser({ email_confirm: true })` o `inviteUserByEmail` con su plantilla
   de serie, que deja los datos de la sesión en la parte de la dirección después de `#`, que el servidor no ve.
@@ -622,11 +691,15 @@ Todos estos puntos los cierra la prueba exploratoria de la etapa 0, con llamadas
    confirmada responda `email_exists`.
 5. Cuánto vive un enlace de tipo invite (¿`otp_expiry`?).
 6. Si el aviso «tu contraseña cambió» sale al fijar la primera contraseña. Si sale, hay que ajustar el texto de la plantilla.
+   También si sale cuando la pasarela fija la contraseña aleatoria con `admin.updateUserById` (§3.1): si sale ahí, llegaría en
+   cada registro, y la pasarela pasa a fijarla solo en las cuentas que ya existían (las que la primera llamada a `generateLink`
+   no acaba de crear), aceptando la diferencia de tiempo, que tapan la duración mínima y el trabajo después de responder (§3.6).
 7. Qué campos entrega `GET /auth/v1/settings` (se cree que incluye `disable_signup`, `mailer_autoconfirm` y los proveedores, pero no
    el cambio seguro de correo) y cuáles entrega la API de gestión `/v1/projects/{ref}/config/auth`, con sus nombres exactos.
 8. En el Supabase alojado: el plan que exigen los ganchos de contraseña y los límites de sesión, y la restricción del SMTP de serie.
 9. Si una función de la base puede leer `auth.mfa_factors` y `auth.sessions` en el proyecto alojado, como hoy lee `auth.users`,
-   y si sigue permitido crear un disparador `before update` en `auth.users` (hoy ya hay uno `after insert`).
+   y si sigue permitido crear un disparador `before update` en `auth.users` (hoy ya hay uno `after insert`). En local, además,
+   qué rol puede deshabilitarlo en las pruebas (`postgres`, con el que conectan hoy, o `supabase_admin`; §3.7).
 10. Qué hace GoTrue al verificar un invite sobre una cuenta que ya tenía contraseña. La reproducción del revisor solo probó el tipo
     `signup`. También queda sin reproducir la variante del cambio de correo tras terminar
     (hay que reproducirla en `main` y comprobar que el cierre de §3.4 la detiene).
@@ -636,9 +709,16 @@ Todos estos puntos los cierra la prueba exploratoria de la etapa 0, con llamadas
     de la víctima, la víctima confirma y el atacante hace el último clic. Anotar el `amr` de esa sesión y si el pase del enlace
     original sigue sirviendo con el correo nuevo. Con el disparador puesto: qué responde `PUT /auth/v1/user` y si GoTrue alcanza
     a enviar los dos correos antes de fallar (si los envía, el texto de la plantilla de cambio de correo debe decir que el cambio
-    no está disponible).
+    no está disponible, y queda como puerta de spam, §4).
 14. Que `signOut({ scope: "others" })` borre de `auth.sessions` las demás sesiones; que todo pase de GoTrue traiga `session_id`,
     también tras renovarse; y que la API de Supabase Auth rechace un pase cuya sesión se borró (`session_not_found`).
+15. **Qué borra fijar una contraseña.** Si `admin.updateUserById(id, { password })` y `updateUser({ password })` (el
+    `UpdatePassword` de GoTrue) borran los códigos de un solo uso pendientes de la cuenta (`confirmation_token`,
+    `recovery_token`, filas de `auth.one_time_tokens`) o cierran sus sesiones. Se cree que sí, al menos en parte. Comprobar: (a)
+    que el enlace del segundo `generateLink`, generado después de la contraseña aleatoria, funciona, y que uno generado antes
+    deja de funcionar (confirma el orden de §3.1); (b) que en `/crear-cuenta`, `updateUser({ password })` no cierra la propia
+    sesión, porque el paso siguiente, `complete_account_setup`, exige que siga abierta (§3.2). Si la cierra, la acción renueva
+    la sesión o se reordena, y se revisa el diseño.
 
 ---
 

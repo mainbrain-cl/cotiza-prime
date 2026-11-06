@@ -43,7 +43,7 @@ Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por sepa
 hallazgos corregidos. Pruebas: `npm test`, `test:db`, `test:isolation` (504 ataques entre
 organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHub Actions.
 
-- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 40 migraciones. Datos de
+- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 42 migraciones. Datos de
   prueba: `npm run db:seed` (`ana`, `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
   `Prueba-Cotiza-2026`; Negocio Demo 1 y 2). Cómo levantarlo: `README.md`.
 - **Documentos de arquitectura:** `docs/arquitectura/modelo-datos.md` (aprobado) y
@@ -54,7 +54,54 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Traspaso del 2026-11-04 — lo primero que hay que saber
+### Traspaso del 2026-11-06 — lo más reciente (léelo antes que el del 2026-11-04)
+
+**Repositorio nuevo:** `github.com/mainbrain-cl/cotiza-prime` (organización de Main Brain, privado). La dirección
+antigua `avronygg/cotiza-prime` solo redirige: no se usa más. Quien tenga una copia vieja corre una vez
+`git remote set-url origin https://github.com/mainbrain-cl/cotiza-prime.git`.
+
+**`main` está en `a83cd42` (PR #28) y no hay PR abiertos.** Entraron los PR #25 a #29, revisados y corregidos por Aarón:
+- **#29** arregla el CI en rojo: dos e2e de formularios dependían de la semilla, que el CI no carga; ahora crean sus
+  propios usuarios y organizaciones (`prepareOrgForForms` en `e2e/intake-support.ts`).
+- **#25** diseño de **H-116** (registro seguro, `docs/arquitectura/h-116-registro-seguro.md`): registro en dos pasos y
+  cambio de correo bloqueado hasta H-109.
+- **#26** diseño de **H-042** (servicios por comercial, `docs/arquitectura/h-042-servicios-por-comercial.md`): el límite
+  **ordena** la lista del comercial pero no controla lo que vende (D2); dos tablas (D13).
+- **#27** H-009: la vista previa de una invitación es de solo lectura. A quien no es el invitado le responde
+  `wrong_email` y todas las rutas tardan lo mismo, para no revelar el estado de la invitación.
+- **#28** **H-010** (cambiar el rol de un miembro o quitarlo). Revisión importante: un Administrador podía meter a un
+  cómplice como Administrador sin que el Dueño se enterara; ahora **solo el Dueño** da, cambia, quita, invita o reenvía
+  roles con `team.manage`. Además: tope de 30 cambios de equipo por hora para quien no es Dueño
+  (`app.member_change_max_per_hour()`) y helper `app.current_tenant_people()`. 42 migraciones.
+
+**Verde local de #28 (informado por Aarón):** `test:db` 999, `test:isolation` 1.201, e2e `chromium` 149, e2e `isolation`
+19, rollbacks OK y 2.160 unitarias. **Nada está en producción:** todo corre en local.
+
+**El CI está apagado** (cuota gratuita de minutos de la organización casi agotada; no es lo mismo que el problema de
+facturación anotado antes). Lo enciende Aarón y avisa; quizá pronto con pago, o hacia el 2026-12-01 cuando se reinicie la
+cuota. **No reactivar Actions ni cambiar los workflows para esquivarlo.** Mientras tanto, antes de abrir o actualizar un
+PR se corre en local lo que toca el cambio; si toca base de datos, permisos o RLS, la suite completa (`lint`,
+`typecheck`, `test`, `test:db`, `test:isolation`, `test:e2e`) y, con migraciones, `test:db:rollbacks` (vacía la base
+local: después `supabase db reset` y `npm run db:seed`). **La descripción del PR dice qué se corrió y el resultado.**
+
+**Reglas vigentes:**
+- Cada migración nueva lleva fecha posterior a la última en `main`, su rollback al día en `supabase/rollbacks/`, y las
+  funciones `SECURITY DEFINER` usan `set search_path = ''` y nombres completos (`public.tabla`, `app.funcion`).
+- `team.manage`: Dueño y Administrador. `tenant.transfer`: solo el Dueño. Cualquier acción que dé o quite poder de
+  Administrador queda reservada al Dueño.
+- Una rama por tarea, PR contra `main`, integración con merge commit. Todo PR se revisa; lo de seguridad, permisos o datos
+  lleva además revisión adversarial.
+- Si una decisión cambia el alcance de una historia, se anota en `docs/arquitectura/` como «decisión por defecto aplicada».
+
+**Pendientes conocidos:**
+- `e2e/intake-convert.spec.ts:206` falló 1 de 9 veces en el CI (no se sabe si es la prueba o la app).
+- **Riesgo aceptado y documentado:** dentro del tope de 30 por hora, un Administrador puede quitar o bajar a quien no es
+  Administrador, o cambiar precios y datos bancarios, sin que el Dueño reciba un correo; solo queda en el registro de
+  actividad. Se cierra con los correos de aviso (decisión nº 17 y proveedor de correo, decisión 016).
+- La decisión 15 (quién envía sin aprobación) sigue sin resolverse y bloquea mezclar H-040.
+- Las historias que ya tienen diseño aprobado son H-116 y H-042; cuál se construye primero lo decide José.
+
+### Traspaso del 2026-11-04 — histórico (lo del 2026-11-06 lo actualiza)
 
 **Quedó en `main` (`42a1fff`):** PR #19, #21, #20 (H-009), #22 y #23 (H-048a), en ese orden, por pedido de Aarón.
 No hay PR abiertos. Ya se puede invitar y aceptar de punta a punta, y existe Configuración → «Textos listos».
@@ -110,7 +157,7 @@ PDF con selector, que espera la aprobación del diseño de las plantillas 2 y 3)
 (H-092 construida y en `main`). **Sprint 5 (equipo y permisos) confirmado por José el 2026-10-28**
 (Compuerta 3) y en construcción: **H-011a (matriz única de permisos) en `main` desde el 2026-10-29**
 (PR #12), **H-008 (invitar, PR #15)**, **H-009 (aceptar, PR #20)** y **H-048a (textos listos, PR #22 y #23)**; siguen
-H-010 y H-011b. Documentos: `docs/sprints/005-equipo-y-permisos.md` y
+H-010 y H-011b (H-010 entró el 2026-11-06, PR #28). Documentos: `docs/sprints/005-equipo-y-permisos.md` y
 `docs/arquitectura/sprint-5-equipo-y-permisos.md`. Sprints 6 a 12 sin partir. 40 migraciones. Pruebas (2026-11-04, local): 2.050 unitarias (1 omitida), 907 de base de
 datos, 1.188 de aislamiento (3 pendientes), e2e `isolation` 19 de 19 y e2e `chromium` 141 de 141 con la app compilada.
 `test:db:rollbacks` no se corrió sobre el conjunto (vacía la base local).
@@ -136,8 +183,9 @@ sigue ahí: se puede borrar cuando José lo ordene.
 sigue decidiendo producto, dinero, proveedores y lo que ve el cliente final; y lo delicado (permisos,
 aislamiento entre organizaciones, dinero, superficie pública) **no se mezcla sin Aarón**.
 
-**El CI de GitHub no corre por la facturación de la cuenta** (las corridas fallan en 2 s con «recent
-account payments have failed…»). Aarón debe regularizarlo. Mientras tanto se verifica todo en local y,
+**El CI de GitHub no corre** (hasta el 2026-11-04, por la facturación de la cuenta: las corridas fallaban en 2 s con
+«recent account payments have failed…»; desde el 2026-11-06 está apagado por la cuota de minutos, ver arriba). Mientras
+tanto se verifica todo en local y,
 **en cada integración grande, se corre la suite completa de punta a punta** (`E2E_PROD=1 npx playwright
 test --project=chromium` y `npx playwright test --project=isolation`), no solo las pruebas de la zona
 tocada. **El `chromium` se corre con `E2E_PROD=1`** (app compilada, unos 8 minutos): con el servidor de
@@ -169,7 +217,7 @@ Turnstile o ALTCHA; antes de correos reales, además, que un nombre de organizac
 vuelva enlace en la invitación); dominio y marca; facturación de GitHub; antes del piloto, abogado, datos de Main Brain
 para los términos (29 marcadores), custodia de claves de cifrado y quién responde un incidente.
 
-**Qué sigue:** terminar el sprint 5 (H-010, H-011b y el resto de su lista) → revisión grande de Aarón (decirle qué está listo, el link
+**Qué sigue** (H-010 ya está en `main` desde el 2026-11-06): terminar el sprint 5 (H-011b y el resto de su lista) → revisión grande de Aarón (decirle qué está listo, el link
 `http://localhost:3000` y los accesos) → 6 aprobación y datos de pago → 7 cobro → piloto privado. Estimación: unas 2 a 3 semanas hasta el piloto y 4 a 6 hasta el lanzamiento.
 
 **Cómo se prueba en pantalla:** `npm run dev` → http://localhost:3000 (Docker abierto y `npx supabase
@@ -179,7 +227,7 @@ falta también `INTAKE_RENDER_SECRET` (32+ caracteres), `ANTIBOT_PROVIDER=memory
 (solo desarrollo). `db reset` y `test:db:rollbacks` vacían la base local: después, `npm run db:seed`.
 
 **Aarón pidió:** que se avance solo y se integre a `main` (desde el 2026-10-28, por rama y PR); él revisa **en un bloque grande**, no historia por
-historia. Mirar siempre el CI tras cada subida.
+historia. Mirar el CI tras cada subida cuando esté encendido (hoy está apagado: ver el traspaso del 2026-11-06).
 
 **Trampas de Windows:** `npm install` puede borrar de `package-lock.json` las entradas
 `node_modules/@emnapi/core` y `@emnapi/runtime` (`npm run lint` lo comprueba). Nunca enlazar `node_modules`
@@ -188,7 +236,7 @@ carpeta. Si Supabase no arranca con «ports are not available» o queda sin puer
 el rango (`netsh interface ipv4 show excludedportrange protocol=tcp`): `net stop winnat` y `net start winnat`
 como administrador, y de nuevo `npx supabase start` (pasó el 2026-10-30; no borra datos).
 
-**Repositorio:** `github.com/avronygg/cotiza-prime`, privado, rama `main`.
+**Repositorio:** `github.com/mainbrain-cl/cotiza-prime` (antes `avronygg/cotiza-prime`, que redirige), privado, rama `main`.
 
 ## Cómo se trabaja cada historia
 

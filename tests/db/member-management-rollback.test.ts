@@ -1,14 +1,17 @@
 // H-010 · El «deshacer» de la migración `member_management` hace lo que dice: borra las tres funciones y sus ayudas,
 // devuelve `profiles_select` a la regla de antes (solo el nombre de los miembros ACTIVOS) y `members_select` a la de la
 // migración 2 (todas las filas de la organización activa), y NO toca a los miembros ya quitados ni a las invitaciones
-// ya canceladas. Se ejecuta el archivo real dentro de una transacción que se
-// deshace; el deshacer completo y en orden lo prueba `npm run test:db:rollbacks`.
+// ya canceladas. También, que al aplicarse la migración cancela las invitaciones pendientes a un rol que maneja el
+// equipo hechas por quien no es el Dueño, que repetirlo no cambia nada y que el deshacer no las devuelve. Se ejecuta el
+// archivo real dentro de una transacción que se deshace; el deshacer completo y en orden lo prueba
+// `npm run test:db:rollbacks`.
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { actAsPostgres, connect, createUser, withTx } from "./helpers";
-import { asUser, buildWorld, type World } from "./send-helpers";
+import { asUser, buildWorld, newToken, sha256Hex, type World } from "./send-helpers";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "supabase");
 const NAME = "20261105110000_member_management";
@@ -74,6 +77,44 @@ const policyOf = async (table: "profiles" | "members") =>
     )
   ).rows[0].qual;
 const policy = () => policyOf("profiles");
+
+/** Una invitación pendiente insertada a mano (montaje directo, como postgres). Devuelve su id. */
+async function insertPending(
+  tenant: string,
+  invitedBy: string,
+  role: string,
+  ownerNotice: "none" | "pending",
+): Promise<string> {
+  const id = randomUUID();
+  const { sha } = newToken();
+  await db.query(
+    `insert into public.invitations
+       (id, tenant_id, email_enc, email_hash, email_binding, role, token_sha256, status, expires_at, invited_by,
+        owner_notice_state)
+     values ($1, $2, $3, $4, $5, $6, $7, 'pending', now() + interval '7 days', $8, $9)`,
+    [
+      id,
+      tenant,
+      `v1.cifrado.${id}`,
+      sha256Hex(`huella|${id}`),
+      sha256Hex(`vinculo|${id}`),
+      role,
+      sha,
+      invitedBy,
+      ownerNotice,
+    ],
+  );
+  return id;
+}
+
+const invitation = async (id: string) =>
+  (
+    await db.query(
+      `select status, revoke_reason, revoked_by, owner_notice_state, revoked_at is not null as revoked
+         from public.invitations where id = $1`,
+      [id],
+    )
+  ).rows[0];
 
 describe("el deshacer de member_management", () => {
   it("existe el archivo y cada función de la migración aparece en él", () => {
@@ -157,6 +198,60 @@ describe("el deshacer de member_management", () => {
         [person.id, w.tenantA],
       );
       expect(row.rows).toEqual([{ status: "removed" }]);
+    }));
+
+  it("al aplicarse cancela las invitaciones pendientes a un rol que maneja el equipo hechas por quien no es el Dueño; repetirlo no cambia nada y el deshacer no las devuelve", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      await db.query(down);
+      // Montaje: invitaciones como las que H-008 dejaba crear antes de esta migración.
+      const legacy = await insertPending(w.tenantA, w.admin.id, "admin", "pending");
+      const bySales = await insertPending(w.tenantA, w.sales.id, "admin", "none");
+      const byOwner = await insertPending(w.tenantA, w.owner.id, "admin", "none");
+      const adminSales = await insertPending(w.tenantA, w.admin.id, "sales", "none");
+      const ownerInB = await insertPending(w.tenantB, w.ownerB.id, "admin", "none");
+      // Quien es Dueño en A no lo es en B: su invitación a Administrador en B también se cancela.
+      const ownerAInB = await insertPending(w.tenantB, w.owner.id, "admin", "none");
+
+      await db.query(up);
+
+      for (const id of [legacy, bySales, ownerAInB]) {
+        expect(await invitation(id), id).toMatchObject({
+          status: "revoked",
+          revoke_reason: "inviter_removed",
+          revoked_by: null,
+          owner_notice_state: "none",
+          revoked: true,
+        });
+      }
+      for (const id of [byOwner, adminSales, ownerInB]) {
+        expect(await invitation(id), id).toMatchObject({ status: "pending", revoke_reason: null });
+      }
+      // La misma auditoría que deja `app.cancel_member_invitations`: el disparador anota el cambio (aquí, de `system`).
+      const audit = await db.query(
+        `select actor_type, details from public.audit_log
+          where tenant_id = $1 and resource_id = $2 and action = 'invitation.updated'`,
+        [w.tenantA, legacy],
+      );
+      expect(audit.rows).toHaveLength(1);
+      expect(audit.rows[0].actor_type).toBe("system");
+      expect(audit.rows[0].details.changed).toEqual(
+        expect.arrayContaining(["status", "revoke_reason", "revoked_at"]),
+      );
+
+      // Repetir la cancelación no toca nada más: solo mira las que siguen pendientes.
+      const cancel = up.slice(up.lastIndexOf("update public.invitations i"));
+      expect(cancel).toContain("i.status = 'pending'");
+      expect((await db.query(cancel)).rowCount).toBe(0);
+      for (const id of [byOwner, adminSales, ownerInB]) {
+        expect((await invitation(id)).status, id).toBe("pending");
+      }
+
+      // El deshacer no las devuelve.
+      await db.query(down);
+      for (const id of [legacy, bySales, ownerAInB]) {
+        expect((await invitation(id)).status, id).toBe("revoked");
+      }
     }));
 
   it("la migración se puede volver a aplicar después de deshacerla", () =>

@@ -1,7 +1,7 @@
 // Sprint 5 · migración 20261105110000 · cambiar el rol de un miembro o quitarlo (H-010).
 // `list_members`, `change_member_role` y `remove_member` con pases reales de cada rol: quién puede, el Dueño y uno
-// mismo intocables, solo el Dueño da o quita un rol que maneja el equipo, tope de cambios por hora (cambios de rol y
-// quitadas sumados), otra
+// mismo intocables (el Dueño, sin bloquear su fila), solo el Dueño da o quita un rol que maneja el equipo, tope de
+// cambios por hora (cambios de rol y quitadas sumados; el Dueño sin tope), otra
 // organización, rol esperado desactualizado, el Dueño quita a un Administrador mientras este actúa, dos cambios
 // simultáneos al mismo miembro, invitar o reenviar mientras te quitan, invitaciones canceladas, nombre todavía
 // visible, filas de quien se fue solo para quien maneja el equipo, ex miembro sin acceso a nada, reactivar por
@@ -439,6 +439,35 @@ describe("tope de cambios en el equipo por hora (cambios de rol y quitadas, suma
       expect((await call(w.owner, w.tenantA, REMOVE, [memberId, flip(role)])).result).toBe(
         "removed",
       );
+    });
+  });
+
+  it("el Dueño no tiene tope: con más de 30 cambios en la hora sigue cambiando roles y quitando; un Administrador con los mismos, no", async () => {
+    await withTx(setup, async () => {
+      // El Dueño y el Administrador ya hicieron, cada uno, más del tope en la última hora (montaje directo).
+      await seedMemberChanges(w.owner, MEMBER_CHANGES_PER_HOUR + 5);
+      await seedMemberChanges(w.admin, MEMBER_CHANGES_PER_HOUR + 5);
+      const one = await addMember("sales", w.tenantA, "Comercial Incidente Uno");
+      const two = await addMember("approver", w.tenantA, "Aprobador Incidente Dos");
+      // El Dueño limpia el equipo en un incidente: cambia y quita sin tope (cada acción deja su registro).
+      expect(
+        (await call(w.owner, w.tenantA, CHANGE, [one.memberId, "viewer", "sales"])).result,
+      ).toBe("changed");
+      expect((await call(w.owner, w.tenantA, REMOVE, [one.memberId, "viewer"])).result).toBe(
+        "removed",
+      );
+      expect(await auditRows("member.role_changed", one.memberId)).toHaveLength(1);
+      expect(await auditRows("member.removed", one.memberId)).toHaveLength(1);
+      // El Administrador sigue con tope, para cambiar y para quitar.
+      for (const [sql, params] of [
+        [CHANGE, [two.memberId, "viewer", "approver"]],
+        [REMOVE, [two.memberId, "approver"]],
+      ] as const) {
+        const error = await denied(w.admin, w.tenantA, sql, [...params]);
+        expect(error.code).toBe(TOO_MANY);
+        expect(error.message).toBe("limit_member_changes");
+      }
+      expect(await memberRow(two.memberId)).toMatchObject({ status: "active", role: "approver" });
     });
   });
 
@@ -1271,6 +1300,38 @@ describe("dos personas a la vez (dos conexiones reales)", () => {
         [tenant],
       ),
     ).toBe(2);
+  });
+
+  it("«nadie toca al Dueño» se responde sin bloquear su fila: con esa fila bloqueada por otra conexión, el Administrador recibe la respuesta sin esperar", async () => {
+    const { owner, tenant, others } = await freshTenant(["admin"]);
+    const [admin] = others;
+    const ownerMemberId = await memberIdOf(owner, tenant);
+    const holder = await connect();
+    const caller = await connect();
+    try {
+      // Otra conexión tiene la fila del Dueño bloqueada (como un cambio del Dueño en curso).
+      await holder.query("begin");
+      await holder.query("select 1 from public.members where id = $1 for update", [ownerMemberId]);
+      // Si la función intentara bloquear la fila del Dueño, esperaría y fallaría con 55P03 (lock_not_available).
+      await caller.query("begin");
+      await caller.query("set local lock_timeout = '2s'");
+      await asUser(caller, admin.user, tenant);
+      for (const [sql, params] of [
+        [CHANGE, [ownerMemberId, "viewer", "owner"]],
+        [CHANGE, [ownerMemberId, "admin", "owner"]],
+        [REMOVE, [ownerMemberId, "owner"]],
+      ] as const) {
+        const error = await expectSqlError(caller, sql, [...params]);
+        expect(error.code).toBe(NOT_ALLOWED);
+        expect(error.message).toBe("cannot_target_owner");
+      }
+    } finally {
+      await caller.query("rollback").catch(() => undefined);
+      await holder.query("rollback").catch(() => undefined);
+      await caller.end();
+      await holder.end();
+    }
+    expect(await memberRow(ownerMemberId)).toMatchObject({ status: "active", role: "owner" });
   });
 
   it("el Dueño sube a alguien a Administrador mientras un Administrador lo quita: el Administrador recibe «solo el Dueño»", async () => {

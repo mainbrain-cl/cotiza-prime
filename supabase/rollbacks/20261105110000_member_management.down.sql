@@ -4,6 +4,10 @@
 -- `members_select` a la de la migración 2 (todas las filas de la organización activa, para cualquier miembro). No toca miembros ni invitaciones: lo que ya se quitó o canceló queda así (el estado de `members`
 -- y de `invitations` es de las historias anteriores). Las filas de auditoría `member.role_changed` y `member.removed`
 -- se conservan (la auditoría es de solo agregar).
+-- NO DEVUELVE las invitaciones que la sección 9 de la migración canceló al aplicarse (pendientes, con un rol que maneja
+-- el equipo, hechas por alguien que no es el Dueño): no se puede saber cuáles estaban pendientes antes, y revivirlas
+-- abriría de nuevo el camino que la migración cerró. Quedan `revoked` con `inviter_removed` y su auditoría; si hace
+-- falta, el Dueño invita de nuevo.
 -- Las dos funciones de H-008 vuelven a su definición original (sin el bloqueo de la fila de quien invita ni la regla
 -- «solo el Dueño invita o reenvía a un rol que maneja el equipo»).
 create or replace function public.create_invitation(

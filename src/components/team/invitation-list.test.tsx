@@ -28,6 +28,7 @@ const baseItem: InvitationItem = {
   sentLabel: "Último envío: 03-11-2026 14:56",
   invitedBy: null,
   resendsLeft: 2,
+  resendLockedNote: null,
 };
 
 let host: HTMLDivElement;
@@ -66,5 +67,35 @@ describe("InvitationList — reenvíos agotados", () => {
     await mount({ ...baseItem, resendsLeft: 2 });
     expect(resendButton().disabled).toBe(false);
     expect(noResendsNote()).toBeNull();
+  });
+});
+
+describe("InvitationList — la invitación a un Administrador, vista por quien no es el Dueño (H-010)", () => {
+  const locked: InvitationItem = {
+    ...baseItem,
+    roleLabel: "Administrador",
+    needsAttention: true,
+    expired: true,
+    resendLockedNote:
+      "Solo el Dueño puede reenviar la invitación de un Administrador. Tú puedes cancelarla.",
+  };
+
+  it("no ofrece «Reenviar» y dice por qué; «Cancelar invitación» sigue", async () => {
+    await mount(locked);
+    expect(host.querySelector('[data-testid="invitation-resend"]')).toBeNull();
+    expect(host.querySelector('[data-testid="invitation-resend-locked"]')?.textContent).toBe(
+      locked.resendLockedNote,
+    );
+    expect(host.querySelector('[data-testid="invitation-revoke"]')).not.toBeNull();
+    // Ni la pista de «reenvíala» (no puede) ni la de reenvíos agotados.
+    expect(host.textContent).not.toContain("Reenvíala");
+    expect(noResendsNote()).toBeNull();
+  });
+
+  it("sin bloqueo, el botón está y no aparece la nota", async () => {
+    await mount({ ...locked, resendLockedNote: null });
+    expect(resendButton()).not.toBeNull();
+    expect(host.querySelector('[data-testid="invitation-resend-locked"]')).toBeNull();
+    expect(host.textContent).toContain("Reenvíala");
   });
 });

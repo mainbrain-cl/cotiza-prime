@@ -722,6 +722,146 @@ describe("reenviar", () => {
   });
 });
 
+describe("solo el Dueño invita o reenvía a un rol que maneja el equipo (H-010)", () => {
+  const ACCEPT = "select public.accept_invitation($1) as r";
+  /** Los argumentos de un reenvío atado a `email` (lo que mandaría quien llama la función directo). */
+  const resendTo = (id: string, email: string) => {
+    const { sha } = newToken();
+    const mailId = randomUUID();
+    return {
+      sha,
+      mailId,
+      params: [id, invitationEmailBinding(sha, email), sha, mailId, `v1.re.${mailId}`],
+    };
+  };
+  const allowResendNow = async (id: string) => {
+    await actAsPostgres(setup);
+    await setup.query(
+      "update public.invitations set last_sent_at = now() - interval '11 minutes' where id = $1",
+      [id],
+    );
+  };
+
+  it("el Administrador no invita a un Administrador (llamando la función directo): «solo el Dueño», sin fila, correo ni aviso", async () => {
+    await withTx(setup, async () => {
+      const p = prepare({ role: "admin" });
+      const error = await denied(w.admin, w.tenantA, CREATE, p.params);
+      expect(error.code).toBe(INSUFFICIENT_PRIVILEGE);
+      expect(error.message).toBe("owner_only");
+      expect(await row(p.id)).toBeUndefined();
+      expect(
+        await count("select count(*) as n from public.email_messages where id = $1", [p.mailId]),
+      ).toBe(0);
+      expect(
+        await count(
+          "select count(*) as n from public.audit_log where tenant_id = $1 and resource_id = $2",
+          [w.tenantA, p.id],
+        ),
+      ).toBe(0);
+      // Los demás roles los sigue invitando.
+      for (const role of ["approver", "sales", "viewer"]) {
+        expect((await invite(w.admin, { role })).result.result, role).toBe("created");
+      }
+    });
+  });
+
+  it("el Dueño sí invita a un Administrador, y sin aviso (ya lo sabe)", async () => {
+    await withTx(setup, async () => {
+      const { result, p } = await invite(w.owner, { role: "admin" });
+      expect(result.result).toBe("created");
+      expect(result.notify_owner).toBe(false);
+      expect((await row(p.id)).owner_notice_state).toBe("none");
+    });
+  });
+
+  it("el Administrador no redirige a un cómplice la invitación a Administrador del Dueño (reenvío directo con un vínculo falso): nada cambia y el cómplice no entra", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.owner, { role: "admin", email: "admin-del-dueno@ejemplo.test" });
+      await allowResendNow(p.id);
+      const before = await row(p.id);
+      const accomplice = await createUser(setup);
+      // El vínculo del correo del cómplice con un código que conoce el Administrador.
+      const forged = resendTo(p.id, accomplice.email);
+      const error = await denied(w.admin, w.tenantA, RESEND, forged.params);
+      expect(error.code).toBe(INSUFFICIENT_PRIVILEGE);
+      expect(error.message).toBe("owner_only");
+      const after = await row(p.id);
+      expect(after.token_sha256).toBe(before.token_sha256);
+      expect(after.email_binding).toBe(before.email_binding);
+      expect(after.send_count).toBe(before.send_count);
+      expect(after.expires_at).toEqual(before.expires_at);
+      expect(
+        await count("select count(*) as n from public.email_messages where id = $1", [
+          forged.mailId,
+        ]),
+      ).toBe(0);
+      expect(
+        await count(
+          "select count(*) as n from public.audit_log where tenant_id = $1 and action = 'invitation.resent' and resource_id = $2",
+          [w.tenantA, p.id],
+        ),
+      ).toBe(0);
+      // El código falso no abre nada: el cómplice no queda como miembro.
+      const attempt = await call(accomplice, w.tenantA, ACCEPT, [forged.sha]);
+      expect(attempt.result).not.toBe("accepted");
+      expect(
+        await count(
+          "select count(*) as n from public.members where tenant_id = $1 and user_id = $2",
+          [w.tenantA, accomplice.id],
+        ),
+      ).toBe(0);
+    });
+  });
+
+  it("tampoco reenvía una invitación a Administrador que él mismo hizo antes de H-010", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.owner, { role: "admin" });
+      await actAsPostgres(setup);
+      await setup.query("set local session_replication_role = replica");
+      await setup.query("update public.invitations set invited_by = $2 where id = $1", [
+        p.id,
+        w.admin.id,
+      ]);
+      await setup.query("set local session_replication_role = origin");
+      await allowResendNow(p.id);
+      const error = await denied(w.admin, w.tenantA, RESEND, resendTo(p.id, p.email).params);
+      expect(error.code).toBe(INSUFFICIENT_PRIVILEGE);
+      expect(error.message).toBe("owner_only");
+    });
+  });
+
+  it("el Dueño sí reenvía la invitación a Administrador; el Administrador puede cancelarla", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.owner, { role: "admin" });
+      await allowResendNow(p.id);
+      const r = resendTo(p.id, p.email);
+      expect((await call(w.owner, w.tenantA, RESEND, r.params)).result).toBe("resent");
+      expect((await row(p.id)).token_sha256).toBe(r.sha);
+      expect(await call(w.admin, w.tenantA, REVOKE, [p.id])).toEqual({ result: "revoked" });
+    });
+  });
+
+  it("el Administrador sigue reenviando invitaciones a roles que no manejan el equipo, aunque las haya hecho el Dueño", async () => {
+    await withTx(setup, async () => {
+      for (const role of ["approver", "sales", "viewer"]) {
+        const { p } = await invite(w.owner, { role });
+        await allowResendNow(p.id);
+        const result = await call(w.admin, w.tenantA, RESEND, resendTo(p.id, p.email).params);
+        expect(result.result, role).toBe("resent");
+      }
+    });
+  });
+
+  it("una invitación a Administrador ya cancelada le dice «ya no está pendiente» (el estado va antes que «solo el Dueño»)", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.owner, { role: "admin" });
+      await call(w.owner, w.tenantA, REVOKE, [p.id]);
+      const error = await denied(w.admin, w.tenantA, RESEND, resendTo(p.id, p.email).params);
+      expect(error.code).toBe(NOT_ALLOWED_STATE);
+    });
+  });
+});
+
 describe("cancelar", () => {
   it("deja la invitación «revoked» con quién y cuándo, y queda en la auditoría sin el correo", async () => {
     await withTx(setup, async () => {
@@ -972,6 +1112,9 @@ describe("cerrar el envío del correo (solo el servidor)", () => {
 });
 
 describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado por la tarea", () => {
+  // Desde H-010 un Administrador ya no puede invitar a un Administrador (`owner_only`), así que ninguna invitación
+  // NUEVA anota un aviso. La tarea sigue atendiendo las que quedaron anotadas antes (como las de esta montaje) y
+  // `create_invitation` sigue anotando el aviso si la regla de H-010 cambiara: lo de abajo sigue valiendo.
   const PENDING = "select public.invitation_notices_pending($1, $2) as r";
   const RECIPIENTS = "select public.invitation_notice_recipients($1) as r";
   const REGISTER = "select public.invitation_notice_register($1, $2, $3, $4, $5) as r";
@@ -1053,6 +1196,27 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
       [id, w.sales.id],
     );
   };
+  /**
+   * Una invitación a Administrador hecha por un Administrador, con el aviso al Dueño anotado: como las que H-008
+   * dejaba crear antes de H-010. Desde H-010 eso da `owner_only`, así que se crea con la función como el Dueño y se
+   * reescribe, como montaje, quién invitó y el aviso (con los disparadores apagados solo en esta transacción).
+   */
+  async function legacyAdminInvite(over: { email?: string } = {}) {
+    const { result, p } = await invite(w.owner, { ...over, role: "admin" });
+    expect(result.result).toBe("created");
+    await actAsPostgres(setup);
+    await setup.query("set local session_replication_role = replica");
+    await setup.query(
+      "update public.invitations set invited_by = $2, owner_notice_state = 'pending' where id = $1",
+      [p.id, w.admin.id],
+    );
+    await setup.query("update public.email_messages set created_by = $2 where invitation_id = $1", [
+      p.id,
+      w.admin.id,
+    ]);
+    await setup.query("set local session_replication_role = origin");
+    return { result, p };
+  }
   const noticeMails = async (id: string) =>
     count(
       "select count(*) as n from public.email_messages where invitation_id = $1 and kind = 'invitation_notice'",
@@ -1060,13 +1224,28 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
     );
 
   describe("qué se anota al invitar", () => {
-    it("llamar a create_invitation DIRECTO como Administrador, invitando a un Administrador, deja el aviso anotado como pendiente", async () => {
+    it("llamar a create_invitation DIRECTO como Administrador, invitando a un Administrador, ya no crea nada (H-010: «solo el Dueño»)", async () => {
       await withTx(setup, async () => {
-        // `invite` llama a la función de la base tal cual: no pasa por la aplicación ni por la pantalla.
-        const { result, p } = await invite(w.admin, { role: "admin" });
-        expect(result.notify_owner).toBe(true);
+        // `denied` llama a la función de la base tal cual: no pasa por la aplicación ni por la pantalla.
+        const p = prepare({ role: "admin" });
+        const error = await denied(w.admin, w.tenantA, CREATE, p.params);
+        expect(error.code).toBe(INSUFFICIENT_PRIVILEGE);
+        expect(error.message).toBe("owner_only");
+        expect(await row(p.id)).toBeUndefined();
+        expect(
+          await count("select count(*) as n from public.email_messages where invitation_id = $1", [
+            p.id,
+          ]),
+        ).toBe(0);
+      });
+    });
+
+    it("una invitación a Administrador anotada antes de H-010 queda pendiente para la tarea (montaje)", async () => {
+      await withTx(setup, async () => {
+        const { p } = await legacyAdminInvite();
         expect(await state(p.id)).toEqual({ state: "pending", attempts: 0 });
         expect(await ready(p.id)).toBe(true);
+        expect((await row(p.id)).invited_by).toBe(w.admin.id);
       });
     });
 
@@ -1089,7 +1268,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("el Administrador no lee ni escribe las columnas del aviso (owner_notice_*)", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         for (const user of [w.admin, w.owner]) {
           await asUser(setup, user, w.tenantA);
           for (const column of [
@@ -1122,7 +1301,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
   describe("destinatarios y registro de un intento", () => {
     it("con un intento reservado, los destinatarios salen de la fila de la invitación: el Dueño de ESA organización", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         // Sin reserva no hay destinatarios (nadie puede pedirlos «de gratis»).
         expect((await asServer<Recipients>(RECIPIENTS, [p.id])).recipients).toEqual([]);
         expect(await reserve(p.id)).toBe(true);
@@ -1136,14 +1315,12 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("entrega el estado de la invitación: pendiente, o ya aceptada (para que el texto no prometa cancelar)", async () => {
       await withTx(setup, async () => {
-        const pending = (await invite(w.admin, { role: "admin", email: "estado-1@ejemplo.test" }))
-          .p;
+        const pending = (await legacyAdminInvite({ email: "estado-1@ejemplo.test" })).p;
         await reserve(pending.id);
         expect((await asServer<Recipients>(RECIPIENTS, [pending.id])).invitation_status).toBe(
           "pending",
         );
-        const accepted = (await invite(w.admin, { role: "admin", email: "estado-2@ejemplo.test" }))
-          .p;
+        const accepted = (await legacyAdminInvite({ email: "estado-2@ejemplo.test" })).p;
         await accept(accepted.id);
         await reserve(accepted.id);
         expect((await asServer<Recipients>(RECIPIENTS, [accepted.id])).invitation_status).toBe(
@@ -1154,7 +1331,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("lo que entrega la base para el aviso no contiene el correo del invitado ni sus huellas", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin", email: "secreto-aviso@ejemplo.test" });
+        const { p } = await legacyAdminInvite({ email: "secreto-aviso@ejemplo.test" });
         await reserve(p.id);
         const text = JSON.stringify(await asServer<Recipients>(RECIPIENTS, [p.id])).toLowerCase();
         for (const secret of [
@@ -1179,7 +1356,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
           ]);
         };
         const readName = async () => {
-          const { p } = await invite(w.admin, { role: "admin" });
+          const { p } = await legacyAdminInvite();
           await reserve(p.id);
           return (await asServer<Recipients>(RECIPIENTS, [p.id])).inviter_name;
         };
@@ -1192,7 +1369,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("se anota un correo por reserva, para el Dueño activo; repetir no crea otro y al enviarse queda «sent»", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         expect(await reserve(p.id)).toBe(true);
         const mailId = randomUUID();
         const args = [mailId, p.id, w.owner.id, "v1.cifrado.aviso", sha256Hex("aviso")];
@@ -1225,7 +1402,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("sin reserva no se anota nada, aunque sea el Dueño de verdad", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         expect(
           await asServer(REGISTER, [randomUUID(), p.id, w.owner.id, "v1.x.y", sha256Hex("a")]),
         ).toEqual({ registered: false });
@@ -1235,7 +1412,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("el destinatario es siempre el Dueño de ESA organización: el Dueño de otra, un Administrador o cualquiera se rechazan", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         await reserve(p.id);
         await actAsService(setup);
         for (const to of [w.ownerB.id, w.admin.id, w.sales.id, randomUUID()]) {
@@ -1267,7 +1444,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("nadie con un pase ejecuta esas funciones", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         for (const user of [w.owner, w.admin]) {
           for (const [sql, params] of [
             [RECIPIENTS, [p.id]],
@@ -1284,7 +1461,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("el registro del aviso lo lee solo el Dueño: ni el Administrador, que es quien invitó, ni nadie más", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         const mailId = await attempt(p.id);
         for (const [user, expected] of [
           [w.owner, 1],
@@ -1305,7 +1482,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("el correo de la invitación sí lo ven quienes manejan el equipo (Dueño y Administrador)", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         for (const [user, expected] of [
           [w.owner, 1],
           [w.admin, 1],
@@ -1325,7 +1502,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
   describe("reservar un intento (gastarlo antes de enviar)", () => {
     it("reservar anota la hora y cuenta el intento; mientras no pase el intervalo, no se puede reservar otro", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         expect(await reserve(p.id)).toBe(true);
         const inv = await row(p.id);
         expect(inv.owner_notice_attempts).toBe(1);
@@ -1338,7 +1515,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("mientras hay un intento vivo (pendiente de enviar) no se reserva otro; enviado, nunca más (sin duplicados)", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         const first = await attempt(p.id);
         expect(first).not.toBeNull();
         await waitRetryInterval(p.id);
@@ -1356,7 +1533,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
     it("dos tareas a la vez no toman el mismo aviso (skip locked)", async () => {
       // Datos confirmados (las dos conexiones tienen que verlos); se borran al terminar.
       await setup.query("begin");
-      const { p } = await invite(w.admin, { role: "admin", email: "carrera-aviso@ejemplo.test" });
+      const { p } = await legacyAdminInvite({ email: "carrera-aviso@ejemplo.test" });
       await setup.query("commit");
       const second = await connect();
       try {
@@ -1392,7 +1569,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
   describe("una reserva solo sirve si es reciente, y cancelar saca el aviso de la cola", () => {
     it("una reserva que nadie usó no queda como saldo: pasados 5 minutos, registrar se rechaza", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         expect(await reserve(p.id)).toBe(true);
         // Pasan 6 minutos sin que nadie anote el correo (se simula fechando la reserva hacia atrás).
         await actAsPostgres(setup);
@@ -1418,8 +1595,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("cancelar DESPUÉS de reservar saca el aviso de la cola: ni se anota ni se lista", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, {
-          role: "admin",
+        const { p } = await legacyAdminInvite({
           email: "cancelar-despues@ejemplo.test",
         });
         expect(await reserve(p.id)).toBe(true);
@@ -1438,8 +1614,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("cancelar una invitación cuyo aviso ya salió no cambia ese estado (sigue «sent»)", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, {
-          role: "admin",
+        const { p } = await legacyAdminInvite({
           email: "cancelar-enviado@ejemplo.test",
         });
         const mailId = await attempt(p.id);
@@ -1453,7 +1628,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
   describe("reintentos y tope", () => {
     it("reintenta los fallidos: espera el intervalo mínimo y se detiene en el tope de intentos", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         for (let n = 1; n <= MAX_ATTEMPTS; n++) {
           const mailId = await attempt(p.id);
           expect(mailId, `intento ${n}`).not.toBeNull();
@@ -1482,7 +1657,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("un aviso que falla ANTES de anotarse igual gasta sus intentos y termina agotándose (no queda atascado)", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         // Cada corrida reserva y «se rompe» antes de anotar el correo (nunca llega a `register`).
         for (let n = 1; n <= MAX_ATTEMPTS; n++) {
           expect(await reserve(p.id), `reserva ${n}`).toBe(true);
@@ -1501,11 +1676,10 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("un aviso atascado no tapa a los siguientes: reservado, no vuelve a la cola hasta que pase el intervalo", async () => {
       await withTx(setup, async () => {
-        const stuck = (await invite(w.admin, { role: "admin", email: "atascado-1@ejemplo.test" }))
-          .p;
+        const stuck = (await legacyAdminInvite({ email: "atascado-1@ejemplo.test" })).p;
         const others = [
-          (await invite(w.admin, { role: "admin", email: "siguiente-1@ejemplo.test" })).p,
-          (await invite(w.admin, { role: "admin", email: "siguiente-2@ejemplo.test" })).p,
+          (await legacyAdminInvite({ email: "siguiente-1@ejemplo.test" })).p,
+          (await legacyAdminInvite({ email: "siguiente-2@ejemplo.test" })).p,
         ];
         const first = await reserveBatch();
         for (const p of [stuck, ...others]) expect(first.invitation_ids).toContain(p.id);
@@ -1513,14 +1687,14 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
         const second = await reserveBatch();
         for (const p of [stuck, ...others]) expect(second.invitation_ids).not.toContain(p.id);
         // Otra invitación nueva sí entra a la cola de inmediato.
-        const fresh = (await invite(w.admin, { role: "admin", email: "nueva-1@ejemplo.test" })).p;
+        const fresh = (await legacyAdminInvite({ email: "nueva-1@ejemplo.test" })).p;
         expect((await reserveBatch()).invitation_ids).toContain(fresh.id);
       });
     });
 
     it("un intento que nunca se cerró (el servidor se cayó) se da por fallido y se reintenta", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         const first = await attempt(p.id);
         // Pasan 6 minutos sin que nadie lo cierre.
         await ageEmail(first!, "6 minutes");
@@ -1539,7 +1713,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("si el último intento permitido se abandona, el aviso se da por agotado y la tarea lo cuenta", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         let last: string | null = null;
         for (let n = 1; n <= MAX_ATTEMPTS; n++) {
           if (last) await settleFailed(last);
@@ -1558,7 +1732,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("el último intento no se da por agotado mientras está en curso, y si sale, queda «sent»", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         let last: string | null = null;
         for (let n = 1; n <= MAX_ATTEMPTS; n++) {
           if (last) await settleFailed(last);
@@ -1577,7 +1751,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("sin un Dueño activo con correo, el aviso se da por agotado de inmediato (no_recipient), sin quedar atascado", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         await actAsPostgres(setup);
         await setup.query(
           "update public.members set status = 'removed', removed_at = now() where tenant_id = $1 and user_id = $2",
@@ -1598,8 +1772,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
   describe("qué invitaciones generan aviso", () => {
     it("una invitación ACEPTADA antes de que salga el aviso igual se lista y se envía", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, {
-          role: "admin",
+        const { p } = await legacyAdminInvite({
           email: "aceptada-rapida@ejemplo.test",
         });
         // Un cómplice la acepta en segundos, antes de que corra la tarea.
@@ -1629,8 +1802,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("una invitación aceptada también agota sus intentos si el aviso no sale", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, {
-          role: "admin",
+        const { p } = await legacyAdminInvite({
           email: "aceptada-agota@ejemplo.test",
         });
         await accept(p.id);
@@ -1645,8 +1817,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("una invitación CANCELADA no genera aviso", async () => {
       await withTx(setup, async () => {
-        const p = (await invite(w.admin, { role: "admin", email: "cancelada-aviso@ejemplo.test" }))
-          .p;
+        const p = (await legacyAdminInvite({ email: "cancelada-aviso@ejemplo.test" })).p;
         await call(w.admin, w.tenantA, REVOKE, [p.id]);
         expect(await ready(p.id)).toBe(false);
         expect((await reserveBatch()).invitation_ids).not.toContain(p.id);
@@ -1659,7 +1830,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("una invitación vencida sin aceptar ni cancelar igual avisa (que se invitó a un Administrador ya ocurrió)", async () => {
       await withTx(setup, async () => {
-        const p = (await invite(w.admin, { role: "admin", email: "vencida-aviso@ejemplo.test" })).p;
+        const p = (await legacyAdminInvite({ email: "vencida-aviso@ejemplo.test" })).p;
         await actAsPostgres(setup);
         await setup.query(
           "update public.invitations set expires_at = now() - interval '1 hour' where id = $1",
@@ -1674,7 +1845,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
   describe("auditoría, plazos y constantes", () => {
     it("reservar, anotar o cerrar un intento no ensucia la auditoría con «invitation.updated»", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         const updates = () =>
           count(
             "select count(*) as n from public.audit_log where resource_id = $1 and action = 'invitation.updated'",
@@ -1689,7 +1860,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("el aviso de una invitación cancelada se borra por plazo, con su invitación", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, { role: "admin" });
+        const { p } = await legacyAdminInvite();
         const mailId = await attempt(p.id);
         await settleFailed(mailId!);
         await call(w.admin, w.tenantA, REVOKE, [p.id]);
@@ -1712,8 +1883,7 @@ describe("aviso al Dueño: anotado al invitar, reservado, enviado y reintentado 
 
     it("el aviso de una invitación aceptada se conserva 30 días tras aceptarse y luego se borra con sus correos", async () => {
       await withTx(setup, async () => {
-        const { p } = await invite(w.admin, {
-          role: "admin",
+        const { p } = await legacyAdminInvite({
           email: "aceptada-plazo@ejemplo.test",
         });
         const mailId = await attempt(p.id);

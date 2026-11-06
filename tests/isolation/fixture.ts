@@ -86,6 +86,8 @@ export interface OrgData {
   invitation: InvitationData | null;
   /** Textos guardados (H-048a), creados por la dueña con su pase (A y B; C no tiene). */
   snippets: SnippetsData | null;
+  /** La fila de `members` de la dueña (H-010): sirve para atacar y abrir la ficha de un miembro (`/equipo/[memberId]`). */
+  ownerMemberId: string;
 }
 
 /** Dos textos guardados de una organización: uno del correo (texto inicial) y unas condiciones. Ambos llevan el canario. */
@@ -257,6 +259,12 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       intake: null,
       invitation: null,
       snippets: null,
+      ownerMemberId: (
+        await db.query<{ id: string }>(
+          "select id from public.members where tenant_id = $1 and user_id = $2",
+          [tenantId, personas[owners[key]].userId],
+        )
+      ).rows[0].id,
     };
   }
 

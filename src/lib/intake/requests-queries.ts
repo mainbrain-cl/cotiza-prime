@@ -51,7 +51,7 @@ function readSealed(
   }
 }
 
-/** Nombres de las personas del equipo (los de quienes ya no están no se pueden leer). */
+/** Nombres de las personas, por su perfil (desde H-010 también se lee el de quien ya no está en el equipo). */
 async function profileNames(
   active: ActiveTenant,
   userIds: readonly string[],
@@ -68,6 +68,31 @@ async function profileNames(
     names.set(row.user_id, row.full_name);
   }
   return names;
+}
+
+/**
+ * Nombres de las personas ASIGNADAS que siguen en el equipo. Desde H-010 el nombre de quien se fue también se
+ * puede leer (para que sus cotizaciones lo sigan mostrando como autor), pero una solicitud asignada a alguien que
+ * ya no está debe verse «sin responsable activo» (`FORMER_MEMBER_LABEL`) para que el Dueño o un Administrador la
+ * reasigne: por eso aquí solo se consultan los miembros activos de esta organización.
+ */
+async function assigneeNames(
+  active: ActiveTenant,
+  userIds: readonly string[],
+): Promise<Map<string, string> | null> {
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return new Map();
+  const { data, error } = await active.supabase
+    .from("members")
+    .select("user_id")
+    .eq("tenant_id", active.tenantId)
+    .eq("status", "active")
+    .in("user_id", ids);
+  if (error) return null;
+  return profileNames(
+    active,
+    (data ?? []).map((row) => (row as { user_id: string }).user_id),
+  );
 }
 
 async function formNames(
@@ -128,7 +153,7 @@ export async function loadRequestList(
       active,
       rows.map((r) => r.form_id as string),
     ),
-    profileNames(active, assigneeIds),
+    assigneeNames(active, assigneeIds),
   ]);
   if (!forms || !people) return { ok: false };
 
@@ -215,7 +240,7 @@ export async function loadRequest(
   const assignedTo = row.assigned_to as string | null;
   const [forms, people] = await Promise.all([
     formNames(active, [row.form_id as string]),
-    profileNames(active, assignedTo ? [assignedTo] : []),
+    assigneeNames(active, assignedTo ? [assignedTo] : []),
   ]);
   if (!forms || !people) return { ok: false, reason: "error" };
 
@@ -277,6 +302,9 @@ export async function loadAssignableMembers(
   const { data, error } = await active.supabase
     .from("members")
     .select("user_id, role")
+    // La política de `members` deja ver también las propias filas de OTRAS organizaciones: sin este filtro, alguien
+    // que está en dos organizaciones saldría repetido.
+    .eq("tenant_id", active.tenantId)
     .eq("status", "active")
     .in("role", [...ASSIGNABLE_ROLES]);
   if (error || !data) return null;

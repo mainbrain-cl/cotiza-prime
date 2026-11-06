@@ -15,9 +15,19 @@ export type RoleChoice = { value: string; label: string; description: string };
 /**
  * Formulario de invitar (H-008): el correo y el rol. Cada rol muestra, ANTES de elegirlo, una frase de qué
  * puede hacer. Las frases salen de la matriz de permisos (única fuente). El permiso real lo exige el
- * servidor y la base de datos; esta pantalla solo se muestra a quien maneja el equipo.
+ * servidor y la base de datos; esta pantalla solo se muestra a quien maneja el equipo. `roles` llega ya
+ * filtrado para quien mira (H-010: solo el Dueño invita a un rol que maneja el equipo) y `rolesNote` explica
+ * por qué falta alguno.
  */
-export function InviteForm({ tenantId, roles }: { tenantId: string; roles: RoleChoice[] }) {
+export function InviteForm({
+  tenantId,
+  roles,
+  rolesNote,
+}: {
+  tenantId: string;
+  roles: RoleChoice[];
+  rolesNote?: string;
+}) {
   const [state, formAction] = useActionState<InviteFormState, FormData>(
     inviteMemberAction.bind(null, tenantId),
     INITIAL_FORM_STATE,
@@ -95,6 +105,11 @@ export function InviteForm({ tenantId, roles }: { tenantId: string; roles: RoleC
             </label>
           ))}
         </div>
+        {rolesNote ? (
+          <p data-testid="invite-roles-note" className="text-sm text-fg-muted">
+            {rolesNote}
+          </p>
+        ) : null}
         {roleError ? (
           <p id="invite-role-error" role="alert" className="text-sm text-danger">
             {roleError}

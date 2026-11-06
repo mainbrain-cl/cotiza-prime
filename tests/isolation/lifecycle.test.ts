@@ -71,6 +71,23 @@ describe("A12 · una persona quitada de la organización, con su pase todavía v
     expect(numbering.status).toBeGreaterThanOrEqual(400);
     const preview = await rpc(token, "preview_next_quote_number", {}, tenantHeader(A));
     expect(preview.json).toBeNull();
+    // Las funciones del equipo (H-010) tampoco le responden: ya no es miembro, así que ni siquiera «sin permiso».
+    const owner = await db.query<{ id: string }>(
+      "select id from public.members where tenant_id = $1 and user_id = $2",
+      [A, fx.personas.ana.userId],
+    );
+    for (const [name, args] of [
+      ["list_members", {}],
+      [
+        "change_member_role",
+        { p_member_id: owner.rows[0].id, p_new_role: "viewer", p_expected_role: "owner" },
+      ],
+      ["remove_member", { p_member_id: owner.rows[0].id, p_expected_role: "owner" }],
+    ] as const) {
+      const res = await rpc(token, name, args, tenantHeader(A));
+      expect(res.status, name).toBeGreaterThanOrEqual(400);
+      expect((res.json as { code?: string } | null)?.code, name).toBe("CP404");
+    }
     const rejoin = await rest(token, "members", {
       method: "POST",
       headers: { Prefer: "return=representation", ...tenantHeader(A) },

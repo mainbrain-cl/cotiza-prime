@@ -113,7 +113,7 @@ describe("aviso al Dueño por una invitación (H-008)", () => {
 
   describe("invitación ya aceptada antes de que saliera el aviso", () => {
     const accepted = () =>
-      build({ invitationAccepted: true, teamUrl: "http://localhost:3000/o/aaaa" });
+      build({ invitationAccepted: true, teamUrl: "http://localhost:3000/o/aaaa/equipo" });
 
     it("dice que la persona ya aceptó y NO promete cancelar ni «ver la invitación»", () => {
       const message = accepted();
@@ -123,15 +123,15 @@ describe("aviso al Dueño por una invitación (H-008)", () => {
         );
         expect(body).not.toMatch(/cancel/i);
         expect(body).not.toContain("Puedes ver la invitación");
-        expect(body).not.toContain("Ver tu equipo");
       }
     });
 
-    it("el botón no promete lo que «Tu equipo» no tiene: lleva al inicio de la organización", () => {
+    it("el botón lleva a «Tu equipo», donde desde H-010 se ve a la persona que ya aceptó", () => {
       const message = accepted();
-      expect(message.html).toContain("Abrir Cotiza Prime");
-      expect(message.html).toContain('href="http://localhost:3000/o/aaaa"');
-      expect(message.text).toContain("Abrir Cotiza Prime: http://localhost:3000/o/aaaa");
+      expect(message.html).toContain("Ver tu equipo");
+      expect(message.html).toContain('href="http://localhost:3000/o/aaaa/equipo"');
+      expect(message.text).toContain("Ver tu equipo: http://localhost:3000/o/aaaa/equipo");
+      expect(message.html).not.toContain("Abrir Cotiza Prime");
     });
 
     it("sigue diciendo quién invitó, a qué organización, el rol y la fecha, y sin el correo del invitado", () => {

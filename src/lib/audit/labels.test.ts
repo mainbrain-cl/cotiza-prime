@@ -3,6 +3,8 @@ import {
   AUDIT_ACTION_LABELS,
   actionLabel,
   describeAuditDetails,
+  describeAuditEntry,
+  describeAuditSubject,
   isKnownAuditAction,
   resourceLabel,
 } from "./labels";
@@ -79,5 +81,123 @@ describe("las acciones de aceptar una invitación (H-009)", () => {
     );
     expect(isKnownAuditAction("invitation.accepted")).toBe(true);
     expect(isKnownAuditAction("invitation.accept_denied")).toBe(true);
+  });
+});
+
+describe("cambiar el rol de un miembro o quitarlo (H-010)", () => {
+  it("tienen nombre y se pueden elegir en el filtro del registro de actividad", () => {
+    expect(actionLabel("member.role_changed")).toBe("Se cambió el rol de un miembro");
+    expect(actionLabel("member.removed")).toBe("Se quitó a un miembro del equipo");
+    expect(isKnownAuditAction("member.role_changed")).toBe(true);
+    expect(isKnownAuditAction("member.removed")).toBe(true);
+  });
+
+  it("describen los roles y las invitaciones canceladas, sin mostrar correos ni nombres", () => {
+    expect(
+      describeAuditDetails({ old_role: "sales", new_role: "viewer", cancelled_invitations: 0 }),
+    ).toBe("Rol: Comercial → Observador");
+    expect(
+      describeAuditDetails({ old_role: "admin", new_role: "sales", cancelled_invitations: 2 }),
+    ).toBe("Rol: Administrador → Comercial · se cancelaron 2 invitaciones que había enviado");
+    expect(describeAuditDetails({ role: "sales", cancelled_invitations: 0 })).toBe(
+      "Rol: Comercial",
+    );
+    expect(describeAuditDetails({ role: "admin", cancelled_invitations: 1 })).toBe(
+      "Rol: Administrador · se canceló 1 invitación que había enviado",
+    );
+    // Las acciones de invitaciones, que también llevan un rol, no cambian.
+    expect(describeAuditDetails({ role: "sales" })).toBeNull();
+  });
+
+  it("la salida del equipo que deja el disparador general se lee en español", () => {
+    expect(
+      describeAuditDetails({
+        old: { status: "active", removed_at: null, removed_by: null },
+        new: { status: "removed", removed_at: "2026-11-05T10:00:00Z", removed_by: "x" },
+      }),
+    ).toBe("Cambió: estado, salida del equipo");
+  });
+});
+
+describe("a quién afectó la acción (H-010: sin correos, el registro es lo que se lo cuenta al Dueño)", () => {
+  const changed = { old_role: "sales", new_role: "viewer", cancelled_invitations: 0 };
+
+  it("cambiar el rol dice a quién, de qué rol a cuál", () => {
+    expect(
+      describeAuditEntry({
+        action: "member.role_changed",
+        details: changed,
+        subjectName: "María Pérez",
+      }),
+    ).toBe("Cambió el rol de María Pérez de Comercial a Observador");
+  });
+
+  it("quitar a alguien dice a quién, y cuántas invitaciones se cancelaron", () => {
+    expect(
+      describeAuditEntry({
+        action: "member.removed",
+        details: { role: "admin", cancelled_invitations: 0 },
+        subjectName: "María Pérez",
+      }),
+    ).toBe("Quitó a María Pérez del equipo");
+    expect(
+      describeAuditEntry({
+        action: "member.removed",
+        details: { role: "admin", cancelled_invitations: 2 },
+        subjectName: "María Pérez",
+      }),
+    ).toBe("Quitó a María Pérez del equipo · se cancelaron 2 invitaciones que había enviado");
+    expect(
+      describeAuditEntry({
+        action: "member.role_changed",
+        details: { ...changed, old_role: "admin", cancelled_invitations: 1 },
+        subjectName: "María Pérez",
+      }),
+    ).toBe(
+      "Cambió el rol de María Pérez de Administrador a Observador · se canceló 1 invitación que había enviado",
+    );
+  });
+
+  it("si el nombre no se puede leer dice «una persona del equipo»", () => {
+    for (const subjectName of [null, undefined, "", "   "]) {
+      expect(describeAuditEntry({ action: "member.removed", details: {}, subjectName })).toBe(
+        "Quitó a una persona del equipo",
+      );
+      expect(
+        describeAuditEntry({ action: "member.role_changed", details: changed, subjectName }),
+      ).toBe("Cambió el rol de una persona del equipo de Comercial a Observador");
+    }
+  });
+
+  it("nunca muestra un correo, aunque el nombre del perfil o los detalles lo traigan escondido", () => {
+    const text = describeAuditEntry({
+      action: "member.role_changed",
+      details: { ...changed, email: "x@ejemplo.test" },
+      subjectName: "Ana",
+    });
+    expect(text).not.toContain("@");
+  });
+
+  it("las demás acciones siguen como antes", () => {
+    expect(
+      describeAuditEntry({
+        action: "member.updated",
+        details: { old: { role: "sales" }, new: { role: "admin" } },
+      }),
+    ).toBe("Rol: Comercial → Administrador");
+    expect(describeAuditEntry({ action: "tenant.updated", details: null })).toBeNull();
+  });
+
+  it("«sobre qué» agrega la persona solo cuando el recurso es un miembro", () => {
+    expect(describeAuditSubject({ resourceType: "member", subjectName: "María Pérez" })).toBe(
+      "Miembro: María Pérez",
+    );
+    expect(describeAuditSubject({ resourceType: "member", subjectName: null })).toBe(
+      "Miembro: una persona del equipo",
+    );
+    expect(describeAuditSubject({ resourceType: "customer", subjectName: "María Pérez" })).toBe(
+      "Cliente",
+    );
+    expect(describeAuditSubject({ resourceType: null })).toBe("—");
   });
 });

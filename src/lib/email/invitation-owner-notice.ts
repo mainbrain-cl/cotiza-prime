@@ -18,10 +18,8 @@ import {
 } from "./invitation-names";
 
 export const OWNER_NOTICE_SENDER_NAME = "Cotiza Prime";
-/** Invitación pendiente o vencida: el botón lleva a «Tu equipo», donde se ve y se puede cancelar. */
+/** El botón lleva siempre a «Tu equipo»: ahí se ve la invitación pendiente (y se cancela) o a la persona que ya aceptó. */
 export const OWNER_NOTICE_BUTTON_LABEL = "Ver tu equipo";
-/** Invitación ya aceptada: «Tu equipo» solo lista las pendientes, así que el botón no promete nada de eso. */
-export const OWNER_NOTICE_ACCEPTED_BUTTON_LABEL = "Abrir Cotiza Prime";
 const emailSchema = z.email().max(254);
 
 export type InvitationOwnerNoticeInput = {
@@ -32,7 +30,7 @@ export type InvitationOwnerNoticeInput = {
   /** Cómo se llama el rol en la interfaz, p. ej. «Administrador». */
   roleLabel: string;
   invitedAt: string | Date;
-  /** Adonde lleva el botón: «Tu equipo» (pendiente o vencida) o el inicio de la organización (ya aceptada). */
+  /** Adonde lleva el botón: «Tu equipo» de la organización. */
   teamUrl: string;
   /** La persona ya aceptó antes de que saliera el aviso: el texto no promete cancelar nada. */
   invitationAccepted?: boolean;
@@ -79,7 +77,7 @@ export function buildInvitationOwnerNotice(
       ? `La persona ya aceptó y es ${roleLabel} de tu organización. Revisa tu equipo.`
       : "Como ese rol puede manejar el equipo, te avisamos. Puedes ver la invitación y cancelarla, si no corresponde, en «Tu equipo».",
   ];
-  const buttonLabel = accepted ? OWNER_NOTICE_ACCEPTED_BUTTON_LABEL : OWNER_NOTICE_BUTTON_LABEL;
+  const buttonLabel = OWNER_NOTICE_BUTTON_LABEL;
   const footer = "Aviso automático de Cotiza Prime para el Dueño de la organización.";
   const paragraphs = lines.map((line) => `<p style="margin:0 0 12px 0;">${escapeHtml(line)}</p>`);
   const link = escapeHtml(url.href);

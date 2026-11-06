@@ -133,12 +133,9 @@ async function noticeOne(
       organizationName: info.tenantName,
       roleLabel: ROLE_LABELS[info.role],
       invitedAt: info.invitedAt,
-      // Una invitación ya aceptada no sale en «Tu equipo» (solo lista las pendientes): el botón lleva al inicio.
+      // Con H-010, «Tu equipo» lista a los miembros: una invitación ya aceptada también se ve ahí.
       invitationAccepted: info.invitationStatus === "accepted",
-      teamUrl: `${getAppOrigin()}${tenantPath(
-        info.tenantId,
-        info.invitationStatus === "accepted" ? "" : "equipo",
-      )}`,
+      teamUrl: `${getAppOrigin()}${tenantPath(info.tenantId, "equipo")}`,
       idempotencyKey: emailId,
     });
     if (!built.ok) {

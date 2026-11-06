@@ -8,16 +8,21 @@ import {
 
 /**
  * Traduce los errores de las funciones de invitaciones (H-008) a mensajes claros, sin detalle técnico.
- * Los códigos son los de la base: 42501 sin permiso, CP404 no existe en esta organización, CP422 dato
- * inválido, CP423 estado que no admite el cambio y CP429 tope alcanzado.
+ * Los códigos son los de la base: 42501 sin permiso (con el motivo `owner_only`: solo el Dueño invita o
+ * reenvía a un rol que maneja el equipo, H-010), CP404 no existe en esta organización, CP422 dato inválido,
+ * CP423 estado que no admite el cambio y CP429 tope alcanzado.
  */
 
-export type TeamErrorKind = "forbidden" | "not_found" | "state" | "invalid" | "limit" | "other";
+export type TeamErrorKind =
+  "forbidden" | "owner_only" | "not_found" | "state" | "invalid" | "limit" | "other";
 export type TeamError = { kind: TeamErrorKind; message: string };
 
 export const TEAM_GENERIC_FAILURE =
   "No pudimos completar la acción. Intenta de nuevo en unos minutos; si sigue igual, avísanos.";
 export const INVITATION_NOT_FOUND = "No encontramos esta invitación. Puede que ya no exista.";
+/** Si alguien que no es el Dueño intenta invitar a un Administrador o reenviar esa invitación (la base lo rechaza). */
+export const INVITATION_OWNER_ONLY_MESSAGE =
+  "Solo el Dueño puede invitar o nombrar Administradores.";
 
 const LIMIT_MESSAGES: Record<string, string> = {
   limit_user_hour:
@@ -30,7 +35,11 @@ const LIMIT_MESSAGES: Record<string, string> = {
 
 export function mapTeamError(error: { code?: string | null; message?: string | null }): TeamError {
   const code = error.code ?? "";
-  if (code === "42501") return { kind: "forbidden", message: NO_PERMISSION_MESSAGE };
+  if (code === "42501") {
+    return error.message === "owner_only"
+      ? { kind: "owner_only", message: INVITATION_OWNER_ONLY_MESSAGE }
+      : { kind: "forbidden", message: NO_PERMISSION_MESSAGE };
+  }
   if (code === "CP404") return { kind: "not_found", message: INVITATION_NOT_FOUND };
   if (code === "CP423") {
     return {

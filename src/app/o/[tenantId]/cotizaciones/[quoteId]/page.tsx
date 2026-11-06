@@ -23,7 +23,8 @@ import { getQuoteDelivery } from "@/lib/quotes/delivery";
 import { needsAttention } from "@/lib/quotes/delivery-model";
 import { canRevokeLinks } from "@/lib/quotes/link-rules";
 import { hasActiveShareLink } from "@/lib/quotes/links";
-import { getQuote } from "@/lib/quotes/queries";
+import { getQuote, isActiveMember } from "@/lib/quotes/queries";
+import { readOnlyReason } from "@/lib/quotes/read-only-reason";
 import { getQuoteResponse } from "@/lib/quotes/response";
 import { listQuoteTimeline } from "@/lib/quotes/timeline";
 import { editorValidity } from "@/lib/quotes/editor-model";
@@ -84,13 +85,19 @@ export default async function QuotePage({
   const linkRevoked = revocable && !linkIsActive;
   const customerEditPath = tenantPath(active.tenantId, `clientes/${quote.customer_id}/editar`);
 
-  let readOnlyReason: string | null = null;
-  if (!editable) {
-    if (!statusAllowsEdit) readOnlyReason = "Esta cotización ya no se puede editar.";
-    else if (!canEver(active.role, "quote.edit")) {
-      readOnlyReason = "Tu rol solo permite ver las cotizaciones.";
-    } else readOnlyReason = `Solo ${authorName} puede editar este borrador. Tú puedes verlo.`;
-  }
+  // Solo hace falta saber si el autor sigue en el equipo cuando el borrador es de otra persona.
+  const roleCanEdit = canEver(active.role, "quote.edit");
+  const authorIsActive =
+    editable || isAuthor || !statusAllowsEdit || !roleCanEdit
+      ? true
+      : await isActiveMember(active, quote.created_by);
+  const readOnlyText = readOnlyReason({
+    editable,
+    statusAllowsEdit,
+    roleCanEdit,
+    authorName,
+    authorIsActive,
+  });
 
   // Cotizaciones sin vigencia guardada: parten con la de la organización.
   let organizationDays = DEFAULT_VALIDITY_DAYS_FALLBACK;
@@ -211,7 +218,7 @@ export default async function QuotePage({
 
       <CustomerResponse response={customerResponse} />
 
-      {readOnlyReason ? <FormAlert tone="warning">{readOnlyReason}</FormAlert> : null}
+      {readOnlyText ? <FormAlert tone="warning">{readOnlyText}</FormAlert> : null}
 
       {sourcePanel ? (
         <SourceRequestPanelView tenantId={active.tenantId} panel={sourcePanel} />

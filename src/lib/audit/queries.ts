@@ -21,8 +21,16 @@ export type AuditEntry = {
   id: number;
   occurredAt: string;
   actorType: "user" | "service" | "system" | "public";
-  /** Nombre de quien lo hizo; `null` si no hay persona o ya no es parte del equipo. */
+  /**
+   * Nombre de quien lo hizo, también si ya no está en el equipo (desde H-010 se lee el nombre de quien tuvo una fila
+   * en `members`); `null` si no hay persona (el sistema, un cliente) o si su perfil no se puede leer.
+   */
   actorName: string | null;
+  /**
+   * Nombre de la persona del equipo sobre la que se hizo la acción (cuando el recurso es un miembro: cambiarle el rol,
+   * quitarla…); `null` si no se puede leer. Se resuelve al leer, con `members` y `profiles`: no se guarda en la auditoría.
+   */
+  subjectName: string | null;
   action: string;
   resourceType: string | null;
   result: "success" | "failure" | "denied";
@@ -54,6 +62,7 @@ type AuditRow = {
   actor_user_id: string | null;
   action: string;
   resource_type: string | null;
+  resource_id: string | null;
   result: AuditEntry["result"];
   origin_ip: string | null;
   details: unknown;
@@ -71,15 +80,25 @@ export function sanitizeAuditFilters(filters: AuditFilters): {
   return { actor, action, page };
 }
 
-/** Nombres de las personas que aparecen en el equipo (los de quienes ya no están no se pueden leer). */
-async function memberNames(active: ActiveTenant): Promise<Map<string, string>> {
+/**
+ * Las personas que tienen o tuvieron una fila en el equipo: su nombre (desde H-010 también se lee el de quien ya no
+ * está) y de qué persona es cada fila de `members` (el recurso de `member.role_changed` y `member.removed`). Las filas de
+ * quien se fue solo las entrega `members_select` a quien maneja el equipo; el registro es del Dueño, que lo maneja.
+ */
+async function memberDirectory(active: ActiveTenant): Promise<{
+  names: Map<string, string>;
+  userOfMember: Map<string, string>;
+}> {
   const names = new Map<string, string>();
+  const userOfMember = new Map<string, string>();
   const { data: members } = await active.supabase
     .from("members")
-    .select("user_id")
+    .select("id, user_id")
     .eq("tenant_id", active.tenantId);
-  const ids = [...new Set(((members ?? []) as { user_id: string }[]).map((row) => row.user_id))];
-  if (ids.length === 0) return names;
+  const rows = (members ?? []) as { id?: string; user_id: string }[];
+  for (const row of rows) if (row.id) userOfMember.set(row.id, row.user_id);
+  const ids = [...new Set(rows.map((row) => row.user_id))];
+  if (ids.length === 0) return { names, userOfMember };
   const { data: profiles } = await active.supabase
     .from("profiles")
     .select("user_id, full_name")
@@ -87,13 +106,24 @@ async function memberNames(active: ActiveTenant): Promise<Map<string, string>> {
   for (const row of (profiles ?? []) as { user_id: string; full_name: string }[]) {
     names.set(row.user_id, row.full_name);
   }
-  return names;
+  return { names, userOfMember };
+}
+
+/** El nombre de la persona afectada, solo si el recurso es un miembro de ESTA organización y su perfil se puede leer. */
+function subjectNameOf(
+  row: AuditRow,
+  names: Map<string, string>,
+  userOfMember: Map<string, string>,
+): string | null {
+  if (row.resource_type !== "member" || !row.resource_id) return null;
+  const userId = userOfMember.get(row.resource_id);
+  return userId ? names.get(userId)?.trim() || null : null;
 }
 
 /** Las personas por las que se puede filtrar, ordenadas por nombre. */
 export async function listAuditActors(active: ActiveTenant): Promise<AuditActorOption[]> {
   if (!canViewAuditLog(active.role)) return [];
-  const names = await memberNames(active);
+  const { names } = await memberDirectory(active);
   return [...names.entries()]
     .map(([userId, name]) => ({ userId, name }))
     .sort((a, b) => a.name.localeCompare(b.name, "es-CL"));
@@ -115,7 +145,7 @@ export async function listAuditEntries(
   let query = active.supabase
     .from("audit_log")
     .select(
-      "id, occurred_at, actor_type, actor_user_id, action, resource_type, result, origin_ip, details",
+      "id, occurred_at, actor_type, actor_user_id, action, resource_type, resource_id, result, origin_ip, details",
       { count: "exact" },
     )
     .eq("tenant_id", active.tenantId);
@@ -136,7 +166,7 @@ export async function listAuditEntries(
   }
 
   const rows = data as unknown as AuditRow[];
-  const names = await memberNames(active);
+  const { names, userOfMember } = await memberDirectory(active);
   const total = count ?? rows.length;
   return {
     entries: rows.map((row) => ({
@@ -144,6 +174,7 @@ export async function listAuditEntries(
       occurredAt: row.occurred_at,
       actorType: row.actor_type,
       actorName: row.actor_user_id ? (names.get(row.actor_user_id) ?? null) : null,
+      subjectName: subjectNameOf(row, names, userOfMember),
       action: row.action,
       resourceType: row.resource_type,
       result: row.result,

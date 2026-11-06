@@ -25,6 +25,11 @@ export type InvitationItem = {
   sentLabel: string;
   invitedBy: string | null;
   resendsLeft: number;
+  /**
+   * Por qué quien mira no puede reenviarla (H-010: la invitación a un Administrador solo la reenvía el Dueño); `null`
+   * si puede. Sin reenvío, el botón no se muestra; cancelar sigue disponible.
+   */
+  resendLockedNote: string | null;
 };
 
 const TONES: Record<InvitationTone, StatusTone> = {
@@ -114,7 +119,7 @@ export function InvitationList({ tenantId, items }: { tenantId: string; items: I
               ) : null}
             </dl>
 
-            {item.needsAttention ? (
+            {item.needsAttention && !item.resendLockedNote ? (
               <p className="text-sm text-fg-muted">
                 {item.expired
                   ? `El enlace venció. Reenvíala para darle otros ${INVITATION_TTL_DAYS} días.`
@@ -122,7 +127,11 @@ export function InvitationList({ tenantId, items }: { tenantId: string; items: I
               </p>
             ) : null}
 
-            {item.resendsLeft === 0 ? (
+            {item.resendLockedNote ? (
+              <p data-testid="invitation-resend-locked" className="text-sm text-fg-muted">
+                {item.resendLockedNote}
+              </p>
+            ) : item.resendsLeft === 0 ? (
               <p data-testid="invitation-no-resends" className="text-sm text-fg-muted">
                 Ya usaste los reenvíos de esta invitación. Si la persona la necesita de nuevo,
                 cancélala e invítala otra vez.
@@ -130,17 +139,23 @@ export function InvitationList({ tenantId, items }: { tenantId: string; items: I
             ) : null}
 
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                data-testid="invitation-resend"
-                disabled={pending || item.resendsLeft === 0}
-                onClick={() => resend(item.id)}
-              >
-                {busy ? <Loader2 aria-hidden className="animate-spin" /> : <RotateCw aria-hidden />}
-                Reenviar
-              </Button>
+              {item.resendLockedNote ? null : (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="invitation-resend"
+                  disabled={pending || item.resendsLeft === 0}
+                  onClick={() => resend(item.id)}
+                >
+                  {busy ? (
+                    <Loader2 aria-hidden className="animate-spin" />
+                  ) : (
+                    <RotateCw aria-hidden />
+                  )}
+                  Reenviar
+                </Button>
+              )}
               <ConfirmAction
                 testId={`invitation-revoke-${item.id}`}
                 trigger={

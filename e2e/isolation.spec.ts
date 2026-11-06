@@ -106,6 +106,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         B.intake!.formId,
         B.intake!.requestId,
         B.snippets!.emailId,
+        B.ownerMemberId,
       );
       await expectNotFound(page, path);
       const html = await page.content();
@@ -206,6 +207,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         fx.orgs.A.intake!.formId,
         fx.orgs.A.intake!.requestId,
         fx.orgs.A.snippets!.emailId,
+        fx.orgs.A.ownerMemberId,
       );
       const response = await page.goto(path);
       expect(response?.status(), path).toBe(200);
@@ -293,6 +295,7 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
           fx.orgs.B.intake!.formId,
           fx.orgs.B.intake!.requestId,
           fx.orgs.B.snippets!.emailId,
+          fx.orgs.B.ownerMemberId,
         );
         const res = await page.request.get(attackPath, {
           headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },

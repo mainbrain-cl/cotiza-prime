@@ -95,6 +95,28 @@ async function authorNames(active: ActiveTenant, userIds: string[]): Promise<Map
 }
 
 /**
+ * ¿Esta persona sigue siendo miembro activo de la organización activa? (Quien se fue ya no puede editar sus
+ * borradores.) `null` si la consulta falló: «no se sabe» no es «se fue», y la pantalla no debe decir que se fue.
+ */
+export async function isActiveMember(
+  active: ActiveTenant,
+  userId: string,
+): Promise<boolean | null> {
+  const { data, error } = await active.supabase
+    .from("members")
+    .select("id")
+    .eq("tenant_id", active.tenantId)
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (error) {
+    await serverLog("error", "quote_author_member_failed", { code: error.code });
+    return null;
+  }
+  return data !== null && data !== undefined;
+}
+
+/**
  * Las últimas cotizaciones de la organización activa (todos los roles ven todas, decisión 009).
  * Con `scope: "mine"` solo las que armó la propia persona.
  */

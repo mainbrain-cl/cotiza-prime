@@ -23,6 +23,8 @@ export const INVITATION_ACCEPT_PATH = "/invitacion";
 export const INVITATION_NOTICES = {
   malformed: "enlace-no-valido",
   tooMany: "muchos-intentos",
+  /** «Unirme» llegó con otra invitación guardada que la que se mostró: se vuelve a mostrar la que hay ahora. */
+  changed: "invitacion-cambio",
 } as const;
 
 /** Aviso de la dirección → cómo se le explica a la persona. */
@@ -31,7 +33,28 @@ export const INVITATION_NOTICE_MESSAGES: Readonly<Record<string, string>> = {
     "Este enlace de invitación no es válido. Revisa que lo hayas abierto completo desde el correo, o pide que te envíen otra invitación.",
   [INVITATION_NOTICES.tooMany]:
     "Se abrieron muchos enlaces de invitación en poco tiempo. Espera un minuto y vuelve a abrir el enlace del correo.",
+  [INVITATION_NOTICES.changed]:
+    "Ahora se muestra otra invitación. Revisa a qué organización te unes.",
 };
+
+/**
+ * El mensaje de `?aviso=...`, o nada si no es uno de los avisos conocidos. Solo las claves propias: con una búsqueda
+ * simple en el objeto, `?aviso=__proto__` o `?aviso=constructor` devolverían algo que no es un texto.
+ */
+export function noticeMessage(aviso: unknown): string | undefined {
+  if (typeof aviso !== "string" || !Object.hasOwn(INVITATION_NOTICE_MESSAGES, aviso))
+    return undefined;
+  return INVITATION_NOTICE_MESSAGES[aviso];
+}
+
+/** El campo oculto del formulario de «Unirme» con la huella de la invitación que se mostró (no es el código). */
+export const INVITATION_VIEW_FIELD = "invitacion";
+
+/**
+ * Lo que trae ese campo: la huella de la invitación que se mostró, 64 hexadecimales en minúscula. Cualquier otra
+ * cosa (falta, no es texto, otra forma) se trata igual que una huella que no coincide.
+ */
+export const invitationViewSchema = z.string().regex(/^[0-9a-f]{64}$/);
 
 /** ¿La cookie trae algo con la forma de un código? Todo lo demás se ignora (no se consulta la base). */
 export const invitationCodeSchema = z.string().refine(isWellFormedInvitationToken, {

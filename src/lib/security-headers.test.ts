@@ -79,3 +79,24 @@ describe("cabeceras del enlace del cliente (H-030)", () => {
     }
   });
 });
+
+describe("cabeceras de la invitación (H-009, corrección I1)", () => {
+  it("/invitacion y /invitacion/:código no se guardan, no se indexan, no pasan la dirección y no dejan que otro sitio controle la ventana", async () => {
+    const rules = await nextConfig.headers!();
+    const rule = rules.find((r) => r.source === "/invitacion/:path*");
+    expect(rule, "falta la regla de /invitacion").toBeDefined();
+    const value = (key: string) => rule!.headers.find((h) => h.key === key)?.value ?? "";
+    expect(value("Cache-Control")).toBe("private, no-store, max-age=0");
+    expect(value("Referrer-Policy")).toBe("no-referrer");
+    expect(value("X-Robots-Tag")).toBe("noindex, nofollow");
+    expect(value("Cross-Origin-Opener-Policy")).toBe("same-origin");
+  });
+
+  it("la cabecera de aislamiento de ventanas solo está en las rutas de la invitación", async () => {
+    const rules = await nextConfig.headers!();
+    const withOpener = rules.filter((r) =>
+      r.headers.some((h) => h.key === "Cross-Origin-Opener-Policy"),
+    );
+    expect(withOpener.map((r) => r.source)).toEqual(["/invitacion/:path*"]);
+  });
+});

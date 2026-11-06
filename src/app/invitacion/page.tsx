@@ -6,6 +6,7 @@ import {
   LeaveInvitationButton,
 } from "@/components/team/accept-invitation-form";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { FormAlert } from "@/components/ui/form-controls";
 import { signOutKeepingInvitationAction } from "@/lib/auth/actions";
 import { HOME_PATH, LOGIN_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
 import { getOptionalUser, requireUser } from "@/lib/auth/session";
@@ -20,6 +21,7 @@ import { previewInvitation } from "@/lib/team/accept-service";
 import {
   INVITATION_ACCEPT_PATH,
   INVITATION_GENERIC_FAILURE,
+  INVITATION_NOTICES,
   INVITATION_NOTICE_MESSAGES,
   MISSING_CODE_MESSAGE,
   RETRY_RESULTS,
@@ -27,7 +29,9 @@ import {
   invitationSentence,
   invitedRole,
   messageForResult,
+  noticeMessage,
 } from "@/lib/team/accept-model";
+import { invitationViewFingerprint } from "@/lib/team/invitation-code";
 import { readInvitationCode } from "@/lib/team/invitation-cookie";
 
 export const metadata: Metadata = {
@@ -47,7 +51,7 @@ export const metadata: Metadata = {
  */
 export default async function InvitationPage({ searchParams }: PageProps<"/invitacion">) {
   const { aviso } = await searchParams;
-  const notice = typeof aviso === "string" ? INVITATION_NOTICE_MESSAGES[aviso] : undefined;
+  const notice = noticeMessage(aviso);
   const code = await readInvitationCode();
   const sessionUser = await getOptionalUser();
 
@@ -70,6 +74,15 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
   // El resto exige sesión y que estén aceptados los términos vigentes.
   const user = await requireUser();
   const preview = await previewInvitation(code);
+  // «Unirme» llegó con otra invitación en la cookie que la que se mostró: se muestra la de ahora y se avisa.
+  const changedNotice =
+    aviso === INVITATION_NOTICES.changed ? (
+      <div data-testid="invitation-changed">
+        <FormAlert tone="warning">
+          {INVITATION_NOTICE_MESSAGES[INVITATION_NOTICES.changed]}
+        </FormAlert>
+      </div>
+    ) : null;
 
   if (preview.status === "no_session") return <SignedOutView />;
   // Si la base falla, se muestra un mensaje de reintento (nunca un detalle técnico).
@@ -90,7 +103,13 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
         title="Ya eres parte de esta organización"
         description="Esta invitación ya la aceptaste con tu cuenta."
       >
-        <AcceptInvitationForm label="Entrar" pendingLabel="Entrando…" offerLeave={false} />
+        {changedNotice}
+        <AcceptInvitationForm
+          viewFingerprint={invitationViewFingerprint(code)}
+          label="Entrar"
+          pendingLabel="Entrando…"
+          offerLeave={false}
+        />
       </AuthCard>
     );
   }
@@ -103,6 +122,7 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
         title={wrongAccount ? "Cambia de cuenta para unirte" : "No podemos abrir esta invitación"}
         description={messageForResult(result)}
       >
+        {changedNotice}
         <div
           className="flex flex-col gap-3"
           data-testid="invitation-unavailable"
@@ -152,6 +172,7 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
   return (
     <AuthCard title="Te invitaron a unirte a un equipo">
       <div className="flex flex-col gap-5" data-testid="invitation-ready">
+        {changedNotice}
         <p className="text-md font-medium" data-testid="invitation-sentence">
           {sentence}
         </p>
@@ -168,6 +189,7 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
           </p>
         ) : null}
         <AcceptInvitationForm
+          viewFingerprint={invitationViewFingerprint(code)}
           label={alreadyMemberNote ? "Entrar" : "Unirme"}
           pendingLabel={alreadyMemberNote ? "Entrando…" : "Uniéndote…"}
         />

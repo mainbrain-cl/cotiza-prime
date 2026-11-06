@@ -16,6 +16,7 @@ import {
   invitationSentence,
   invitedRole,
   messageForResult,
+  noticeMessage,
   previewResponseSchema,
 } from "./accept-model";
 import { newInvitationToken } from "./invitation-code";
@@ -101,6 +102,29 @@ describe("los mensajes", () => {
   it("hay un mensaje para cada aviso de la dirección", () => {
     for (const notice of Object.values(INVITATION_NOTICES)) {
       expect(INVITATION_NOTICE_MESSAGES[notice], notice).toBeTruthy();
+    }
+  });
+
+  it("el aviso de la dirección: solo los conocidos dan un texto; `__proto__`, `constructor` y otros, nada", () => {
+    for (const notice of Object.values(INVITATION_NOTICES)) {
+      expect(noticeMessage(notice), notice).toBe(INVITATION_NOTICE_MESSAGES[notice]);
+    }
+    expect(noticeMessage(INVITATION_NOTICES.changed)).toBe(
+      "Ahora se muestra otra invitación. Revisa a qué organización te unes.",
+    );
+    for (const bad of [
+      "__proto__",
+      "constructor",
+      "toString",
+      "hasOwnProperty",
+      "valueOf",
+      "",
+      "otro",
+      undefined,
+      ["invitacion-cambio"],
+      42,
+    ]) {
+      expect(noticeMessage(bad), String(bad)).toBeUndefined();
     }
   });
 

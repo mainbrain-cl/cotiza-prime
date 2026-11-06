@@ -4,7 +4,9 @@ import {
   hashInvitationToken,
   invitationEmailBinding,
   invitationUrl,
+  invitationViewFingerprint,
   isWellFormedInvitationToken,
+  matchesInvitationView,
   newInvitationToken,
 } from "./invitation-code";
 
@@ -66,5 +68,38 @@ describe("código de la invitación", () => {
     expect(invitationUrl("http://localhost:3000", "abc")).toBe(
       "http://localhost:3000/invitacion/abc",
     );
+  });
+});
+
+describe("huella de la invitación que se mostró («Unirme»)", () => {
+  it("son 64 hexadecimales, estable, distinta por código y distinta de la huella de la base", () => {
+    const token = newInvitationToken();
+    const view = invitationViewFingerprint(token);
+    expect(view).toMatch(/^[0-9a-f]{64}$/);
+    expect(invitationViewFingerprint(token)).toBe(view);
+    expect(invitationViewFingerprint(newInvitationToken())).not.toBe(view);
+    // La de la base sirve para llamar a sus funciones: la de la página no puede ser la misma.
+    expect(view).not.toBe(hashInvitationToken(token));
+    expect(view).not.toContain(token);
+  });
+
+  it("solo coincide con la huella exacta de ESE código", () => {
+    const token = newInvitationToken();
+    const view = invitationViewFingerprint(token);
+    expect(matchesInvitationView(token, view)).toBe(true);
+    for (const other of [
+      invitationViewFingerprint(newInvitationToken()),
+      hashInvitationToken(token),
+      token,
+      view.toUpperCase(),
+      `${view} `,
+      view.slice(0, 63),
+      "",
+      null,
+      undefined,
+      42,
+    ]) {
+      expect(matchesInvitationView(token, other), String(other)).toBe(false);
+    }
   });
 });

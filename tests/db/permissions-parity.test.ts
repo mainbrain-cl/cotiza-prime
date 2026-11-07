@@ -27,6 +27,48 @@ import {
   type TestUser,
 } from "./helpers";
 
+/** Las acciones (en orden) que lista una definición de `app.role_can`: una fila `('accion', array[...` por acción. */
+function actionsIn(sql: string): string[] {
+  return [...sql.matchAll(/^\s*\('([a-z_.]+)',\s*array\[/gm)].map((m) => m[1]);
+}
+
+const MIGRATIONS_DIR = path.resolve(import.meta.dirname, "..", "..", "supabase", "migrations");
+type Migration = { name: string; sql: string };
+function readMigrations(): Migration[] {
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((name) => name.endsWith(".sql"))
+    .sort()
+    .map((name) => ({ name, sql: readFileSync(path.join(MIGRATIONS_DIR, name), "utf8") }));
+}
+
+/**
+ * La ÚLTIMA migración (por nombre) que define `app.role_can`: si una posterior a `role_matrix` la redefine, la
+ * lista de acciones que vale es la suya. Antes se miraba siempre la original y una acción nueva pasaba sin que nadie
+ * la comprobara.
+ */
+function latestRoleCanDefinition(migrations: Migration[]): Migration | null {
+  const defining = migrations
+    .filter((m) => /create (or replace )?function app\.role_can\(/i.test(m.sql))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return defining.at(-1) ?? null;
+}
+
+/** El cuerpo de `app.role_can` tal como está HOY en la base. */
+async function liveRoleCanSource(): Promise<string> {
+  const { rows } = await db.query<{ prosrc: string }>(
+    "select prosrc from pg_proc where oid = 'app.role_can(text, text, boolean)'::regprocedure",
+  );
+  return rows[0].prosrc;
+}
+
+const ROLE_CAN_SAMPLE = `create function app.role_can(p_role text, p_action text, p_own boolean default false) returns boolean
+language sql immutable parallel safe set search_path = '' as $$
+  select 1 from (values
+  ('org.view', array['owner']::text[], array[]::text[]),
+  ('quote.create', array['owner']::text[], array[]::text[])
+  ) as m(action, any_roles, own_roles)
+$$;`;
+
 let db: Client;
 beforeAll(async () => {
   db = await connect();
@@ -82,14 +124,54 @@ describe("app.role_can y can() de TypeScript dicen lo mismo", () => {
     }
   });
 
-  it("las acciones de la migración son exactamente las de TypeScript", () => {
-    const migrations = path.resolve(import.meta.dirname, "..", "..", "supabase", "migrations");
-    const file = readdirSync(migrations).find((name) => name.endsWith("_role_matrix.sql"));
-    expect(file, "falta la migración role_matrix").toBeDefined();
-    const sql = readFileSync(path.join(migrations, file as string), "utf8");
-    const inMigration = [...sql.matchAll(/^\s*\('([a-z_.]+)',\s*array\[/gm)].map((m) => m[1]);
-    expect(inMigration).toEqual([...PERMISSION_ACTIONS]);
+  it("las acciones de la migración que define `app.role_can` hoy son exactamente las de TypeScript", () => {
+    const defining = latestRoleCanDefinition(readMigrations());
+    expect(defining, "ninguna migración define app.role_can").not.toBeNull();
+    expect(actionsIn(defining!.sql)).toEqual([...PERMISSION_ACTIONS]);
   });
+
+  it("la definición VIVA de `app.role_can` en la base lista exactamente las acciones de TypeScript", async () => {
+    expect(actionsIn(await liveRoleCanSource())).toEqual([...PERMISSION_ACTIONS]);
+  });
+
+  it("una migración POSTERIOR que redefina `app.role_can` es la que se compara, no la original (prueba negativa)", () => {
+    const original = { name: "20261028100000_role_matrix.sql", sql: ROLE_CAN_SAMPLE };
+    const later = {
+      name: "20261201100000_otra.sql",
+      sql: ROLE_CAN_SAMPLE.replace(
+        "('org.view',",
+        "('quote.archive', array['owner']::text[], array[]::text[]),\n  ('org.view',",
+      ).replace("create function", "create or replace function"),
+    };
+    // Con solo la original, la lista coincide; al sumar la posterior, la que manda es la posterior y la lista cambia.
+    expect(actionsIn(latestRoleCanDefinition([original])!.sql)).toEqual([
+      "org.view",
+      "quote.create",
+    ]);
+    const picked = latestRoleCanDefinition([later, original]);
+    expect(picked?.name).toBe(later.name);
+    expect(actionsIn(picked!.sql)).toEqual(["quote.archive", "org.view", "quote.create"]);
+    expect(actionsIn(picked!.sql)).not.toEqual(["org.view", "quote.create"]);
+  });
+
+  it("si la definición viva cambia (una acción de más), la lectura de la base lo detecta (prueba negativa)", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      const source = await liveRoleCanSource();
+      const before = actionsIn(source);
+      const redefined = source.replace(
+        "('org.view',",
+        "('prueba.accion_nueva', array['owner']::text[], array[]::text[]),\n        ('org.view',",
+      );
+      expect(redefined).not.toBe(source);
+      await db.query(
+        `create or replace function app.role_can(p_role text, p_action text, p_own boolean default false)
+         returns boolean language sql immutable parallel safe set search_path = '' as $fn$${redefined}$fn$`,
+      );
+      const after = actionsIn(await liveRoleCanSource());
+      expect(after).toEqual(["prueba.accion_nueva", ...before]);
+      expect(after).not.toEqual([...PERMISSION_ACTIONS]);
+    }));
 });
 
 describe("el rol efectivo en una sesión real", () => {

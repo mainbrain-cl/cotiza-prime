@@ -98,12 +98,14 @@ describe("cambiar el rol de un miembro o quitarlo (H-010)", () => {
     ).toBe("Rol: Comercial → Observador");
     expect(
       describeAuditDetails({ old_role: "admin", new_role: "sales", cancelled_invitations: 2 }),
-    ).toBe("Rol: Administrador → Comercial · se cancelaron 2 invitaciones que había enviado");
+    ).toBe(
+      "Rol: Administrador → Comercial · se cancelaron 2 invitaciones que había enviado o reenviado",
+    );
     expect(describeAuditDetails({ role: "sales", cancelled_invitations: 0 })).toBe(
       "Rol: Comercial",
     );
     expect(describeAuditDetails({ role: "admin", cancelled_invitations: 1 })).toBe(
-      "Rol: Administrador · se canceló 1 invitación que había enviado",
+      "Rol: Administrador · se canceló 1 invitación que había enviado o reenviado",
     );
     // Las acciones de invitaciones, que también llevan un rol, no cambian.
     expect(describeAuditDetails({ role: "sales" })).toBeNull();
@@ -146,7 +148,9 @@ describe("a quién afectó la acción (H-010: sin correos, el registro es lo que
         details: { role: "admin", cancelled_invitations: 2 },
         subjectName: "María Pérez",
       }),
-    ).toBe("Quitó a María Pérez del equipo · se cancelaron 2 invitaciones que había enviado");
+    ).toBe(
+      "Quitó a María Pérez del equipo · se cancelaron 2 invitaciones que había enviado o reenviado",
+    );
     expect(
       describeAuditEntry({
         action: "member.role_changed",
@@ -154,7 +158,7 @@ describe("a quién afectó la acción (H-010: sin correos, el registro es lo que
         subjectName: "María Pérez",
       }),
     ).toBe(
-      "Cambió el rol de María Pérez de Administrador a Observador · se canceló 1 invitación que había enviado",
+      "Cambió el rol de María Pérez de Administrador a Observador · se canceló 1 invitación que había enviado o reenviado",
     );
   });
 

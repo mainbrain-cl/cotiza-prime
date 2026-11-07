@@ -15,6 +15,11 @@ const OLD = "20261103100000_invitation_accept";
 const up = readFileSync(path.join(ROOT, "migrations", `${NAME}.sql`), "utf8");
 const down = readFileSync(path.join(ROOT, "rollbacks", `${NAME}.down.sql`), "utf8");
 const oldMigration = readFileSync(path.join(ROOT, "migrations", `${OLD}.sql`), "utf8");
+// La migración POSTERIOR que vuelve a definir `app.invitation_state` (también mira a quien reenvió). Es la vigente.
+const newer = readFileSync(
+  path.join(ROOT, "migrations", "20261106100000_invitation_resender.sql"),
+  "utf8",
+);
 
 let db: Client;
 beforeAll(async () => {
@@ -124,7 +129,9 @@ describe("el deshacer de invitation_preview_read_only", () => {
       await actAsPostgres(db);
       const current = await stateDefinition();
       expect(current.count).toBe(1);
-      expect(current.src.trim()).toBe(bodyIn(up, "app.invitation_state").trim());
+      // La definición vigente es la de la migración posterior (`invitation_resender`), no la de esta.
+      expect(current.src.trim()).toBe(bodyIn(newer, "app.invitation_state").trim());
+      expect(current.src.trim()).not.toBe(bodyIn(up, "app.invitation_state").trim());
       // La versión actual compara quién pregunta ANTES que el estado.
       expect(current.src.indexOf("invitation_binding")).toBeLessThan(
         current.src.indexOf("'revoked'"),
@@ -152,7 +159,7 @@ describe("el deshacer de invitation_preview_read_only", () => {
       expect(restored).toMatchObject({ anon: false, pub: false, auth: false });
     }));
 
-  it("la migración se puede volver a aplicar después de deshacerla y deja la versión de solo lectura", () =>
+  it("la migración se puede volver a aplicar después de deshacerla y deja la versión de solo lectura (y el estado de la invitación, el de esta migración)", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
       const original = await definition();
@@ -162,6 +169,9 @@ describe("el deshacer de invitation_preview_read_only", () => {
       const again = await definition();
       expect(again).toEqual(original);
       expect(again.src.trim()).toBe(bodyIn(up).trim());
-      expect(await stateDefinition()).toEqual(originalState);
+      // `app.invitation_state` queda como la dejó ESTA migración (la posterior aún no se reaplicó).
+      const state = await stateDefinition();
+      expect(state.src.trim()).toBe(bodyIn(up, "app.invitation_state").trim());
+      expect({ ...state, src: "" }).toEqual({ ...originalState, src: "" });
     }));
 });

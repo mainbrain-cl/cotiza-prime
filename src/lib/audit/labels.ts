@@ -79,6 +79,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   send_count: "envíos",
   last_sent_at: "último envío",
   revoke_reason: "motivo de la cancelación",
+  resent_by: "quién la reenvió",
   body: "texto",
   is_default: "predeterminado",
 };
@@ -105,8 +106,8 @@ function cancelledNote(details: Record<string, unknown>): string | null {
   const cancelled = details.cancelled_invitations;
   if (typeof cancelled !== "number" || cancelled <= 0) return null;
   return cancelled === 1
-    ? "se canceló 1 invitación que había enviado"
-    : `se cancelaron ${cancelled} invitaciones que había enviado`;
+    ? "se canceló 1 invitación que había enviado o reenviado"
+    : `se cancelaron ${cancelled} invitaciones que había enviado o reenviado`;
 }
 
 function describeMemberChange(details: Record<string, unknown>): string | null {

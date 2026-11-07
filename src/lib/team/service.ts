@@ -67,6 +67,10 @@ function failure(error: { code?: string | null; message?: string | null }, logNa
   if (mapped.kind === "other") {
     // Solo el código: nunca el mensaje de la base ni datos de nadie.
     void serverLog("error", logName, { code: error.code ?? "unknown" });
+  } else if (mapped.kind === "owner_only") {
+    // Alguien que no es el Dueño intentó algo solo del Dueño: se anota solo el código (aviso, no error), nunca
+    // correos, nombres ni identificadores de personas. Sirve para notar quién insiste en llamar la base directo.
+    void serverLog("warn", logName, { code: "owner_only" });
   }
   return { status: "error", kind: mapped.kind, message: mapped.message } as const;
 }

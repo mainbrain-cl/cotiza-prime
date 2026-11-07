@@ -13,6 +13,7 @@ const rpc = vi.fn();
 const from = vi.fn();
 const revalidatePath = vi.fn();
 const logged: string[] = [];
+const warned: string[] = [];
 let role: string = MEMBER_ROLES[0];
 
 vi.mock("next/cache", () => ({ revalidatePath: (...args: unknown[]) => revalidatePath(...args) }));
@@ -34,8 +35,12 @@ beforeEach(() => {
   from.mockReset();
   revalidatePath.mockReset();
   logged.length = 0;
+  warned.length = 0;
   vi.spyOn(console, "error").mockImplementation((line: string) => {
     logged.push(String(line));
+  });
+  vi.spyOn(console, "warn").mockImplementation((line: string) => {
+    warned.push(String(line));
   });
 });
 
@@ -92,8 +97,12 @@ describe("cambiar el rol", () => {
     const one = await changeMemberRoleAction(...changeArgs);
     rpc.mockResolvedValue({ data: { result: "changed", cancelled_invitations: 3 }, error: null });
     const three = await changeMemberRoleAction(...changeArgs);
-    expect(one.message).toContain("Se canceló 1 invitación que esa persona había enviado.");
-    expect(three.message).toContain("Se cancelaron 3 invitaciones que esa persona había enviado.");
+    expect(one.message).toContain(
+      "Se canceló 1 invitación que esa persona había enviado o reenviado.",
+    );
+    expect(three.message).toContain(
+      "Se cancelaron 3 invitaciones que esa persona había enviado o reenviado.",
+    );
   });
 
   it("si ya tenía ese rol, avisa que no hubo cambios", async () => {
@@ -135,8 +144,19 @@ describe("cambiar el rol", () => {
         "Solo el Dueño puede nombrar Administradores, cambiarles el rol o quitarlos del equipo.",
     });
     expect(revalidatePath).not.toHaveBeenCalled();
-    // Lo esperado no se escribe en el log.
+    // No es un error del servidor: no sale como `error`. Sí queda un aviso con solo el código `owner_only`, sin correo,
+    // nombre ni identificadores de personas.
     expect(logged.join("\n")).not.toContain("member_role_change_failed");
+    const lines = warned.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      level: "warn",
+      message: "member_role_change_failed",
+      code: "owner_only",
+    });
+    expect(Object.keys(lines[0]).sort()).toEqual(["code", "level", "message", "requestId", "time"]);
+    expect(warned.join("\n")).not.toContain(MEMBER_ID);
+    expect(warned.join("\n")).not.toContain(USER_ID);
   });
 
   it("el tope de cambios en el equipo por hora tiene su mensaje", async () => {
@@ -237,6 +257,21 @@ describe("quitar del equipo", () => {
     rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "owner_only" } });
     expect(await removeMemberAction(...removeArgs)).toMatchObject({ kind: "owner_only" });
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("quitar a un Administrador sin ser el Dueño deja un aviso con solo el código `owner_only`", async () => {
+    role = MEMBER_ROLES[1];
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "owner_only" } });
+    await removeMemberAction(...removeArgs);
+    const lines = warned.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      level: "warn",
+      message: "member_remove_failed",
+      code: "owner_only",
+    });
+    expect(warned.join("\n")).not.toContain(MEMBER_ID);
+    expect(logged).toHaveLength(0);
   });
 
   it("ids inválidos no llegan a la base", async () => {

@@ -197,7 +197,7 @@ describe("cambiar el rol", () => {
     expect(q("member-role-demote-note")).toBeNull();
     await click(q("member-role-option-viewer")!.querySelector("input"));
     expect(q("member-role-demote-note")?.textContent).toBe(
-      "Las invitaciones pendientes que envió se cancelarán.",
+      "Las invitaciones pendientes que envió o reenvió se cancelarán.",
     );
     // Subir o cambiar entre roles que no manejan el equipo no lo muestra.
     await click(q(`member-role-option-${ADMIN}`)!.querySelector("input"));
@@ -323,7 +323,7 @@ describe("quitar del equipo", () => {
     for (const phrase of [
       "Sus cotizaciones siguen existiendo con su nombre.",
       "Sus borradores quedan solo para leer.",
-      "Las invitaciones que envió se cancelan.",
+      "Las invitaciones que envió o reenvió se cancelan.",
       "Sus solicitudes asignadas quedan esperando que las reasignes.",
     ]) {
       expect(consequences).toContain(phrase);

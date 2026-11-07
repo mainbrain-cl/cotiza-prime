@@ -81,24 +81,43 @@ async function inviteAs(inviter: TestUser, email: string, role = "sales", tenant
 }
 
 /**
- * Una invitación a Administrador hecha por un Administrador, con el aviso al Dueño anotado, como las que H-008 dejaba
- * crear antes de H-010. Desde H-010 eso da `owner_only` (solo el Dueño invita a un rol que maneja el equipo), así que
- * la crea el Dueño y se reescribe, como montaje, quién invitó y el aviso (sin disparadores, solo en esta transacción).
+ * Una invitación a Administrador hecha por el Dueño, con el aviso al Dueño anotado como pendiente (como lo dejaba H-008
+ * cuando un Administrador invitaba a otro). Desde H-010 un Administrador ya no invita a un Administrador, y desde la
+ * corrección del 2026-11-06 una invitación a un rol que maneja el equipo solo vale si la creó y reenvió el Dueño: por eso
+ * se monta con el Dueño como autor y solo se anota el aviso pendiente (lo que estas pruebas necesitan).
  */
-async function legacyAdminInvite(email: string) {
+async function adminInviteWithPendingNotice(email: string) {
   const p = await inviteAs(w.owner, email, "admin");
   await actAsPostgres(setup);
-  await setup.query("set local session_replication_role = replica");
-  await setup.query(
-    "update public.invitations set invited_by = $2, owner_notice_state = 'pending' where id = $1",
-    [p.id, w.admin.id],
-  );
-  await setup.query("update public.email_messages set created_by = $2 where invitation_id = $1", [
+  await setup.query("update public.invitations set owner_notice_state = 'pending' where id = $1", [
     p.id,
-    w.admin.id,
   ]);
-  await setup.query("set local session_replication_role = origin");
   return p;
+}
+
+/**
+ * Reenvía la invitación `p` como `user` (al mismo correo), con la función real, y deja `p.tokenSha` con el código nuevo.
+ * Antes se pasa el tiempo mínimo entre envíos.
+ */
+async function resendAs(user: TestUser, p: Prepared, tenant = w.tenantA) {
+  await actAsPostgres(setup);
+  await setup.query(
+    "update public.invitations set last_sent_at = now() - interval '1 hour' where id = $1",
+    [p.id],
+  );
+  const { sha } = newToken();
+  const mailId = randomUUID();
+  await asUser(setup, user, tenant);
+  const { rows } = await setup.query<{ r: Json }>(RESEND, [
+    p.id,
+    invitationEmailBinding(sha, p.email),
+    sha,
+    mailId,
+    `v1.cifrado.correo.${mailId}`,
+  ]);
+  await actAsPostgres(setup);
+  expect(rows[0].r.result).toBe("resent");
+  p.tokenSha = sha;
 }
 
 /** Una cuenta nueva con el correo confirmado (o no). Siempre como postgres. */
@@ -170,6 +189,11 @@ async function everyState(): Promise<StateCase[]> {
   });
   const expired = await add("vencida", { result: "expired" });
   await add("quien invitó ya no maneja el equipo", { result: "inviter_inactive" }, w.admin);
+  // La hizo el Dueño, pero la REENVIÓ un Administrador que después dejó de manejar el equipo (más abajo).
+  const resent = await add("reenviada por quien ya no maneja el equipo", {
+    result: "inviter_inactive",
+  });
+  await resendAs(w.admin, resent.p);
   await add("organización archivada", { result: "archived" }, w.ownerB, w.tenantB);
   const accepted = await add("aceptada", { result: "accepted", tenant_id: w.tenantA });
   const used = await add("usada (quien la aceptó ya no es miembro)", { result: "used" });
@@ -826,8 +850,8 @@ describe("el aviso al Dueño sale aunque la invitación ya esté aceptada", () =
   it("aceptar no borra ni toca las filas `invitation_notice` ni `owner_notice_*`; los correos de la invitación siguen", () =>
     withTx(setup, async () => {
       const person = await newPerson();
-      // Un Administrador invitó a otro Administrador antes de H-010: el aviso al Dueño quedó anotado como pendiente.
-      const p = await legacyAdminInvite(person.email);
+      // El aviso al Dueño quedó anotado como pendiente (como cuando un Administrador invitaba a otro antes de H-010).
+      const p = await adminInviteWithPendingNotice(person.email);
       const before = await rowOf(p.id);
       expect(before.owner_notice_state).toBe("pending");
 
@@ -876,7 +900,7 @@ describe("el aviso al Dueño sale aunque la invitación ya esté aceptada", () =
   it("un aviso todavía pendiente (sin reservar) se puede reservar y enviar después de aceptar", () =>
     withTx(setup, async () => {
       const person = await newPerson();
-      const p = await legacyAdminInvite(person.email);
+      const p = await adminInviteWithPendingNotice(person.email);
       expect((await accept(person, p.tokenSha)).result).toBe("accepted");
       const after = await rowOf(p.id);
       expect(after.owner_notice_state).toBe("pending");
@@ -1420,8 +1444,9 @@ describe("la vista previa es de SOLO LECTURA (corrección I1 de la revisión adv
         for (let n = 0; n < 3; n++) answers.push(await preview(stranger, c.p.tokenSha));
         expect(await rowOf(c.p.id), c.state).toEqual(row);
       }
-      // Una sola respuesta para los ocho estados (pendiente, cancelada, cancelada porque quien invitó se fue,
-      // vencida, quien invitó ya no maneja el equipo, organización archivada, aceptada, usada): «wrong_email», sin
+      // Una sola respuesta para los nueve estados (pendiente, cancelada, cancelada porque quien invitó se fue,
+      // vencida, quien invitó ya no maneja el equipo, reenviada por quien ya no maneja el equipo, organización
+      // archivada, aceptada, usada): «wrong_email», sin
       // ningún otro campo.
       expect(answers).toHaveLength(cases.length * 3);
       const distinct = new Set(answers.map((a) => JSON.stringify(a)));
@@ -1676,5 +1701,103 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
       }
       expect(await memberOf(w.tenantA, wrong)).toBeUndefined();
       expect(await memberOf(w.tenantB, wrong)).toBeUndefined();
+    }));
+});
+
+describe("quien reenvió la invitación también tiene que seguir pudiendo (corrección de la revisión del 2026-11-06)", () => {
+  /** Anota quién reenvió (montaje directo): una invitación a Administrador no la puede reenviar un Administrador por la función. */
+  const setResender = async (p: Prepared, user: TestUser) => {
+    await actAsPostgres(setup);
+    await setup.query("update public.invitations set resent_by = $2 where id = $1", [
+      p.id,
+      user.id,
+    ]);
+  };
+
+  it("A2 · si quien reenvió ya no está en el equipo, la invitación da «quien te invitó ya no puede», en la vista previa y al aceptar, y no cuenta como fallo", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      await resendAs(w.admin, p);
+      // Mientras el Administrador sigue en el equipo, vale.
+      expect(await preview(person, p.tokenSha)).toMatchObject({ result: "ok" });
+      // Lo quitan directo (sin pasar por H-010): la invitación pendiente todavía no se canceló.
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.members set status = 'removed', removed_at = now(), removed_by = $3 where tenant_id = $1 and user_id = $2",
+        [w.tenantA, w.admin.id, w.owner.id],
+      );
+      expect((await rowOf(p.id)).status).toBe("pending");
+      expect(await preview(person, p.tokenSha)).toEqual({ result: "inviter_inactive" });
+      expect(await accept(person, p.tokenSha)).toEqual({ result: "inviter_inactive" });
+      expect(await memberOf(w.tenantA, person)).toBeUndefined();
+      expect(await failuresOf(person)).toEqual({ failures: 0, locked: false });
+    }));
+
+  it("A2b · lo mismo si a quien reenvió le bajaron el rol a uno que no maneja el equipo", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      await resendAs(w.admin, p);
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.members set role = 'viewer' where tenant_id = $1 and user_id = $2",
+        [w.tenantA, w.admin.id],
+      );
+      expect(await accept(person, p.tokenSha)).toEqual({ result: "inviter_inactive" });
+    }));
+
+  it("quien NO es la persona invitada recibe «wrong_email» aunque quien reenvió ya no pueda (no se adelanta la revisión)", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const stranger = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      await resendAs(w.admin, p);
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.members set status = 'removed', removed_at = now(), removed_by = $3 where tenant_id = $1 and user_id = $2",
+        [w.tenantA, w.admin.id, w.owner.id],
+      );
+      expect(await preview(stranger, p.tokenSha)).toEqual({ result: "wrong_email" });
+      expect(await accept(stranger, p.tokenSha)).toEqual({ result: "wrong_email" });
+    }));
+
+  it("control · reenviada por un Administrador que sigue en el equipo, a un rol que no maneja el equipo: se acepta", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "sales");
+      await resendAs(w.admin, p);
+      expect(await accept(person, p.tokenSha)).toMatchObject({ result: "accepted", role: "sales" });
+    }));
+
+  it("A3 (D2) · una invitación a Administrador solo vale si la creó y reenvió el Dueño", () =>
+    withTx(setup, async () => {
+      // Creada y reenviada por el Dueño (la forma normal): se acepta como Administrador.
+      const okPerson = await newPerson();
+      const ok = await inviteAs(w.owner, okPerson.email, "admin");
+      await resendAs(w.owner, ok);
+      expect(await accept(okPerson, ok.tokenSha)).toMatchObject({
+        result: "accepted",
+        role: "admin",
+      });
+
+      // Creada por el Dueño pero reenviada por un Administrador (solo se llega por SQL: la función da `owner_only`).
+      const resentPerson = await newPerson();
+      const resent = await inviteAs(w.owner, resentPerson.email, "admin");
+      await setResender(resent, w.admin);
+      expect(await preview(resentPerson, resent.tokenSha)).toEqual({ result: "inviter_inactive" });
+      expect(await accept(resentPerson, resent.tokenSha)).toEqual({ result: "inviter_inactive" });
+      expect(await memberOf(w.tenantA, resentPerson)).toBeUndefined();
+
+      // Creada por un Administrador (como las que H-008 dejaba crear antes de H-010).
+      const createdPerson = await newPerson();
+      const created = await inviteAs(w.owner, createdPerson.email, "admin");
+      await actAsPostgres(setup);
+      await setup.query("update public.invitations set invited_by = $2 where id = $1", [
+        created.id,
+        w.admin.id,
+      ]);
+      expect(await accept(createdPerson, created.tokenSha)).toEqual({ result: "inviter_inactive" });
+      expect(await memberOf(w.tenantA, createdPerson)).toBeUndefined();
     }));
 });

@@ -1,62 +1,13 @@
-import {
-  Building2,
-  ChevronRight,
-  FileText,
-  Hash,
-  Palette,
-  ScrollText,
-  UsersRound,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { can } from "@/lib/permissions/matrix";
 import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
+import { visibleSettingsSections } from "./sections";
 
 export const metadata: Metadata = { title: "Configuración · Cotiza Prime" };
-
-const SECTIONS: { path: string; title: string; description: string; icon: LucideIcon }[] = [
-  {
-    path: "configuracion/empresa",
-    title: "Empresa",
-    description: "Nombre, RUT, rubro y datos de contacto.",
-    icon: Building2,
-  },
-  {
-    path: "configuracion/marca",
-    title: "Marca",
-    description: "Tu logo y tus colores, para que tus clientes te reconozcan.",
-    icon: Palette,
-  },
-  {
-    path: "configuracion/numeracion",
-    title: "Numeración",
-    description: "Prefijo, formato y desde qué número parten tus cotizaciones.",
-    icon: Hash,
-  },
-  {
-    path: "configuracion/textos",
-    title: "Textos listos",
-    description:
-      "Escribe una vez el correo base, las condiciones, las exclusiones y las notas al pie.",
-    icon: FileText,
-  },
-  {
-    path: "equipo",
-    title: "Tu equipo",
-    description: "Invita a personas por correo y elige qué puede hacer cada una.",
-    icon: UsersRound,
-  },
-];
-
-const ACTIVITY_SECTION = {
-  path: "configuracion/actividad",
-  title: "Registro de actividad",
-  description: "Quién hizo cada acción sensible y cuándo. Solo lo ve el Dueño.",
-  icon: ScrollText,
-};
 
 const UPCOMING = ["Cómo te pagan", "Tus reglas de aprobación"];
 
@@ -64,7 +15,7 @@ export default async function SettingsPage({ params }: PageProps<"/o/[tenantId]/
   const active = await requireActiveTenant((await params).tenantId);
   const denied = pagePermission(active, "settings.manage");
   if (denied) return denied;
-  const sections = can(active.role, "audit.read") ? [...SECTIONS, ACTIVITY_SECTION] : SECTIONS;
+  const sections = visibleSettingsSections((action) => can(active.role, action));
   return (
     <div className="flex max-w-2xl flex-col gap-6">
       <div className="flex flex-col gap-2">

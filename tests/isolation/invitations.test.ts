@@ -6,6 +6,7 @@
 //  5. El correo de la invitación (registro de correos) tampoco se filtra a quien no maneja el equipo.
 //  6. (H-010) Un Administrador no invita Administradores ni redirige, reenviándola con otro vínculo, la invitación a
 //     Administrador del Dueño: «solo el Dueño» (`owner_only`) y nada cambia.
+//  7. (H-010, revisión del 2026-11-06) Quitar a quien reenvió cancela lo que reenvió en ESA organización y nada de la otra.
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -191,6 +192,7 @@ describe("Ataque 3 · las huellas y el vínculo no los lee nadie con un pase", (
         "owner_notice_state",
         "owner_notice_attempts",
         "owner_notice_last_attempt_at",
+        "resent_by",
         "*",
       ]) {
         const res = await rest(token, `invitations?select=${column}`, { headers });
@@ -202,6 +204,9 @@ describe("Ataque 3 · las huellas y el vínculo no los lee nadie con un pase", (
         { owner_notice_state: "sent" },
         { owner_notice_attempts: 0 },
         { owner_notice_last_attempt_at: null },
+        // Ni anotarse (o borrar) quién reenvió: es lo que decide a quién cancela la limpieza.
+        { resent_by: fixture().personas[persona].userId },
+        { resent_by: null },
       ]) {
         const patch = await rest(token, `invitations?id=eq.${fx.orgs.A.invitation!.invitationId}`, {
           method: "PATCH",
@@ -221,6 +226,13 @@ describe("Ataque 3 · las huellas y el vínculo no los lee nadie con un pase", (
         );
         expect(probe.status, `${persona} filtrar por ${column}`).toBeGreaterThanOrEqual(400);
       }
+      // Ni filtrar por `resent_by` para averiguar quién reenvió.
+      const byResender = await rest(
+        token,
+        `invitations?select=id&resent_by=eq.${fx.personas.mixta.userId}`,
+        { headers },
+      );
+      expect(byResender.status, `${persona} filtrar por resent_by`).toBeGreaterThanOrEqual(400);
     },
   );
 });
@@ -394,6 +406,90 @@ describe("Ataque 6 · un Administrador redirige a un cómplice la invitación a 
         headers,
       );
       expect(cancel.status, cancel.text).toBe(200);
+    }
+  });
+});
+
+describe("Ataque 7 · quitar a quien reenvió cancela lo suyo en esa organización y nada de la otra (revisión del 2026-11-06)", () => {
+  it("Mixta (Administradora de A y de B) reenvía una invitación en cada una; Ana la quita de A y solo se cancela la de A", async () => {
+    const fx = fixture();
+    const { buildNewInvitation, buildResend } = await import("@/lib/team/record");
+    const ana = await tokenOf("ana");
+    const beto = await tokenOf("beto");
+    const mixta = await tokenOf("mixta");
+    const mixtaId = fx.personas.mixta.userId;
+    const headersA = tenantHeader(fx.orgs.A.tenantId);
+    const headersB = tenantHeader(fx.orgs.B.tenantId);
+
+    const inA = buildNewInvitation(
+      fx.orgs.A.tenantId,
+      `reenvio-a-${fx.runId}@ejemplo.test`,
+      "sales",
+    );
+    const inB = buildNewInvitation(
+      fx.orgs.B.tenantId,
+      `reenvio-b-${fx.runId}@ejemplo.test`,
+      "sales",
+    );
+    expect((await rpc(ana, "create_invitation", inA.params, headersA)).status).toBe(200);
+    expect((await rpc(beto, "create_invitation", inB.params, headersB)).status).toBe(200);
+    const memberRow = await db.query<{ id: string }>(
+      "select id from public.members where tenant_id = $1 and user_id = $2",
+      [fx.orgs.A.tenantId, mixtaId],
+    );
+    const mixtaMemberInA = memberRow.rows[0].id;
+    try {
+      // Pasa el tiempo mínimo entre envíos y Mixta reenvía las dos, atadas a otro correo.
+      await db.query(
+        "update public.invitations set last_sent_at = now() - interval '1 hour' where id = any($1::uuid[])",
+        [[inA.invitationId, inB.invitationId]],
+      );
+      const forgedA = buildResend(
+        fx.orgs.A.tenantId,
+        inA.invitationId,
+        `otro-a-${fx.runId}@ejemplo.test`,
+      );
+      const forgedB = buildResend(
+        fx.orgs.B.tenantId,
+        inB.invitationId,
+        `otro-b-${fx.runId}@ejemplo.test`,
+      );
+      expect((await rpc(mixta, "resend_invitation", forgedA.params, headersA)).status).toBe(200);
+      expect((await rpc(mixta, "resend_invitation", forgedB.params, headersB)).status).toBe(200);
+      const resenders = await db.query<{ id: string; resent_by: string }>(
+        "select id, resent_by from public.invitations where id = any($1::uuid[])",
+        [[inA.invitationId, inB.invitationId]],
+      );
+      expect(resenders.rows.map((r) => r.resent_by)).toEqual([mixtaId, mixtaId]);
+
+      // Ana la quita de A (con el pase de Ana, por la API).
+      const removed = await rpc(
+        ana,
+        "remove_member",
+        { p_member_id: mixtaMemberInA, p_expected_role: "admin" },
+        headersA,
+      );
+      expect(removed.status, removed.text).toBe(200);
+      expect(removed.json).toMatchObject({ result: "removed", cancelled_invitations: 1 });
+
+      const states = await db.query<{ id: string; status: string; revoke_reason: string | null }>(
+        "select id, status, revoke_reason from public.invitations where id = any($1::uuid[])",
+        [[inA.invitationId, inB.invitationId]],
+      );
+      const byId = new Map(states.rows.map((r) => [r.id, r]));
+      expect(byId.get(inA.invitationId)).toMatchObject({
+        status: "revoked",
+        revoke_reason: "inviter_removed",
+      });
+      expect(byId.get(inB.invitationId)).toMatchObject({ status: "pending", revoke_reason: null });
+    } finally {
+      // Se deja la fixture como estaba: Mixta de nuevo Administradora de A y las dos invitaciones cerradas.
+      await db.query(
+        `update public.members set status = 'active', removed_at = null, removed_by = null where id = $1`,
+        [mixtaMemberInA],
+      );
+      await rpc(beto, "revoke_invitation", { p_invitation_id: inB.invitationId }, headersB);
+      await rpc(ana, "revoke_invitation", { p_invitation_id: inA.invitationId }, headersA);
     }
   });
 });

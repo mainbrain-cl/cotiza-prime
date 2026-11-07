@@ -160,7 +160,7 @@ test("el Dueño ve a su equipo y cambia a una Comercial a Observadora: al recarg
   await expect(roleDialog(page, adminOne).getByTestId("member-role-demote-note")).toHaveCount(0);
   await roleDialog(page, adminOne).getByTestId("member-role-option-viewer").click();
   await expect(roleDialog(page, adminOne).getByTestId("member-role-demote-note")).toHaveText(
-    "Las invitaciones pendientes que envió se cancelarán.",
+    "Las invitaciones pendientes que envió o reenvió se cancelarán.",
   );
   await page.getByTestId(`member-role-${adminOne.memberId}-cancel`).click();
   expect((await dbRole(adminOne.memberId)).role).toBe("admin");
@@ -294,7 +294,7 @@ test("quitar a alguien con la sesión abierta: su siguiente clic le muestra «No
     for (const phrase of [
       "Sus cotizaciones siguen existiendo con su nombre.",
       "Sus borradores quedan solo para leer.",
-      "Las invitaciones que envió se cancelan.",
+      "Las invitaciones que envió o reenvió se cancelan.",
       "Sus solicitudes asignadas quedan esperando que las reasignes.",
     ]) {
       await expect(dialog.getByText(phrase)).toBeVisible();

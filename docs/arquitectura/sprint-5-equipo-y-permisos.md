@@ -823,3 +823,20 @@ Las tres son decisiones por defecto aplicadas por Aarón el 2026-11-05. La migra
 - **Aislamiento:** `tests/isolation/members.test.ts` (siete ataques), el ataque 6 de `tests/isolation/invitations.test.ts` (invitar o reenviar a un Administrador por PostgREST sin ser el Dueño), las tres funciones en `RPC_CASES`, `/o/[tenantId]/equipo/[memberId]` en `APP_ROUTES`, y la prueba A12 del ex miembro (`lifecycle.test.ts`) ahora también llama a las funciones de equipo.
 - **De punta a punta:** `e2e/member-management.spec.ts` (cinco pruebas: cambiar el rol y que desaparezca «Nueva cotización»; quitar con la sesión abierta; Administrador sin acciones sobre el Dueño ni sobre sí mismo, y los demás roles sin permiso; 375 px y sin conexión; dos pestañas).
 - **Nota de operación de las pruebas e2e:** Supabase local limita a 60 ingresos o registros cada 5 minutos desde una misma IP (`sign_in_sign_ups` en `supabase/config.toml`); correr varias especificaciones de equipo seguidas con la máquina cargada puede pasar los 5 s de espera de las pruebas o ese tope. Cada archivo pasa solo.
+
+---
+
+## Registro de construcción — H-011b (2026-11-06)
+
+Solo pruebas y datos de prueba: sin migraciones y sin cambios en `src/`.
+
+- **Datos de prueba.** La fixture de aislamiento suma a la organización A un **Aprobador** (`dario`) y una **Comercial** (`sofia`): con Ana (Dueña), Mixta (Administradora) y Dante (Observador), A tiene los cinco roles activos. No cambió ninguna cantidad de pruebas de aislamiento (los ataques por persona recorren una lista fija). La semilla de desarrollo suma `dario@ejemplo.test` (Aprobador) y `dante@ejemplo.test` (Observador) a Negocio Demo 1; Carla ya era Comercial.
+- **Dónde corre.** `e2e/roles.spec.ts` va en el proyecto `isolation` de Playwright (usa a las personas de la fixture con la sesión ya iniciada; `chromium` crea cuentas nuevas en cada prueba). `e2e/isolation.setup.ts` inicia sesión también como `dario`, `sofia` y `dante`, y `playwright.config.ts` reparte `roles.spec.ts` al proyecto `isolation`.
+- **Qué prueba.**
+  - Una tabla escrita a mano con los roles que abren cada pantalla (27 pantallas) y una prueba que exige que cubra todas las del registro de aislamiento: una pantalla nueva rompe la prueba hasta que alguien decida qué roles la ven.
+  - Por rol: el menú, cada pantalla (o «No tienes permiso para esto», sin el texto marcado de ninguna organización en la pantalla negada) y los botones de acción de las pantallas clave (visibles para quien corresponde, ausentes para el resto).
+  - El Observador recorre las 27 pantallas sin ver ningún botón, campo o enlace que cambie algo; un control con la Dueña comprueba que ese detector sí los encuentra donde existen.
+  - El borrador de Ana: ella lo edita; los demás roles lo ven en solo lectura con el motivo y no pueden enviarlo.
+  - Pedidos forzados por fuera de la pantalla (se captura la acción del servidor con la sesión de quien puede y se repite con la de otro rol): guardar el borrador de Ana (Administradora y Comercial: «Solo quien creó este borrador puede editarlo.»; Aprobador y Observador: «No tienes permiso para esto.») y crear un cliente (Aprobador y Observador). Cada una tiene un control en que el mismo pedido sí se aplica con la sesión que corresponde, y se comprueba en la base que lo rechazado no cambió nada.
+- **Ya cubierto en `e2e/member-management.spec.ts`** y por eso no se repite: pasar a alguien de Comercial a Observador y que «Nueva cotización» desaparezca al recargar, y quitar a alguien con la sesión abierta («No encontrado» en su siguiente clic y la cotización conserva su nombre).
+- **Cómo leer lo que se espera de la pantalla.** React entrega las partes lentas de una pantalla después del resto: mirar justo al cargar puede no encontrar un botón que sí existe. Las pruebas esperan a que no quede ninguna parte pendiente antes de afirmar que algo falta.

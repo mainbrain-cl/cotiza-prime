@@ -24,7 +24,7 @@ Requisitos: Node 24, npm 11 y Docker Desktop abierto.
    recuperan.
 
 5. Cargar datos ficticios: `npm run db:seed` (se niega a correr si la URL de Supabase no es local;
-   crea ana, beto, mixta, carla (Comercial de Negocio Demo 1) y ex `@ejemplo.test`, con la contraseña que imprime al terminar)
+   crea ana, beto, mixta, carla (Comercial de Negocio Demo 1), dario (Aprobador), dante (Observador) y ex `@ejemplo.test`, con la contraseña que imprime al terminar)
 6. Levantar la aplicación: `npm run dev` y abrir http://localhost:3000
 
 Para apagar la base local: `npx supabase stop`.

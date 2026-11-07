@@ -12,8 +12,12 @@ import { TEST_PASSWORD } from "../tests/support/local-supabase";
 import { expect, test } from "./fixtures";
 import { AUTH_DIR, FIXTURE_FILE, loadFixture, stateFile } from "./isolation-support";
 
-/** Personas que navegan en las pruebas de pantalla. */
-const BROWSER_PERSONAS: PersonaKey[] = ["ana", "mixta", "carla", "ex"];
+/**
+ * Personas que navegan en las pruebas de pantalla. Ana (Dueña), Mixta (Administradora), Darío (Aprobador), Sofía
+ * (Comercial) y Dante (Observador) son los cinco roles de la organización A (H-011b, e2e/roles.spec.ts); Carla
+ * (organización archivada) y Ex (ya quitada) atacan.
+ */
+const BROWSER_PERSONAS: PersonaKey[] = ["ana", "mixta", "dario", "sofia", "dante", "carla", "ex"];
 
 test.describe.configure({ mode: "serial" });
 

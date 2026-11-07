@@ -26,11 +26,20 @@ import {
   type Session,
 } from "../support/local-supabase";
 
-export type PersonaKey = "ana" | "beto" | "carla" | "mixta" | "ex" | "dante";
+export type PersonaKey = "ana" | "beto" | "carla" | "mixta" | "ex" | "dante" | "dario" | "sofia";
 export type OrgKey = "A" | "B" | "C";
 export type Role = "owner" | "admin" | "approver" | "sales" | "viewer";
 
-export const PERSONA_KEYS: PersonaKey[] = ["ana", "beto", "carla", "mixta", "ex", "dante"];
+export const PERSONA_KEYS: PersonaKey[] = [
+  "ana",
+  "beto",
+  "carla",
+  "mixta",
+  "ex",
+  "dante",
+  "dario",
+  "sofia",
+];
 export const ORG_KEYS: OrgKey[] = ["A", "B", "C"];
 
 /** RUT ficticio válido para las organizaciones y para el cliente que se repite en A y en B. */
@@ -224,6 +233,8 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     mixta: "Mixta Doble",
     ex: "Ex Miembro",
     dante: "Dante Lector",
+    dario: "Darío Aprobador",
+    sofia: "Sofía Comercial",
   };
 
   const personas = {} as Record<PersonaKey, Persona>;
@@ -278,6 +289,9 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
   await addMember(orgs.A.tenantId, personas.mixta.userId, "admin");
   await addMember(orgs.B.tenantId, personas.mixta.userId, "admin");
   await addMember(orgs.A.tenantId, personas.dante.userId, "viewer");
+  // H-011b: con Ana (Dueña), Mixta (Administradora) y Dante (Observador), A tiene los cinco roles activos.
+  await addMember(orgs.A.tenantId, personas.dario.userId, "approver");
+  await addMember(orgs.A.tenantId, personas.sofia.userId, "sales");
   await addMember(orgs.A.tenantId, personas.ex.userId, "sales");
   // Mixta usó B por última vez: es el dato que no debe filtrarse a sus compañeros de A (criterio 3)
   await db.query(`update public.profiles set last_tenant_id = $1 where user_id = $2`, [

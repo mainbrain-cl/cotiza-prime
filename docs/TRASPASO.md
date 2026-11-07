@@ -34,7 +34,8 @@ plataforma), no es un CRM ni un sistema de operación logística.
 5. `npm run db:seed` y `npm run dev` → http://localhost:3000. Correos de prueba: http://127.0.0.1:56324.
 
 **Usuarios de prueba** (contraseña `Prueba-Cotiza-2026`): `ana@ejemplo.test` (Dueña de Negocio Demo 1),
-`carla@ejemplo.test` (Comercial de Negocio Demo 1), `beto@ejemplo.test` (Dueño de Negocio Demo 2),
+`carla@ejemplo.test` (Comercial de Negocio Demo 1), `dario@ejemplo.test` (Aprobador de Negocio Demo 1),
+`dante@ejemplo.test` (Observador de Negocio Demo 1), `beto@ejemplo.test` (Dueño de Negocio Demo 2),
 `mixta@ejemplo.test` (en las dos), `ex@ejemplo.test` (ya no es miembro).
 
 ## 3. Qué documentos leer, en orden

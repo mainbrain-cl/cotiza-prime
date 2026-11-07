@@ -12,7 +12,9 @@ const WEB_SERVER_STARTUP_TIMEOUT_MS = USE_PRODUCTION_BUILD ? 600_000 : 120_000;
 // fixture de aislamiento y el servidor de la prueba tienen que usar las mismas, también en CI.
 ensureTestCryptoEnv();
 
-const ISOLATION_FILES = /isolation\.(setup|spec)\.ts$/;
+// Los archivos que usan la fixture de aislamiento (personas con sesión ya iniciada) corren en el proyecto
+// `isolation`; `chromium` crea sus propias cuentas y organizaciones en cada prueba.
+const ISOLATION_FILES = /(isolation\.(setup|spec)|roles\.spec)\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -32,9 +34,10 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
     // H-012: ataques de punta a punta desde el navegador. Sin reintentos: una falla es una falla.
+    // H-011b: `roles.spec.ts` usa las mismas personas (una por rol) en la organización A de la fixture.
     {
       name: "isolation",
-      testMatch: /isolation\.spec\.ts$/,
+      testMatch: /(isolation|roles)\.spec\.ts$/,
       dependencies: ["isolation-setup"],
       retries: 0,
       use: { ...devices["Desktop Chrome"] },

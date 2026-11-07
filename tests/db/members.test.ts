@@ -2047,7 +2047,8 @@ describe("reenviar y quitar a la vez (dos conexiones reales): la invitación ree
       sql: ACCEPT,
       params: [resend.sha],
     };
-    const { firstResult, second } = await raceBlocking(accept, ownerRemovesX(team));
+    const { firstResult, second, blocked } = await raceBlocking(accept, ownerRemovesX(team));
+    expect(blocked).toBe(true);
     expect(firstResult).toMatchObject({ result: "accepted", role: "sales" });
     expect(second.ok).toBe(true);
     expect((second as { ok: true; result: Json }).result.cancelled_invitations).toBe(0);

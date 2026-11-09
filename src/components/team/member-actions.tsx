@@ -20,7 +20,7 @@ const membersHeading = () => document.getElementById(MEMBERS_HEADING_ID);
 const REMOVAL_CONSEQUENCES = [
   "Sus cotizaciones siguen existiendo con su nombre.",
   "Sus borradores quedan solo para leer.",
-  "Las invitaciones que envió se cancelan.",
+  "Las invitaciones que envió o reenvió se cancelan.",
   "Sus solicitudes asignadas quedan esperando que las reasignes.",
   "Para que vuelva, tendrás que invitar de nuevo a esa persona.",
 ];

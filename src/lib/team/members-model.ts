@@ -207,7 +207,7 @@ export const MEMBER_OWNER_ONLY_NOTE =
 export const MEMBER_OWNER_ONLY_MESSAGE =
   "Solo el Dueño puede nombrar Administradores, cambiarles el rol o quitarlos del equipo.";
 /** Se muestra ANTES de confirmar que alguien deja de manejar el equipo (`change_member_role` hace exactamente esto). */
-export const MEMBER_DEMOTE_NOTE = "Las invitaciones pendientes que envió se cancelarán.";
+export const MEMBER_DEMOTE_NOTE = "Las invitaciones pendientes que envió o reenvió se cancelarán.";
 export const MEMBER_RATE_LIMITED_MESSAGE =
   "Hiciste muchos cambios en tu equipo en la última hora (cambios de rol y personas quitadas). Espera un rato y vuelve a intentar.";
 export const MEMBER_INVALID_ROLE_MESSAGE = "Ese rol no se puede asignar. Elige uno de la lista.";

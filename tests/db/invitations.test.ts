@@ -520,6 +520,46 @@ describe("reenviar", () => {
     );
   };
 
+  const resentBy = async (id: string) => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query<{ resent_by: string | null }>(
+        "select resent_by from public.invitations where id = $1",
+        [id],
+      )
+    ).rows[0].resent_by;
+  };
+
+  it("`resent_by`: crear lo deja vacío, reenviar anota a quien reenvía y otro reenvío lo reemplaza", async () => {
+    await withTx(setup, async () => {
+      const { p } = await invite(w.owner, { email: "quien-reenvia@ejemplo.test", role: "viewer" });
+      expect(await resentBy(p.id)).toBeNull();
+
+      await backdateSend(p.id);
+      expect((await call(w.admin, w.tenantA, RESEND, resendArgs(p.id).params)).result).toBe(
+        "resent",
+      );
+      expect(await resentBy(p.id)).toBe(w.admin.id);
+
+      await backdateSend(p.id);
+      expect((await call(w.owner, w.tenantA, RESEND, resendArgs(p.id).params)).result).toBe(
+        "resent",
+      );
+      expect(await resentBy(p.id)).toBe(w.owner.id);
+
+      // La auditoría del cambio anota solo el NOMBRE del campo, nunca quién ni el correo.
+      await actAsPostgres(setup);
+      const { rows } = await setup.query(
+        `select details from public.audit_log
+          where tenant_id = $1 and resource_id = $2 and action = 'invitation.updated'`,
+        [w.tenantA, p.id],
+      );
+      const changed = rows.flatMap((r) => r.details.changed as string[]);
+      expect(changed).toContain("resent_by");
+      expect(JSON.stringify(rows)).not.toContain(w.admin.id);
+    });
+  });
+
   it("genera un código nuevo (el anterior deja de existir), extiende la vigencia y registra otro correo", async () => {
     await withTx(setup, async () => {
       const { p } = await invite(w.owner, { email: "reenvio@ejemplo.test" });
@@ -930,7 +970,7 @@ describe("quién ve la tabla", () => {
         ]);
         expect(rows).toHaveLength(1);
         expect(rows[0].role).toBe("approver");
-        for (const column of ["token_sha256", "email_binding", "email_hash", "*"]) {
+        for (const column of ["token_sha256", "email_binding", "email_hash", "resent_by", "*"]) {
           const error = await expectSqlError(setup, `select ${column} from public.invitations`);
           expect(error.code, `${user.id} ${column}`).toBe(INSUFFICIENT_PRIVILEGE);
         }

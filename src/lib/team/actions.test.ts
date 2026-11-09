@@ -404,6 +404,22 @@ describe("reenviar", () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
+  it("el rechazo `owner_only` queda en el log del servidor solo con su código: ni correo ni identificadores", async () => {
+    readRow({ id: INVITATION_ID, email_enc: storedEmail(), role: "admin", status: "pending" });
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "owner_only" } });
+    await resendInvitationAction(TENANT_ID, INVITATION_ID);
+    const lines = logged.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      level: "warn",
+      message: "invitation_resend_failed",
+      code: "owner_only",
+    });
+    expect(Object.keys(lines[0]).sort()).toEqual(["code", "level", "message", "requestId", "time"]);
+    expect(logged.join("\n").toLowerCase()).not.toContain("persona.nueva");
+    expect(logged.join("\n")).not.toContain(INVITATION_ID);
+  });
+
   it("los topes de reenvío se explican", async () => {
     readRow({ id: INVITATION_ID, email_enc: storedEmail(), role: "sales", status: "pending" });
     rpc.mockResolvedValue({ data: null, error: { code: "CP429", message: "resend_too_soon" } });

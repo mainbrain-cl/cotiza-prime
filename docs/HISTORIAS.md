@@ -1887,6 +1887,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** chico
 **Depende de:** H-010, H-004c
 **Datos personales:** no
+**Notas técnicas:** al traspasar, en la misma operación hay que cancelar las invitaciones pendientes a roles que manejan el equipo (Administrador) creadas o reenviadas por el Dueño saliente: con la regla de H-010 (corrección del 2026-11-06) ya no se pueden aceptar, pero seguirían apareciendo como pendientes y bloquearían invitar de nuevo al mismo correo. Conviene una cancelación acotada a esa organización, no `app.reconcile_invitation_senders()`, que bloquea toda la tabla de invitaciones.
 
 ---
 

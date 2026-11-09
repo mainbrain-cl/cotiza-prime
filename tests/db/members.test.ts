@@ -1712,6 +1712,354 @@ describe("reenviar mientras te quitan o te bajan de rol (el bloqueo de resend_in
   );
 });
 
+/**
+ * Reenvía la invitación `p` como `user`, atándola al correo `toEmail` (como lo haría quien llama la base directo): el
+ * código nuevo (`sha`) y el vínculo con ese correo. Antes se pasa el tiempo mínimo entre envíos.
+ */
+async function resendAs(user: TestUser, p: Prepared, toEmail: string, tenant = w.tenantA) {
+  await actAsPostgres(setup);
+  await setup.query(
+    "update public.invitations set last_sent_at = now() - interval '1 hour' where id = $1",
+    [p.id],
+  );
+  const { sha } = newToken();
+  const mailId = randomUUID();
+  const result = await call(user, tenant, RESEND, [
+    p.id,
+    invitationEmailBinding(sha, toEmail),
+    sha,
+    mailId,
+    `v1.cifrado.correo.${mailId}`,
+  ]);
+  return { sha, mailId, result };
+}
+
+const resentBy = async (id: string) => {
+  await actAsPostgres(setup);
+  return (
+    await setup.query<{ resent_by: string | null }>(
+      "select resent_by from public.invitations where id = $1",
+      [id],
+    )
+  ).rows[0].resent_by;
+};
+
+describe("invitaciones que la persona reenvió (corrección de la revisión del 2026-11-06)", () => {
+  it("M1 · el ataque exacto: un Administrador reenvía la invitación del Dueño a un cómplice y lo quitan; la invitación se cancela y el cómplice no entra", async () => {
+    await withTx(setup, async () => {
+      const x = await addMember("admin", w.tenantA, "Admin Que Se Va");
+      const accomplice = await createUser(setup);
+      // El Dueño invita a un Comercial; X la reenvía atada al correo de su cómplice, con un código que X conoce.
+      const p = await inviteAs(w.owner, "sales");
+      const resent = await resendAs(x.user, p, accomplice.email);
+      expect(resent.result.result).toBe("resent");
+      expect(await resentBy(p.id)).toBe(x.user.id);
+      expect((await invitationStatus(p.id)).status).toBe("pending");
+
+      // Lo quitan: la limpieza ve que X reenvió esa invitación y la cancela (antes quedaba viva).
+      const removed = await call(w.owner, w.tenantA, REMOVE, [x.memberId, "admin"]);
+      expect(removed).toMatchObject({ result: "removed", cancelled_invitations: 1 });
+      expect(await invitationStatus(p.id)).toMatchObject({
+        status: "revoked",
+        revoke_reason: "inviter_removed",
+        revoked_by: w.owner.id,
+      });
+      const audit = await auditRows("member.removed", x.memberId);
+      expect(audit[0].details).toEqual({ role: "admin", cancelled_invitations: 1 });
+
+      // El cómplice usa el código de X: no entra.
+      const attempt = await call(accomplice, w.tenantA, ACCEPT, [resent.sha]);
+      expect(attempt.result).toBe("inviter_inactive");
+      expect(
+        await count(
+          "select count(*) as n from public.members where tenant_id = $1 and user_id = $2",
+          [w.tenantA, accomplice.id],
+        ),
+      ).toBe(0);
+    });
+  });
+
+  it("M2 · lo mismo si en vez de quitarlo le bajan el rol a uno que no maneja el equipo", async () => {
+    await withTx(setup, async () => {
+      const x = await addMember("admin", w.tenantA, "Admin Que Baja");
+      const accomplice = await createUser(setup);
+      const p = await inviteAs(w.owner, "sales");
+      const resent = await resendAs(x.user, p, accomplice.email);
+      const changed = await call(w.owner, w.tenantA, CHANGE, [x.memberId, "sales", "admin"]);
+      expect(changed).toMatchObject({ result: "changed", role: "sales", cancelled_invitations: 1 });
+      expect(await invitationStatus(p.id)).toMatchObject({
+        status: "revoked",
+        revoke_reason: "inviter_removed",
+        revoked_by: w.owner.id,
+      });
+      expect((await call(accomplice, w.tenantA, ACCEPT, [resent.sha])).result).toBe(
+        "inviter_inactive",
+      );
+      const audit = await auditRows("member.role_changed", x.memberId);
+      expect(audit[0].details).toEqual({
+        old_role: "admin",
+        new_role: "sales",
+        cancelled_invitations: 1,
+      });
+    });
+  });
+
+  it.each(["resender", "creator"] as const)(
+    "M3 · creada por un Administrador (B) y reenviada por otro (X): se cancela cuando sale %s",
+    async (leaver) => {
+      await withTx(setup, async () => {
+        const b = await addMember("admin", w.tenantA, "Admin Creador");
+        const x = await addMember("admin", w.tenantA, "Admin Reenviador");
+        const p = await inviteAs(b.user, "sales");
+        await resendAs(x.user, p, `otro-${randomUUID().slice(0, 8)}@ejemplo.test`);
+        expect(await resentBy(p.id)).toBe(x.user.id);
+        const out = leaver === "resender" ? x : b;
+        const removed = await call(w.owner, w.tenantA, REMOVE, [out.memberId, "admin"]);
+        expect(removed.cancelled_invitations).toBe(1);
+        expect(await invitationStatus(p.id)).toMatchObject({
+          status: "revoked",
+          revoke_reason: "inviter_removed",
+        });
+      });
+    },
+  );
+
+  it("M4 · la reenvía el Dueño: si la creó X se cancela al salir X (cuenta 1, no 2); si la creó y reenvió el Dueño, no se toca", async () => {
+    await withTx(setup, async () => {
+      const x = await addMember("admin", w.tenantA, "Admin Creador");
+      const byX = await inviteAs(x.user, "viewer");
+      await resendAs(w.owner, byX, byX.email);
+      expect(await resentBy(byX.id)).toBe(w.owner.id);
+      const byOwner = await inviteAs(w.owner, "viewer");
+      await resendAs(w.owner, byOwner, byOwner.email);
+      expect(await resentBy(byOwner.id)).toBe(w.owner.id);
+
+      const removed = await call(w.owner, w.tenantA, REMOVE, [x.memberId, "admin"]);
+      expect(removed.cancelled_invitations).toBe(1);
+      expect((await invitationStatus(byX.id)).status).toBe("revoked");
+      expect((await invitationStatus(byOwner.id)).status).toBe("pending");
+    });
+  });
+
+  it("M5 · X crea y reenvía la suya: al salir cuenta una sola vez", async () => {
+    await withTx(setup, async () => {
+      const x = await addMember("admin", w.tenantA, "Admin Que Crea Y Reenvía");
+      const p = await inviteAs(x.user, "viewer");
+      await resendAs(x.user, p, p.email);
+      expect(await resentBy(p.id)).toBe(x.user.id);
+      const removed = await call(w.owner, w.tenantA, REMOVE, [x.memberId, "admin"]);
+      expect(removed.cancelled_invitations).toBe(1);
+      expect((await invitationStatus(p.id)).status).toBe("revoked");
+    });
+  });
+
+  it("M6 · si después de X la reenvía el Dueño al correo real, al quitar a X no se cancela nada y el código de X deja de servir", async () => {
+    await withTx(setup, async () => {
+      const x = await addMember("admin", w.tenantA, "Admin Desviado");
+      const accomplice = await createUser(setup);
+      const real = await createUser(setup);
+      const p = await inviteAs(w.owner, "sales");
+      const viaX = await resendAs(x.user, p, accomplice.email);
+      const viaOwner = await resendAs(w.owner, p, real.email);
+      expect(await resentBy(p.id)).toBe(w.owner.id);
+
+      const removed = await call(w.owner, w.tenantA, REMOVE, [x.memberId, "admin"]);
+      expect(removed.cancelled_invitations).toBe(0);
+      expect((await invitationStatus(p.id)).status).toBe("pending");
+      // El código que X conocía ya no existe (el reenvío del Dueño lo reemplazó).
+      expect((await call(accomplice, w.tenantA, ACCEPT, [viaX.sha])).result).toBe("not_found");
+      // La persona real entra con el código del Dueño.
+      expect((await call(real, w.tenantA, ACCEPT, [viaOwner.sha])).result).toBe("accepted");
+    });
+  });
+
+  it("M7 · X es Administrador en A y en B: al quitarlo de A se cancela solo lo que reenvió en A", async () => {
+    await withTx(setup, async () => {
+      const x = await addMember("admin", w.tenantA, "Admin En Dos");
+      await actAsPostgres(setup);
+      await setup.query(
+        "insert into public.members (tenant_id, user_id, role) values ($1, $2, 'admin')",
+        [w.tenantB, x.user.id],
+      );
+      const inA = await inviteAs(w.owner, "sales", w.tenantA);
+      const inB = await inviteAs(w.ownerB, "sales", w.tenantB);
+      await resendAs(x.user, inA, inA.email, w.tenantA);
+      await resendAs(x.user, inB, inB.email, w.tenantB);
+      expect(await resentBy(inA.id)).toBe(x.user.id);
+      expect(await resentBy(inB.id)).toBe(x.user.id);
+
+      const removed = await call(w.owner, w.tenantA, REMOVE, [x.memberId, "admin"]);
+      expect(removed.cancelled_invitations).toBe(1);
+      expect((await invitationStatus(inA.id)).status).toBe("revoked");
+      expect((await invitationStatus(inB.id)).status).toBe("pending");
+    });
+  });
+
+  it("una invitación que nunca se reenvió queda con `resent_by` vacío; reenviar lo llena y otro reenvío lo reemplaza", async () => {
+    await withTx(setup, async () => {
+      const x = await addMember("admin", w.tenantA, "Admin Reenviador");
+      const p = await inviteAs(w.owner, "viewer");
+      expect(await resentBy(p.id)).toBeNull();
+      await resendAs(x.user, p, p.email);
+      expect(await resentBy(p.id)).toBe(x.user.id);
+      await resendAs(w.owner, p, p.email);
+      expect(await resentBy(p.id)).toBe(w.owner.id);
+    });
+  });
+});
+
+describe("las ayudas de quien reenvía no las ejecuta nadie con un pase", () => {
+  it("`invitation_sender_ok`, `invitation_senders_ok` y la limpieza no las ejecutan `anon` ni `authenticated`", async () => {
+    await actAsPostgres(setup);
+    const { rows } = await setup.query<{ sig: string; anon: boolean; auth: boolean; pub: boolean }>(
+      `select s.sig,
+              has_function_privilege('anon', s.sig, 'EXECUTE') as anon,
+              has_function_privilege('authenticated', s.sig, 'EXECUTE') as auth,
+              has_function_privilege('public', s.sig, 'EXECUTE') as pub
+         from (values ('app.invitation_sender_ok(uuid, text, uuid)'),
+                      ('app.invitation_senders_ok(uuid, text, uuid, uuid)'),
+                      ('app.reconcile_invitation_senders()')) as s(sig)`,
+    );
+    expect(rows).toHaveLength(3);
+    for (const row of rows)
+      expect(row, row.sig).toMatchObject({ anon: false, auth: false, pub: false });
+  });
+});
+
+describe("reenviar y quitar a la vez (dos conexiones reales): la invitación reenviada", () => {
+  /**
+   * Una organización propia con un Dueño, un Administrador X y una invitación a un Comercial hecha por el Dueño, lista
+   * para reenviar. `accomplice` es la persona a cuyo correo X la quiere atar.
+   */
+  async function teamWithOwnersInvitation() {
+    const owner = await createUser(setup);
+    await setup.query("begin");
+    const tenant = await createTenantAs(setup, owner, "76086428-5", "Carrera de reenviadas");
+    const x = await createUser(setup, { meta: { full_name: "Admin Que Reenvía" } });
+    const { rows } = await setup.query<{ id: string }>(
+      "insert into public.members (tenant_id, user_id, role) values ($1, $2, 'admin') returning id",
+      [tenant, x.id],
+    );
+    const accomplice = await createUser(setup);
+    const invite = prepareInvitation(`dueno-${randomUUID().slice(0, 8)}@ejemplo.test`, "sales");
+    expect((await call(owner, tenant, CREATE_INVITATION, invite.params)).result).toBe("created");
+    await setup.query(
+      "update public.invitations set last_sent_at = now() - interval '1 hour' where id = $1",
+      [invite.id],
+    );
+    await setup.query("commit");
+    return { owner, tenant, x, xMemberId: rows[0].id, accomplice, invite };
+  }
+  type Team = Awaited<ReturnType<typeof teamWithOwnersInvitation>>;
+
+  const xResends = (team: Team) => {
+    const { sha } = newToken();
+    const mailId = randomUUID();
+    return {
+      sha,
+      mailId,
+      call: {
+        user: team.x,
+        tenant: team.tenant,
+        sql: RESEND,
+        params: [
+          team.invite.id,
+          invitationEmailBinding(sha, team.accomplice.email),
+          sha,
+          mailId,
+          `v1.cifrado.correo.${mailId}`,
+        ],
+      },
+    };
+  };
+  const ownerRemovesX = (team: Team) => ({
+    user: team.owner,
+    tenant: team.tenant,
+    sql: REMOVE,
+    params: [team.xMemberId, "admin"],
+  });
+  const detail = async (id: string) => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query(
+        "select status, revoke_reason, resent_by, send_count, token_sha256 from public.invitations where id = $1",
+        [id],
+      )
+    ).rows[0];
+  };
+
+  it("R1 · X reenvía primero y el Dueño lo quita después: queda 1 cancelada y el cómplice recibe «quien te invitó ya no puede»", async () => {
+    const team = await teamWithOwnersInvitation();
+    const resend = xResends(team);
+    const { firstResult, second, blocked } = await raceBlocking(resend.call, ownerRemovesX(team));
+    expect(firstResult.result).toBe("resent");
+    // Quitar a X esperó a que X terminara de reenviar (X tiene su fila de miembro bloqueada).
+    expect(blocked).toBe(true);
+    expect(second.ok).toBe(true);
+    expect((second as { ok: true; result: Json }).result.cancelled_invitations).toBe(1);
+    expect(await detail(team.invite.id)).toMatchObject({
+      status: "revoked",
+      revoke_reason: "inviter_removed",
+      resent_by: team.x.id,
+    });
+    await withTx(setup, async () => {
+      expect((await call(team.accomplice, team.tenant, ACCEPT, [resend.sha])).result).toBe(
+        "inviter_inactive",
+      );
+    });
+    expect(
+      await count(
+        "select count(*) as n from public.members where tenant_id = $1 and user_id = $2",
+        [team.tenant, team.accomplice.id],
+      ),
+    ).toBe(0);
+  });
+
+  it("R2 · el Dueño actúa primero y el reenvío espera: X recibe «sin permiso» y la invitación queda intacta", async () => {
+    const team = await teamWithOwnersInvitation();
+    const before = await detail(team.invite.id);
+    const resend = xResends(team);
+    const { firstResult, second, blocked } = await raceBlocking(ownerRemovesX(team), resend.call);
+    expect(blocked).toBe(true);
+    expect(firstResult).toMatchObject({ result: "removed", cancelled_invitations: 0 });
+    expect(second.ok).toBe(false);
+    expect((second as { code?: string }).code).toBe(INSUFFICIENT_PRIVILEGE);
+    // Mismo código, nadie reenvió, sin correo nuevo, sigue pendiente.
+    const after = await detail(team.invite.id);
+    expect(after).toMatchObject({ status: "pending", resent_by: null });
+    expect(after.token_sha256).toBe(before.token_sha256);
+    expect(after.send_count).toBe(before.send_count);
+    expect(
+      await count("select count(*) as n from public.email_messages where id = $1", [resend.mailId]),
+    ).toBe(0);
+  });
+
+  it("R3 · el cómplice acepta primero y luego quitan a X: sin interbloqueo, nada que cancelar y el cómplice queda en el equipo (límite conocido D3)", async () => {
+    const team = await teamWithOwnersInvitation();
+    // X ya había reenviado antes de la carrera.
+    const resend = xResends(team);
+    await setup.query("begin");
+    await call(team.x, team.tenant, RESEND, resend.call.params);
+    await setup.query("commit");
+    const accept = {
+      user: team.accomplice,
+      tenant: team.tenant,
+      sql: ACCEPT,
+      params: [resend.sha],
+    };
+    const { firstResult, second, blocked } = await raceBlocking(accept, ownerRemovesX(team));
+    expect(blocked).toBe(true);
+    expect(firstResult).toMatchObject({ result: "accepted", role: "sales" });
+    expect(second.ok).toBe(true);
+    expect((second as { ok: true; result: Json }).result.cancelled_invitations).toBe(0);
+    expect((await detail(team.invite.id)).status).toBe("accepted");
+    await withTx(setup, async () => {
+      const members = await call<{ user_id: string }[]>(team.owner, team.tenant, LIST);
+      expect(members.map((m) => m.user_id)).toContain(team.accomplice.id);
+    });
+  });
+});
+
 describe("las filas de quien se fue, solo para quien maneja el equipo", () => {
   it("el Aprobador, el Comercial y el Observador no ven la fila de un ex miembro (ni cuándo ni quién lo quitó), pero sí a su equipo activo y el nombre del ex miembro", async () => {
     await withTx(setup, async () => {

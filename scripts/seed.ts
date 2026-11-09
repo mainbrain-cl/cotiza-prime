@@ -59,6 +59,18 @@ const PEOPLE: {
     memberships: [{ tenant: "A", role: "sales" }],
   },
   {
+    // Aprobador activo de Negocio Demo 1 (H-011b): con Ana, Mixta, Carla y Dante, esa organización tiene los cinco roles.
+    email: "dario@ejemplo.test",
+    fullName: "Darío Prueba",
+    memberships: [{ tenant: "A", role: "approver" }],
+  },
+  {
+    // Observador activo de Negocio Demo 1: ve todo y no cambia nada.
+    email: "dante@ejemplo.test",
+    fullName: "Dante Prueba",
+    memberships: [{ tenant: "A", role: "viewer" }],
+  },
+  {
     email: "ex@ejemplo.test",
     fullName: "Ex Prueba",
     memberships: [{ tenant: "A", role: "sales", removed: true }],

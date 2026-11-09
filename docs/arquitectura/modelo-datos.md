@@ -814,6 +814,8 @@ La entrada pública usa el patrón del portero (decisión 017): el navegador nun
   | `mixta@ejemplo.test` | Administradora de Org A y de Org B (no Dueña: cada organización tiene un solo Dueño activo) |
   | `ex@ejemplo.test` | Estaba en Org A y fue quitada |
   | `carla@ejemplo.test` | Comercial activa de Org A (solo en el `seed`, para probar la asignación de solicitudes) |
+  | `dario@ejemplo.test` | Aprobador activo de Org A (solo en el `seed`, H-011b: con Ana, Mixta, Carla y Dante, Org A tiene los cinco roles) |
+  | `dante@ejemplo.test` | Observador activo de Org A (solo en el `seed`, H-011b) |
 
   Cada organización tiene catálogo, clientes cifrados, numeración y auditoría.
 - **Clientes de prueba:** se inicia sesión de verdad con cada persona (pase real) y se crea un cliente de Supabase con la llave pública más ese pase. Así se reproduce exactamente lo que podría hacer un atacante con una cuenta válida.

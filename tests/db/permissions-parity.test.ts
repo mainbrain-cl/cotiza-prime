@@ -6,8 +6,6 @@
 //  1. la función pura `app.role_can` contra `can()` de TypeScript (todas las combinaciones);
 //  2. el listado de acciones de la migración contra el de TypeScript (ni una de más ni una de menos);
 //  3. una sesión real: `app.effective_role()`, `app.can()` y `app.has_role()` para una persona de cada rol.
-import { readFileSync, readdirSync } from "node:fs";
-import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -26,19 +24,11 @@ import {
   withTx,
   type TestUser,
 } from "./helpers";
+import { latestMigrationDefining, readMigrations, type Migration } from "./migration-files";
 
 /** Las acciones (en orden) que lista una definición de `app.role_can`: una fila `('accion', array[...` por acción. */
 function actionsIn(sql: string): string[] {
   return [...sql.matchAll(/^\s*\('([a-z_.]+)',\s*array\[/gm)].map((m) => m[1]);
-}
-
-const MIGRATIONS_DIR = path.resolve(import.meta.dirname, "..", "..", "supabase", "migrations");
-type Migration = { name: string; sql: string };
-function readMigrations(): Migration[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((name) => name.endsWith(".sql"))
-    .sort()
-    .map((name) => ({ name, sql: readFileSync(path.join(MIGRATIONS_DIR, name), "utf8") }));
 }
 
 /**
@@ -47,10 +37,7 @@ function readMigrations(): Migration[] {
  * la comprobara.
  */
 function latestRoleCanDefinition(migrations: Migration[]): Migration | null {
-  const defining = migrations
-    .filter((m) => /create (or replace )?function app\.role_can\(/i.test(m.sql))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  return defining.at(-1) ?? null;
+  return latestMigrationDefining(migrations, /create (or replace )?function app\.role_can\(/i);
 }
 
 /** El cuerpo de `app.role_can` tal como está HOY en la base. */

@@ -1848,6 +1848,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-001
 **Datos personales:** sí
+**Notas técnicas:** si algún día se borra la fila de `auth.users`, antes hay que resolver todas las columnas que la referencian (por ejemplo `members.invited_by`, `members.invitation_created_by`, `members.removed_by`, `invitations.resent_by`); listarlas con `grep "references auth.users" supabase/migrations`.
 
 ---
 

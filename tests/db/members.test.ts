@@ -1178,6 +1178,28 @@ describe("nadie escribe directo en members", () => {
     });
   });
 
+  it("tampoco se escribe `invitation_created_by` directo: ni el Dueño con su pase puede insertarla ni cambiarla (solo lo hace `accept_invitation`)", async () => {
+    await withTx(setup, async () => {
+      const salesId = await memberIdOf(w.sales);
+      await asUser(setup, w.owner, w.tenantA);
+      const stranger = await createUserAsPostgres();
+      const insert = await expectSqlError(
+        setup,
+        "insert into public.members (tenant_id, user_id, role, invitation_created_by) values ($1, $2, 'viewer', $3)",
+        [w.tenantA, stranger, w.owner.id],
+      );
+      expect(insert.code).toBe(INSUFFICIENT_PRIVILEGE);
+      const update = await expectSqlError(
+        setup,
+        "update public.members set invitation_created_by = $2 where id = $1",
+        [salesId, w.owner.id],
+      );
+      expect(update.code).toBe(INSUFFICIENT_PRIVILEGE);
+      await actAsPostgres(setup);
+      expect((await memberRow(salesId)).invitation_created_by).toBeNull();
+    });
+  });
+
   async function createUserAsPostgres(): Promise<string> {
     await actAsPostgres(setup);
     const user = await createUser(setup);
@@ -1755,6 +1777,17 @@ const invitedByAsOwner = async (user: TestUser, tenant = w.tenantA) => {
   return rows[0]?.invited_by;
 };
 
+/** Lo que el Dueño ve en `members.invitation_created_by` de esa persona (menor 1 del PR #35), con su propia sesión. */
+const invitationCreatedByAsOwner = async (user: TestUser, tenant = w.tenantA) => {
+  await asUser(setup, w.owner, tenant);
+  const { rows } = await setup.query<{ invitation_created_by: string | null }>(
+    "select invitation_created_by from public.members where tenant_id = $1 and user_id = $2",
+    [tenant, user.id],
+  );
+  await actAsPostgres(setup);
+  return rows[0]?.invitation_created_by;
+};
+
 describe("invitaciones que la persona reenvió (corrección de la revisión del 2026-11-06)", () => {
   it("M1 · el ataque exacto: un Administrador reenvía la invitación del Dueño a un cómplice y lo quitan; la invitación se cancela y el cómplice no entra", async () => {
     await withTx(setup, async () => {
@@ -1918,6 +1951,8 @@ describe("invitaciones que la persona reenvió (corrección de la revisión del 
 
       // El desvío ya no queda oculto: el Dueño lee quién envió el enlace.
       expect(await invitedByAsOwner(accomplice)).toBe(x.user.id);
+      // Y quién creó la invitación (el Dueño) figura aparte, en la misma fila.
+      expect(await invitationCreatedByAsOwner(accomplice)).toBe(w.owner.id);
       const accepted = (await auditRows("invitation.accepted", p.id))[0];
       expect(accepted.details).toMatchObject({ created_by: w.owner.id, sent_by: x.user.id });
       // La invitación sigue a nombre de quien la creó.
@@ -2160,12 +2195,14 @@ describe("reenviar y quitar a la vez (dos conexiones reales): la invitación ree
       expect(members.map((m) => m.user_id)).toContain(team.accomplice.id);
       // D3: el desvío queda a la vista. El Dueño lee con su sesión que quien envió el enlace fue X...
       await asUser(setup, team.owner, team.tenant);
-      const row = await setup.query<{ invited_by: string }>(
-        "select invited_by from public.members where tenant_id = $1 and user_id = $2",
+      const row = await setup.query<{ invited_by: string; invitation_created_by: string }>(
+        "select invited_by, invitation_created_by from public.members where tenant_id = $1 and user_id = $2",
         [team.tenant, team.accomplice.id],
       );
       await actAsPostgres(setup);
       expect(row.rows[0].invited_by).toBe(team.x.id);
+      // ...y quién creó la invitación (el Dueño), aparte.
+      expect(row.rows[0].invitation_created_by).toBe(team.owner.id);
       // ...y la auditoría anota quién la creó y quién envió el enlace.
       const audit = await setup.query<{ details: Json }>(
         "select details from public.audit_log where tenant_id = $1 and action = 'invitation.accepted' and resource_id = $2",
@@ -2175,6 +2212,46 @@ describe("reenviar y quitar a la vez (dos conexiones reales): la invitación ree
         created_by: team.owner.id,
         sent_by: team.x.id,
       });
+    });
+  });
+});
+
+describe("quién ve `invited_by` e `invitation_created_by` (menor 1 del PR #35)", () => {
+  it("cualquier miembro activo de la organización los lee de otro miembro activo (el Observador también), y el de otra organización no ve la fila", async () => {
+    await withTx(setup, async () => {
+      const person = await addMember("sales", w.tenantA, "Persona Con Rastro");
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.members set invited_by = $2, invitation_created_by = $3 where id = $1",
+        [person.memberId, w.owner.id, w.admin.id],
+      );
+      for (const reader of [w.viewer, w.sales, w.approver, w.admin, w.owner]) {
+        await asUser(setup, reader, w.tenantA);
+        const { rows } = await setup.query<{
+          invited_by: string;
+          invitation_created_by: string;
+        }>("select invited_by, invitation_created_by from public.members where id = $1", [
+          person.memberId,
+        ]);
+        await actAsPostgres(setup);
+        expect(rows, reader.email).toEqual([
+          { invited_by: w.owner.id, invitation_created_by: w.admin.id },
+        ]);
+      }
+      // Un miembro de otra organización (con su propia sesión) no ve ni la fila.
+      await asUser(setup, w.ownerB, w.tenantB);
+      const outside = await setup.query(
+        "select invited_by, invitation_created_by from public.members where id = $1",
+        [person.memberId],
+      );
+      await actAsPostgres(setup);
+      expect(outside.rowCount).toBe(0);
+      // Y `list_members()` no expone ninguna de las dos columnas.
+      const listed = await call<Record<string, unknown>[]>(w.owner, w.tenantA, LIST);
+      for (const row of listed) {
+        expect(row).not.toHaveProperty("invitation_created_by");
+        expect(row).not.toHaveProperty("invited_by");
+      }
     });
   });
 });

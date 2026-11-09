@@ -6,8 +6,6 @@
 // Cada prueba corre en una transacción que se deshace, salvo las de dos conexiones (usan su propia organización y
 // dejan datos ficticios). Todo es ficticio.
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { invitationEmailBinding } from "../../src/lib/team/invitation-code";
@@ -22,6 +20,7 @@ import {
   withTx,
   type TestUser,
 } from "./helpers";
+import { functionBodyIn, latestMigrationDefining, readMigrations } from "./migration-files";
 import { actAsService, asUser, buildWorld, newToken, sha256Hex, type World } from "./send-helpers";
 
 let setup: Client;
@@ -183,6 +182,40 @@ const platformCopies = async (user: TestUser, invitationId: string) =>
   );
 const randomSha = () => randomBytes(32).toString("hex");
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** El pid de la conexión. Se pide ANTES de que esa conexión quede esperando (después su cola está ocupada). */
+const pidOf = async (client: Client) =>
+  (await client.query<{ pid: number }>("select pg_backend_pid() as pid")).rows[0].pid;
+
+/**
+ * Espera, mirando `pg_stat_activity` desde una tercera conexión (sin dormir a ciegas y con un tope de tiempo), a que la
+ * conexión `waiter` esté de verdad detenida en un bloqueo (`wait_event_type = 'Lock'`) que tiene `blocker`. Así la prueba de
+ * carrera demuestra que una llamada esperaba el candado de la otra, y no solo que «todavía no terminó».
+ */
+async function waitUntilBlocked(
+  waiterPid: number,
+  blockerPid: number,
+  timeoutMs = 5000,
+): Promise<void> {
+  const monitor = await connect();
+  try {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const { rowCount } = await monitor.query(
+        `select 1 from pg_stat_activity
+          where pid = $1 and wait_event_type = 'Lock' and $2 = any(pg_blocking_pids($1))`,
+        [waiterPid, blockerPid],
+      );
+      if (rowCount) return;
+      await sleep(20);
+    }
+    throw new Error(
+      `la conexión ${waiterPid} nunca quedó esperando un bloqueo de la ${blockerPid}`,
+    );
+  } finally {
+    await monitor.end();
+  }
+}
 
 type StateCase = { state: string; invitee: TestUser; p: Prepared; expected: Json };
 
@@ -1235,9 +1268,12 @@ describe("dos conexiones reales a la vez", () => {
     }
   });
 
-  it("D3-5 · aceptar GANA el candado con el código del Dueño y el reenvío de un Administrador llega después: el reenvío se rechaza y el miembro queda a nombre del Dueño", async () => {
+  // CONTROL: pasa igual con o sin la corrección D3 (el miembro queda a nombre del Dueño en los dos casos). Lo que prueba
+  // es el orden de los candados; la prueba que SÍ distingue D3 es la D3-6, que va justo después.
+  it("D3-5 (control) · aceptar GANA el candado con el código del Dueño y el reenvío de un Administrador llega después: el reenvío se rechaza y el miembro queda a nombre del Dueño", async () => {
     const { owner, invitee, tenant, p } = await committedInvitation();
     const resender = await connect();
+    const [resenderPid, setupPid] = [await pidOf(resender), await pidOf(setup)];
     try {
       // Un Administrador de esa organización, y una invitación que ya se puede reenviar (pasó el intervalo mínimo).
       await actAsPostgres(setup);
@@ -1279,15 +1315,110 @@ describe("dos conexiones reales a la vez", () => {
         .finally(() => {
           settled = true;
         });
-      await sleep(250);
+      await waitUntilBlocked(resenderPid, setupPid);
       expect(settled, "reenviar debía quedar esperando el candado").toBe(false);
       await setup.query("commit");
       expect(await resending).toBe(NOT_ALLOWED_STATE);
       await resender.query("rollback");
       await actAsPostgres(setup);
       expect((await rowOf(p.id)).resent_by).toBeNull();
-      expect((await memberOf(tenant, invitee)).invited_by).toBe(owner.id);
+      const member = await memberOf(tenant, invitee);
+      expect(member.invited_by).toBe(owner.id);
+      expect(member.invitation_created_by).toBe(owner.id);
     } finally {
+      await setup.query("rollback").catch(() => undefined);
+      await actAsPostgres(setup);
+      await resender.end();
+    }
+  });
+
+  it("D3-6 · el reenvío de un Administrador GANA el candado y la persona acepta después con el código nuevo: el miembro queda a nombre del Administrador (no del Dueño) y el Dueño figura como quien creó la invitación", async () => {
+    const { owner, invitee, tenant, p } = await committedInvitation();
+    const resender = await connect();
+    const [resenderPid, setupPid] = [await pidOf(resender), await pidOf(setup)];
+    try {
+      // Un Administrador de esa organización, y una invitación que ya se puede reenviar (pasó el intervalo mínimo).
+      await actAsPostgres(setup);
+      await setup.query("begin");
+      const admin = await createUser(setup);
+      await setup.query(
+        "insert into public.members (tenant_id, user_id, role) values ($1, $2, 'admin')",
+        [tenant, admin.id],
+      );
+      await setup.query(
+        "update public.invitations set last_sent_at = now() - interval '1 hour' where id = $1",
+        [p.id],
+      );
+      await setup.query("commit");
+
+      // El Administrador reenvía con un código nuevo y NO confirma: tiene el candado de la fila.
+      const fresh = newToken();
+      const mailId = randomUUID();
+      await resender.query("begin");
+      await asUser(resender, admin, tenant);
+      const resent = (
+        await resender.query<{ r: Json }>(RESEND, [
+          p.id,
+          invitationEmailBinding(fresh.sha, invitee.email),
+          fresh.sha,
+          mailId,
+          `v1.cifrado.correo.${mailId}`,
+        ])
+      ).rows[0].r;
+      expect(resent.result).toBe("resent");
+
+      // La persona acepta con el código VIEJO: tiene que esperar el candado.
+      await setup.query("begin");
+      await actAs(setup, invitee);
+      let settled = false;
+      const accepting = setup.query<{ r: Json }>(ACCEPT, [p.tokenSha]).finally(() => {
+        settled = true;
+      });
+      // Está de verdad esperando el candado que tiene el reenvío (no solo «todavía no terminó»).
+      await waitUntilBlocked(setupPid, resenderPid);
+      expect(settled, "aceptar debía quedar esperando el candado").toBe(false);
+      await resender.query("commit");
+      // El reenvío cambió el código mientras se esperaba: el viejo ya no existe.
+      expect((await accepting).rows[0].r).toEqual({ result: "not_found" });
+      await setup.query("commit");
+
+      // Condiciones para que la prueba no sea vana: el Dueño creó, el Administrador reenvió, son personas distintas y
+      // la persona todavía no es miembro.
+      await actAsPostgres(setup);
+      const inv = await rowOf(p.id);
+      expect(inv.invited_by).toBe(owner.id);
+      expect(inv.resent_by).toBe(admin.id);
+      expect(inv.invited_by).not.toBe(inv.resent_by);
+      expect(inv.status).toBe("pending");
+      expect(await memberOf(tenant, invitee)).toBeUndefined();
+
+      // Acepta con el código nuevo (el pase de la sesión vale solo dentro de una transacción).
+      await setup.query("begin");
+      await actAs(setup, invitee);
+      const accepted = (await setup.query<{ r: Json }>(ACCEPT, [fresh.sha])).rows[0].r;
+      await setup.query("commit");
+      await actAsPostgres(setup);
+      expect(accepted).toEqual({
+        result: "accepted",
+        tenant_id: tenant,
+        role: "approver",
+        already_member: false,
+        reactivated: false,
+      });
+      // En este orden: sin la corrección D3 falla en la primera (queda el Dueño).
+      const member = await memberOf(tenant, invitee);
+      expect(member.invited_by, "quien envió el enlace (Administrador)").toBe(admin.id);
+      expect(member.invitation_created_by, "quien creó la invitación (Dueño)").toBe(owner.id);
+      const { rows } = await setup.query<{ details: Json }>(
+        "select details from public.audit_log where action = 'invitation.accepted' and resource_id = $1",
+        [p.id],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].details).toMatchObject({ created_by: owner.id, sent_by: admin.id });
+    } finally {
+      // Primero se suelta el bloqueo de la otra conexión: si la prueba falló antes de confirmarlo, la aceptación de `setup`
+      // sigue esperándolo y el `rollback` de `setup` quedaría en cola detrás (colgaría hasta el tiempo límite).
+      await resender.query("rollback").catch(() => undefined);
       await setup.query("rollback").catch(() => undefined);
       await actAsPostgres(setup);
       await resender.end();
@@ -1321,6 +1452,9 @@ describe("dos conexiones reales a la vez", () => {
       expect(row.email_binding).not.toBeNull();
       expect(await memberOf(tenant, invitee)).toBeUndefined();
     } finally {
+      // Primero se suelta el bloqueo de la otra conexión: si la prueba falló antes de confirmarlo, la aceptación de `setup`
+      // sigue esperándolo y el `rollback` de `setup` quedaría en cola detrás (colgaría hasta el tiempo límite).
+      await canceller.query("rollback").catch(() => undefined);
       await setup.query("rollback").catch(() => undefined);
       await actAsPostgres(setup);
       await canceller.end();
@@ -1421,6 +1555,9 @@ describe("dos conexiones reales a la vez", () => {
       // El Dueño creó y reenvió: figura como quien invitó.
       expect((await memberOf(tenant, invitee)).invited_by).toBe(owner.id);
     } finally {
+      // Primero se suelta el bloqueo de la otra conexión: si la prueba falló antes de confirmarlo, la aceptación de `setup`
+      // sigue esperándolo y el `rollback` de `setup` quedaría en cola detrás (colgaría hasta el tiempo límite).
+      await resender.query("rollback").catch(() => undefined);
       await setup.query("rollback").catch(() => undefined);
       await actAsPostgres(setup);
       await resender.end();
@@ -2060,7 +2197,7 @@ describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en
       expect(await platformRows(p.id)).toHaveLength(1);
     }));
 
-  it("7 · la ayuda conserva SECURITY DEFINER, `search_path = ''`, la firma y los permisos; y `accept_invitation` no se tocó (es la de la migración D3)", async () => {
+  it("7 · la ayuda conserva SECURITY DEFINER, `search_path = ''`, la firma y los permisos; y `accept_invitation` no se tocó (es la de la última migración que la define)", async () => {
     await actAsPostgres(setup);
     const { rows } = await setup.query<{
       secdef: boolean;
@@ -2098,22 +2235,14 @@ describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en
       "select prosrc as src from pg_proc where oid = 'app.invitation_audit_wrong_email(public.invitations, uuid, text)'::regprocedure",
     );
     expect(src[0].src).not.toMatch(/for\s+(update|share|no key update|key share)/i);
-    // `accept_invitation` es EXACTAMENTE la de la migración D3 (20261109100000): esta migración no la tocó.
-    const d3 = readFileSync(
-      path.join(
-        import.meta.dirname,
-        "..",
-        "..",
-        "supabase",
-        "migrations",
-        "20261109100000_invitation_accept_sender.sql",
-      ),
-      "utf8",
+    // `accept_invitation` es EXACTAMENTE la de la última migración que la define: esta migración (la de «intentos ajenos»)
+    // no la tocó. Se busca sola, para no atar la prueba a una versión que una migración posterior vuelva a redefinir.
+    const latest = latestMigrationDefining(
+      readMigrations(),
+      /create (or replace )?function public\.accept_invitation\(/i,
     );
-    const start = d3.indexOf("function public.accept_invitation(");
-    expect(start).toBeGreaterThan(-1);
-    const open = d3.indexOf("$$", start) + 2;
-    const body = d3.slice(open, d3.indexOf("$$", open));
+    expect(latest, "ninguna migración define accept_invitation").not.toBeNull();
+    const body = functionBodyIn(latest!.sql, "public.accept_invitation");
     const { rows: acc } = await setup.query<{ src: string }>(
       "select prosrc as src from pg_proc where oid = 'public.accept_invitation(text)'::regprocedure",
     );
@@ -2255,6 +2384,7 @@ describe("D3: queda a nombre de quien envió el enlace (revisión de Aarón al P
       });
       const member = await memberOf(w.tenantA, person);
       expect(member.invited_by).toBe(w.admin.id);
+      expect(member.invitation_created_by).toBe(w.owner.id);
       const row = await rowOf(p.id);
       expect(row.invited_by).toBe(w.owner.id);
       expect(row.resent_by).toBe(w.admin.id);
@@ -2295,12 +2425,28 @@ describe("D3: queda a nombre de quien envió el enlace (revisión de Aarón al P
       });
       const member = await memberOf(w.tenantA, person);
       expect(member.id).toBe(former.id);
-      expect(member).toMatchObject({ status: "active", role: "sales", invited_by: w.admin.id });
+      expect(member).toMatchObject({
+        status: "active",
+        role: "sales",
+        invited_by: w.admin.id,
+        invitation_created_by: w.owner.id,
+      });
+      expect(former.invitation_created_by).toBeNull();
       expect((await auditOf(p.id))[0].details).toMatchObject({
         reactivated: true,
         created_by: w.owner.id,
         sent_by: w.admin.id,
       });
+      // El valor anterior (vacío) queda en la auditoría automática del cambio de la fila.
+      await actAsPostgres(setup);
+      const updates = await setup.query<{ details: { old: Json; new: Json } }>(
+        "select details from public.audit_log where action = 'member.updated' and resource_id = $1",
+        [former.id],
+      );
+      const change = updates.rows.find((row) => "invitation_created_by" in row.details.new);
+      expect(change, "falta el member.updated con invitation_created_by").toBeDefined();
+      expect(change!.details.old.invitation_created_by).toBeNull();
+      expect(change!.details.new.invitation_created_by).toBe(w.owner.id);
     }));
 
   it("D3-3 · el último en reenviar es el Dueño: el miembro queda a nombre del Dueño, la invitación a nombre de quien la creó y el código de X ya no sirve", () =>
@@ -2316,7 +2462,9 @@ describe("D3: queda a nombre de quien envió el enlace (revisión de Aarón al P
 
       expect(await accept(person, viaX)).toEqual({ result: "not_found" });
       expect(await accept(person, p.tokenSha)).toMatchObject({ result: "accepted", role: "sales" });
-      expect((await memberOf(w.tenantA, person)).invited_by).toBe(w.owner.id);
+      const member = await memberOf(w.tenantA, person);
+      expect(member.invited_by).toBe(w.owner.id);
+      expect(member.invitation_created_by).toBe(creator.id);
       expect((await rowOf(p.id)).invited_by).toBe(creator.id);
       expect((await auditOf(p.id))[0].details).toMatchObject({
         created_by: creator.id,
@@ -2342,10 +2490,35 @@ describe("D3: queda a nombre de quien envió el enlace (revisión de Aarón al P
       });
       const member = await memberOf(w.tenantA, person);
       expect(member).toMatchObject({ role: "viewer", invited_by: w.approver.id });
+      // No se toca nada de su fila: `invitation_created_by` sigue vacío.
+      expect(member.invitation_created_by).toBeNull();
       expect((await auditOf(p.id))[0].details).toMatchObject({
         already_member: true,
         created_by: w.owner.id,
         sent_by: w.admin.id,
+      });
+    }));
+
+  it("D3-7 · el Administrador crea la invitación y el Dueño la reenvía («no le llegó»): el miembro queda a nombre del Dueño (envió el enlace) y `invitation_created_by` es el Administrador", () =>
+    withTx(setup, async () => {
+      const creator = await addMemberA("admin");
+      const person = await newPerson();
+      const p = await inviteAs(creator, person.email, "sales");
+      await resendAs(w.owner, p);
+      const inv = await rowOf(p.id);
+      expect(inv.invited_by).toBe(creator.id);
+      expect(inv.resent_by).toBe(w.owner.id);
+      expect(await accept(person, p.tokenSha)).toMatchObject({
+        result: "accepted",
+        role: "sales",
+        already_member: false,
+      });
+      const member = await memberOf(w.tenantA, person);
+      expect(member.invited_by, "quien envió el enlace").toBe(w.owner.id);
+      expect(member.invitation_created_by, "quien creó la invitación").toBe(creator.id);
+      expect((await auditOf(p.id))[0].details).toMatchObject({
+        created_by: creator.id,
+        sent_by: w.owner.id,
       });
     }));
 });

@@ -6,7 +6,8 @@
 // Aquí se prueba que el «deshacer» devuelve cada función EXACTAMENTE a su texto anterior (con los mismos permisos), que se
 // puede volver a aplicar, y que SIN la migración los dos problemas siguen ahí (por eso las pruebas lo demuestran). Se
 // ejecutan los archivos reales dentro de una transacción que se deshace; el deshacer completo y en orden lo prueba
-// `npm run test:db:rollbacks`. Todo es ficticio.
+// `npm run test:db:rollbacks`. Desde el menor 1 del PR #35 (20261109120000) `accept_invitation` la redefine otra migración:
+// las pruebas que comparan la función vigente con la de esta migración deshacen primero esa (`downNewer`). Todo es ficticio.
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -28,6 +29,12 @@ const NAME = "20261109100000_invitation_accept_sender";
 const read = (dir: string, file: string) => readFileSync(path.join(ROOT, dir, file), "utf8");
 const up = read("migrations", `${NAME}.sql`);
 const down = read("rollbacks", `${NAME}.down.sql`);
+/**
+ * El deshacer de la migración POSTERIOR que vuelve a redefinir `accept_invitation` (20261109120000_member_invitation_creator,
+ * menor 1 del PR #35). Para probar ESTA migración, la función vigente tiene que ser la suya: se deshace primero lo más nuevo,
+ * como en el orden real.
+ */
+const downNewer = read("rollbacks", "20261109120000_member_invitation_creator.down.sql");
 const acceptMigration = read("migrations", "20261103100000_invitation_accept.sql");
 const resenderMigration = read("migrations", "20261106100000_invitation_resender.sql");
 
@@ -113,6 +120,8 @@ describe("el deshacer de invitation_accept_sender", () => {
   it("NR2 · las definiciones vigentes son el texto de esta migración; tras el deshacer, el de las anteriores; mismos atributos y permisos", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      // Primero lo más nuevo: así `accept_invitation` vigente es la de ESTA migración.
+      await db.query(downNewer);
       const current = {
         accept: await definition(ACCEPT_SIG),
         reconcile: await definition(RECONCILE_SIG),
@@ -170,6 +179,7 @@ describe("el deshacer de invitation_accept_sender", () => {
   it("NR3 · deshacer y volver a aplicar deja lo mismo", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(downNewer);
       const before = {
         accept: await definition(ACCEPT_SIG),
         reconcile: await definition(RECONCILE_SIG),
@@ -252,6 +262,8 @@ describe("el deshacer de invitation_accept_sender", () => {
     it("NR4 · D3: sin la migración el miembro desviado figura a nombre del Dueño (el desvío queda oculto); con la migración, a nombre de quien reenvió", () =>
       withTx(db, async () => {
         await actAsPostgres(db);
+        // Primero lo más nuevo: la función vigente es la de esta migración (sin la columna nueva).
+        await db.query(downNewer);
         const x = await newAdmin();
         // Con la migración puesta.
         expect(await resentByXAndAccepted(x.user)).toBe(x.user.id);

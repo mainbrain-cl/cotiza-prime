@@ -100,6 +100,7 @@ local: después `supabase db reset` y `npm run db:seed`). **La descripción del 
   actividad. Se cierra con los correos de aviso (decisión nº 17 y proveedor de correo, decisión 016).
 - La decisión 15 (quién envía sin aprobación) sigue sin resolverse y bloquea mezclar H-040.
 - Las historias que ya tienen diseño aprobado son H-116 y H-042; cuál se construye primero lo decide José.
+- **Antes de la primera ida a producción:** toda migración y todo deshacer desde `20261109120000` empieza con `set local lock_timeout = '3s'` (guardia 15), y las migraciones anteriores que toman bloqueos fuertes se aplican sobre la base vacía antes de abrir el tráfico o en una ventana tranquila con `lock_timeout` desde la conexión: lista y forma en `docs/arquitectura/modelo-datos.md` §9.4.
 
 ### Traspaso del 2026-11-04 — histórico (lo del 2026-11-06 lo actualiza)
 

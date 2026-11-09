@@ -1744,6 +1744,17 @@ const resentBy = async (id: string) => {
   ).rows[0].resent_by;
 };
 
+/** Lo que el Dueño ve en `members.invited_by` de esa persona, con su propia sesión. */
+const invitedByAsOwner = async (user: TestUser, tenant = w.tenantA) => {
+  await asUser(setup, w.owner, tenant);
+  const { rows } = await setup.query<{ invited_by: string | null }>(
+    "select invited_by from public.members where tenant_id = $1 and user_id = $2",
+    [tenant, user.id],
+  );
+  await actAsPostgres(setup);
+  return rows[0]?.invited_by;
+};
+
 describe("invitaciones que la persona reenvió (corrección de la revisión del 2026-11-06)", () => {
   it("M1 · el ataque exacto: un Administrador reenvía la invitación del Dueño a un cómplice y lo quitan; la invitación se cancela y el cómplice no entra", async () => {
     await withTx(setup, async () => {
@@ -1870,6 +1881,8 @@ describe("invitaciones que la persona reenvió (corrección de la revisión del 
       expect((await call(accomplice, w.tenantA, ACCEPT, [viaX.sha])).result).toBe("not_found");
       // La persona real entra con el código del Dueño.
       expect((await call(real, w.tenantA, ACCEPT, [viaOwner.sha])).result).toBe("accepted");
+      // Quien envió el enlace aceptado fue el Dueño: figura él como quien invitó (D3).
+      expect(await invitedByAsOwner(real)).toBe(w.owner.id);
     });
   });
 
@@ -1894,6 +1907,95 @@ describe("invitaciones que la persona reenvió (corrección de la revisión del 
       expect((await invitationStatus(inB.id)).status).toBe("pending");
     });
   });
+
+  it("M8 · D3 sin carrera: X reenvía al cómplice y el cómplice acepta ANTES de que quiten a X: queda a nombre de X, el Dueño lo puede leer con su sesión, y al quitar a X el cómplice sigue y sigue a nombre de X", async () => {
+    await withTx(setup, async () => {
+      const x = await addMember("admin", w.tenantA, "Admin Desviado Visible");
+      const accomplice = await createUser(setup);
+      const p = await inviteAs(w.owner, "sales");
+      const viaX = await resendAs(x.user, p, accomplice.email);
+      expect((await call(accomplice, w.tenantA, ACCEPT, [viaX.sha])).result).toBe("accepted");
+
+      // El desvío ya no queda oculto: el Dueño lee quién envió el enlace.
+      expect(await invitedByAsOwner(accomplice)).toBe(x.user.id);
+      const accepted = (await auditRows("invitation.accepted", p.id))[0];
+      expect(accepted.details).toMatchObject({ created_by: w.owner.id, sent_by: x.user.id });
+      // La invitación sigue a nombre de quien la creó.
+      await actAsPostgres(setup);
+      expect(
+        (await setup.query("select invited_by from public.invitations where id = $1", [p.id]))
+          .rows[0].invited_by,
+      ).toBe(w.owner.id);
+
+      // Quitan a X: no hay nada pendiente que cancelar; la membresía no se deshace (decisión del 2026-11-06) y sigue a
+      // nombre de X (para sacarla, el Dueño la quita).
+      const removed = await call(w.owner, w.tenantA, REMOVE, [x.memberId, "admin"]);
+      expect(removed.cancelled_invitations).toBe(0);
+      expect(await invitedByAsOwner(accomplice)).toBe(x.user.id);
+      expect((await memberRow(await memberIdOf(accomplice))).status).toBe("active");
+    });
+  });
+
+  /**
+   * Una invitación pendiente montada a mano como la dejaría una carrera de relojes: `send_count` 2, `resent_by` = X y dos
+   * correos con el MISMO `created_at` (solo pasa si se crean en una misma transacción). El id del correo del Dueño es
+   * menor o mayor que el de X, según se pida.
+   */
+  async function tiedInvitation(x: TestUser, ownerMailId: "smaller" | "larger") {
+    const p = await inviteAs(w.owner, "viewer");
+    await actAsPostgres(setup);
+    const first = (
+      await setup.query<{ id: string }>(
+        "select id from public.email_messages where invitation_id = $1 and kind = 'invitation'",
+        [p.id],
+      )
+    ).rows[0];
+    let xMailId = randomUUID();
+    while (xMailId < first.id === (ownerMailId === "smaller")) xMailId = randomUUID();
+    await setup.query(
+      `insert into public.email_messages
+         (id, tenant_id, invitation_id, kind, to_email_enc, to_email_hash, provider, status, created_by, created_at)
+       values ($1, $2, $3, 'invitation', $4, $5, 'pending', 'pending', $6,
+                 (select m.created_at from public.email_messages m
+                   where m.invitation_id = $3 and m.kind = 'invitation' order by m.created_at limit 1))`,
+      [xMailId, w.tenantA, p.id, `v1.cifrado.correo.${xMailId}`, sha256Hex(`huella|${p.id}`), x.id],
+    );
+    await setup.query(
+      "update public.invitations set send_count = 2, resent_by = $2 where id = $1",
+      [p.id, x.id],
+    );
+    // El empate es de verdad: los dos correos tienen exactamente el mismo `created_at`.
+    expect(
+      await setup
+        .query(
+          "select 1 from public.email_messages where invitation_id = $1 and kind = 'invitation' group by created_at",
+          [p.id],
+        )
+        .then((r) => r.rowCount),
+    ).toBe(1);
+    return p;
+  }
+
+  it.each(["smaller", "larger"] as const)(
+    "M9 · menor 1: repetir la limpieza no pisa `resent_by` aunque dos correos empaten en `created_at` (el id del correo del Dueño es el %s)",
+    async (ownerMailId) => {
+      await withTx(setup, async () => {
+        const x = await addMember("admin", w.tenantA, "Admin Que Reenvió");
+        const p = await tiedInvitation(x.user, ownerMailId);
+        expect(await resentBy(p.id)).toBe(x.user.id);
+        // Solo se comprueba esta fila: la base local tiene datos confirmados por otras pruebas.
+        for (let run = 0; run < 2; run++) {
+          await actAsPostgres(setup);
+          await setup.query("select app.reconcile_invitation_senders()");
+          expect(await resentBy(p.id), `limpieza n.° ${run + 1}`).toBe(x.user.id);
+        }
+        // El ataque sigue cerrado: al quitar a X, la invitación que reenvió se cancela.
+        const removed = await call(w.owner, w.tenantA, REMOVE, [x.memberId, "admin"]);
+        expect(removed.cancelled_invitations).toBe(1);
+        expect((await invitationStatus(p.id)).status).toBe("revoked");
+      });
+    },
+  );
 
   it("una invitación que nunca se reenvió queda con `resent_by` vacío; reenviar lo llena y otro reenvío lo reemplaza", async () => {
     await withTx(setup, async () => {
@@ -2034,7 +2136,7 @@ describe("reenviar y quitar a la vez (dos conexiones reales): la invitación ree
     ).toBe(0);
   });
 
-  it("R3 · el cómplice acepta primero y luego quitan a X: sin interbloqueo, nada que cancelar y el cómplice queda en el equipo (límite conocido D3)", async () => {
+  it("R3 · el cómplice acepta primero y luego quitan a X: sin interbloqueo, nada que cancelar y el cómplice queda en el equipo, a nombre de X y legible por el Dueño con su sesión (D3)", async () => {
     const team = await teamWithOwnersInvitation();
     // X ya había reenviado antes de la carrera.
     const resend = xResends(team);
@@ -2056,6 +2158,23 @@ describe("reenviar y quitar a la vez (dos conexiones reales): la invitación ree
     await withTx(setup, async () => {
       const members = await call<{ user_id: string }[]>(team.owner, team.tenant, LIST);
       expect(members.map((m) => m.user_id)).toContain(team.accomplice.id);
+      // D3: el desvío queda a la vista. El Dueño lee con su sesión que quien envió el enlace fue X...
+      await asUser(setup, team.owner, team.tenant);
+      const row = await setup.query<{ invited_by: string }>(
+        "select invited_by from public.members where tenant_id = $1 and user_id = $2",
+        [team.tenant, team.accomplice.id],
+      );
+      await actAsPostgres(setup);
+      expect(row.rows[0].invited_by).toBe(team.x.id);
+      // ...y la auditoría anota quién la creó y quién envió el enlace.
+      const audit = await setup.query<{ details: Json }>(
+        "select details from public.audit_log where tenant_id = $1 and action = 'invitation.accepted' and resource_id = $2",
+        [team.tenant, team.invite.id],
+      );
+      expect(audit.rows[0].details).toMatchObject({
+        created_by: team.owner.id,
+        sent_by: team.x.id,
+      });
     });
   });
 });

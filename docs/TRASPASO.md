@@ -18,7 +18,7 @@ plataforma), no es un CRM ni un sistema de operación logística.
 
 | Qué | Cómo |
 |---|---|
-| **Acceso al repositorio** | `github.com/avronygg/cotiza-prime` (privado). **Aarón tiene que invitarte** (Settings → Collaborators). Se trabaja desde un `git clone`; **no copies la carpeta de Aarón** (está en OneDrive, que no sincroniza este proyecto, y trae copias de trabajo viejas) |
+| **Acceso al repositorio** | `github.com/mainbrain-cl/cotiza-prime` (privado; desde el 2026-11-06, antes `avronygg/cotiza-prime`, que redirige). **Aarón tiene que invitarte** (Settings → Collaborators). Se trabaja desde un `git clone`; **no copies la carpeta de Aarón** (está en OneDrive, que no sincroniza este proyecto, y trae copias de trabajo viejas) |
 | **Herramientas** | Node 24, npm 11, Docker Desktop abierto, Git. Claude Code para el flujo con agentes (ver §6) |
 | **Variables de entorno** | **No necesitas ningún secreto.** Todo corre en local contra una base ficticia en Docker: `README.md` explica cómo generar tu propio `.env.local` y tus propias claves de cifrado de desarrollo. Las claves de Resend y de Turnstile no hacen falta (en local se usan el correo de pruebas y el verificador de prueba) |
 | **Datos** | Solo ficticios. **Nunca datos reales en pruebas** (`LEGAL.md`) |
@@ -53,16 +53,16 @@ de seguridad exige una decisión escrita en `docs/decisiones/`.
 
 ## 4. Dónde está el proyecto
 
-Fecha de este traspaso: **2026-10-27** (puesto al día el **2026-11-04**; el detalle de esa fecha está en `CLAUDE.md`, «Traspaso del 2026-11-04»). El último trabajo fue el **2026-10-07** (el proyecto estuvo 20
+Fecha de este traspaso: **2026-10-27** (puesto al día el **2026-11-06**; el detalle está en `CLAUDE.md`, «Traspaso del 2026-11-06»). El último trabajo fue el **2026-10-07** (el proyecto estuvo 20
 días sin moverse; no se perdió nada).
 
 | | |
 |---|---|
 | **Historias construidas** | **38 de 92** (el total es anterior a partir H-004 y H-048; `HISTORIAS.md` tiene hoy 97 fichas: falta recontar) |
-| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 construida y en `main` desde el 2026-10-28) · **5 (equipo y permisos) confirmado por José el 2026-10-28 y en construcción** (H-011a, H-008, H-009 y H-048a en `main`; siguen H-010 y H-011b) · 6 a 12 sin partir |
-| **Pruebas, la última vez** | 2026-11-04, local, antes de mezclar los PR #19 a #23: 2.050 unitarias (1 omitida) · 907 de base de datos · 1.188 de aislamiento entre organizaciones (3 pendientes) · e2e `chromium` 141 de 141 con la app compilada · e2e `isolation` 19 de 19. `test:db:rollbacks` no se corrió sobre el conjunto |
-| **Base de datos** | 40 migraciones, cada una con su deshacer |
-| **Rama** | `main` estaba limpia en `1085ef1` (2026-10-27). El 2026-10-28 se mezclaron los PR #2, #8, #1, #6, #4 y #5 (ver §5); después, hasta el #23 (`42a1fff`, 2026-11-04). **Desde ahora el trabajo va por ramas y PR: nada directo a `main`** |
+| **Sprints** | 1 cerrado · 2 construido (falta que Aarón lo pruebe y apruebe la plantilla 1) · 3 con 8 de 9 · 4 completo (H-092 construida y en `main` desde el 2026-10-28) · **5 (equipo y permisos) confirmado por José el 2026-10-28 y en construcción** (H-011a, H-008, H-009, H-048a y H-010 en `main`; sigue H-011b) · 6 a 12 sin partir |
+| **Pruebas, la última vez** | 2026-11-06, local, sobre H-010 (PR #28; cifras informadas por Aarón): 2.160 unitarias · 999 de base de datos · 1.201 de aislamiento entre organizaciones · e2e `chromium` 149 de 149 · e2e `isolation` 19 de 19 · rollbacks OK |
+| **Base de datos** | 42 migraciones, cada una con su deshacer |
+| **Rama** | `main` estaba limpia en `1085ef1` (2026-10-27). El 2026-10-28 se mezclaron los PR #2, #8, #1, #6, #4 y #5 (ver §5); después, hasta el #28 (`a83cd42`, 2026-11-06). **Desde ahora el trabajo va por ramas y PR: nada directo a `main`** |
 
 ### Lo que funciona hoy (en local)
 
@@ -101,7 +101,7 @@ hoy, 7 y 30 días; solo Dueño y Administrador), control del tope diario (1 a 20
 - La rama remota `wip/h-092-bloqueos-y-tope` ya no hace falta, pero **no se ha borrado**: borrable cuando José lo ordene.
 
 **Sprint 5 (equipo y permisos).** Confirmado por José el 2026-10-28 (Compuerta 3; Aarón queda avisado y puede
-objetar). En construcción: H-011a (PR #12), H-008 (PR #15), H-009 (PR #20) y H-048a (PR #22 y #23) en `main`. Siguen H-010 y
+objetar). En construcción: H-011a (PR #12), H-008 (PR #15), H-009 (PR #20), H-048a (PR #22 y #23) y H-010 (PR #28) en `main`. Sigue
 H-011b. Documentos: `docs/sprints/005-equipo-y-permisos.md` y `docs/arquitectura/sprint-5-equipo-y-permisos.md`.
 
 **Decisión 020** (en `main`): aprobada por José el 2026-10-28 y ratificada por Aarón el 2026-10-29; plazo de
@@ -150,9 +150,11 @@ cambie el alcance se vuelve historia y entra a la lista; no se agrega a escondid
 
 ## 8. Trampas que ya nos mordieron
 
-- **El CI de GitHub no está corriendo** por un problema de facturación de la cuenta (las últimas corridas
-  fallan en 2 segundos con "recent account payments have failed…"). **Aarón debe regularizarlo**
-  (Settings → Billing & plans). Mientras tanto, todo se verifica en local, y **cada pantalla nueva debe
+- **El CI de GitHub no está corriendo.** Hasta el 2026-11-04 fue por la facturación de la cuenta (corridas que
+  fallaban en 2 segundos con "recent account payments have failed…"); desde el 2026-11-06 está **apagado** porque la
+  cuota gratuita de minutos de la organización está casi agotada. **Lo enciende Aarón** (pago de minutos, o cuando se
+  reinicie la cuota, cerca del 2026-12-01) y avisa. No reactivar Actions ni cambiar los workflows para esquivarlo, y
+  escribir en cada PR qué se corrió en local. Mientras tanto, todo se verifica en local, y **cada pantalla nueva debe
   correr las pruebas de punta a punta completas**: una vez pasó que un agente corría solo las de su zona
   y rompía otra.
 - **`db reset` y `test:db:rollbacks` vacían la base local**: después, `npm run db:seed`. Si otra persona

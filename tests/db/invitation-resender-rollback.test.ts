@@ -6,14 +6,23 @@
 // archivos reales dentro de una transacción que se deshace; el deshacer completo y en orden lo prueba
 // `npm run test:db:rollbacks`.
 // Desde la corrección D3 (20261109100000_invitation_accept_sender) hay una migración POSTERIOR que lee `resent_by`
-// (`accept_invitation`): para deshacer esta, primero se deshace aquella (`applyDowns`), como en el orden real.
+// (`accept_invitation`), y desde el menor 1 del PR #35 (20261109120000_member_invitation_creator) otra más que vuelve a
+// redefinirla: para deshacer esta, primero se deshacen aquellas, de la más nueva a la más antigua (`applyDowns`), como en
+// el orden real. El deshacer de esta migración se niega a correr si no se hizo así (RB6 a RB8).
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { invitationEmailBinding } from "../../src/lib/team/invitation-code";
-import { actAsPostgres, connect, createUser, withTx, type TestUser } from "./helpers";
+import {
+  actAsPostgres,
+  connect,
+  createUser,
+  expectSqlError,
+  withTx,
+  type TestUser,
+} from "./helpers";
 import { asUser, buildWorld, newToken, sha256Hex, type World } from "./send-helpers";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "supabase");
@@ -21,8 +30,9 @@ const NAME = "20261106100000_invitation_resender";
 const read = (dir: string, file: string) => readFileSync(path.join(ROOT, dir, file), "utf8");
 const up = read("migrations", `${NAME}.sql`);
 const down = read("rollbacks", `${NAME}.down.sql`);
-/** El deshacer de la migración posterior (D3), que se aplica ANTES que el de esta. */
+/** Los deshacer de las migraciones posteriores, que se aplican ANTES que el de esta (el más nuevo primero). */
 const downNewer = read("rollbacks", "20261109100000_invitation_accept_sender.down.sql");
+const downNewest = read("rollbacks", "20261109120000_member_invitation_creator.down.sql");
 const previewMigration = read("migrations", "20261105100000_invitation_preview_read_only.sql");
 const managementMigration = read("migrations", "20261105110000_member_management.sql");
 
@@ -36,8 +46,9 @@ function bodyIn(sql: string, signature: string): string {
 
 let db: Client;
 let w: World;
-/** Deshace en el orden real: primero lo más nuevo (D3), después esta migración. */
+/** Deshace en el orden real: primero lo más nuevo (menor 1 del #35), después D3, después esta migración. */
 const applyDowns = async () => {
+  await db.query(downNewest);
   await db.query(downNewer);
   await db.query(down);
 };
@@ -333,8 +344,9 @@ describe("el deshacer de invitation_resender", () => {
       );
       expect(again.rows[0].r).toEqual({ backfilled: 0, cancelled: 0 });
 
-      // El deshacer no revive nada.
-      await applyDowns();
+      // El deshacer no revive nada. Las migraciones posteriores ya se deshicieron al empezar (y no se reaplicaron: solo se
+      // volvió a aplicar esta), así que basta con el deshacer de esta.
+      await db.query(down);
       for (const id of [resentByRemoved, adminInviteDiverted, otherOrgForeign]) {
         const row = (
           await db.query("select status, revoke_reason from public.invitations where id = $1", [id])
@@ -376,6 +388,86 @@ describe("el deshacer de invitation_resender", () => {
           auth: false,
         });
       }
+    }));
+
+  it("RB6 · la guarda de orden es la primera sentencia del deshacer y solo deja de lado las seis funciones que ese archivo redefine o borra", () => {
+    const code = down
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n")
+      .trimStart();
+    expect(code.startsWith("do $$"), "la guarda va antes del primer `create or replace`").toBe(
+      true,
+    );
+    expect(code.indexOf("do $$")).toBeLessThan(code.indexOf("create or replace function"));
+    // Busca la columna como palabra entera (`p_resent_by` de una ayuda no cuenta) en `public` y `app`.
+    expect(code).toContain("p.prosrc ~ '\\mresent_by\\M'");
+    const excluded = [
+      ...code.slice(0, code.indexOf("end $$")).matchAll(/'((?:app|public)\.[a-z_]+)'/g),
+    ]
+      .map((m) => m[1])
+      .sort();
+    // Exactamente las funciones que ese archivo redefine (`create or replace`) o borra (`drop function`): ni una más ni una
+    // menos (seis). Se leen del propio archivo, para que la lista no se desfase si alguien cambia uno de los dos lados.
+    const touched = [
+      ...code.matchAll(
+        /(?:create or replace function|drop function if exists) ((?:app|public)\.[a-z_]+)\(/g,
+      ),
+    ]
+      .map((m) => m[1])
+      .sort();
+    expect(touched).toHaveLength(6);
+    expect(excluded).toEqual(touched);
+    for (const signature of [STATE, RESEND_SIG, CANCEL, ...NEW_OBJECTS]) {
+      const name = signature.split("(")[0];
+      expect(excluded, name).toContain(name);
+    }
+  });
+
+  it("RB7 · fuera de orden se niega: con la migración posterior (D3) puesta, el deshacer falla, nombra `accept_invitation` y no cambia nada", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      // (a) Con todo puesto, `accept_invitation` es la del menor 1 del #35 y también lee `resent_by`.
+      const all = await expectSqlError(db, down);
+      expect(all.message).toContain("public.accept_invitation(");
+      // El mensaje dice el orden completo: primero el más nuevo.
+      expect(all.message).toContain("20261109120000_member_invitation_creator.down.sql");
+      // (b) Solo con D3 puesta (se deshace lo más nuevo): lo mismo, y el mensaje señala el deshacer que falta.
+      await db.query(downNewest);
+      const onlyD3 = await expectSqlError(db, down);
+      expect(onlyD3.message).toContain("public.accept_invitation(");
+      expect(onlyD3.message).toContain("20261109100000_invitation_accept_sender.down.sql");
+      // No cambió nada: la columna, el índice y las ayudas siguen ahí.
+      expect(await hasColumn()).toBe(true);
+      expect(await hasIndex()).toBe(true);
+      for (const signature of NEW_OBJECTS) expect(await exists(signature), signature).toBe(true);
+      // (c) En el orden correcto, pasa.
+      await db.query(downNewer);
+      await db.query(down);
+      expect(await hasColumn()).toBe(false);
+    }));
+
+  it("RB8 · la guarda es general: una función cualquiera que lea `resent_by` hace que se niegue y la nombra; sin ella (o si solo tiene `p_resent_by`) pasa", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      await db.query(downNewest);
+      await db.query(downNewer);
+      // Un parámetro llamado `p_resent_by` NO cuenta (como el de `app.invitation_senders_ok`).
+      await db.query(
+        `create function app.rb8_harmless(p_resent_by uuid) returns uuid language sql immutable
+           set search_path = '' as $$ select p_resent_by $$`,
+      );
+      await db.query(
+        `create function app.rb8_reader() returns uuid language sql stable
+           set search_path = '' as $$ select i.resent_by from public.invitations i limit 1 $$`,
+      );
+      const refused = await expectSqlError(db, down);
+      expect(refused.message).toContain("app.rb8_reader(");
+      expect(refused.message).not.toContain("rb8_harmless");
+      expect(await hasColumn()).toBe(true);
+      await db.query("drop function app.rb8_reader()");
+      await db.query(down);
+      expect(await hasColumn()).toBe(false);
     }));
 
   it("RB5 · sin la migración, el ataque exacto vuelve a funcionar (por eso esta prueba demuestra lo que corrige)", () =>

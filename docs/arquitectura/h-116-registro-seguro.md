@@ -272,7 +272,7 @@ momento (por ejemplo `20261105120000` o más tarde).
 - **`app.forbid_email_change`** y su disparador en `auth.users`, descritos arriba.
 - **`create_tenant`, `invitation_preview` y `accept_invitation`.** Se agregan `app.session_alive()` y `app.account_ready(v_uid)`
   (que incluye la comparación con el correo de alta) junto al chequeo de `email_confirmed_at`. El cuerpo se copia de la **última** migración que define cada una (al construir: `20261001140100` para
-  `create_tenant`, y las de H-009 y su corrección I1 para las otras dos). `create_tenant` responde 42501 «Termina de crear tu cuenta
+  `create_tenant`; para `accept_invitation`, hoy `20261109120000_member_invitation_creator.sql`, que incluye D3 y el rastro de quien creó la invitación —copiar una versión anterior, como la de H-009 o la de D3, borraría esos cambios en silencio—; y para `invitation_preview`, la de H-009 y su corrección I1). Antes de copiar, buscar la última con `git grep -n "function public.accept_invitation" -- supabase/migrations`. `create_tenant` responde 42501 «Termina de crear tu cuenta
   antes de crear una organización»; las de invitación responden `unverified`, sin resultado nuevo.
 - **`app.current_tenant_id()`.** Se agrega `app.session_alive()`: sin sesión abierta devuelve vacío, como hoy sin pase. El cuerpo
   se copia de `20261001120200` (la única que la define en esta rama; revisar `main` al construir).

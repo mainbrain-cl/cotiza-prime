@@ -7,6 +7,24 @@
 -- revivirlas reabriría el camino que cerró): quedan `revoked` con `inviter_removed` y su auditoría. Si hace falta, se
 -- invita de nuevo.
 -- Orden: primero las funciones vuelven a su definición anterior (ya no usan las ayudas ni la columna), después se borran.
+-- Orden entre migraciones: se niega a correr si alguna otra función todavía usa la columna `invitations.resent_by` (hoy
+-- `accept_invitation`, desde 20261109100000): hay que deshacer antes, de la más nueva a la más antigua, las migraciones
+-- posteriores que la usan. Sin esta revisión, `accept_invitation` quedaría leyendo una columna que ya no existe y toda
+-- aceptación válida fallaría. La lista de excepciones es EXACTAMENTE lo que este archivo redefine o borra (seis funciones).
+-- (Pedido de Aarón en el PR #35. La excepción de «no editar lo ya integrado»: es un deshacer.)
+do $$ declare v_users text; begin
+  select string_agg(n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', ', '
+                      order by n.nspname, p.proname) into v_users
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname in ('public', 'app') and p.prosrc ~ '\mresent_by\M'
+     and n.nspname || '.' || p.proname not in ('app.invitation_state', 'public.resend_invitation',
+         'app.cancel_member_invitations', 'app.reconcile_invitation_senders',
+         'app.invitation_senders_ok', 'app.invitation_sender_ok');
+  if v_users is not null then
+    raise exception 'no se puede deshacer 20261106100000_invitation_resender: % todavia usa invitations.resent_by. Deshaga antes, de la mas nueva a la mas antigua, las migraciones posteriores que la usan (hoy, primero 20261109120000_member_invitation_creator.down.sql y despues 20261109100000_invitation_accept_sender.down.sql)', v_users;
+  end if;
+end $$;
+
 create or replace function app.invitation_state(i public.invitations, p_user_id uuid, p_email text) returns text
 language plpgsql stable security definer set search_path = '' as $$
 declare

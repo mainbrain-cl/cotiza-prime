@@ -1,7 +1,7 @@
 // Prueba de estructura (docs/arquitectura/modelo-datos.md §8.2).
 // Recorre el catálogo de la base de datos y falla si alguna tabla o función no cumple las reglas.
 // Protege también lo que todavía no existe: cuando se cree `quotes`, esta prueba ya la vigila.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -56,6 +56,37 @@ const FROZEN_ROLE_LITERAL_FUNCTIONS = [
   // cuando el autor ya no puede recibirlo), no autoriza ninguna acción.
   "public.share_notice_recipients",
 ];
+
+// Menor 4 del PR #35 (2026-11-09): cuánto espera una migración (o un deshacer) por un bloqueo antes de rendirse. Sin esto,
+// una migración que espera se queda en la fila y frena tras ella toda la aplicación. 3 s POR CADA bloqueo que se pide (una migración que pide dos
+// seguidos puede esperar casi el doble) es menos que la espera de 5 s de las pantallas y que el límite de 8 s de la API. Mismo valor en todos los archivos desde la fecha de abajo.
+const MIGRATION_LOCK_TIMEOUT = "3s";
+/** La regla vale para las migraciones y los deshacer con fecha desde esta (las anteriores ya están integradas y no se editan). */
+const LOCK_TIMEOUT_FROM = "20261109120000";
+const SUPABASE_DIR = path.resolve(import.meta.dirname, "..", "..", "supabase");
+
+/** La primera sentencia de un archivo SQL, sin los comentarios de `--` ni las líneas vacías que la preceden. */
+function firstStatement(sql: string): string {
+  const code = sql
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n")
+    .trimStart();
+  const end = code.indexOf(";");
+  return (end === -1 ? code : code.slice(0, end)).replace(/\s+/g, " ").trim();
+}
+
+/** ¿Empieza con `set local lock_timeout = '3s'`? (`set local`: vale hasta el fin de la transacción de la migración.) */
+function startsWithLockTimeout(sql: string): boolean {
+  return firstStatement(sql) === `set local lock_timeout = '${MIGRATION_LOCK_TIMEOUT}'`;
+}
+
+function filesFrom(dir: "migrations" | "rollbacks"): string[] {
+  return readdirSync(path.join(SUPABASE_DIR, dir))
+    .filter((name) => name.endsWith(".sql"))
+    .filter((name) => name.slice(0, 14) >= LOCK_TIMEOUT_FROM)
+    .sort();
+}
 
 let db: Client;
 beforeAll(async () => {
@@ -288,5 +319,45 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
        order by 1`,
     );
     expect(rows.map((r) => r.name)).toEqual([...FROZEN_ROLE_LITERAL_FUNCTIONS].sort());
+  });
+  it("15. menor 4 del PR #35: toda migración y todo deshacer con fecha desde 20261109120000 empieza con `set local lock_timeout = '3s'`", () => {
+    const covered: string[] = [];
+    for (const dir of ["migrations", "rollbacks"] as const) {
+      for (const name of filesFrom(dir)) {
+        covered.push(`${dir}/${name}`);
+        const sql = readFileSync(path.join(SUPABASE_DIR, dir, name), "utf8");
+        expect(
+          startsWithLockTimeout(sql),
+          `${dir}/${name} debe empezar con set local lock_timeout = '${MIGRATION_LOCK_TIMEOUT}' (antes solo van comentarios)`,
+        ).toBe(true);
+      }
+    }
+    // La guardia no es vacía: cubre al menos la migración que la introdujo y su deshacer.
+    expect(covered).toEqual(
+      expect.arrayContaining([
+        "migrations/20261109120000_member_invitation_creator.sql",
+        "rollbacks/20261109120000_member_invitation_creator.down.sql",
+      ]),
+    );
+    // Cada migración con fecha desde entonces tiene su deshacer (así la regla vale también para él).
+    const ups = covered.filter((f) => f.startsWith("migrations/")).map((f) => f.slice(11, -4));
+    const downs = covered.filter((f) => f.startsWith("rollbacks/")).map((f) => f.slice(10, -9));
+    expect(downs).toEqual(ups);
+  });
+
+  it("15b. la guardia 15 detecta lo que debe: sin `lock_timeout`, con otro valor, fuera de lugar, sin `local` o dentro de un comentario", () => {
+    const good = `-- Encabezado\n-- más encabezado\n\nset local lock_timeout = '3s';\nalter table public.x add column y int;\n`;
+    expect(startsWithLockTimeout(good)).toBe(true);
+    expect(startsWithLockTimeout("set  local  lock_timeout = '3s' ;")).toBe(true);
+    expect(startsWithLockTimeout("alter table public.x add column y int;\n")).toBe(false);
+    expect(
+      startsWithLockTimeout(
+        "-- set local lock_timeout = '3s';\nalter table public.x add column y int;",
+      ),
+    ).toBe(false);
+    expect(startsWithLockTimeout("set local lock_timeout = '10s';\nselect 1;")).toBe(false);
+    expect(startsWithLockTimeout("set lock_timeout = '3s';\nselect 1;")).toBe(false);
+    expect(startsWithLockTimeout("select 1;\nset local lock_timeout = '3s';")).toBe(false);
+    expect(startsWithLockTimeout("")).toBe(false);
   });
 });

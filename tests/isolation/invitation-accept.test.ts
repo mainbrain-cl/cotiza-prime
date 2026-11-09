@@ -8,7 +8,13 @@
 //  6. Sin sesión, nada responde.
 //  7. (Corrección I1) Ver una invitación ajena (la vista previa) no escribe nada: ni en la auditoría de B ni en el
 //     contador de fallos de la cuenta que mira. Solo intentar aceptar cuenta y deja registro.
-import { createHash, randomBytes } from "node:crypto";
+//  8. (Decisión de Aarón en el PR #33, 2026-11-09) El intento de alguien de FUERA de la organización de la invitación
+//     queda en el registro de esa organización SIN autor (sin id, IP, navegador ni correlación); la copia completa
+//     queda solo en la organización «plataforma». Quien es o fue de esa organización conserva su id. Las comprobaciones
+//     de «cero» se hacen solo para quien NO es ni fue de esa organización, decidido en el momento (otras pruebas pueden
+//     haber dejado a alguien como ex miembro), así que el resultado no depende del orden de los archivos; el Ataque 8
+//     (el último de este archivo) lo comprueba al final, mirando todas las acciones.
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rest, rpc } from "../support/local-supabase";
@@ -18,6 +24,7 @@ import {
   fixture,
   openDb,
   orgMarkers,
+  peopleOfOrgs,
   tenantHeader,
   tokenOf,
 } from "./context";
@@ -57,12 +64,85 @@ async function snapshotB() {
   return out;
 }
 
-const deniedInB = async (userId: string) =>
+/** Cuántos intentos de aceptar esa invitación hay en el registro de su organización (con o sin autor). */
+const deniedFor = (tenantId: string, invitationId: string) =>
   countWhere(
     db,
     "audit_log",
-    `action = 'invitation.accept_denied' and tenant_id = '${fixture().orgs.B.tenantId}' and actor_user_id = '${userId}'`,
+    `action = 'invitation.accept_denied' and tenant_id = '${tenantId}' and resource_id = '${invitationId}'`,
   );
+
+/**
+ * Cuántas filas `invitation.accept_denied` de ESA organización guardan el id de esa persona en cualquier columna (el
+ * texto de la fila entera). El montaje del mundo de pruebas deja otras filas con ids ajenos; esas las revisa el
+ * Ataque 8 (a), que mira todas las acciones.
+ */
+async function idInOrgAudit(tenantId: string, userId: string): Promise<number> {
+  const { rows } = await db.query<{ n: string }>(
+    `select count(*)::text as n from public.audit_log t
+      where t.tenant_id = $1 and t.action = 'invitation.accept_denied' and position($2 in t::text) > 0`,
+    [tenantId, userId],
+  );
+  return Number(rows[0].n);
+}
+
+/**
+ * Quien NO es ni fue de esa organización no deja su id en su registro. Quien sí lo es o lo fue (otras pruebas de este
+ * mundo compartido pueden haber dejado a alguien como ex miembro: por ejemplo Carla en A) conserva su id por regla, y
+ * ahí no hay nada que exigir. Se decide en el momento de comprobar, no al montar el mundo, para que el resultado no
+ * dependa del orden en que corran los archivos.
+ */
+async function expectNoIdUnlessInsider(
+  tenantId: string,
+  userId: string,
+  label: string,
+): Promise<void> {
+  if ((await peopleOfOrgs(db, [tenantId])).has(userId)) return;
+  expect(await idInOrgAudit(tenantId, userId), label).toBe(0);
+}
+
+/** Cuántas copias de esos intentos hay en la organización «plataforma» (solo las ve Main Brain). */
+async function platformDenied(userId: string, invitationId: string): Promise<number> {
+  const { rows } = await db.query<{ n: string }>(
+    `select count(*)::text as n from public.audit_log
+      where action = 'invitation.accept_denied' and tenant_id = app.platform_tenant_id()
+        and actor_user_id = $1 and resource_id = $2`,
+    [userId, invitationId],
+  );
+  return Number(rows[0].n);
+}
+
+interface DeniedRow {
+  actor_type: string;
+  actor_user_id: string | null;
+  origin_ip: string | null;
+  user_agent: string | null;
+  correlation_id: string | null;
+  result: string;
+  details: unknown;
+}
+/** La fila más reciente de ese intento en el registro de la organización de la invitación. */
+async function lastDenied(tenantId: string, invitationId: string): Promise<DeniedRow> {
+  const { rows } = await db.query<DeniedRow>(
+    `select actor_type, actor_user_id, origin_ip::text, user_agent, correlation_id, result, details
+       from public.audit_log
+      where action = 'invitation.accept_denied' and tenant_id = $1 and resource_id = $2
+      order by id desc limit 1`,
+    [tenantId, invitationId],
+  );
+  return rows[0];
+}
+
+/** Lo que tiene que cumplir un intento de alguien de FUERA: sin autor, IP, navegador ni correlación. */
+const ANONYMOUS_ATTEMPT = {
+  actor_type: "user",
+  actor_user_id: null,
+  origin_ip: null,
+  user_agent: null,
+  correlation_id: null,
+  result: "denied",
+  details: { reason: "wrong_email", step: "accept" },
+};
 
 /** Fallos de aceptación que lleva la cuenta (el contador guarda una huella del id, no el id). */
 const failuresOf = async (userId: string): Promise<number> => {
@@ -79,7 +159,19 @@ const call = async (
   fn: "accept_invitation" | "invitation_preview",
   sha: string,
   header?: string,
-) => rpc(await tokenOf(persona), fn, { p_token_sha256: sha }, tenantHeader(header));
+) =>
+  rpc(
+    await tokenOf(persona),
+    fn,
+    { p_token_sha256: sha },
+    {
+      ...tenantHeader(header),
+      // Como si llegaran de la aplicación: así «IP nula» y «correlación nula» en el intento de alguien de fuera quieren
+      // decir que la función los descartó, no que nadie los mandó.
+      "x-cp-client-ip": "203.0.113.7",
+      "x-cp-request-id": randomUUID(),
+    },
+  );
 
 describe("Ataque 1 · usar el código de una invitación de B (dirigida a otro correo) con el pase de A", () => {
   it.each(["accept_invitation", "invitation_preview"] as const)(
@@ -90,7 +182,8 @@ describe("Ataque 1 · usar el código de una invitación de B (dirigida a otro c
       const before = await snapshotB();
       // Una llamada por función: aceptar gasta un intento del cupo de Ana (10 en 10 minutos); la vista previa no
       // gasta ninguno (corrección I1). La cabecera de B en una y ninguna en la otra; la de A la prueba Mixta más abajo.
-      const deniedBefore = await deniedInB(fx.personas.ana.userId);
+      const deniedBefore = await deniedFor(fx.orgs.B.tenantId, b.invitationId);
+      const platformBefore = await platformDenied(fx.personas.ana.userId, b.invitationId);
       const failuresBefore = await failuresOf(fx.personas.ana.userId);
       for (const header of [fn === "accept_invitation" ? fx.orgs.B.tenantId : undefined]) {
         const res = await call("ana", fn, b.tokenSha256, header);
@@ -105,22 +198,22 @@ describe("Ataque 1 · usar el código de una invitación de B (dirigida a otro c
       }
       if (fn === "invitation_preview") {
         // Ver la pantalla no deja NADA: ni registro en B ni un fallo para Ana.
-        expect(await deniedInB(fx.personas.ana.userId)).toBe(deniedBefore);
+        expect(await deniedFor(fx.orgs.B.tenantId, b.invitationId)).toBe(deniedBefore);
+        expect(await platformDenied(fx.personas.ana.userId, b.invitationId)).toBe(platformBefore);
         expect(await failuresOf(fx.personas.ana.userId)).toBe(failuresBefore);
         return;
       }
-      // Lo único que queda en B es el registro de que Ana lo intentó, sin su correo ni el código.
-      expect(await deniedInB(fx.personas.ana.userId)).toBe(deniedBefore + 1);
+      // Lo único que queda en B es que ALGUIEN DE FUERA lo intentó: sin autor (ni id, ni IP, ni navegador, ni
+      // correlación), sin su correo ni el código. Ana es de otra organización, así que su id no queda en B.
+      expect(await deniedFor(fx.orgs.B.tenantId, b.invitationId)).toBe(deniedBefore + 1);
       expect(await failuresOf(fx.personas.ana.userId)).toBe(failuresBefore + 1);
-      const { rows: denied } = await db.query<{ details: unknown; result: string }>(
-        `select details, result from public.audit_log
-          where action = 'invitation.accept_denied' and tenant_id = $1 and actor_user_id = $2
-          order by id desc limit 1`,
-        [fx.orgs.B.tenantId, fx.personas.ana.userId],
-      );
-      expect(denied[0].result).toBe("denied");
-      expect(JSON.stringify(denied[0].details)).not.toContain(fx.personas.ana.email);
-      expect(JSON.stringify(denied[0].details)).not.toContain(b.tokenSha256);
+      const denied = await lastDenied(fx.orgs.B.tenantId, b.invitationId);
+      expect(denied).toEqual(ANONYMOUS_ATTEMPT);
+      expect(JSON.stringify(denied.details)).not.toContain(fx.personas.ana.email);
+      expect(JSON.stringify(denied.details)).not.toContain(b.tokenSha256);
+      await expectNoIdUnlessInsider(fx.orgs.B.tenantId, fx.personas.ana.userId, "ana en B");
+      // La copia completa (con el id de Ana) queda solo en la organización «plataforma».
+      expect(await platformDenied(fx.personas.ana.userId, b.invitationId)).toBe(platformBefore + 1);
       expect(
         await countWhere(
           db,
@@ -137,8 +230,15 @@ describe("Ataque 1 · usar el código de una invitación de B (dirigida a otro c
   it("Beto (Dueño de B) tampoco entra a A con el código de una invitación de A", async () => {
     const fx = fixture();
     const a = fx.orgs.A.invitation!;
+    const deniedBefore = await deniedFor(fx.orgs.A.tenantId, a.invitationId);
+    const platformBefore = await platformDenied(fx.personas.beto.userId, a.invitationId);
     const res = await call("beto", "accept_invitation", a.tokenSha256, fx.orgs.B.tenantId);
     expect(res.json).toEqual({ result: "wrong_email" });
+    // Beto es de B, no de A: el intento queda en A sin su id; la copia con su id, en la plataforma.
+    expect(await deniedFor(fx.orgs.A.tenantId, a.invitationId)).toBe(deniedBefore + 1);
+    expect(await lastDenied(fx.orgs.A.tenantId, a.invitationId)).toEqual(ANONYMOUS_ATTEMPT);
+    await expectNoIdUnlessInsider(fx.orgs.A.tenantId, fx.personas.beto.userId, "beto en A");
+    expect(await platformDenied(fx.personas.beto.userId, a.invitationId)).toBe(platformBefore + 1);
     expect(
       await countWhere(
         db,
@@ -183,11 +283,20 @@ describe("Ataque 2 · quien está en A y en B, quien fue quitada y quien solo mi
     const fx = fixture();
     const b = fx.orgs.B.invitation!;
     const before = await snapshotB();
-    const deniedBefore = await deniedInB(fx.personas.mixta.userId);
+    const deniedBefore = await deniedFor(fx.orgs.B.tenantId, b.invitationId);
+    const platformBefore = await platformDenied(fx.personas.mixta.userId, b.invitationId);
     const res = await call("mixta", "accept_invitation", b.tokenSha256, fx.orgs.A.tenantId);
     expect(res.json).toEqual({ result: "wrong_email" });
-    // El intento queda en la auditoría de B (la organización de la invitación), no en la de A: exactamente uno.
-    expect(await deniedInB(fx.personas.mixta.userId)).toBe(deniedBefore + 1);
+    // El intento queda en la auditoría de B (la organización de la invitación), no en la de A: exactamente uno. Mixta
+    // también es de B, así que ahí SÍ conserva su id (no es «de fuera»).
+    expect(await deniedFor(fx.orgs.B.tenantId, b.invitationId)).toBe(deniedBefore + 1);
+    const mixtaRow = await lastDenied(fx.orgs.B.tenantId, b.invitationId);
+    expect(mixtaRow.actor_user_id).toBe(fx.personas.mixta.userId);
+    // Quien es de B conserva también su IP y su correlación: así queda probado que las cabeceras que manda `call`
+    // llegan de verdad a la función, y que «nulo» en el intento de alguien de fuera es porque la función las descartó.
+    expect(mixtaRow.origin_ip).toBe("203.0.113.7/32");
+    expect(mixtaRow.correlation_id).not.toBeNull();
+    expect(await platformDenied(fx.personas.mixta.userId, b.invitationId)).toBe(platformBefore + 1);
     expect(
       await countWhere(
         db,
@@ -203,8 +312,14 @@ describe("Ataque 2 · quien está en A y en B, quien fue quitada y quien solo mi
   it("Ex, con su pase todavía vigente, no vuelve a A con el código de otra invitación", async () => {
     const fx = fixture();
     const a = fx.orgs.A.invitation!;
+    const deniedInABefore = await deniedFor(fx.orgs.A.tenantId, a.invitationId);
     const res = await call("ex", "accept_invitation", a.tokenSha256, fx.orgs.A.tenantId);
     expect(res.json).toEqual({ result: "wrong_email" });
+    // Ex tiene (o tuvo) una fila en `members` de A: no es «de fuera», conserva su id en el registro de A.
+    expect(await deniedFor(fx.orgs.A.tenantId, a.invitationId)).toBe(deniedInABefore + 1);
+    expect((await lastDenied(fx.orgs.A.tenantId, a.invitationId)).actor_user_id).toBe(
+      fx.personas.ex.userId,
+    );
     // Su estado en A es el que tenía (quitada, o miembro si todavía no corrió el ciclo de vida): no cambia por esto.
     expect(
       await countWhere(
@@ -215,10 +330,15 @@ describe("Ataque 2 · quien está en A y en B, quien fue quitada y quien solo mi
     ).toBe(0);
     // Y con la invitación de B tampoco.
     const b = fx.orgs.B.invitation!;
-    const deniedBefore = await deniedInB(fx.personas.ex.userId);
+    const deniedBefore = await deniedFor(fx.orgs.B.tenantId, b.invitationId);
+    const platformBefore = await platformDenied(fx.personas.ex.userId, b.invitationId);
     const inB = await call("ex", "accept_invitation", b.tokenSha256);
     expect(inB.json).toEqual({ result: "wrong_email" });
-    expect(await deniedInB(fx.personas.ex.userId)).toBe(deniedBefore + 1);
+    // En B, Ex es de fuera: el intento queda sin autor y su id solo en la copia de la plataforma.
+    expect(await deniedFor(fx.orgs.B.tenantId, b.invitationId)).toBe(deniedBefore + 1);
+    expect(await lastDenied(fx.orgs.B.tenantId, b.invitationId)).toEqual(ANONYMOUS_ATTEMPT);
+    await expectNoIdUnlessInsider(fx.orgs.B.tenantId, fx.personas.ex.userId, "ex en B");
+    expect(await platformDenied(fx.personas.ex.userId, b.invitationId)).toBe(platformBefore + 1);
     expect(
       await countWhere(
         db,
@@ -261,12 +381,15 @@ describe("Ataque 4 · adivinar códigos: el límite de aceptaciones fallidas", (
   it("Carla prueba 10 códigos al azar y a la 11 queda bloqueada, también con un código que existe", async () => {
     const fx = fixture();
     const before = await snapshotB();
-    const deniedByCarla = () =>
-      countWhere(
-        db,
-        "audit_log",
-        `action = 'invitation.accept_denied' and actor_user_id = '${fx.personas.carla.userId}'`,
-      );
+    // Carla es de la organización C: en A y en B es de fuera y no deja su id (salvo que otra prueba la haya dejado como ex miembro). Se cuentan los intentos por invitación
+    // (en los registros de A y B, sin autor) y sus copias en la plataforma (con su id).
+    const a = fx.orgs.A.invitation!;
+    const b = fx.orgs.B.invitation!;
+    const deniedByCarla = async () =>
+      (await deniedFor(fx.orgs.A.tenantId, a.invitationId)) +
+      (await deniedFor(fx.orgs.B.tenantId, b.invitationId)) +
+      (await platformDenied(fx.personas.carla.userId, a.invitationId)) +
+      (await platformDenied(fx.personas.carla.userId, b.invitationId));
     // Carla ya gastó 2 fallos en la prueba anterior (A y B); se completan hasta el tope.
     let result: unknown = null;
     for (let n = 0; n < 12; n++) {
@@ -274,7 +397,8 @@ describe("Ataque 4 · adivinar códigos: el límite de aceptaciones fallidas", (
       if ((result as { result: string }).result === "rate_limited") break;
     }
     expect(result).toEqual({ result: "rate_limited" });
-    // Los códigos al azar no tienen organización: no dejaron ningún registro. Se cuentan los de antes del bloqueo.
+    // Los códigos al azar no tienen organización: no dejaron ningún registro. Se cuentan los de antes del bloqueo
+    // (los de Carla en A y B: dos por intento, uno en la organización y su copia en la plataforma).
     const deniedWhenLocked = await deniedByCarla();
     // Bloqueada: ni el código de una invitación real se prueba.
     const real = await call("carla", "accept_invitation", fx.orgs.A.invitation!.tokenSha256);
@@ -283,6 +407,10 @@ describe("Ataque 4 · adivinar códigos: el límite de aceptaciones fallidas", (
     expect(preview.json).toEqual({ result: "rate_limited" });
     // Bloqueada no se escribe NADA en la auditoría: el registro no crece más rápido que el límite.
     expect(await deniedByCarla()).toBe(deniedWhenLocked);
+    // Y su id no está en el registro de A ni de B (solo en la copia de la plataforma), salvo que sea o haya sido de esa
+    // organización (igual que arriba).
+    await expectNoIdUnlessInsider(fx.orgs.A.tenantId, fx.personas.carla.userId, "carla en A");
+    await expectNoIdUnlessInsider(fx.orgs.B.tenantId, fx.personas.carla.userId, "carla en B");
     for (const name of BUSINESS_TABLES) {
       expect(await fingerprintB(name), `${name} de B cambió`).toBe(before.get(name));
     }
@@ -363,6 +491,7 @@ describe("Ataque 7 · mirar una invitación ajena (la vista previa) no escribe n
         )
         .then((r) => r.rows[0]);
     const auditBefore = await allAudit();
+    const deniedBeforeB = await deniedFor(fx.orgs.B.tenantId, b.invitationId);
     const failuresBefore = await failuresOf(dante);
     const before = await snapshotB();
     for (let n = 0; n < 15; n++) {
@@ -374,12 +503,65 @@ describe("Ataque 7 · mirar una invitación ajena (la vista previa) no escribe n
     // Ninguna fila nueva en la auditoría de NINGUNA organización, y el contador de Dante igual.
     expect(await allAudit()).toEqual(auditBefore);
     expect(await failuresOf(dante)).toBe(failuresBefore);
-    expect(await deniedInB(dante)).toBe(0);
+    expect(await deniedFor(fx.orgs.B.tenantId, b.invitationId)).toBe(deniedBeforeB);
+    expect(await platformDenied(dante, b.invitationId)).toBe(0);
     for (const name of BUSINESS_TABLES) {
       expect(await fingerprintB(name), `${name} de B cambió`).toBe(before.get(name));
     }
     // Y sigue sin estar bloqueado: la vista previa de su propia invitación no dice «rate_limited».
     const own = await call("dante", "invitation_preview", fx.orgs.A.invitation!.tokenSha256);
     expect((own.json as { result: string }).result).not.toBe("rate_limited");
+  });
+});
+
+describe("Ataque 8 · el id de alguien de fuera no queda en el registro de una organización, en ningún orden", () => {
+  // Este bloque va AL FINAL de este archivo a propósito: así los intentos de los ataques anteriores ya ocurrieron y
+  // se prueba siempre el orden malo (primero los intentos, después la lectura). Además `tables-read.test.ts` compara
+  // quién es «visible» en cada organización con las filas de `members`: si el registro guardara el id de alguien de
+  // fuera, esa prueba fallaría o pasaría según el orden de los archivos. Aquí se comprueba directo, sin depender de él.
+  it("(a) en la base, ninguna fila de A, B ni C guarda el id de alguien que no es ni fue de esa organización", async () => {
+    const fx = fixture();
+    for (const key of ["A", "B", "C"] as const) {
+      const tenantId = fx.orgs[key].tenantId;
+      const { rows } = await db.query<{ action: string; actor_user_id: string }>(
+        `select a.action, a.actor_user_id from public.audit_log a
+          where a.tenant_id = $1 and a.actor_user_id is not null
+            and not exists (select 1 from public.members m where m.tenant_id = a.tenant_id and m.user_id = a.actor_user_id)`,
+        [tenantId],
+      );
+      expect(rows, `organización ${key}`).toEqual([]);
+    }
+  });
+
+  it("(b) por la API: el Dueño de A y el de B leen su auditoría completa y no aparece el id ni el correo de nadie que no sea de su organización", async () => {
+    const fx = fixture();
+    for (const [persona, key] of [
+      ["ana", "A"],
+      ["beto", "B"],
+    ] as const) {
+      const tenantId = fx.orgs[key].tenantId;
+      const res = await rest(await tokenOf(persona), "audit_log?select=*&order=id.desc", {
+        headers: tenantHeader(tenantId),
+      });
+      expect(res.status, `${persona} ${key}`).toBe(200);
+      const own = await peopleOfOrgs(db, [tenantId]);
+      expect(Array.isArray(res.json) && res.json.length > 0, `${persona} ${key}`).toBe(true);
+      // La API entrega como máximo 1.000 filas (`max_rows`): si llegan tantas, la lectura puede venir cortada y esta
+      // comprobación se quedaría ciega en silencio.
+      expect(
+        (res.json as unknown[]).length,
+        `${persona} ${key}: respuesta posiblemente cortada`,
+      ).toBeLessThan(1000);
+      for (const other of Object.values(fx.personas)) {
+        if (own.has(other.userId)) continue;
+        expect(res.text, `${persona} ${key}: id de ${other.email}`).not.toContain(other.userId);
+        expect(res.text, `${persona} ${key}: correo de ${other.email}`).not.toContain(other.email);
+      }
+      // Y sí ve que alguien de fuera lo intentó: filas sin autor.
+      const anonymous = (res.json as { action: string; actor_user_id: string | null }[]).filter(
+        (r) => r.action === "invitation.accept_denied" && r.actor_user_id === null,
+      );
+      expect(anonymous.length, `${persona} ${key}`).toBeGreaterThan(0);
+    }
   });
 });

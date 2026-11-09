@@ -27,6 +27,12 @@ export type AuditEntry = {
    */
   actorName: string | null;
   /**
+   * La acción es de una persona con cuenta que no es ni fue de esta organización, y la fila va sin su identidad a
+   * propósito (alguien de fuera que probó una invitación ajena): `actor_type = 'user'` con `actor_user_id` vacío.
+   * No es «alguien que ya se fue» (esa fila sí guarda el id).
+   */
+  actorOutside: boolean;
+  /**
    * Nombre de la persona del equipo sobre la que se hizo la acción (cuando el recurso es un miembro: cambiarle el rol,
    * quitarla…); `null` si no se puede leer. Se resuelve al leer, con `members` y `profiles`: no se guarda en la auditoría.
    */
@@ -174,6 +180,7 @@ export async function listAuditEntries(
       occurredAt: row.occurred_at,
       actorType: row.actor_type,
       actorName: row.actor_user_id ? (names.get(row.actor_user_id) ?? null) : null,
+      actorOutside: row.actor_type === "user" && row.actor_user_id === null,
       subjectName: subjectNameOf(row, names, userOfMember),
       action: row.action,
       resourceType: row.resource_type,

@@ -6,6 +6,8 @@
 // Cada prueba corre en una transacción que se deshace, salvo las de dos conexiones (usan su propia organización y
 // dejan datos ficticios). Todo es ficticio.
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { invitationEmailBinding } from "../../src/lib/team/invitation-code";
@@ -163,6 +165,22 @@ const failuresOf = async (user: TestUser) => {
   );
   return rows[0] ?? { failures: 0, locked: false };
 };
+/** Cuántas filas `invitation.accept_denied` hay en la organización de la invitación, por esa invitación. */
+const deniedCountOn = async (tenant: string, invitationId: string, onlyAnonymous = false) =>
+  count(
+    `select count(*) as n from public.audit_log
+      where action = 'invitation.accept_denied' and tenant_id = $1 and resource_id = $2
+        and ($3::boolean is false or actor_user_id is null)`,
+    [tenant, invitationId, onlyAnonymous],
+  );
+/** Cuántas copias de esos intentos hay en la organización «plataforma» para esa persona y esa invitación. */
+const platformCopies = async (user: TestUser, invitationId: string) =>
+  count(
+    `select count(*) as n from public.audit_log
+      where action = 'invitation.accept_denied' and tenant_id = app.platform_tenant_id()
+        and actor_user_id = $1 and resource_id = $2`,
+    [user.id, invitationId],
+  );
 const randomSha = () => randomBytes(32).toString("hex");
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1344,12 +1362,17 @@ describe("dos conexiones reales a la vez", () => {
       expect(results.filter((r) => r.result === "rate_limited")).toHaveLength(3);
       expect(await failuresOf(stranger)).toEqual({ failures: MAX_FAILURES, locked: true });
       await actAsPostgres(setup);
+      // Quien prueba un código ajeno es de fuera: en la organización queda UNA fila, sin autor; la copia con su id
+      // (también una sola) queda en la organización «plataforma».
+      expect(await deniedCountOn(tenant, p.id)).toBe(1);
+      expect(await deniedCountOn(tenant, p.id, true)).toBe(1);
       expect(
         await count(
           "select count(*) as n from public.audit_log where action = 'invitation.accept_denied' and actor_user_id = $1 and tenant_id = $2",
           [stranger.id, tenant],
         ),
-      ).toBe(1);
+      ).toBe(0);
+      expect(await platformCopies(stranger, p.id)).toBe(1);
     } finally {
       await actAsPostgres(setup);
       for (const client of others) await client.end();
@@ -1566,14 +1589,16 @@ describe("la vista previa es de SOLO LECTURA (corrección I1 de la revisión adv
       const auditBefore = await count("select count(*) as n from public.audit_log");
       expect(await accept(stranger, p.tokenSha)).toEqual({ result: "wrong_email" });
       expect(await failuresOf(stranger)).toEqual({ failures: 2, locked: false });
+      // Es de fuera de la organización B: la fila de B va sin autor y la copia con su id queda en la plataforma.
       expect(
         await count(
           `select count(*) as n from public.audit_log
-            where action = 'invitation.accept_denied' and tenant_id = $1 and actor_user_id = $2
-              and resource_id = $3 and details = '{"reason": "wrong_email", "step": "accept"}'::jsonb`,
-          [w.tenantB, stranger.id, p.id],
+            where action = 'invitation.accept_denied' and tenant_id = $1 and actor_user_id is null
+              and resource_id = $2 and details = '{"reason": "wrong_email", "step": "accept"}'::jsonb`,
+          [w.tenantB, p.id],
         ),
       ).toBe(1);
+      expect(await platformCopies(stranger, p.id)).toBe(1);
       expect(await count("select count(*) as n from public.audit_log")).toBeGreaterThan(
         auditBefore,
       );
@@ -1644,23 +1669,39 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
   type AuditRow = {
     action: string;
     result: string;
+    actor_type: string;
     tenant_id: string;
-    actor_user_id: string;
+    actor_user_id: string | null;
     resource_id: string;
     details: Json;
   };
+  /** Las filas del registro de la ORGANIZACIÓN de la invitación (en orden). */
+  const deniedOn = async (tenant: string, invitationId: string): Promise<AuditRow[]> => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query<AuditRow>(
+        `select action, result, actor_type, tenant_id, actor_user_id, resource_id, details
+           from public.audit_log
+          where action = 'invitation.accept_denied' and tenant_id = $1 and resource_id = $2 order by id`,
+        [tenant, invitationId],
+      )
+    ).rows;
+  };
+  /** Las copias de los intentos de esa persona en la organización «plataforma» (solo las ve Main Brain). */
   const deniedBy = async (user: TestUser): Promise<AuditRow[]> => {
     await actAsPostgres(setup);
     return (
       await setup.query<AuditRow>(
-        `select action, result, tenant_id, actor_user_id, resource_id, details from public.audit_log
-          where action = 'invitation.accept_denied' and actor_user_id = $1 order by id`,
+        `select action, result, actor_type, tenant_id, actor_user_id, resource_id, details
+           from public.audit_log
+          where action = 'invitation.accept_denied' and tenant_id = app.platform_tenant_id()
+            and actor_user_id = $1 order by id`,
         [user.id],
       )
     ).rows;
   };
 
-  it("se registra en la organización de la invitación, como «denied», sin el correo ni el código", () =>
+  it("se registra en la organización de la invitación, como «denied», sin autor, sin el correo ni el código; la copia con su id queda en la plataforma", () =>
     withTx(setup, async () => {
       const person = await newPerson();
       const stranger = await newPerson();
@@ -1668,31 +1709,50 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
       expect((await accept(stranger, p.tokenSha)).result).toBe("wrong_email");
       // Ver la pantalla («vista previa») NO deja registro: solo intentar aceptar lo deja (corrección I1).
       expect((await preview(stranger, p.tokenSha)).result).toBe("wrong_email");
-      const rows = await deniedBy(stranger);
+      const rows = await deniedOn(w.tenantB, p.id);
       expect(rows).toHaveLength(1);
-      for (const row of rows) {
-        expect(row).toMatchObject({
-          result: "denied",
-          tenant_id: w.tenantB,
-          actor_user_id: stranger.id,
-          resource_id: p.id,
-        });
-      }
+      expect(rows[0]).toMatchObject({
+        result: "denied",
+        actor_type: "user",
+        tenant_id: w.tenantB,
+        actor_user_id: null,
+        resource_id: p.id,
+      });
       expect(rows.map((r) => r.details)).toEqual([{ reason: "wrong_email", step: "accept" }]);
       const everything = JSON.stringify(rows);
-      for (const secret of [person.email, stranger.email, p.tokenSha, "@ejemplo.test"]) {
+      for (const secret of [
+        person.email,
+        stranger.email,
+        p.tokenSha,
+        stranger.id,
+        "@ejemplo.test",
+      ]) {
         expect(everything).not.toContain(secret);
       }
-      // No aparece en la auditoría de ninguna otra organización.
+      // No aparece en la auditoría de ninguna otra organización (salvo la copia de la plataforma, con el id).
       expect(
         await count(
-          "select count(*) as n from public.audit_log where action = 'invitation.accept_denied' and tenant_id <> $1 and actor_user_id = $2",
-          [w.tenantB, stranger.id],
+          `select count(*) as n from public.audit_log
+            where action = 'invitation.accept_denied' and tenant_id <> $1
+              and tenant_id <> app.platform_tenant_id() and resource_id = $2`,
+          [w.tenantB, p.id],
         ),
       ).toBe(0);
+      const copies = await deniedBy(stranger);
+      expect(copies).toHaveLength(1);
+      expect(copies[0]).toMatchObject({ result: "denied", resource_id: p.id });
+      expect(copies[0].details).toEqual({
+        reason: "wrong_email",
+        step: "accept",
+        invitation_tenant_id: w.tenantB,
+      });
+      const copy = JSON.stringify(copies);
+      for (const secret of [person.email, stranger.email, p.tokenSha]) {
+        expect(copy).not.toContain(secret);
+      }
     }));
 
-  it("la ve el Dueño de ESA organización (el registro de actividad es suyo) y nadie más: ni el resto del equipo ni otra organización", () =>
+  it("la ve el Dueño de ESA organización (el registro de actividad es suyo) y nadie más: ni el resto del equipo ni otra organización; y no ve quién fue", () =>
     withTx(setup, async () => {
       const person = await newPerson();
       const stranger = await newPerson();
@@ -1700,18 +1760,26 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
       await accept(stranger, p.tokenSha);
       const read = async (user: TestUser, tenant: string) => {
         await asUser(setup, user, tenant);
-        const { rows } = await setup.query<{ n: string }>(
-          "select count(*) as n from public.audit_log where action = 'invitation.accept_denied' and actor_user_id = $1",
-          [stranger.id],
+        const { rows } = await setup.query<{ n: string; has_id: string }>(
+          `select count(*) as n,
+                  count(*) filter (where position($2 in t::text) > 0) as has_id
+             from public.audit_log t
+            where t.action = 'invitation.accept_denied' and t.resource_id = $1`,
+          [p.id, stranger.id],
         );
         await actAsPostgres(setup);
-        return Number(rows[0].n);
+        return { n: Number(rows[0].n), hasId: Number(rows[0].has_id) };
       };
-      expect(await read(w.owner, w.tenantA)).toBe(1);
-      expect(await read(w.admin, w.tenantA)).toBe(0);
-      expect(await read(w.sales, w.tenantA)).toBe(0);
-      expect(await read(w.viewer, w.tenantA)).toBe(0);
-      expect(await read(w.ownerB, w.tenantB)).toBe(0);
+      // El Dueño de A lee 1 fila (la de A) y en ella no hay ni el id de la persona.
+      expect(await read(w.owner, w.tenantA)).toEqual({ n: 1, hasId: 0 });
+      for (const [user, tenant] of [
+        [w.admin, w.tenantA],
+        [w.sales, w.tenantA],
+        [w.viewer, w.tenantA],
+        [w.ownerB, w.tenantB],
+      ] as const) {
+        expect(await read(user, tenant)).toEqual({ n: 0, hasId: 0 });
+      }
     }));
 
   it("no se registra para un código inventado (no hay organización), ni cuando la cuenta ya está bloqueada", () =>
@@ -1721,13 +1789,15 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
       const p = await inviteAs(w.owner, person.email, "viewer");
       for (let n = 0; n < 3; n++) await accept(stranger, randomSha());
       expect(await deniedBy(stranger)).toHaveLength(0);
+      expect(await deniedOn(w.tenantA, p.id)).toHaveLength(0);
       // Hasta el tope se registra cada intento; pasado el tope (la cuenta bloqueada) ya no se escribe nada:
       // la auditoría no puede crecer más rápido que el límite de fallos.
       for (let n = 0; n < MAX_FAILURES + 5; n++) await accept(stranger, p.tokenSha);
       expect(await failuresOf(stranger)).toMatchObject({ locked: true });
-      const rows = await deniedBy(stranger);
-      expect(rows).toHaveLength(MAX_FAILURES - 3);
+      expect(await deniedOn(w.tenantA, p.id)).toHaveLength(MAX_FAILURES - 3);
+      expect(await deniedBy(stranger)).toHaveLength(MAX_FAILURES - 3);
       expect(await accept(stranger, p.tokenSha)).toEqual({ result: "rate_limited" });
+      expect(await deniedOn(w.tenantA, p.id)).toHaveLength(MAX_FAILURES - 3);
       expect(await deniedBy(stranger)).toHaveLength(MAX_FAILURES - 3);
     }));
 
@@ -1738,6 +1808,7 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
       await preview(person, p.tokenSha);
       await accept(person, p.tokenSha);
       expect(await deniedBy(person)).toHaveLength(0);
+      expect(await deniedOn(w.tenantA, p.id)).toHaveLength(0);
 
       const cases = await everyState();
       for (const c of cases) {
@@ -1745,9 +1816,15 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
         expect(await deniedBy(c.invitee), c.state).toHaveLength(0);
         expect(await failuresOf(c.invitee), c.state).toEqual({ failures: 0, locked: false });
       }
+      expect(
+        await count(
+          "select count(*) as n from public.audit_log where action = 'invitation.accept_denied' and resource_id = any($1::uuid[])",
+          [cases.map((c) => c.p.id)],
+        ),
+      ).toBe(0);
     }));
 
-  it("una cuenta EQUIVOCADA que intenta aceptar recibe «wrong_email» en todos los estados, y cada intento cuenta y queda registrado", () =>
+  it("una cuenta EQUIVOCADA que intenta aceptar recibe «wrong_email» en todos los estados, y cada intento cuenta y queda registrado (sin autor, porque es de fuera)", () =>
     withTx(setup, async () => {
       // Antes, con una invitación ya cancelada, vencida o usada, la cuenta equivocada recibía el estado sin contar
       // ni dejar registro (el estado se respondía antes de comparar el correo).
@@ -1760,15 +1837,288 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
         expect(await rowOf(c.p.id), c.state).toEqual(row);
       }
       expect(await failuresOf(wrong)).toEqual({ failures: cases.length, locked: false });
-      const rows = await deniedBy(wrong);
+      await actAsPostgres(setup);
+      const { rows } = await setup.query<AuditRow>(
+        `select action, result, actor_type, tenant_id, actor_user_id, resource_id, details
+           from public.audit_log
+          where action = 'invitation.accept_denied' and resource_id = any($1::uuid[])
+            and tenant_id <> app.platform_tenant_id()`,
+        [cases.map((c) => c.p.id)],
+      );
       expect(rows.map((r) => r.resource_id).sort()).toEqual(cases.map((c) => c.p.id).sort());
       for (const row of rows) {
-        expect(row).toMatchObject({ result: "denied", actor_user_id: wrong.id });
+        expect(row).toMatchObject({ result: "denied", actor_type: "user", actor_user_id: null });
         expect(row.details).toEqual({ reason: "wrong_email", step: "accept" });
       }
+      // Las copias completas (con su id) quedan en la plataforma, una por intento.
+      const copies = await deniedBy(wrong);
+      expect(copies.map((r) => r.resource_id).sort()).toEqual(cases.map((c) => c.p.id).sort());
+      for (const copy of copies)
+        expect(copy).toMatchObject({ result: "denied", actor_user_id: wrong.id });
       expect(await memberOf(w.tenantA, wrong)).toBeUndefined();
       expect(await memberOf(w.tenantB, wrong)).toBeUndefined();
     }));
+});
+
+describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en el PR #33, 2026-11-09)", () => {
+  const IP = "203.0.113.7";
+  const AGENT = "Navegador-de-prueba/1.0";
+  const headers = () => ({
+    "x-cp-client-ip": IP,
+    "user-agent": AGENT,
+    "x-cp-request-id": randomUUID(),
+  });
+  type Full = {
+    tenant_id: string;
+    actor_type: string;
+    actor_user_id: string | null;
+    origin_ip: string | null;
+    user_agent: string | null;
+    correlation_id: string | null;
+    result: string;
+    details: Json;
+  };
+  const COLUMNS = `tenant_id, actor_type, actor_user_id, host(origin_ip) as origin_ip, user_agent, correlation_id,
+                   result, details`;
+  /** Acepta con cabeceras (IP, navegador y correlación) y devuelve lo que respondió la función. */
+  async function acceptWithHeaders(user: TestUser, sha: string) {
+    await actAs(setup, user, headers());
+    const { rows } = await setup.query<{ r: Json }>(ACCEPT, [sha]);
+    await actAsPostgres(setup);
+    return rows[0].r;
+  }
+  const orgRows = async (tenant: string, invitationId: string): Promise<Full[]> => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query<Full>(
+        `select ${COLUMNS} from public.audit_log
+          where action = 'invitation.accept_denied' and tenant_id = $1 and resource_id = $2 order by id`,
+        [tenant, invitationId],
+      )
+    ).rows;
+  };
+  const platformRows = async (invitationId: string): Promise<Full[]> => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query<Full>(
+        `select ${COLUMNS} from public.audit_log
+          where action = 'invitation.accept_denied' and tenant_id = app.platform_tenant_id()
+            and resource_id = $1 order by id`,
+        [invitationId],
+      )
+    ).rows;
+  };
+  /**
+   * Cuántas filas `invitation.accept_denied` de la organización guardan este id en CUALQUIER columna (el texto de la fila
+   * entera). Solo esa acción: el montaje del mundo de pruebas crea cosas en A actuando como el Dueño de B y deja otras
+   * filas con su id; eso es del montaje, no del intento.
+   */
+  const idInOrg = (tenant: string, userId: string) =>
+    count(
+      `select count(*) as n from public.audit_log t
+        where t.tenant_id = $1 and t.action = 'invitation.accept_denied' and position($2 in t::text) > 0`,
+      [tenant, userId],
+    );
+
+  it("1 · alguien que nunca fue de la organización: la fila va sin id, IP, navegador ni correlación; ninguna columna de la organización guarda su id; la copia completa queda en la plataforma", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const outsider = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      expect(await acceptWithHeaders(outsider, p.tokenSha)).toEqual({ result: "wrong_email" });
+      const rows = await orgRows(w.tenantA, p.id);
+      expect(rows).toEqual([
+        {
+          tenant_id: w.tenantA,
+          actor_type: "user",
+          actor_user_id: null,
+          origin_ip: null,
+          user_agent: null,
+          correlation_id: null,
+          result: "denied",
+          details: { reason: "wrong_email", step: "accept" },
+        },
+      ]);
+      expect(await idInOrg(w.tenantA, outsider.id)).toBe(0);
+      const copies = await platformRows(p.id);
+      expect(copies).toHaveLength(1);
+      expect(copies[0]).toMatchObject({
+        actor_type: "user",
+        actor_user_id: outsider.id,
+        user_agent: AGENT,
+        result: "denied",
+        details: { reason: "wrong_email", step: "accept", invitation_tenant_id: w.tenantA },
+      });
+      expect(copies[0].origin_ip).toBe(IP);
+      expect(copies[0].correlation_id).not.toBeNull();
+    }));
+
+  it("2 · un miembro activo de la misma organización conserva su id, su IP y su navegador (la fila queda como siempre)", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      expect(await acceptWithHeaders(w.admin, p.tokenSha)).toEqual({ result: "wrong_email" });
+      const rows = await orgRows(w.tenantA, p.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        actor_type: "user",
+        actor_user_id: w.admin.id,
+        user_agent: AGENT,
+        result: "denied",
+        details: { reason: "wrong_email", step: "accept" },
+      });
+      expect(rows[0].origin_ip).toBe(IP);
+      expect(rows[0].correlation_id).not.toBeNull();
+      expect(await platformRows(p.id)).toHaveLength(1);
+    }));
+
+  it("3 · quien fue miembro (quitado) conserva su id: tuvo fila en `members`", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const former = await newPerson();
+      const first = await inviteAs(w.owner, former.email, "viewer");
+      expect((await accept(former, first.tokenSha)).result).toBe("accepted");
+      await actAsPostgres(setup);
+      await setup.query(
+        "update public.members set status = 'removed', removed_at = now(), removed_by = $3 where tenant_id = $1 and user_id = $2",
+        [w.tenantA, former.id, w.owner.id],
+      );
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      expect(await acceptWithHeaders(former, p.tokenSha)).toEqual({ result: "wrong_email" });
+      const rows = await orgRows(w.tenantA, p.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ actor_user_id: former.id, user_agent: AGENT });
+      expect(rows[0].origin_ip).toBe(IP);
+    }));
+
+  it("4 · el Dueño de OTRA organización (con la invitación de A) queda sin autor en A y no se escribe nada en B", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      const inB = await count("select count(*) as n from public.audit_log where tenant_id = $1", [
+        w.tenantB,
+      ]);
+      expect(await acceptWithHeaders(w.ownerB, p.tokenSha)).toEqual({ result: "wrong_email" });
+      const rows = await orgRows(w.tenantA, p.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        actor_type: "user",
+        actor_user_id: null,
+        origin_ip: null,
+        user_agent: null,
+        correlation_id: null,
+      });
+      expect(await idInOrg(w.tenantA, w.ownerB.id)).toBe(0);
+      expect(await orgRows(w.tenantB, p.id)).toHaveLength(0);
+      expect(
+        await count("select count(*) as n from public.audit_log where tenant_id = $1", [w.tenantB]),
+      ).toBe(inB);
+      const copies = await platformRows(p.id);
+      expect(copies).toHaveLength(1);
+      expect(copies[0].actor_user_id).toBe(w.ownerB.id);
+    }));
+
+  it("5 · el trabajo es el mismo: miembro y de fuera dejan exactamente 1 fila en la organización y 1 en la plataforma, con la misma respuesta", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const outsider = await newPerson();
+      const otherPerson = await newPerson();
+      const pIn = await inviteAs(w.owner, person.email, "viewer");
+      const pOut = await inviteAs(w.owner, otherPerson.email, "viewer");
+      const answerIn = await acceptWithHeaders(w.sales, pIn.tokenSha);
+      const answerOut = await acceptWithHeaders(outsider, pOut.tokenSha);
+      expect(answerOut).toEqual(answerIn);
+      expect(JSON.stringify(answerOut)).toBe(JSON.stringify(answerIn));
+      for (const p of [pIn, pOut]) {
+        expect(await orgRows(w.tenantA, p.id)).toHaveLength(1);
+        expect(await platformRows(p.id)).toHaveLength(1);
+      }
+      expect(await failuresOf(w.sales)).toEqual(await failuresOf(outsider));
+    }));
+
+  it("6 · una IP o una correlación mal escritas no abortan el intento: se cuenta y se audita igual", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const insider = w.sales2;
+      const p = await inviteAs(w.owner, person.email, "viewer");
+      await actAs(setup, insider, {
+        "x-cp-client-ip": "no-es-una-ip",
+        "user-agent": AGENT,
+        "x-cp-request-id": "no-es-un-uuid",
+      });
+      const { rows } = await setup.query<{ r: Json }>(ACCEPT, [p.tokenSha]);
+      await actAsPostgres(setup);
+      expect(rows[0].r).toEqual({ result: "wrong_email" });
+      expect(await failuresOf(insider)).toEqual({ failures: 1, locked: false });
+      const org = await orgRows(w.tenantA, p.id);
+      expect(org).toHaveLength(1);
+      expect(org[0]).toMatchObject({
+        actor_user_id: insider.id,
+        origin_ip: null,
+        correlation_id: null,
+      });
+      expect(await platformRows(p.id)).toHaveLength(1);
+    }));
+
+  it("7 · la ayuda conserva SECURITY DEFINER, `search_path = ''`, la firma y los permisos; y `accept_invitation` no se tocó (es la de la migración D3)", async () => {
+    await actAsPostgres(setup);
+    const { rows } = await setup.query<{
+      secdef: boolean;
+      cfg: string[];
+      lang: string;
+      volatility: string;
+      args: string;
+      returns: string;
+      anon: boolean;
+      pub: boolean;
+      auth: boolean;
+    }>(
+      `select p.prosecdef as secdef, p.proconfig as cfg, l.lanname as lang, p.provolatile as volatility,
+              pg_get_function_arguments(p.oid) as args, pg_get_function_result(p.oid) as returns,
+              has_function_privilege('anon', p.oid, 'execute') as anon,
+              has_function_privilege('public', p.oid, 'execute') as pub,
+              has_function_privilege('authenticated', p.oid, 'execute') as auth
+         from pg_proc p join pg_language l on l.oid = p.prolang
+        where p.oid = 'app.invitation_audit_wrong_email(public.invitations, uuid, text)'::regprocedure`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      secdef: true,
+      lang: "plpgsql",
+      volatility: "v",
+      args: "i invitations, p_user_id uuid, p_step text",
+      returns: "void",
+      anon: false,
+      pub: false,
+      auth: false,
+    });
+    expect(rows[0].cfg).toContain('search_path=""');
+    // No bloquea filas de `members` (solo las lee): `remove_member` bloquea en el orden contrario.
+    const { rows: src } = await setup.query<{ src: string }>(
+      "select prosrc as src from pg_proc where oid = 'app.invitation_audit_wrong_email(public.invitations, uuid, text)'::regprocedure",
+    );
+    expect(src[0].src).not.toMatch(/for\s+(update|share|no key update|key share)/i);
+    // `accept_invitation` es EXACTAMENTE la de la migración D3 (20261109100000): esta migración no la tocó.
+    const d3 = readFileSync(
+      path.join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "supabase",
+        "migrations",
+        "20261109100000_invitation_accept_sender.sql",
+      ),
+      "utf8",
+    );
+    const start = d3.indexOf("function public.accept_invitation(");
+    expect(start).toBeGreaterThan(-1);
+    const open = d3.indexOf("$$", start) + 2;
+    const body = d3.slice(open, d3.indexOf("$$", open));
+    const { rows: acc } = await setup.query<{ src: string }>(
+      "select prosrc as src from pg_proc where oid = 'public.accept_invitation(text)'::regprocedure",
+    );
+    expect(acc[0].src).toBe(body);
+  });
 });
 
 describe("quien reenvió la invitación también tiene que seguir pudiendo (corrección de la revisión del 2026-11-06)", () => {

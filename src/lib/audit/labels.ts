@@ -35,7 +35,7 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "text_snippet.updated": "Se cambió un texto guardado",
   "text_snippet.deleted": "Se eliminó un texto guardado",
   "invitation.accepted": "Una persona aceptó la invitación al equipo",
-  "invitation.accept_denied": "Alguien intentó usar una invitación con otro correo",
+  "invitation.accept_denied": "Se intentó aceptar una invitación dirigida a otra persona",
 };
 
 const RESOURCE_LABELS: Readonly<Record<string, string>> = {
@@ -83,6 +83,23 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   body: "texto",
   is_default: "predeterminado",
 };
+
+/** Quién hizo algo cuando la fila no lo identifica: una persona con cuenta que no es ni fue de esta organización. */
+export const OUTSIDE_ACTOR_TEXT = "Una persona de fuera de tu organización";
+
+/** Quién hizo algo, para la columna «Quién» del registro de actividad. */
+export function auditActorText(entry: {
+  actorName: string | null;
+  actorOutside?: boolean;
+  actorType: "user" | "service" | "system" | "public";
+}): string {
+  if (entry.actorName) return entry.actorName;
+  if (entry.actorOutside) return OUTSIDE_ACTOR_TEXT;
+  if (entry.actorType === "system") return "El sistema";
+  if (entry.actorType === "public") return "Una visita sin cuenta";
+  if (entry.actorType === "service") return "Un servicio automático";
+  return "Alguien que ya no está en el equipo";
+}
 
 export function actionLabel(action: string): string {
   return AUDIT_ACTION_LABELS[action] ?? action;

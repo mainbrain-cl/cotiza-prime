@@ -101,6 +101,25 @@ const auditRowsOf = async (db: import("pg").Client, email: string) =>
     ).rows[0].n,
   );
 
+/**
+ * Intentos de aceptar una invitación ajena (`invitation.accept_denied`) que hay en la auditoría de esas organizaciones.
+ * Desde la decisión de Aarón del 2026-11-09 el intento de alguien de FUERA va sin autor, así que ya no se puede contar
+ * por la cuenta: se cuenta por organización (y, en la organización «plataforma», por la cuenta, que es donde queda su id).
+ */
+const deniedRowsIn = async (db: import("pg").Client, tenantIds: string[], email?: string) =>
+  Number(
+    (
+      await db.query<{ n: string }>(
+        `select count(*) as n from public.audit_log a
+          where a.action = 'invitation.accept_denied'
+            and (a.tenant_id = any($1::uuid[])
+                 or ($2::text is not null and a.tenant_id = app.platform_tenant_id()
+                     and a.actor_user_id = (select id from auth.users where email = $2)))`,
+        [tenantIds, email ?? null],
+      )
+    ).rows[0].n,
+  );
+
 async function newContext(browser: Browser, baseURL: string | undefined): Promise<BrowserContext> {
   return browser.newContext({ baseURL, extraHTTPHeaders: { "x-forwarded-for": randomTestIp() } });
 }
@@ -432,12 +451,8 @@ test("con otro correo: se le dice sin mostrar nada de la organización, puede ce
       expect(member.rowCount).toBe(0);
       // Corrección I1: ver esta pantalla no deja registro en la auditoría ni suma un fallo a la cuenta
       // (solo un intento real de aceptar lo haría; aquí no hay botón para aceptar).
-      const denied = await db.query(
-        `select 1 from public.audit_log a join auth.users u on u.id = a.actor_user_id
-          where a.tenant_id = $1 and a.action = 'invitation.accept_denied' and u.email = $2`,
-        [tenantId, other],
-      );
-      expect(denied.rowCount).toBe(0);
+      // Se cuenta por la organización (el intento de alguien de fuera va sin autor) y por la cuenta en la plataforma.
+      expect(await deniedRowsIn(db, [tenantId], other)).toBe(0);
       expect(await failuresOfAccount(db, other)).toBe(0);
     });
 
@@ -485,6 +500,7 @@ test("mirar una invitación ajena (o códigos inventados) no deja registro, no b
     await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
 
     const auditBefore = await withDb((db) => auditRowsOf(db, mine));
+    const deniedBefore = await withDb((db) => deniedRowsIn(db, [tenantId], mine));
 
     // --- una visita a una invitación AJENA, varias veces (como si otro sitio nos mandara allí) ---
     for (let n = 0; n < 3; n++) {
@@ -510,6 +526,8 @@ test("mirar una invitación ajena (o códigos inventados) no deja registro, no b
     await withDb(async (db) => {
       // Ni una fila nueva de esta cuenta en la auditoría (de ninguna organización) ni un fallo en la cuenta.
       expect(await auditRowsOf(db, mine)).toBe(auditBefore);
+      // Y tampoco un intento sin autor en la auditoría de la organización de la invitación ajena (ni su copia).
+      expect(await deniedRowsIn(db, [tenantId], mine)).toBe(deniedBefore);
       expect(await failuresOfAccount(db, mine)).toBe(0);
     });
 
@@ -566,6 +584,7 @@ test("«Unirme» acepta la invitación que se mostró: si otra página cambió l
     expect(html).not.toContain(shown.token);
     expect(html).not.toContain(sha256(shown.token));
     const auditBefore = await withDb((db) => auditRowsOf(db, victim));
+    const deniedBefore = await withDb((db) => deniedRowsIn(db, [tenantId, otherTenant], victim));
 
     // Otra pestaña (o una página ajena con una navegación de primer nivel) abre el otro enlace: la cookie cambia.
     const other = await context.newPage();
@@ -598,6 +617,7 @@ test("«Unirme» acepta la invitación que se mostró: si otra página cambió l
       // No llamó a la base: ni un fallo sumado ni una fila en la auditoría.
       expect(await failuresOfAccount(db, victim)).toBe(0);
       expect(await auditRowsOf(db, victim)).toBe(auditBefore);
+      expect(await deniedRowsIn(db, [tenantId, otherTenant], victim)).toBe(deniedBefore);
     });
 
     // Si, ya viéndola, decide unirse a la que ahora se muestra, el clic sí vale (y es esa, no la primera).

@@ -142,3 +142,37 @@ describe("a quién afectó la acción", () => {
     expect(calls).toContainEqual(["members.eq", "tenant_id", TENANT_ID]);
   });
 });
+
+describe("quién hizo la acción", () => {
+  const row = (over: Record<string, unknown>) => ({
+    id: 20,
+    occurred_at: "2026-11-09T12:00:00Z",
+    actor_type: "user",
+    actor_user_id: USER_ID,
+    action: "invitation.accept_denied",
+    resource_type: "invitation",
+    resource_id: MEMBER_ID,
+    result: "denied",
+    origin_ip: null,
+    details: { reason: "wrong_email", step: "accept" },
+    ...over,
+  });
+
+  it("una fila de «user» sin id (alguien de fuera de la organización) sale como persona de fuera, sin nombre", async () => {
+    const { active } = fakeActive("owner", [row({ actor_user_id: null })]);
+    const page = await listAuditEntries(active);
+    expect(page?.entries[0]).toMatchObject({ actorName: null, actorOutside: true });
+  });
+
+  it("una fila con id no es «de fuera», aunque su perfil no se lea; y las del sistema o de una visita tampoco", async () => {
+    const { active } = fakeActive("owner", [
+      row({ id: 21 }),
+      row({ id: 22, actor_user_id: "55555555-5555-4555-8555-555555555555" }),
+      row({ id: 23, actor_type: "system", actor_user_id: null }),
+      row({ id: 24, actor_type: "public", actor_user_id: null }),
+    ]);
+    const page = await listAuditEntries(active);
+    expect(page?.entries.map((e) => e.actorOutside)).toEqual([false, false, false, false]);
+    expect(page?.entries[0].actorName).toBe("Ana Prueba");
+  });
+});

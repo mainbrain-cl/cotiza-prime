@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   AUDIT_ACTION_LABELS,
   actionLabel,
+  auditActorText,
   describeAuditDetails,
   describeAuditEntry,
   describeAuditSubject,
   isKnownAuditAction,
+  OUTSIDE_ACTOR_TEXT,
   resourceLabel,
 } from "./labels";
 
@@ -77,7 +79,7 @@ describe("las acciones de aceptar una invitación (H-009)", () => {
   it("tienen nombre y se pueden elegir en el filtro del registro de actividad", () => {
     expect(actionLabel("invitation.accepted")).toBe("Una persona aceptó la invitación al equipo");
     expect(actionLabel("invitation.accept_denied")).toBe(
-      "Alguien intentó usar una invitación con otro correo",
+      "Se intentó aceptar una invitación dirigida a otra persona",
     );
     expect(isKnownAuditAction("invitation.accepted")).toBe(true);
     expect(isKnownAuditAction("invitation.accept_denied")).toBe(true);
@@ -203,5 +205,28 @@ describe("a quién afectó la acción (H-010: sin correos, el registro es lo que
       "Cliente",
     );
     expect(describeAuditSubject({ resourceType: null })).toBe("—");
+  });
+});
+
+describe("quién hizo cada acción (auditActorText)", () => {
+  const base = { actorName: null, actorOutside: false, actorType: "user" as const };
+
+  it("con nombre, el nombre (también de quien ya no está)", () => {
+    expect(auditActorText({ ...base, actorName: "María Pérez" })).toBe("María Pérez");
+  });
+
+  it("una persona de fuera de la organización (fila de «user» sin id) se dice como tal", () => {
+    expect(OUTSIDE_ACTOR_TEXT).toBe("Una persona de fuera de tu organización");
+    expect(auditActorText({ ...base, actorOutside: true })).toBe(OUTSIDE_ACTOR_TEXT);
+  });
+
+  it("el sistema, una visita sin cuenta y un servicio tienen su propio texto", () => {
+    expect(auditActorText({ ...base, actorType: "system" })).toBe("El sistema");
+    expect(auditActorText({ ...base, actorType: "public" })).toBe("Una visita sin cuenta");
+    expect(auditActorText({ ...base, actorType: "service" })).toBe("Un servicio automático");
+  });
+
+  it("una persona con id pero sin nombre legible sigue siendo «alguien que ya no está en el equipo»", () => {
+    expect(auditActorText(base)).toBe("Alguien que ya no está en el equipo");
   });
 });

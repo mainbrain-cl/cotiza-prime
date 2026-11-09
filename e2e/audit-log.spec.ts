@@ -149,6 +149,38 @@ test("el Dueño ve y filtra el registro; no se puede editar; otros roles y otras
   await expect(page).toHaveURL(/pagina=2/);
   await expect(page.getByTestId("page-status")).toContainText("Página 2 de 2");
 
+  // Alguien de fuera de la organización que probó una invitación ajena: la fila va sin autor (ni id, ni IP) y la
+  // pantalla lo dice con claridad, sin llamarlo «alguien que ya no está en el equipo».
+  await withDb((db) =>
+    db.query(
+      `insert into public.audit_log
+         (tenant_id, actor_type, action, resource_type, resource_id, result, details, occurred_at)
+       values ($1, 'user', 'invitation.accept_denied', 'invitation', gen_random_uuid(), 'denied',
+               '{"reason": "wrong_email", "step": "accept"}'::jsonb, now() + interval '1 minute')`,
+      [tenantId],
+    ),
+  );
+  await page.goto(`/o/${tenantId}/configuracion/actividad`);
+  const outsider = rows.filter({
+    hasText: "Se intentó aceptar una invitación dirigida a otra persona",
+  });
+  await expect(outsider).toHaveCount(1);
+  await expect(outsider).toContainText("Una persona de fuera de tu organización");
+  await expect(outsider).not.toContainText("Alguien que ya no está en el equipo");
+  await expect(outsider).toContainText("Se negó el permiso");
+  await expect(outsider).toContainText("Invitación");
+  await expect(outsider.locator("td").last()).toHaveText("—");
+  // El filtro por acción la encuentra; el filtro por persona, no (no hay persona).
+  await page.getByLabel("Tipo de acción").selectOption("invitation.accept_denied");
+  await page.getByRole("button", { name: "Filtrar", exact: true }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("Una persona de fuera de tu organización");
+  await page.getByRole("link", { name: "Limpiar filtros" }).click();
+  await page.getByLabel("Persona").selectOption({ label: "Miembro Registro" });
+  await page.getByRole("button", { name: "Filtrar", exact: true }).click();
+  await expect(rows.filter({ hasText: "Una persona de fuera de tu organización" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Limpiar filtros" }).click();
+
   // Otra organización: su Dueño ve solo lo suyo y la pantalla de esta no existe para él
   const otherContext = await newContext();
   const otherPage = await otherContext.newPage();

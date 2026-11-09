@@ -7,6 +7,7 @@ import { FormAlert, Select } from "@/components/ui/form-controls";
 import {
   AUDIT_ACTION_LABELS,
   actionLabel,
+  auditActorText,
   describeAuditEntry,
   describeAuditSubject,
 } from "@/lib/audit/labels";
@@ -27,14 +28,6 @@ const EMPTY = "—";
 
 function firstValue(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value) ?? "";
-}
-
-function actorText(entry: AuditEntry): string {
-  if (entry.actorName) return entry.actorName;
-  if (entry.actorType === "system") return "El sistema";
-  if (entry.actorType === "public") return "Una visita sin cuenta";
-  if (entry.actorType === "service") return "Un servicio automático";
-  return "Alguien que ya no está en el equipo";
 }
 
 function resultText(result: AuditEntry["result"]): string | null {
@@ -162,7 +155,7 @@ export default async function ActivityLogPage({
                     {formatDateTime(entry.occurredAt)}
                   </span>
                   <span className="font-semibold text-fg">{actionLabel(entry.action)}</span>
-                  <span className="text-fg">{actorText(entry)}</span>
+                  <span className="text-fg">{auditActorText(entry)}</span>
                   <span className="text-sm text-fg-muted">
                     {describeAuditSubject(entry)}
                     {detail ? ` · ${detail}` : ""}
@@ -210,7 +203,7 @@ export default async function ActivityLogPage({
                       <td className="px-4 py-3 whitespace-nowrap tabular-nums">
                         {formatDateTime(entry.occurredAt)}
                       </td>
-                      <td className="px-4 py-3">{actorText(entry)}</td>
+                      <td className="px-4 py-3">{auditActorText(entry)}</td>
                       <td className="px-4 py-3">
                         <span className="font-semibold text-fg">{actionLabel(entry.action)}</span>
                         {detail ? <span className="block text-fg-muted">{detail}</span> : null}

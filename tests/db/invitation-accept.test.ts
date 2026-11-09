@@ -400,7 +400,13 @@ describe("aceptar: el camino feliz", () => {
       const mine = rows.filter((r) => r.resource_id === p.id);
       expect(mine).toHaveLength(1);
       expect(mine[0].actor_user_id).toBe(person.id);
-      expect(mine[0].details).toEqual({ role: "sales", already_member: false, reactivated: false });
+      expect(mine[0].details).toEqual({
+        role: "sales",
+        already_member: false,
+        reactivated: false,
+        created_by: w.owner.id,
+        sent_by: w.owner.id,
+      });
       // Ni el correo ni el código ni su huella aparecen en NINGÚN registro de esta organización.
       const everything = JSON.stringify(
         (
@@ -1211,6 +1217,65 @@ describe("dos conexiones reales a la vez", () => {
     }
   });
 
+  it("D3-5 · aceptar GANA el candado con el código del Dueño y el reenvío de un Administrador llega después: el reenvío se rechaza y el miembro queda a nombre del Dueño", async () => {
+    const { owner, invitee, tenant, p } = await committedInvitation();
+    const resender = await connect();
+    try {
+      // Un Administrador de esa organización, y una invitación que ya se puede reenviar (pasó el intervalo mínimo).
+      await actAsPostgres(setup);
+      await setup.query("begin");
+      const admin = await createUser(setup);
+      await setup.query(
+        "insert into public.members (tenant_id, user_id, role) values ($1, $2, 'admin')",
+        [tenant, admin.id],
+      );
+      await setup.query(
+        "update public.invitations set last_sent_at = now() - interval '1 hour' where id = $1",
+        [p.id],
+      );
+      await setup.query("commit");
+
+      await setup.query("begin");
+      await actAs(setup, invitee);
+      expect((await setup.query<{ r: Json }>(ACCEPT, [p.tokenSha])).rows[0].r.result).toBe(
+        "accepted",
+      );
+      // La aceptación está sin confirmar y tiene la invitación bloqueada: el reenvío tiene que esperar.
+      const stolen = newToken();
+      const mailId = randomUUID();
+      await resender.query("begin");
+      await asUser(resender, admin, tenant);
+      let settled = false;
+      const resending = resender
+        .query(RESEND, [
+          p.id,
+          invitationEmailBinding(stolen.sha, invitee.email),
+          stolen.sha,
+          mailId,
+          `v1.cifrado.correo.${mailId}`,
+        ])
+        .then(
+          () => "resent" as const,
+          (error: { code?: string }) => error.code ?? "error",
+        )
+        .finally(() => {
+          settled = true;
+        });
+      await sleep(250);
+      expect(settled, "reenviar debía quedar esperando el candado").toBe(false);
+      await setup.query("commit");
+      expect(await resending).toBe(NOT_ALLOWED_STATE);
+      await resender.query("rollback");
+      await actAsPostgres(setup);
+      expect((await rowOf(p.id)).resent_by).toBeNull();
+      expect((await memberOf(tenant, invitee)).invited_by).toBe(owner.id);
+    } finally {
+      await setup.query("rollback").catch(() => undefined);
+      await actAsPostgres(setup);
+      await resender.end();
+    }
+  });
+
   it("cancelar GANA el candado y aceptar llega después: «revoked», nadie entra y no hay estados a medias", async () => {
     const { owner, invitee, tenant, p } = await committedInvitation();
     const canceller = await connect();
@@ -1330,6 +1395,8 @@ describe("dos conexiones reales a la vez", () => {
       await setup.query("begin");
       expect((await accept(invitee, fresh.sha)).result).toBe("accepted");
       await setup.query("commit");
+      // El Dueño creó y reenvió: figura como quien invitó.
+      expect((await memberOf(tenant, invitee)).invited_by).toBe(owner.id);
     } finally {
       await setup.query("rollback").catch(() => undefined);
       await actAsPostgres(setup);
@@ -1799,5 +1866,136 @@ describe("quien reenvió la invitación también tiene que seguir pudiendo (corr
       ]);
       expect(await accept(createdPerson, created.tokenSha)).toEqual({ result: "inviter_inactive" });
       expect(await memberOf(w.tenantA, createdPerson)).toBeUndefined();
+    }));
+});
+
+describe("D3: queda a nombre de quien envió el enlace (revisión de Aarón al PR #33, 2026-11-09)", () => {
+  const auditOf = async (invitationId: string) => {
+    await actAsPostgres(setup);
+    return (
+      await setup.query<{ details: Json }>(
+        "select details from public.audit_log where action = 'invitation.accepted' and resource_id = $1",
+        [invitationId],
+      )
+    ).rows;
+  };
+  /** Suma una cuenta nueva como miembro activo de la organización A con ese rol. */
+  async function addMemberA(role: string): Promise<TestUser> {
+    const user = await newPerson();
+    await actAsPostgres(setup);
+    await setup.query("insert into public.members (tenant_id, user_id, role) values ($1, $2, $3)", [
+      w.tenantA,
+      user.id,
+      role,
+    ]);
+    return user;
+  }
+
+  it("D3-1 · el Dueño crea y un Administrador reenvía: al aceptar, `members.invited_by` es el Administrador, la invitación sigue a nombre del Dueño y la auditoría anota los dos", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "sales");
+      await resendAs(w.admin, p);
+      expect(await accept(person, p.tokenSha)).toEqual({
+        result: "accepted",
+        tenant_id: w.tenantA,
+        role: "sales",
+        already_member: false,
+        reactivated: false,
+      });
+      const member = await memberOf(w.tenantA, person);
+      expect(member.invited_by).toBe(w.admin.id);
+      const row = await rowOf(p.id);
+      expect(row.invited_by).toBe(w.owner.id);
+      expect(row.resent_by).toBe(w.admin.id);
+      const audit = await auditOf(p.id);
+      expect(audit).toHaveLength(1);
+      expect(audit[0].details).toEqual({
+        role: "sales",
+        already_member: false,
+        reactivated: false,
+        created_by: w.owner.id,
+        sent_by: w.admin.id,
+      });
+      // `invited_by` es una persona de la misma organización.
+      expect(
+        await count(
+          "select count(*) as n from public.members where tenant_id = $1 and user_id = $2 and status = 'active'",
+          [w.tenantA, member.invited_by],
+        ),
+      ).toBe(1);
+    }));
+
+  it("D3-2 · quien fue quitado y vuelve con una invitación reenviada: misma fila, reactivada, a nombre de quien reenvió", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      await actAsPostgres(setup);
+      await setup.query(
+        `insert into public.members (tenant_id, user_id, role, status, removed_at, removed_by, invited_by)
+         values ($1, $2, 'viewer', 'removed', now() - interval '1 day', $3, $3)`,
+        [w.tenantA, person.id, w.owner.id],
+      );
+      const former = await memberOf(w.tenantA, person);
+      const p = await inviteAs(w.owner, person.email, "sales");
+      await resendAs(w.admin, p);
+      expect(await accept(person, p.tokenSha)).toMatchObject({
+        result: "accepted",
+        reactivated: true,
+        already_member: false,
+      });
+      const member = await memberOf(w.tenantA, person);
+      expect(member.id).toBe(former.id);
+      expect(member).toMatchObject({ status: "active", role: "sales", invited_by: w.admin.id });
+      expect((await auditOf(p.id))[0].details).toMatchObject({
+        reactivated: true,
+        created_by: w.owner.id,
+        sent_by: w.admin.id,
+      });
+    }));
+
+  it("D3-3 · el último en reenviar es el Dueño: el miembro queda a nombre del Dueño, la invitación a nombre de quien la creó y el código de X ya no sirve", () =>
+    withTx(setup, async () => {
+      const creator = await addMemberA("admin");
+      const person = await newPerson();
+      const p = await inviteAs(creator, person.email, "sales");
+      await resendAs(w.admin, p);
+      const viaX = p.tokenSha;
+      await resendAs(w.owner, p);
+      expect(p.tokenSha).not.toBe(viaX);
+      expect((await rowOf(p.id)).resent_by).toBe(w.owner.id);
+
+      expect(await accept(person, viaX)).toEqual({ result: "not_found" });
+      expect(await accept(person, p.tokenSha)).toMatchObject({ result: "accepted", role: "sales" });
+      expect((await memberOf(w.tenantA, person)).invited_by).toBe(w.owner.id);
+      expect((await rowOf(p.id)).invited_by).toBe(creator.id);
+      expect((await auditOf(p.id))[0].details).toMatchObject({
+        created_by: creator.id,
+        sent_by: w.owner.id,
+      });
+    }));
+
+  it("D3-4 · quien ya era miembro activo conserva su rol y su `invited_by`; la auditoría anota igual quién envió el enlace", () =>
+    withTx(setup, async () => {
+      const person = await newPerson();
+      const p = await inviteAs(w.owner, person.email, "sales");
+      await resendAs(w.admin, p);
+      // Entra a la organización por otro camino DESPUÉS de que le llegó la invitación.
+      await actAsPostgres(setup);
+      await setup.query(
+        "insert into public.members (tenant_id, user_id, role, invited_by) values ($1, $2, 'viewer', $3)",
+        [w.tenantA, person.id, w.approver.id],
+      );
+      expect(await accept(person, p.tokenSha)).toMatchObject({
+        result: "accepted",
+        role: "viewer",
+        already_member: true,
+      });
+      const member = await memberOf(w.tenantA, person);
+      expect(member).toMatchObject({ role: "viewer", invited_by: w.approver.id });
+      expect((await auditOf(p.id))[0].details).toMatchObject({
+        already_member: true,
+        created_by: w.owner.id,
+        sent_by: w.admin.id,
+      });
     }));
 });

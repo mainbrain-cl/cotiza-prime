@@ -5,6 +5,8 @@
 // y al aplicarla sobre datos de antes rellena `resent_by` y cancela lo que corresponde, una sola vez. Se ejecutan los
 // archivos reales dentro de una transacción que se deshace; el deshacer completo y en orden lo prueba
 // `npm run test:db:rollbacks`.
+// Desde la corrección D3 (20261109100000_invitation_accept_sender) hay una migración POSTERIOR que lee `resent_by`
+// (`accept_invitation`): para deshacer esta, primero se deshace aquella (`applyDowns`), como en el orden real.
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -19,6 +21,8 @@ const NAME = "20261106100000_invitation_resender";
 const read = (dir: string, file: string) => readFileSync(path.join(ROOT, dir, file), "utf8");
 const up = read("migrations", `${NAME}.sql`);
 const down = read("rollbacks", `${NAME}.down.sql`);
+/** El deshacer de la migración posterior (D3), que se aplica ANTES que el de esta. */
+const downNewer = read("rollbacks", "20261109100000_invitation_accept_sender.down.sql");
 const previewMigration = read("migrations", "20261105100000_invitation_preview_read_only.sql");
 const managementMigration = read("migrations", "20261105110000_member_management.sql");
 
@@ -32,6 +36,11 @@ function bodyIn(sql: string, signature: string): string {
 
 let db: Client;
 let w: World;
+/** Deshace en el orden real: primero lo más nuevo (D3), después esta migración. */
+const applyDowns = async () => {
+  await db.query(downNewer);
+  await db.query(down);
+};
 beforeAll(async () => {
   db = await connect();
   w = await buildWorld(db);
@@ -125,7 +134,7 @@ describe("el deshacer de invitation_resender", () => {
       expect(current.resend.src).toContain("resent_by = v_uid");
       expect(current.cancel.src).toContain("resent_by = p_user");
 
-      await db.query(down);
+      await applyDowns();
 
       expect(await hasColumn()).toBe(false);
       expect(await hasIndex()).toBe(false);
@@ -159,7 +168,7 @@ describe("el deshacer de invitation_resender", () => {
   it("RB3 · aplicada sobre datos de antes: rellena `resent_by` y cancela solo lo que corresponde; repetir la limpieza no cambia nada y el deshacer no revive nada", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
-      await db.query(down);
+      await applyDowns();
 
       const removed = await createUser(db, { meta: { full_name: "Admin Que Ya Se Fue" } });
       await db.query(
@@ -325,7 +334,7 @@ describe("el deshacer de invitation_resender", () => {
       expect(again.rows[0].r).toEqual({ backfilled: 0, cancelled: 0 });
 
       // El deshacer no revive nada.
-      await db.query(down);
+      await applyDowns();
       for (const id of [resentByRemoved, adminInviteDiverted, otherOrgForeign]) {
         const row = (
           await db.query("select status, revoke_reason from public.invitations where id = $1", [id])
@@ -349,7 +358,7 @@ describe("el deshacer de invitation_resender", () => {
         resend: await definition(RESEND_SIG),
         cancel: await definition(CANCEL),
       };
-      await db.query(down);
+      await applyDowns();
       await db.query(up);
       expect(await hasColumn()).toBe(true);
       expect(await hasIndex()).toBe(true);
@@ -372,7 +381,7 @@ describe("el deshacer de invitation_resender", () => {
   it("RB5 · sin la migración, el ataque exacto vuelve a funcionar (por eso esta prueba demuestra lo que corrige)", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
-      await db.query(down);
+      await applyDowns();
       const accomplice = await createUser(db);
       // El Dueño invita a un Comercial; el Administrador la reenvía atada al correo del cómplice y lo quitan.
       const id = randomUUID();

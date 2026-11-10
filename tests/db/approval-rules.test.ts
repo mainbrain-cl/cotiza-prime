@@ -318,7 +318,7 @@ describe("el historial es de solo agregar", () => {
   const attempts: [string, string][] = [
     ["editar una versión", "update public.approval_rules set mode = 'always' where tenant_id = $1"],
     ["borrar una versión", "delete from public.approval_rules where tenant_id = $1"],
-    ["vaciar la tabla", "truncate public.approval_rules"],
+    ["vaciar la tabla", "truncate public.approval_rules cascade"],
     [
       "cambiar su organización",
       "update public.approval_rules set tenant_id = gen_random_uuid() where tenant_id = $1",
@@ -329,8 +329,10 @@ describe("el historial es de solo agregar", () => {
     await withTx(setup, async () => {
       await actAsService(setup);
       const error = await expectSqlError(setup, sql, sql.includes("$1") ? [w.tenantA] : []);
-      // Vaciar la tabla ni siquiera llega al disparador: Postgres lo niega antes porque `quote_packages` la referencia (0A000).
-      expect(error.code).toBe(sql.startsWith("truncate") ? "0A000" : INSUFFICIENT_PRIVILEGE);
+      expect(error.code).toBe(INSUFFICIENT_PRIVILEGE);
+      // Con `cascade` Postgres no lo niega antes por la relación de `quote_packages` (0A000): llega al disparador de la tabla.
+      if (sql.startsWith("truncate"))
+        expect(error.message).toMatch(/approval_rules is append-only/);
       await actAsPostgres(setup);
       expect(await rulesOf(w.tenantA)).toHaveLength(1);
     });

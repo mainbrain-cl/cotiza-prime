@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  APPROVAL_ALWAYS_NOT_AVAILABLE_MESSAGE,
   APPROVAL_NOT_AVAILABLE_YET,
   APPROVAL_REQUIRED_GENERIC_MESSAGE,
   APPROVAL_RULE_UNAVAILABLE_MESSAGE,
@@ -54,13 +55,15 @@ describe("approvalBlockMessage: el bloqueo de /enviar", () => {
       ),
     ).toContain("el descuento (20%) supera 10%");
   });
-  it("siempre", () => {
-    expect(
-      approvalBlockMessage(
-        { mode: "always", amountThresholdClp: null, discountThresholdBp: null },
-        totals(),
-      ),
-    ).toContain("la organización pide aprobación para todas las cotizaciones");
+  it("siempre: no sugiere ajustar la cotización, dice que hoy no puede enviarse", () => {
+    const message = approvalBlockMessage(
+      { mode: "always", amountThresholdClp: null, discountThresholdBp: null },
+      totals(),
+    );
+    expect(message).toBe(APPROVAL_ALWAYS_NOT_AVAILABLE_MESSAGE);
+    expect(message).toContain("no se puede enviar por ahora");
+    expect(message).toContain("todavía no está disponible");
+    expect(message).not.toMatch(/ajusta la cotización/i);
   });
 });
 
@@ -68,6 +71,15 @@ describe("approvalPrepareError: el rechazo de la base al enviar", () => {
   it("reconoce el motivo de la regla antes del mensaje general de CP423", () => {
     expect(approvalPrepareError("approval_required")).toBe(APPROVAL_REQUIRED_GENERIC_MESSAGE);
     expect(approvalPrepareError("approval_rule_missing")).toBe(APPROVAL_RULE_UNAVAILABLE_MESSAGE);
+  });
+  it("con «Siempre» (detail) tampoco sugiere ajustar la cotización", () => {
+    expect(approvalPrepareError("approval_required", "always")).toBe(
+      APPROVAL_ALWAYS_NOT_AVAILABLE_MESSAGE,
+    );
+    expect(approvalPrepareError("approval_required", "amount,discount")).toBe(
+      APPROVAL_REQUIRED_GENERIC_MESSAGE,
+    );
+    expect(approvalPrepareError("approval_required", null)).toBe(APPROVAL_REQUIRED_GENERIC_MESSAGE);
   });
   it("lo demás no es de la regla (siguen siendo «ya no está en borrador»)", () => {
     expect(approvalPrepareError("not_editable")).toBeNull();

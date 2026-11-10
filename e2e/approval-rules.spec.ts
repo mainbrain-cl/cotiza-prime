@@ -81,6 +81,10 @@ async function chooseAndSave(
     await page.getByTestId("approval-discount").fill(fields.discount ?? "");
   }
   await page.getByTestId("approval-save").click();
+  // «Siempre» pide confirmar antes de guardar (frena todos los envíos hasta el sprint 6)
+  if (mode === "always" && (await page.getByTestId("approval-confirm").isVisible())) {
+    await page.getByTestId("approval-confirm-always").click();
+  }
   await expect(page.getByTestId("approval-saved")).toBeVisible();
 }
 
@@ -150,8 +154,8 @@ test("el Dueño llega desde Configuración, ve «Nunca» de partida y la frase s
   await expect(page.getByTestId("approval-preview")).toHaveText(
     "Se pide aprobación para todas las cotizaciones.",
   );
-  await expect(page.getByTestId("approval-heads-up")).toContainText(
-    "una cotización que cumpla la regla no se puede enviar",
+  await expect(page.getByTestId("approval-always-warning")).toHaveText(
+    "Con «Siempre», ninguna cotización podrá enviarse —tampoco las tuyas— hasta que llegue la solicitud de aprobación.",
   );
 
   // Según el monto o el descuento: los dos campos aparecen y la frase sigue lo que se escribe
@@ -179,6 +183,21 @@ test("el Dueño llega desde Configuración, ve «Nunca» de partida y la frase s
 
   // Aviso de «nadie más puede aprobar»: el Dueño es la única persona que puede aprobar
   await expect(page.getByTestId("approval-only-you")).toContainText("Hoy solo tú puedes aprobar");
+  await expect(page.getByTestId("approval-only-you")).toContainText(
+    "Cuando llegue la solicitud de aprobación",
+  );
+  // El texto de ayuda aclara que cambiar el precio no es un descuento
+  await page.getByTestId("approval-mode-conditional").check();
+  await expect(
+    page.getByText("Cambiar el precio de un servicio no cuenta como descuento."),
+  ).toBeVisible();
+  // `aria-controls` solo existe mientras el bloque de condiciones está en pantalla
+  await expect(page.getByTestId("approval-mode-conditional")).toHaveAttribute(
+    "aria-controls",
+    /.+/,
+  );
+  await page.getByTestId("approval-mode-never").check();
+  await expect(page.getByTestId("approval-mode-conditional")).not.toHaveAttribute("aria-controls");
 });
 
 test("datos inválidos se rechazan con mensajes claros y no se guarda nada", async () => {
@@ -381,8 +400,11 @@ test("al cambiar la regla, el envío lo nota enseguida: «Siempre» bloquea y «
 
   await salesPage.goto(sendUrl());
   await expect(salesPage.getByTestId("send-blocker")).toContainText(
-    "la organización pide aprobación para todas las cotizaciones",
+    "Esta cotización no se puede enviar por ahora: tu organización pide aprobación para todas las cotizaciones",
   );
+  // Con «Siempre» no se sugiere ajustar la cotización: no sirve de nada
+  await expect(salesPage.getByTestId("send-blocker")).toContainText("todavía no está disponible");
+  await expect(salesPage.getByTestId("send-blocker")).not.toContainText("ajusta la cotización");
 
   // Un monto más alto que el total: ya no se pide (y el descuento no se mira porque no hay)
   await chooseAndSave(ownerPage, "conditional", { amount: "20.000" });
@@ -408,6 +430,7 @@ test("dos pestañas del Dueño: la segunda en guardar recibe el aviso de que otr
 
     await first.getByTestId("approval-mode-always").check();
     await first.getByTestId("approval-save").click();
+    await first.getByTestId("approval-confirm-always").click();
     await expect(first.getByTestId("approval-saved")).toBeVisible();
 
     await second.getByTestId("approval-mode-conditional").check();
@@ -430,6 +453,74 @@ test("dos pestañas del Dueño: la segunda en guardar recibe el aviso de que otr
   } finally {
     await second.close();
   }
+});
+
+test("«Siempre» pide confirmar: cancelar o Escape no guardan nada, confirmar sí; el teclado llega a los botones", async () => {
+  test.setTimeout(240_000);
+  const page = ownerPage;
+  // Parte de «Nunca» (la regla vigente no es «Siempre»)
+  await chooseAndSave(page, "never");
+  const versionsBefore = () =>
+    withDb(async (db) =>
+      Number(
+        (
+          await db.query<{ n: string }>(
+            "select count(*) as n from public.approval_rules where tenant_id = $1",
+            [tenantId],
+          )
+        ).rows[0].n,
+      ),
+    );
+  const before = await versionsBefore();
+
+  await page.goto(ruleUrl());
+  await page.getByTestId("approval-mode-always").check();
+  await page.getByTestId("approval-save").click();
+  const confirm = page.getByTestId("approval-confirm");
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText("ninguna cotización podrá enviarse —tampoco las tuyas—");
+  await expect(page.getByTestId("approval-saved")).toHaveCount(0);
+  // el foco queda en «Cancelar» (lo menos destructivo) y Escape devuelve al botón de guardar
+  await expect(page.getByTestId("approval-confirm-cancel")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(page.getByTestId("approval-save")).toBeFocused();
+  expect(await versionsBefore()).toBe(before);
+
+  // Cancelar con el botón tampoco guarda; cambiar de opción cierra la pregunta
+  await page.getByTestId("approval-save").click();
+  await page.getByTestId("approval-confirm-cancel").click();
+  await expect(confirm).toHaveCount(0);
+  await page.getByTestId("approval-save").click();
+  await page.getByTestId("approval-mode-never").check();
+  await expect(confirm).toHaveCount(0);
+  await page.getByTestId("approval-mode-always").check();
+  expect(await versionsBefore()).toBe(before);
+
+  // Con el teclado: Tab pasa de «Cancelar» a «Sí, guardar», Enter guarda
+  await page.getByTestId("approval-save").click();
+  await page.keyboard.press("Tab");
+  await expect(page.getByTestId("approval-confirm-always")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("approval-saved")).toBeVisible();
+  expect(await versionsBefore()).toBe(before + 1);
+
+  // Ya está en «Siempre»: guardar de nuevo no vuelve a preguntar
+  await page.getByTestId("approval-save").click();
+  await expect(confirm).toHaveCount(0);
+  await expect(page.getByTestId("approval-saved")).toContainText("no hay cambios que guardar");
+
+  // En teléfono la pregunta cabe y sus botones miden al menos 44 px
+  await chooseAndSave(page, "never");
+  await page.setViewportSize(MOBILE);
+  await page.goto(ruleUrl());
+  await page.getByTestId("approval-mode-always").check();
+  await page.getByTestId("approval-save").click();
+  await expect(confirm).toBeVisible();
+  expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+  expect(await heightOf(page, "approval-confirm-cancel")).toBeGreaterThanOrEqual(MIN_TOUCH_PX);
+  expect(await heightOf(page, "approval-confirm-always")).toBeGreaterThanOrEqual(MIN_TOUCH_PX);
+  await page.setViewportSize(DESKTOP);
 });
 
 test("sin conexión: aviso claro, lo escrito se conserva y al volver se guarda", async () => {

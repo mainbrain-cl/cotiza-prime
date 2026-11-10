@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeApprovalReasons, describeApprovalRule } from "./describe";
+import { APPROVAL_RULE_HELP, describeApprovalReasons, describeApprovalRule } from "./describe";
 import type { ApprovalRule } from "./rule";
 
 const rule = (over: Partial<ApprovalRule>): ApprovalRule => ({
@@ -97,5 +97,14 @@ describe("describeApprovalReasons: por qué ESTA cotización necesita aprobació
   });
   it("sin motivos, vacío", () => {
     expect(describeApprovalReasons(rule({ mode: "never" }), [], metrics)).toBe("");
+  });
+});
+
+describe("el texto de ayuda de la regla", () => {
+  it("aclara qué cuenta como descuento y qué no", () => {
+    expect(APPROVAL_RULE_HELP).toContain("El total incluye IVA.");
+    expect(APPROVAL_RULE_HELP).toContain(
+      "Cambiar el precio de un servicio no cuenta como descuento",
+    );
   });
 });

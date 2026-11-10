@@ -7,7 +7,8 @@
 > está en «Decisiones por defecto aplicadas al construir (2026-11-10)», al final.
 >
 > **Migraciones:** `20261110110000_approval_rules.sql` (H-040a) y `20261110120000_approval_send_gate.sql` (H-040b), cada una con su
-> deshacer en `supabase/rollbacks/`. Se dejó libre `20261110100000` para H-004a; la `20261109130000` la reserva el PR #38.
+> deshacer en `supabase/rollbacks/`. La `20261109130000` la reserva el PR #38. **Si H-040 entra antes que H-004a, H-004a toma una
+> fecha posterior a `20261110120000`** (se quita la reserva de `20261110100000`: ya no hace falta).
 
 **Actualización del 2026-11-04 (histórica).** Se verificaron las premisas contra `main` (sección «Verificación del
 2026-11-04», al final) y José decidió **D1, D3 y D4 con los supuestos del diseño** (§11). La D2 quedó entonces con Aarón; la
@@ -269,6 +270,27 @@ a mano en vez de dar descuento (lo cubren H-041 y el margen); una organización 
 «Siempre» queda sin poder enviar (aviso en pantalla, depende de D2); la lógica del disparador queda «escondida»
 (se documenta en la cabecera de la migración y en el plan del sprint 6).
 
+**Riesgos aceptados al construir (revisión adversarial del 2026-11-10), para que Aarón decida:**
+
+- **Bajar el precio a mano no cuenta como descuento (I2).** `save_quote_draft` acepta `unit_price_clp` desde el navegador y H-041
+  (precios bloqueados) aún no está construida: quien arma la cotización puede escribir un precio menor al del catálogo y la regla
+  de descuento no lo ve. La pantalla lo dice («Cambiar el precio de un servicio no cuenta como descuento»). **Alternativa, no
+  implementada:** contar la rebaja contra `quote_items.catalog_unit_price_clp` como parte del descuento. Decisión de Aarón.
+- **Una cuenta de Administrador puede mover la regla sin que el Dueño se entere (I3).** Un Administrador (o su cuenta robada)
+  puede poner la regla en «Nunca», enviar y devolverla, o ponerla en «Siempre» y bloquear al Dueño. No hay aviso por correo hasta
+  H-047 (D8). El rastro queda en el registro de actividad (`approval_rule.updated`, con la regla anterior y la nueva) y en
+  `quote_packages.approval_rule_id` de cada envío.
+- **«Siempre» frena todos los envíos hasta el sprint 6 (I1).** Tampoco puede enviar el Dueño. La pantalla lo dice en claro, pide
+  confirmar antes de guardar «Siempre» y `/enviar` no sugiere «ajustar la cotización» en ese caso.
+- **Quién lee la regla (M7).** El criterio original decía «solo el Dueño y los Administradores la ven»; por D10 y por H-040b, todo
+  miembro la lee por la API y el Comercial ve el umbral en el motivo de `/enviar`. Consecuencia que Aarón debe conocer: el umbral
+  (por ejemplo, $2.000.000) no es secreto para el equipo de venta.
+
+**Para más adelante (M9):** (a) M18, la retención y el borrado de una organización cancelada, necesitará una excepción en
+`approval_rules` como la de `audit_log` (`app.retention_purge`), porque hoy la tabla no permite borrar ni con la llave maestra;
+(b) deshacer **solo** la migración 2 (`approval_send_gate`) deja la regla visible y configurable, pero la base ya no la aplica: el
+orden correcto es deshacer 2 y después 1, y el aviso de la pantalla no sabe distinguirlo.
+
 **No hacer:** guardar la regla como columnas editables de `tenants` ni dar permisos de edición a
 `authenticated` · permitir editar o borrar versiones ni «para corregir» · evaluar solo en la pantalla o solo en
 TypeScript · usar totales del navegador · evaluar en `confirm_email_dispatch` · decimales flotantes para el
@@ -338,3 +360,10 @@ Dónde la construcción se aparta del texto de arriba o lo precisa. Cada punto e
 12. **`scripts/check-rollbacks.mjs`:** la fila de prueba de `quote_packages` lleva ahora `approval_rule_id`.
 13. **No se construyó:** el aviso por correo al Dueño cuando un Administrador cambia la regla (D8, llega con H-047), la excepción
     por persona, la regla por margen, ni «Solicitar aprobación» (sprint 6, que además debe cambiar el disparador del envío).
+14. **Revisión adversarial (2026-11-10):** los deshacer traen el verificador de `lock_timeout` (guardia 15 del PR #38); «Siempre» pide
+    confirmación antes de guardarse y se explica en la pantalla y en `/enviar` (I1); el texto de ayuda aclara que cambiar el precio
+    no es un descuento (I2); el aviso «Hoy solo tú puedes aprobar» dice que depende de que llegue la solicitud de aprobación (M4);
+    `approval_required` ya no se registra como advertencia del servidor (M6).
+15. **La migración `approval_send_gate` se deja en un solo archivo** (M2): en una transacción los bloqueos se sueltan al confirmar,
+    así que reordenar la columna, el relleno, la relación y el `not null` no acorta el `ACCESS EXCLUSIVE` sobre `quote_packages`; solo
+    archivos separados lo harían. Se anotó en `modelo-datos.md` §9.4 para aplicarla sobre la base vacía.

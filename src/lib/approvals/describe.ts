@@ -8,7 +8,7 @@ import type { ApprovalMetrics, ApprovalReason, ApprovalRule } from "./rule";
 
 /** Texto de ayuda fijo, debajo de las opciones. */
 export const APPROVAL_RULE_HELP =
-  "El total incluye IVA. El descuento suma los descuentos de cada línea y el descuento general, sobre el valor antes de descuentos.";
+  "El total incluye IVA. El descuento suma los descuentos de cada línea y el descuento general, sobre el valor antes de descuentos. Cambiar el precio de un servicio no cuenta como descuento.";
 
 /** Aviso fijo del formulario. */
 export const APPROVAL_RULE_SCOPE_NOTE =

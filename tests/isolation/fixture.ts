@@ -482,7 +482,7 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     orgs[key].snippets = await buildSnippetsData(orgs[key], personas[owners[key]], key);
   }
   // La regla de aprobación de A y de B (H-040), por el camino legítimo (la función con el pase de la dueña). Va DESPUÉS de las
-  // cotizaciones enviadas: lo que la fixture envía con `pg` no pasa por la regla, y nada la manda a otra cosa que a lo que ya hay.
+  // cotizaciones enviadas: lo que la fixture envía con `pg` sí pasa por el disparador del envío, pero con la regla «Nunca» de entonces; después la regla cambia y esos paquetes quedan anotados con la versión 1.
   for (const key of ["A", "B"] as const) {
     orgs[key].approval = await buildApprovalData(orgs[key], personas[owners[key]], key);
   }

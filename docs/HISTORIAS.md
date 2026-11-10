@@ -709,7 +709,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 - [ ] Puedo combinar monto y descuento (basta con que se cumpla una)
 - [ ] Veo en una frase cómo quedó la regla ("Se pide aprobación si el total supera $2.000.000 o el descuento supera 10%")
 - [ ] La regla es de la organización y aplica a todos los que envían, también al Dueño y a los Administradores; si nadie más puede aprobar, la pantalla me lo avisa
-- [ ] Solo el Dueño y los Administradores la ven y la cambian; cada cambio queda con quién y cuándo, y el registro de actividad cuenta cómo era antes y cómo es ahora
+- [ ] El Dueño y los Administradores la ven y la cambian en Configuración; los demás roles no tienen esa pantalla, pero el servidor les deja leer la regla (el Comercial ve el motivo en la pantalla de enviar). Cada cambio queda con quién y cuándo, y el registro de actividad cuenta cómo era antes y cómo es ahora
 - [ ] Si dos personas editan a la vez, la segunda recibe un aviso y no pisa el cambio de la primera
 
 **Prioridad:** núcleo

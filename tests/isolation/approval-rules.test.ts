@@ -293,7 +293,8 @@ describe("Ataque 5 · lectura", () => {
       const res = await rest(token, "approval_rules?select=*", { headers: headersA });
       expect(res.status, persona).toBe(200);
       const rows = res.json as { tenant_id: string; amount_threshold_clp: number | null }[];
-      expect(rows.length, persona).toBeGreaterThanOrEqual(2);
+      // Ex puede haber sido quitada de A por otra prueba que corre a la vez: entonces no ve nada (nunca algo de B).
+      if (persona !== "ex") expect(rows.length, persona).toBeGreaterThanOrEqual(2);
       expect(
         rows.every((r) => r.tenant_id === fx.orgs.A.tenantId),
         persona,

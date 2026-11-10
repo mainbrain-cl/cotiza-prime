@@ -75,8 +75,13 @@ describe("los archivos", () => {
       expect(code(sql).match(/set\s+local\s+lock_timeout/gi)).toHaveLength(1);
       expect(code(sql)).not.toMatch(/^\s*(begin|commit)\s*;/im);
     }
-    for (const sql of [upA, upB])
-      expect(code(sql)).toContain("current_setting('lock_timeout') <> '3s'");
+    // Desde 20261109130000 (PR #38) también los deshacer traen, como segunda sentencia, el verificador de `lock_timeout`.
+    for (const sql of [upA, upB, downA, downB]) {
+      const second = code(sql).split(";").slice(1).join(";").trimStart();
+      expect(second).toMatch(
+        /^do \$\$ begin\s+if current_setting\('lock_timeout'\) <> '3s' then\s+raise exception [\s\S]*?;\s+end if;/i,
+      );
+    }
   });
 
   it("AR2 · toda función de las migraciones que corre con permisos elevados fija `search_path` y usa nombres con esquema", () => {

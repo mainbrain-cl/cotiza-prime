@@ -9,6 +9,12 @@
 set local lock_timeout = '3s';
 
 do $$ begin
+  if current_setting('lock_timeout') <> '3s' then
+    raise exception 'el deshacer 20261110110000 no puede seguir: lock_timeout no quedo en 3s (vale %); aplique el archivo dentro de una transaccion', current_setting('lock_timeout');
+  end if;
+end $$;
+
+do $$ begin
   if exists (
        select 1 from information_schema.columns
         where table_schema = 'public' and table_name = 'quote_packages' and column_name = 'approval_rule_id') then

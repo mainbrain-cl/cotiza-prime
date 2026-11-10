@@ -1,6 +1,15 @@
 "use client";
 
-import { useId, useMemo, useState, useTransition, type FormEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { CheckCircle2, Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, FormAlert, Input } from "@/components/ui/form-controls";
@@ -37,6 +46,8 @@ const MODE_OPTIONS: readonly { value: ApprovalMode; title: string; text: string 
 
 const OFFLINE_SAVE_MESSAGE =
   "No pudimos conectar con el servidor. Revisa tu conexión e intenta de nuevo: lo que escribiste sigue aquí.";
+const ALWAYS_WARNING =
+  "Con «Siempre», ninguna cotización podrá enviarse —tampoco las tuyas— hasta que llegue la solicitud de aprobación.";
 const AMOUNT_HINT = "Pide aprobación si el total, con IVA, es mayor. Por ejemplo, 2.000.000.";
 const DISCOUNT_HINT =
   "Pide aprobación si el descuento es mayor. Por ejemplo, 10 o 12,5. Con 0, cualquier descuento la pide.";
@@ -60,6 +71,16 @@ export function ApprovalRuleForm({
   const [amount, setAmount] = useState(initial.amount);
   const [discount, setDiscount] = useState(initial.discount);
   const conditionId = useId();
+  // «Siempre» frena todos los envíos hasta que llegue la solicitud de aprobación: se pide confirmarlo antes de guardar.
+  const [savedMode, setSavedMode] = useState<ApprovalMode>(initial.mode);
+  const [confirming, setConfirming] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const saveRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmTitleId = useId();
+  useEffect(() => {
+    if (confirming) cancelRef.current?.focus();
+  }, [confirming]);
 
   // Tras guardar, la versión siguiente; antes, la que trajo la pantalla.
   const expectedVersion = state.status === "saved" && state.version ? state.version : version;
@@ -77,17 +98,41 @@ export function ApprovalRuleForm({
 
   // Se guarda con una acción llamada a mano (no con `action` del formulario): si no hay conexión la llamada falla, y eso se
   // cuenta aquí con lo escrito intacto, en vez de caer en la pantalla de error de la organización.
-  function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (pending) return;
-    const data = new FormData(event.currentTarget);
+  function save(form: HTMLFormElement) {
+    const data = new FormData(form);
+    setConfirming(false);
     startTransition(async () => {
       try {
-        setState(await saveApprovalRuleAction(tenantId, INITIAL_APPROVAL_STATE, data));
+        const result = await saveApprovalRuleAction(tenantId, INITIAL_APPROVAL_STATE, data);
+        if (result.status === "saved" && result.values)
+          setSavedMode(result.values.mode as ApprovalMode);
+        setState(result);
       } catch {
         setState({ status: "error", message: OFFLINE_SAVE_MESSAGE });
       }
     });
+  }
+
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pending) return;
+    if (mode === "always" && savedMode !== "always") {
+      setConfirming(true);
+      return;
+    }
+    save(event.currentTarget);
+  }
+
+  function cancelConfirm() {
+    setConfirming(false);
+    saveRef.current?.focus();
+  }
+
+  function onConfirmKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      cancelConfirm();
+    }
   }
 
   const errors = state.status === "error" ? (state.fieldErrors ?? {}) : {};
@@ -100,7 +145,7 @@ export function ApprovalRuleForm({
       (state.values?.amount === amount && state.values?.discount === discount));
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
+    <form ref={formRef} onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
       <OfflineNotice />
       <input type="hidden" name="expectedVersion" value={expectedVersion} />
       {state.status === "error" && state.message ? (
@@ -149,8 +194,13 @@ export function ApprovalRuleForm({
                 name="mode"
                 value={option.value}
                 checked={mode === option.value}
-                onChange={() => setMode(option.value)}
-                aria-controls={option.value === "conditional" ? conditionId : undefined}
+                onChange={() => {
+                  setMode(option.value);
+                  setConfirming(false);
+                }}
+                aria-controls={
+                  option.value === "conditional" && mode === "conditional" ? conditionId : undefined
+                }
                 data-testid={`approval-mode-${option.value}`}
                 className="peer absolute inset-0 size-full cursor-[inherit] appearance-none rounded-md outline-none"
               />
@@ -256,26 +306,63 @@ export function ApprovalRuleForm({
           <FormAlert tone="warning">
             <span className="inline-flex items-start gap-2">
               <ShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-              <span>
-                Por ahora, una cotización que cumpla la regla no se puede enviar: la solicitud de
-                aprobación llega pronto. Quien la armó puede ajustarla (por ejemplo, bajar el
-                descuento) para que salga.
+              <span data-testid={mode === "always" ? "approval-always-warning" : undefined}>
+                {mode === "always"
+                  ? ALWAYS_WARNING
+                  : "Por ahora, una cotización que cumpla la regla no se puede enviar: la solicitud de aprobación llega pronto. Quien la armó puede ajustarla (por ejemplo, bajar el descuento) para que salga."}
               </span>
             </span>
           </FormAlert>
           {onlyApproverIsYou ? (
             <FormAlert tone="warning">
               <span data-testid="approval-only-you">
-                Hoy solo tú puedes aprobar; tus cotizaciones que cumplan la regla no podrán salir
-                hasta que invites a otra persona.
+                Hoy solo tú puedes aprobar. Cuando llegue la solicitud de aprobación, tus
+                cotizaciones que cumplan la regla no podrán salir hasta que invites a otra persona.
               </span>
             </FormAlert>
           ) : null}
         </div>
       ) : null}
 
+      {confirming ? (
+        <div
+          role="alertdialog"
+          aria-labelledby={confirmTitleId}
+          data-testid="approval-confirm"
+          onKeyDown={onConfirmKeyDown}
+          className="flex flex-col gap-3 rounded-lg border border-warning bg-warning-soft px-4 py-4"
+        >
+          <p id={confirmTitleId} className="text-sm font-semibold text-warning">
+            ¿Guardar «Siempre»?
+          </p>
+          <p className="text-sm text-fg">{ALWAYS_WARNING}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              ref={cancelRef}
+              type="button"
+              variant="secondary"
+              size="lg"
+              data-testid="approval-confirm-cancel"
+              onClick={cancelConfirm}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              disabled={pending}
+              data-testid="approval-confirm-always"
+              onClick={() => formRef.current && save(formRef.current)}
+            >
+              Sí, guardar «Siempre»
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       <div>
         <Button
+          ref={saveRef}
           type="submit"
           size="lg"
           disabled={pending}

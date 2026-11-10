@@ -3,6 +3,8 @@
  * Puro, sin base de datos. Las acciones nuevas que aún no tengan nombre se muestran con su código.
  */
 
+import { describeApprovalRule } from "@/lib/approvals/describe";
+import { isApprovalMode, type ApprovalRule } from "@/lib/approvals/rule";
 import { roleLabel } from "@/lib/permissions/matrix";
 
 /** Acciones que el registro de la organización sabe nombrar, en el orden del selector. */
@@ -31,6 +33,7 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "invitation.updated": "Cambió una invitación",
   "invitation.resent": "Se reenvió una invitación",
   "invitation.revoked": "Se canceló una invitación",
+  "approval_rule.updated": "Cambió la regla de aprobación",
   "text_snippet.created": "Se creó un texto guardado",
   "text_snippet.updated": "Se cambió un texto guardado",
   "text_snippet.deleted": "Se eliminó un texto guardado",
@@ -48,6 +51,7 @@ const RESOURCE_LABELS: Readonly<Record<string, string>> = {
   quote: "Cotización",
   invitation: "Invitación",
   text_snippet: "Texto guardado",
+  approval_rule: "Regla de aprobación",
 };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
@@ -174,6 +178,16 @@ export function describeAuditDetails(details: unknown): string | null {
   return `Cambió: ${names.join(", ")}`;
 }
 
+/** La regla de aprobación guardada en un registro (`old` o `new`); `null` si la forma no es la esperada. */
+function approvalRuleOf(value: unknown): ApprovalRule | null {
+  if (!isRecord(value) || !isApprovalMode(value.mode)) return null;
+  const amount = value.amount_threshold_clp;
+  const discount = value.discount_threshold_bp;
+  if (amount !== null && typeof amount !== "number") return null;
+  if (discount !== null && typeof discount !== "number") return null;
+  return { mode: value.mode, amountThresholdClp: amount, discountThresholdBp: discount };
+}
+
 /**
  * La frase del detalle de un registro. Para cambiar el rol de un miembro o quitarlo dice **a quién** afectó
  * («Quitó a María Pérez del equipo»): con la decisión de no mandar correos, el registro es lo único que se lo
@@ -200,6 +214,14 @@ export function describeAuditEntry(entry: {
     // Sin nombre: «Quitó a una persona del equipo» (sin repetir «del equipo»).
     const sentence = named ? `Quitó a ${named} del equipo` : `Quitó a ${UNKNOWN_SUBJECT}`;
     return [sentence, cancelledNote(details)].filter(Boolean).join(" · ");
+  }
+  if (entry.action === "approval_rule.updated") {
+    // Montos y porcentajes, nunca datos personales: se cuenta la regla de antes y la de ahora con la misma frase de la pantalla.
+    const before = approvalRuleOf(details.old);
+    const after = approvalRuleOf(details.new);
+    if (before && after) {
+      return `Antes: ${describeApprovalRule(before)} Ahora: ${describeApprovalRule(after)}`;
+    }
   }
   return describeAuditDetails(entry.details);
 }

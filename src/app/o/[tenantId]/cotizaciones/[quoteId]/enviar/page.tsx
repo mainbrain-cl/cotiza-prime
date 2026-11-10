@@ -4,6 +4,11 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
+import { loadCurrentApprovalRule } from "@/lib/approvals/queries";
+import {
+  APPROVAL_RULE_UNAVAILABLE_MESSAGE,
+  approvalBlockMessage,
+} from "@/lib/approvals/send-block";
 import { maskEmail } from "@/lib/customers/mask";
 import { getCustomer } from "@/lib/customers/queries";
 import { resolvePdfBrand } from "@/lib/pdf/brand-colors";
@@ -41,12 +46,23 @@ export default async function SendQuotePage({
 
   const customer = await getCustomer(active, quote.customer_id);
   const context = await loadSendContext(active);
+  // La regla de aprobación de la organización (H-040b): la lee cualquier miembro. Si no se puede leer, no se deja enviar.
+  const approvalRule = await loadCurrentApprovalRule(active);
   const customerName =
     customer === null || customer === "unreadable" ? "Cliente" : customer.displayName;
   const customerEmail =
     customer !== null && customer !== "unreadable" ? (customer.email ?? null) : null;
 
   // Lo que impide enviar, dicho con claridad (la acción de enviar lo vuelve a verificar).
+  const approvalBlock =
+    approvalRule.status === "ok"
+      ? approvalBlockMessage(approvalRule.current.rule, {
+          subtotalClp: quote.subtotal_clp,
+          lineDiscountsClp: quote.line_discounts_clp,
+          globalDiscountClp: quote.global_discount_clp,
+          totalClp: quote.total_clp,
+        })
+      : null;
   let blocker: string | null = null;
   if (quote.created_by !== active.userId) {
     blocker = `Solo ${authorName} puede enviar este borrador. Tú puedes verlo.`;
@@ -57,6 +73,10 @@ export default async function SendQuotePage({
   } else if (!customerEmail) {
     blocker =
       "Este cliente no tiene correo. Agrégalo en su ficha para poder enviarle la cotización.";
+  } else if (approvalRule.status !== "ok") {
+    blocker = APPROVAL_RULE_UNAVAILABLE_MESSAGE;
+  } else if (approvalBlock) {
+    blocker = approvalBlock;
   } else if (context === null) {
     blocker = "No pudimos cargar los datos de tu organización. Intenta de nuevo en unos minutos.";
   }

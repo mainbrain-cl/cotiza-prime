@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { encryptPii } from "@/lib/crypto/pii";
 import { searchHash } from "@/lib/crypto/search-hash";
+import { approvalPrepareError } from "@/lib/approvals/send-block";
 import { getCustomer } from "@/lib/customers/queries";
 import { BASIC_FORMAT_ERROR_MESSAGES, parseBasicFormat } from "@/lib/email/basic-format";
 import { buildQuoteEmail, MAX_PDF_BYTES } from "@/lib/email/quote-email";
@@ -147,7 +148,9 @@ function prepareErrorMessage(error: SupabaseError): string {
     case SQLSTATE_NOT_FOUND:
       return MSG_NOT_FOUND;
     case SQLSTATE_NOT_ALLOWED:
-      return MSG_NOT_DRAFT;
+      // La regla de aprobación (H-040b) rechaza con el mismo código que "ya no está en borrador": se distingue por el
+      // motivo, y ANTES del mensaje general.
+      return approvalPrepareError(message) ?? MSG_NOT_DRAFT;
     case SQLSTATE_CONFLICT:
       return message.startsWith("send_in_progress") ? MSG_IN_PROGRESS_OTHER : MSG_CHANGED;
     case SQLSTATE_INVALID:

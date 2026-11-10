@@ -20,13 +20,13 @@ vi.mock("@/lib/tenant/active-tenant", () => ({
   })),
 }));
 
+const { saveApprovalRuleAction } = await import("./actions");
 const {
-  saveApprovalRuleAction,
   APPROVAL_CONFLICT_MESSAGE,
   APPROVAL_GENERIC_FAILURE,
   APPROVAL_SAVED_MESSAGE,
   APPROVAL_UNCHANGED_MESSAGE,
-} = await import("./actions");
+} = await import("./messages");
 const { INITIAL_APPROVAL_STATE } = await import("./form-state");
 
 const logged: string[] = [];

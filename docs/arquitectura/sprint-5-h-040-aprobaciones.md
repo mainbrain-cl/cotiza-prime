@@ -1,20 +1,17 @@
 # H-040 · Configurar cuándo se exige aprobación (M09) — plan de construcción
 
-> **Estado: diseño del `planificador` (Opus), 2026-11-02. Sin construir.** Es una historia 🔒 delicada (controla
-> qué sale al cliente): por la decisión 020 §5 su PR queda abierto hasta que Aarón lo revise. Las decisiones
-> D1 a D12 (§11) llevan un supuesto por defecto; las que bloquean la construcción están marcadas. La decisión 15
-> (quién puede enviar directo) sigue siendo de Aarón.
+> **Estado: construida el 2026-11-10 (rama `feat/h-040-aprobaciones`), en dos partes que entran juntas a `main`: H-040a
+> (regla, función que decide y pantalla) y H-040b (control en el envío). El PR queda abierto hasta que Aarón lo revise** (es una
+> historia 🔒 delicada: controla qué sale al cliente; decisión 020 §5). Diseño del `planificador` (Opus) del 2026-11-02;
+> D1, D3 y D4 decididas por José el 2026-11-04; **D2 (decisión 15) resuelta por Aarón** (ver §11). Lo que cambió al construir
+> está en «Decisiones por defecto aplicadas al construir (2026-11-10)», al final.
 >
-> **Antes de construir:** las fechas de las migraciones se asignan en ese momento. Cada migración debe tener
-> fecha **única** y posterior a la última integrada en `main` (`20261102100000` ya la usa el pendiente m11 de
-> H-092).
->
-> **Actualización del 2026-11-04.** Se verificaron las premisas contra `main` (sección «Verificación del
-> 2026-11-04», al final) y José decidió **D1, D3 y D4 con los supuestos del diseño** (§11). Queda abierta solo la
-> **D2 (decisión 15, de Aarón)**: **no impide construir**, porque la tabla de la regla no cambia con ninguna de sus
-> respuestas (§5), pero el PR queda abierto hasta que Aarón la responda. La fecha de migración que se había
-> reservado (`20261102120000`) quedó por detrás de la de H-009 (`20261103100000`): la propuesta nueva es
-> `20261104120000`, y se confirma al construir con la regla de siempre (única y posterior a la última de `main`).
+> **Migraciones:** `20261110110000_approval_rules.sql` (H-040a) y `20261110120000_approval_send_gate.sql` (H-040b), cada una con su
+> deshacer en `supabase/rollbacks/`. Se dejó libre `20261110100000` para H-004a; la `20261109130000` la reserva el PR #38.
+
+**Actualización del 2026-11-04 (histórica).** Se verificaron las premisas contra `main` (sección «Verificación del
+2026-11-04», al final) y José decidió **D1, D3 y D4 con los supuestos del diseño** (§11). La D2 quedó entonces con Aarón; la
+fecha de migración que se había reservado (`20261102120000`) quedó por detrás de la de H-009 y se reemplazó por las dos de arriba.
 
 **En pocas palabras.** Hoy no hay ningún lugar donde se guarde una regla de aprobación, y el envío no revisa
 nada: cualquier cotización sale directo. Se proponen cuatro piezas:
@@ -141,7 +138,7 @@ descuentos de cada línea y el descuento general, sobre el valor antes de descue
 
 ## 5. Decisión 15: quién puede enviar directo
 
-Supuesto: **por organización, con excepción por persona**. La excepción no se construye ahora; para no cerrarle
+**Resuelto por Aarón: por organización, con excepción por persona más adelante.** La excepción no se construye ahora; para no cerrarle
 el paso, la tabla de la regla **no tiene columnas de rol ni de persona** y todo pasa por
 `app.quote_approval_check`, que conoce al autor. La excepción futura sería una tabla aparte
 `approval_rule_exemptions (tenant_id, member_id, …)` más una columna en `quote_packages` que registre la
@@ -251,7 +248,9 @@ aplica. PR delicado: queda abierto hasta que Aarón lo revise; después, el `rev
    Supuesto: sí. Lo que cumple la regla no sale; como parte en «Nunca», nada cambia si nadie la toca. La
    alternativa (guardar sin aplicar) da una falsa sensación de control. Bloquea el paso 4. **Decidida por José el 2026-11-04: sí, se aplica desde ya.**
 2. **D2 · ¿A quién aplica?** (decisión 15, de Aarón). Supuesto: a todos los que envían, incluidos Dueño y
-   Administrador, con el aviso de «nadie más puede aprobar». **Pendiente de Aarón: no impide construir (§5), sí mezclar.**
+   Administrador, con el aviso de «nadie más puede aprobar». **Resuelta por Aarón: la regla de aprobación es POR
+   ORGANIZACIÓN y aplica a TODOS los que envían, incluido el Dueño y el Administrador (con el aviso de «nadie más puede aprobar»
+   cuando corresponda). La excepción por persona viene después** (§5: tabla aparte, sin tocar `approval_rules`). Se construyó así.
 3. **D3 · ¿El monto se compara con el total con IVA o con el neto?** Supuesto: total con IVA. **Decidida por José el 2026-11-04: total con IVA.**
 4. **D4 · ¿Qué cuenta como descuento?** Supuesto: descuentos de línea más el general, sobre el valor antes de
    descuentos y sin IVA (no las rebajas de precio respecto del catálogo). **Decidida por José el 2026-11-04: ese criterio.**
@@ -261,7 +260,7 @@ redondear el porcentaje a dos decimales antes de comparar (sí) · D7 regla de l
 «Nunca» (el paso 10 del onboarding la cambiará) · D8 aviso por correo al Dueño cuando un Administrador cambia
 la regla (no por ahora; llega con H-047) · D9 permiso propio (no; `settings.manage`) · D10 los demás roles ven
 la regla (no tienen pantalla; el Comercial ve el motivo al enviar) · D11 para el sprint 6: autoaprobación (no) y
-solicitud pendiente si la regla se relaja (se mantiene) · D12 partir H-040 en a y b en `HISTORIAS.md` (sí).
+solicitud pendiente si la regla se relaja (se mantiene) · D12 partir H-040 en a y b en `HISTORIAS.md` (sí; hecho el 2026-11-10: `HISTORIAS.md` tiene H-040a y H-040b).
 
 ## 12. Riesgos y qué NO hacer
 
@@ -302,3 +301,40 @@ Contrastado con `origin/main` (última migración `20261102100000`; H-009 trae `
 - **Sigue sin poder verificarse:** la implementación de H-041 (no está construida) y por tanto cómo reescribe
   `prepare_quote_send`; por eso el control va en un disparador de `quote_packages` (§7) y no en esa función.
 
+## Decisiones por defecto aplicadas al construir (2026-11-10)
+
+Dónde la construcción se aparta del texto de arriba o lo precisa. Cada punto es un supuesto que Aarón puede revertir.
+
+1. **Dos migraciones, no una.** `20261110110000_approval_rules` (H-040a: tabla, versión 1, disparador de `tenants`, funciones
+   `app.approval_*`, `app.quote_approval_check` y `set_approval_rule`) y `20261110120000_approval_send_gate` (H-040b: columna
+   `quote_packages.approval_rule_id` y disparador del envío). Cada una con su deshacer; las dos entran juntas a `main`.
+2. **Sin `approvals.configure`:** se reutiliza `settings.manage` (D9) y no se tocó la matriz ni `permissions-parity.test.ts`.
+3. **`app.quote_approval_check` devuelve además `mode` y `metrics`** (`total_clp`, `discount_clp`, `discount_bp`), para que las
+   pruebas comparen las cifras y el sprint 6 las reutilice. Sin la regla, rechaza con `approval_rule_missing` (CP423).
+4. **Candado:** `set_approval_rule` toma el candado **exclusivo** `approval_rule:{organización}` y el disparador del envío toma el
+   **compartido**: dos envíos no se esperan entre sí, pero un cambio de regla espera a que termine el envío en curso, y el
+   paquete queda anotado con la versión que de verdad rigió (probado con dos conexiones en los dos órdenes).
+5. **El disparador del envío no evalúa una cotización que no existe en esa organización:** deja que la relación compuesta
+   rechace la fila (23503), como ya hace `quote_packages_set_revision` (una prueba anterior lo exige).
+6. **El error del envío lleva los motivos en `detail`** (`amount`, `discount`, `always`); la aplicación igual arma su frase con la
+   función de TypeScript y el mensaje se distingue del «ya no está en borrador» por el motivo (`approval_required`), revisado
+   antes del CP423 genérico (`approvalPrepareError` en `src/lib/approvals/send-block.ts`).
+7. **Alcance que se ve y no estaba en el diseño:** la pantalla de la regla avisa, cuando la regla no es «Nunca»: «Por ahora, una
+   cotización que cumpla la regla no se puede enviar: la solicitud de aprobación llega pronto. Quien la armó puede ajustarla (por
+   ejemplo, bajar el descuento) para que salga.» Es la consecuencia directa de D1 (sin «Solicitar aprobación» todavía) y se dice
+   en claro. El aviso de «Hoy solo tú puedes aprobar» sale solo si quien configura puede aprobar y hay menos de dos miembros
+   activos con ese permiso.
+8. **Guardar se llama a mano** (no con `action` del formulario): sin conexión, la llamada falla, el aviso lo cuenta y lo escrito
+   queda en pantalla (cuarto estado del diseño). «Último cambio» dice «Todavía nadie ha cambiado esta regla.» mientras rija la
+   versión 1 del sistema.
+9. **Registro de actividad:** `approval_rule.updated` (recurso «Regla de aprobación») cuenta el cambio con la misma frase de la
+   pantalla: «Antes: … Ahora: …». La auditoría guarda montos y porcentajes, nunca datos personales.
+10. **Los deshacer se niegan a perder la prueba de qué regla regía un envío:** el de H-040b si algún paquete apunta a una versión
+    creada por una persona, y el de H-040a si hay versiones creadas por personas o si la columna del paquete sigue existiendo.
+    Consecuencia en desarrollo: las pruebas de base dejan versiones de personas confirmadas en la base local; `test:db:rollbacks`
+    vacía la base antes, como ya hace con los demás registros legales.
+11. **La fixture de aislamiento** deja la regla de A en «según el monto» con $7.654.321 y la de B con $1.234.567 (canario numérico
+    de la regla); lo que la fixture envía con `pg` ocurre antes y no pasa por la regla.
+12. **`scripts/check-rollbacks.mjs`:** la fila de prueba de `quote_packages` lleva ahora `approval_rule_id`.
+13. **No se construyó:** el aviso por correo al Dueño cuando un Administrador cambia la regla (D8, llega con H-047), la excepción
+    por persona, la regla por margen, ni «Solicitar aprobación» (sprint 6, que además debe cambiar el disparador del envío).

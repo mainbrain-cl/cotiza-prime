@@ -91,11 +91,13 @@ export function ApprovalRuleForm({
   }
 
   const errors = state.status === "error" ? (state.fieldErrors ?? {}) : {};
+  // «Guardada» se muestra mientras lo que está en pantalla sea lo que se guardó. Los montos solo cuentan en «según el monto o el
+  // descuento»: en las otras dos opciones los campos ni se ven ni se envían.
   const showSaved =
     state.status === "saved" &&
     state.values?.mode === mode &&
-    state.values?.amount === amount &&
-    state.values?.discount === discount;
+    (mode !== "conditional" ||
+      (state.values?.amount === amount && state.values?.discount === discount));
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>

@@ -8,6 +8,12 @@ import { requirePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import type { ApprovalSaveState } from "./form-state";
+import {
+  APPROVAL_CONFLICT_MESSAGE,
+  APPROVAL_GENERIC_FAILURE,
+  APPROVAL_SAVED_MESSAGE,
+  APPROVAL_UNCHANGED_MESSAGE,
+} from "./messages";
 import { approvalRuleSchema } from "./schemas";
 
 /**
@@ -20,13 +26,6 @@ import { approvalRuleSchema } from "./schemas";
 const SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
 const SQLSTATE_CONFLICT = "CP409";
 const SQLSTATE_INVALID = "CP422";
-
-export const APPROVAL_CONFLICT_MESSAGE =
-  "Otra persona cambió la regla mientras la editabas. Recarga para ver la vigente.";
-export const APPROVAL_UNCHANGED_MESSAGE = "La regla ya estaba así: no hay cambios que guardar.";
-export const APPROVAL_SAVED_MESSAGE = "Guardamos la regla de aprobación.";
-export const APPROVAL_GENERIC_FAILURE =
-  "No pudimos guardar la regla. Intenta de nuevo en unos minutos.";
 
 const SETTINGS_PATH = "configuracion/aprobaciones";
 

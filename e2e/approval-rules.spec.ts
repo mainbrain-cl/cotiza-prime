@@ -489,9 +489,22 @@ test("el registro de actividad cuenta cada cambio con la regla de antes y la de 
   const page = ownerPage;
   await chooseAndSave(page, "never");
   await page.goto(`/o/${tenantId}/configuracion/actividad`);
-  await expect(page.getByText("Cambió la regla de aprobación").first()).toBeVisible();
-  await expect(page.getByText(/^Antes: .* Ahora: No se pide aprobación/).first()).toBeVisible();
-  await expect(page.getByText("Regla de aprobación").first()).toBeVisible();
-  const text = await page.locator("body").innerText();
-  expect(text).toContain("Se pide aprobación si el total supera $5.000 o el descuento supera 10%.");
+  const rows = page.getByTestId("audit-row").filter({ hasText: "Cambió la regla de aprobación" });
+  await expect(rows.first()).toBeVisible();
+  await expect(rows.first()).toContainText("Regla de aprobación");
+  await expect(rows.first()).toContainText("Dueña Aprobaciones");
+  // El cambio más reciente: de «según el monto» ($9.000) a «Nunca»
+  await expect(rows.first()).toContainText(
+    "Antes: Se pide aprobación si el total supera $9.000. Ahora: No se pide aprobación: las cotizaciones se envían directo.",
+  );
+  // y el primero de todos: de «Nunca» a monto y descuento
+  await expect(
+    page
+      .getByTestId("audit-row")
+      .filter({
+        hasText:
+          "Antes: No se pide aprobación: las cotizaciones se envían directo. Ahora: Se pide aprobación si el total supera $5.000 o el descuento supera 10%.",
+      })
+      .first(),
+  ).toBeVisible();
 });

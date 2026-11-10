@@ -313,14 +313,29 @@ describe("Ataque 2 · quien está en A y en B, quien fue quitada y quien solo mi
     const fx = fixture();
     const a = fx.orgs.A.invitation!;
     const deniedInABefore = await deniedFor(fx.orgs.A.tenantId, a.invitationId);
+    // El estado de Ex en A en ESTE momento (quitada, o miembro activa si todavía no corrió el ciclo de vida), leído justo
+    // antes del intento: de él depende lo que debe quedar en la fila.
+    const { rows: statusRows } = await db.query<{ status: string }>(
+      "select status from public.members where tenant_id = $1 and user_id = $2",
+      [fx.orgs.A.tenantId, fx.personas.ex.userId],
+    );
+    expect(statusRows, "Ex debe tener fila en `members` de A").toHaveLength(1);
     const res = await call("ex", "accept_invitation", a.tokenSha256, fx.orgs.A.tenantId);
     expect(res.json).toEqual({ result: "wrong_email" });
-    // Ex tiene (o tuvo) una fila en `members` de A: no es «de fuera», conserva su id en el registro de A. Su IP y su
-    // navegador, en cambio, solo se guardan si hoy es miembro activa (menor 1 del PR #36): aquí no se exige ninguno de los dos.
+    // Ex tiene (o tuvo) una fila en `members` de A: no es «de fuera», conserva su id en el registro de A.
     expect(await deniedFor(fx.orgs.A.tenantId, a.invitationId)).toBe(deniedInABefore + 1);
-    expect((await lastDenied(fx.orgs.A.tenantId, a.invitationId)).actor_user_id).toBe(
-      fx.personas.ex.userId,
-    );
+    const last = await lastDenied(fx.orgs.A.tenantId, a.invitationId);
+    expect(last.actor_user_id).toBe(fx.personas.ex.userId);
+    // Su IP, su navegador y su correlación solo se guardan si hoy es miembro ACTIVA (menor 1 del PR #36), comprobado por
+    // la API real (la función llega con las cabeceras que manda `call`).
+    if (statusRows[0].status === "removed") {
+      expect(last.origin_ip, "Ex quitada: sin IP").toBeNull();
+      expect(last.user_agent, "Ex quitada: sin navegador").toBeNull();
+      expect(last.correlation_id, "Ex quitada: sin correlación").toBeNull();
+    } else {
+      expect(statusRows[0].status).toBe("active");
+      expect(last.origin_ip, "Ex activa: con IP").toBe("203.0.113.7/32");
+    }
     // Su estado en A es el que tenía (quitada, o miembro si todavía no corrió el ciclo de vida): no cambia por esto.
     expect(
       await countWhere(
@@ -524,15 +539,16 @@ describe("Ataque 8 · el id de alguien de fuera no queda en el registro de una o
     const fx = fixture();
     for (const key of ["A", "B", "C"] as const) {
       const tenantId = fx.orgs[key].tenantId;
-      // Se busca el id de cada cuenta ajena en el texto de la FILA ENTERA (autor, recurso, detalles...), no solo en
-      // `actor_user_id`: es el mismo criterio de `idInOrgAudit`. «Ajena» = sin ninguna fila en `members` de esa
-      // organización, en cualquier estado.
+      // Se extraen los UUID del texto de la FILA ENTERA (autor, recurso, detalles...), no solo de `actor_user_id`, y se
+      // comparan con las cuentas. «Ajena» = cuenta de `auth.users` sin ninguna fila en `members` de esa organización, en
+      // cualquier estado. (Cada fila se recorre una vez, en vez de cruzar todas las cuentas con todas las filas.)
       const { rows } = await db.query<{ action: string; user_id: string }>(
-        `with log as (select a.id, a.action, a::text as t from public.audit_log a where a.tenant_id = $1),
-              strangers as (select u.id from auth.users u
-                             where not exists (select 1 from public.members m where m.tenant_id = $1 and m.user_id = u.id))
-         select l.action, s.id::text as user_id from log l
-           join strangers s on position(s.id::text in l.t) > 0`,
+        `with found as (
+           select a.action, (regexp_matches(a::text, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', 'g'))[1] as uuid
+             from public.audit_log a where a.tenant_id = $1)
+         select distinct f.action, u.id::text as user_id
+           from found f join auth.users u on u.id::text = f.uuid
+          where not exists (select 1 from public.members m where m.tenant_id = $1 and m.user_id = u.id)`,
         [tenantId],
       );
       expect(rows, `organización ${key}`).toEqual([]);

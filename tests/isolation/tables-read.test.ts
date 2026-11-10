@@ -249,7 +249,16 @@ async function readAndCheck(spec: TableSpec, s: Scenario, select: string): Promi
   // X8: ningún texto delatador, salvo en las filas propias de las tablas de personas
   const ownRowsExempt = spec.visibility === "profiles" || spec.visibility === "own-user";
   const toScan = ownRowsExempt ? rows.filter((r) => r.user_id !== ctx.me) : rows;
-  const text = JSON.stringify(toScan);
+  let text = JSON.stringify(toScan);
+  // El nombre completo de una persona que SÍ puede verse (p. ej. Carla, Dueña de C y ex miembro de A: desde H-010
+  // `app.current_tenant_people()` deja a A leer su nombre) lleva dentro el canario de su organización (`Carla CANARIO-C-…`).
+  // Ese nombre exacto se quita del texto antes de buscar lo prohibido; cualquier otra aparición del canario sigue fallando.
+  for (const key of PERSONA_KEYS) {
+    const persona = fixture().personas[key];
+    if (ctx.visiblePeople.has(persona.userId) && persona.fullName) {
+      text = text.replaceAll(persona.fullName, "");
+    }
+  }
   for (const forbidden of forbiddenTexts(ctx)) {
     expect(text, `${spec.name}: aparece "${forbidden}"`).not.toContain(forbidden);
   }

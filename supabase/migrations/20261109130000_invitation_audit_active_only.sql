@@ -37,15 +37,21 @@ language plpgsql volatile security definer set search_path = '' as $$
 declare
   v_headers json    := nullif(current_setting('request.headers', true), '')::json;
   v_details jsonb   := jsonb_build_object('reason', 'wrong_email', 'step', p_step);
+  v_status  text;
   -- Tiene o tuvo una fila en `members` de esa organización (cualquier estado): se conserva su id.
-  v_known   boolean := exists (
-    select 1 from public.members m where m.tenant_id = i.tenant_id and m.user_id = p_user_id);
+  v_known   boolean;
   -- Hoy es miembro activo: solo entonces se conservan también su IP, su navegador y su correlación.
-  v_active  boolean := exists (
-    select 1 from public.members m where m.tenant_id = i.tenant_id and m.user_id = p_user_id and m.status = 'active');
+  v_active  boolean;
   v_ip      inet;
   v_corr    uuid;
 begin
+  -- UNA sola lectura de `members` (por el índice (tenant_id, user_id); no bloquea filas). Si hubiera más de una fila para
+  -- la misma persona, gana la activa.
+  select m.status into v_status from public.members m
+   where m.tenant_id = i.tenant_id and m.user_id = p_user_id
+   order by (m.status = 'active') desc limit 1;
+  v_known  := found;
+  v_active := coalesce(v_status = 'active', false);
   begin v_ip := nullif(v_headers ->> 'x-cp-client-ip', '')::inet;
   exception when others then v_ip := null; end;
   begin v_corr := nullif(v_headers ->> 'x-cp-request-id', '')::uuid;

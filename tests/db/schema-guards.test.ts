@@ -73,50 +73,106 @@ const LOCK_TIMEOUT_VERIFIED_FROM = "20261109130000";
 const SUPABASE_DIR = path.resolve(import.meta.dirname, "..", "..", "supabase");
 
 /**
- * El SQL sin comentarios (`--` hasta el fin de línea). Respeta los textos entre comillas simples y entre `$$`: un `--`
- * dentro de uno de ellos no es un comentario.
+ * Un trozo del SQL ya leído: `code` (sin comentarios), `string` (un texto entre comillas simples, con sus comillas) o
+ * `body` (lo que hay entre `$tag$ ... $tag$`, que a su vez es código y se lee de nuevo).
  */
-function stripComments(sql: string): string {
-  let out = "";
+type Token =
+  | { kind: "code"; text: string }
+  | { kind: "string"; text: string }
+  | { kind: "body"; tag: string; inner: Token[] };
+
+/** La etiqueta de cuerpo que empieza en `at` (`$$`, `$fn$`, `$fn1$`), o null. `$1` no es una etiqueta. */
+const dollarTagAt = (sql: string, at: number): string | null =>
+  /^\$([A-Za-z_][A-Za-z_0-9]*)?\$/.exec(sql.slice(at, at + 64))?.[0] ?? null;
+
+/**
+ * Lee el SQL de UNA sola pasada: quita los comentarios de línea (`--`) y los de bloque (que pueden anidarse), separa los textos
+ * entre comillas simples y los cuerpos `$tag$ ... $tag$`, y vuelve a leer cada cuerpo con las mismas reglas (así un
+ * apóstrofo suelto dentro de un comentario de un cuerpo no desempareja nada de lo demás).
+ */
+function lex(sql: string): Token[] {
+  const tokens: Token[] = [];
+  let code = "";
+  const flush = () => {
+    if (code !== "") tokens.push({ kind: "code", text: code });
+    code = "";
+  };
   let i = 0;
-  let quote: string | null = null; // `'` o la etiqueta de un `$tag$`
   while (i < sql.length) {
     const c = sql[i];
-    if (quote === null) {
-      if (c === "-" && sql[i + 1] === "-") {
-        while (i < sql.length && sql[i] !== "\n") i++;
-        continue;
+    if (c === "-" && sql[i + 1] === "-") {
+      while (i < sql.length && sql[i] !== "\n") i++;
+    } else if (c === "/" && sql[i + 1] === "*") {
+      let depth = 1;
+      i += 2;
+      while (i < sql.length && depth > 0) {
+        if (sql[i] === "/" && sql[i + 1] === "*") {
+          depth++;
+          i += 2;
+        } else if (sql[i] === "*" && sql[i + 1] === "/") {
+          depth--;
+          i += 2;
+        } else i++;
       }
-      if (c === "'") quote = "'";
-      else if (c === "$") {
-        const tag = /^\$([A-Za-z_]*)\$/.exec(sql.slice(i));
-        if (tag) {
-          quote = tag[0];
-          out += tag[0];
-          i += tag[0].length;
-          continue;
-        }
+      code += " ";
+    } else if (c === "'") {
+      flush();
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === "'" && sql[j + 1] === "'") j += 2;
+        else if (sql[j] === "'") break;
+        else j++;
       }
-    } else if (quote === "'" ? c === "'" : sql.startsWith(quote, i)) {
-      if (quote === "'") quote = null;
-      else {
-        out += quote;
-        i += quote.length;
-        quote = null;
-        continue;
-      }
+      tokens.push({ kind: "string", text: sql.slice(i, j + 1) });
+      i = j + 1;
+    } else if (c === '"') {
+      // Un identificador entre comillas dobles se deja como código (puede traer comillas simples adentro).
+      const end = sql.indexOf('"', i + 1);
+      const stop = end === -1 ? sql.length : end + 1;
+      code += sql.slice(i, stop);
+      i = stop;
+    } else if (c === "$" && dollarTagAt(sql, i) !== null) {
+      const tag = dollarTagAt(sql, i)!;
+      const close = sql.indexOf(tag, i + tag.length);
+      const stop = close === -1 ? sql.length : close;
+      flush();
+      tokens.push({ kind: "body", tag, inner: lex(sql.slice(i + tag.length, stop)) });
+      i = close === -1 ? sql.length : close + tag.length;
+    } else {
+      code += c;
+      i++;
     }
-    out += c;
-    i++;
   }
-  return out;
+  flush();
+  return tokens;
 }
 
-/** Las sentencias de primer nivel (sin comentarios y con cada cuerpo `$$ ... $$` vaciado), sin el `;` final. */
+/** El SQL sin comentarios, con los textos y los cuerpos completos (cada cuerpo también sin comentarios). */
+function renderFull(tokens: Token[]): string {
+  return tokens
+    .map((t) => (t.kind === "body" ? `${t.tag}${renderFull(t.inner)}${t.tag}` : t.text))
+    .join("");
+}
+
+/**
+ * Las sentencias de primer nivel, sin el `;` final: sin comentarios, con los textos entre comillas tal cual (un `;` dentro
+ * de un texto no corta) y con cada cuerpo `$tag$ ... $tag$` vaciado (`$$`).
+ */
 function topLevelStatements(sql: string): string[] {
-  return stripComments(sql)
-    .replace(/\$([A-Za-z_]*)\$[\s\S]*?\$\1\$/g, "$$$$")
-    .split(";")
+  const statements: string[] = [];
+  let current = "";
+  for (const t of lex(sql)) {
+    if (t.kind === "code") {
+      const parts = t.text.split(";");
+      current += parts[0];
+      for (const part of parts.slice(1)) {
+        statements.push(current);
+        current = part;
+      }
+    } else current += t.kind === "string" ? t.text : "$$";
+  }
+  statements.push(current);
+  return statements
     .map((statement) => statement.replace(/\s+/g, " ").trim())
     .filter((statement) => statement !== "");
 }
@@ -131,21 +187,32 @@ function startsWithLockTimeout(sql: string): boolean {
   return firstStatement(sql) === `set local lock_timeout = '${MIGRATION_LOCK_TIMEOUT}'`;
 }
 
+/** Cuántas veces aparece la palabra `lock_timeout` en el CÓDIGO de estos trozos (también dentro de los cuerpos). */
+function mentionsIn(tokens: Token[]): number {
+  let count = 0;
+  for (const t of tokens) {
+    if (t.kind === "code") count += (t.text.match(/\block_timeout\b/gi) ?? []).length;
+    else if (t.kind === "body") count += mentionsIn(t.inner);
+  }
+  return count;
+}
+
 /**
- * Cuántas veces aparece `lock_timeout` como palabra fuera de comentarios y de textos entre comillas. Tiene que ser UNA: la
- * primera sentencia. (`current_setting('lock_timeout')` de la verificación va entre comillas y no cuenta.) `set_config`
- * con ese nombre también se rechaza, porque su nombre sí va entre comillas.
+ * Cuántas veces aparece `lock_timeout` como palabra fuera de comentarios y de textos entre comillas, incluso dentro de
+ * un cuerpo `$$` (el archivo se lee de una pasada, así que un apóstrofo o un `--` dentro de un cuerpo no esconde nada).
+ * Tiene que ser UNA: la primera sentencia. `current_setting('lock_timeout')` de la verificación va entre comillas y no
+ * cuenta. `set_config('lock_timeout', ...)` también se rechaza, porque su nombre sí va entre comillas.
  */
 function lockTimeoutMentions(sql: string): number {
-  const code = stripComments(sql);
-  if (/set_config\s*\(\s*'lock_timeout'/i.test(code)) return Number.POSITIVE_INFINITY;
-  const withoutLiterals = code.replace(/'(?:[^']|'')*'/g, "''");
-  return (withoutLiterals.match(/\block_timeout\b/gi) ?? []).length;
+  const tokens = lex(sql);
+  if (/set_config\s*\(\s*'lock_timeout'/i.test(renderFull(tokens))) return Number.POSITIVE_INFINITY;
+  return mentionsIn(tokens);
 }
 
 /**
  * Sentencias de primer nivel que cortan la transacción del archivo o devuelven el valor: `begin`, `commit`, `rollback`,
- * `end`, `start transaction`, `savepoint`, `release` y `reset`. (Un `begin` dentro de un cuerpo `$$` de plpgsql no cuenta.)
+ * `end`, `start transaction`, `savepoint`, `release` y `reset` (también `reset role` y `reset all`). (Un `begin` dentro
+ * de un cuerpo `$$` de plpgsql no cuenta.)
  */
 function transactionControl(sql: string): string[] {
   return topLevelStatements(sql).filter((statement) =>
@@ -160,14 +227,14 @@ function transactionControl(sql: string): string[] {
  * if; end $$`? Se lee del texto sin comentarios.
  */
 function hasLockTimeoutVerification(sql: string): boolean {
-  const code = stripComments(sql).replace(/\s+/g, " ").trim();
+  const code = renderFull(lex(sql)).replace(/\s+/g, " ").trim();
   const afterFirst = code.slice(code.indexOf(";") + 1).trim();
-  const block = /^do \$\$([\s\S]*?)\$\$/i.exec(afterFirst);
+  const block = /^do (\$([A-Za-z_][A-Za-z_0-9]*)?\$)([\s\S]*?)\1/i.exec(afterFirst);
   if (!block) return false;
   return new RegExp(
     `if current_setting\\('lock_timeout'\\) <> '${MIGRATION_LOCK_TIMEOUT}' then raise exception [\\s\\S]*?; end if;`,
     "i",
-  ).test(block[1]);
+  ).test(block[3]);
 }
 
 function filesFrom(dir: "migrations" | "rollbacks"): string[] {
@@ -425,7 +492,7 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
         ).toBe(1);
         expect(
           transactionControl(sql),
-          `${dir}/${name} no puede traer begin, commit, rollback, end, savepoint ni reset a nivel de archivo: la CLI aplica cada archivo en su transacción`,
+          `${dir}/${name} no puede traer begin, commit, rollback, end, savepoint ni reset (tampoco «reset role» ni «reset all») a nivel de archivo: la CLI aplica cada archivo en su transacción`,
         ).toEqual([]);
         if (name.slice(0, 14) >= LOCK_TIMEOUT_VERIFIED_FROM) {
           expect(
@@ -493,6 +560,31 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
     expect(transactionControl(`${good}savepoint a;\n`)).toEqual(["savepoint a"]);
     expect(transactionControl(`${good}reset lock_timeout;\n`)).toEqual(["reset lock_timeout"]);
     expect(transactionControl(`${good}reset all;\n`)).toEqual(["reset all"]);
+    // Lectura de una pasada: un apóstrofo suelto en un comentario DENTRO de un cuerpo `$$` no esconde una segunda mención.
+    const apostrophe = `${good}create function app.f() returns void language plpgsql as $$\nbegin\n  -- no rompas esto: d'accord\n  null;\nend $$;\nset lock_timeout = '0';\n`;
+    expect(lockTimeoutMentions(apostrophe)).toBe(2);
+    expect(
+      lockTimeoutMentions(
+        `${good}create function app.f() returns void language plpgsql as $$\nbegin\n  -- it's here\n  set local lock_timeout = '0';\nend $$;\n`,
+      ),
+    ).toBe(2);
+    // Un \`--\` dentro de un texto no es un comentario; un comentario de bloque tampoco esconde nada a su alrededor.
+    expect(lockTimeoutMentions(`${good}select '-- x'; set lock_timeout = '0';\n`)).toBe(2);
+    expect(
+      lockTimeoutMentions(`${good}/* it's a comment, set lock_timeout = '0'; */ select 1;\n`),
+    ).toBe(1);
+    // Etiquetas de cuerpo con dígitos y con nombre (\`$fn1$\`): el \`begin\` de adentro no cuenta, el \`commit;\` de afuera sí.
+    const tagged = `${good}create function app.g() returns void language plpgsql as $fn1$ begin null; end $fn1$;\n`;
+    expect(transactionControl(tagged)).toEqual([]);
+    expect(transactionControl(`${tagged}commit;\n`)).toEqual(["commit"]);
+    expect(transactionControl(`${good}reset role;\n`)).toEqual(["reset role"]);
+    expect(
+      lockTimeoutMentions(
+        `${good}create function app.g() returns void language plpgsql as $fn1$ begin set local lock_timeout = '0'; end $fn1$;\n`,
+      ),
+    ).toBe(2);
+    // Un parámetro \`$1\` no es una etiqueta.
+    expect(topLevelStatements("select $1; select 2;")).toEqual(["select $1", "select 2"]);
     // Verificación: la segunda sentencia tiene que ser el bloque que compara con '3s' y lanza la excepción.
     expect(hasLockTimeoutVerification(good)).toBe(true);
     expect(hasLockTimeoutVerification("set local lock_timeout = '3s';\nselect 1;")).toBe(false);

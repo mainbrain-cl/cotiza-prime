@@ -2,8 +2,8 @@
 -- Devuelve `accept_invitation` a la definición de 20261109100000_invitation_accept_sender.sql (mismas firmas, mismos
 -- permisos) y borra la columna `members.invitation_created_by`. El dato que tenía se pierde de `members`, pero sigue en
 -- `invitations.invited_by` (por `member_id`) y en la auditoría `invitation.accepted` (`created_by`).
--- Orden: se niega a correr (1) si la función vigente `public.accept_invitation` ya no nombra `invitation_created_by`
--- (otra migración la redefinió o ya se deshizo: la versión que este archivo repone lee `invitations.resent_by`, y si esa
+-- Orden: se niega a correr (1) si la función vigente `public.accept_invitation` ya no es la de esta migración (se compara
+-- el md5 de su cuerpo; otra migración la redefinió o ya se deshizo: la versión que este archivo repone lee `invitations.resent_by`, y si esa
 -- columna ya no existe toda aceptación válida fallaría), y (2) si otra función (aparte de `accept_invitation`, que este mismo archivo devuelve)
 -- usa la columna: primero hay que deshacer lo que la use. Si se deshace también 20261109100000, este archivo va PRIMERO.
 -- Salida si alguien corrió antes el deshacer de D3 (que no tiene guarda): este archivo se niega, y en PRUEBAS basta con
@@ -12,10 +12,13 @@
 set local lock_timeout = '3s';
 
 do $$ begin
+  -- La función vigente tiene que ser EXACTAMENTE la de esta migración: se compara el md5 de su cuerpo con el del cuerpo de
+  -- 20261109120000_member_invitation_creator.sql (la prueba MC lo recalcula del archivo).
   if not exists (
-       select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and p.proname = 'accept_invitation' and p.prosrc ~ '\minvitation_created_by\M') then
-    raise exception 'no se puede deshacer 20261109120000_member_invitation_creator: la funcion public.accept_invitation vigente ya no nombra invitation_created_by: otra migracion la redefinio o ya se deshizo; revise el orden de los deshacer';
+       select 1 from pg_proc p
+        where p.oid = to_regprocedure('public.accept_invitation(text)')::oid
+          and md5(p.prosrc) = 'a70b740e6f4e3fe53fc2657b71c78b69') then
+    raise exception 'no se puede deshacer 20261109120000_member_invitation_creator: la funcion public.accept_invitation vigente ya no es la de esta migracion: otra migracion la redefinio o ya se deshizo; revise el orden de los deshacer';
   end if;
 end $$;
 
@@ -23,8 +26,8 @@ do $$ declare v_users text; begin
   select string_agg(n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', ', '
                       order by n.nspname, p.proname) into v_users
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname in ('public', 'app') and p.prosrc ~ '\minvitation_created_by\M'
-     and n.nspname || '.' || p.proname <> 'public.accept_invitation';
+   where n.nspname in ('public', 'app') and p.prosrc ~* '\minvitation_created_by\M'
+     and p.oid is distinct from to_regprocedure('public.accept_invitation(text)')::oid;
   if v_users is not null then
     raise exception 'no se puede deshacer 20261109120000_member_invitation_creator: % todavia usa members.invitation_created_by. Deshaga antes las migraciones posteriores que la usan', v_users;
   end if;

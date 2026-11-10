@@ -63,22 +63,111 @@ const FROZEN_ROLE_LITERAL_FUNCTIONS = [
 const MIGRATION_LOCK_TIMEOUT = "3s";
 /** La regla vale para las migraciones y los deshacer con fecha desde esta (las anteriores ya están integradas y no se editan). */
 const LOCK_TIMEOUT_FROM = "20261109120000";
+/**
+ * Menor 5 del PR #37 (2026-11-10): desde esta fecha, justo después del `set local lock_timeout`, el archivo trae un bloque
+ * `do $$ ... if current_setting('lock_timeout') <> '3s' then raise exception ...; end if; end $$;` que lo detiene si quien
+ * lo aplica no lo hizo dentro de una transacción (sin ella `set local` no tiene efecto). `20261109120000` ya está integrada
+ * y no lo trae: no se edita.
+ */
+const LOCK_TIMEOUT_VERIFIED_FROM = "20261109130000";
 const SUPABASE_DIR = path.resolve(import.meta.dirname, "..", "..", "supabase");
+
+/**
+ * El SQL sin comentarios (`--` hasta el fin de línea). Respeta los textos entre comillas simples y entre `$$`: un `--`
+ * dentro de uno de ellos no es un comentario.
+ */
+function stripComments(sql: string): string {
+  let out = "";
+  let i = 0;
+  let quote: string | null = null; // `'` o la etiqueta de un `$tag$`
+  while (i < sql.length) {
+    const c = sql[i];
+    if (quote === null) {
+      if (c === "-" && sql[i + 1] === "-") {
+        while (i < sql.length && sql[i] !== "\n") i++;
+        continue;
+      }
+      if (c === "'") quote = "'";
+      else if (c === "$") {
+        const tag = /^\$([A-Za-z_]*)\$/.exec(sql.slice(i));
+        if (tag) {
+          quote = tag[0];
+          out += tag[0];
+          i += tag[0].length;
+          continue;
+        }
+      }
+    } else if (quote === "'" ? c === "'" : sql.startsWith(quote, i)) {
+      if (quote === "'") quote = null;
+      else {
+        out += quote;
+        i += quote.length;
+        quote = null;
+        continue;
+      }
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/** Las sentencias de primer nivel (sin comentarios y con cada cuerpo `$$ ... $$` vaciado), sin el `;` final. */
+function topLevelStatements(sql: string): string[] {
+  return stripComments(sql)
+    .replace(/\$([A-Za-z_]*)\$[\s\S]*?\$\1\$/g, "$$$$")
+    .split(";")
+    .map((statement) => statement.replace(/\s+/g, " ").trim())
+    .filter((statement) => statement !== "");
+}
 
 /** La primera sentencia de un archivo SQL, sin los comentarios de `--` ni las líneas vacías que la preceden. */
 function firstStatement(sql: string): string {
-  const code = sql
-    .split("\n")
-    .filter((line) => !line.trim().startsWith("--"))
-    .join("\n")
-    .trimStart();
-  const end = code.indexOf(";");
-  return (end === -1 ? code : code.slice(0, end)).replace(/\s+/g, " ").trim();
+  return topLevelStatements(sql)[0] ?? "";
 }
 
 /** ¿Empieza con `set local lock_timeout = '3s'`? (`set local`: vale hasta el fin de la transacción de la migración.) */
 function startsWithLockTimeout(sql: string): boolean {
   return firstStatement(sql) === `set local lock_timeout = '${MIGRATION_LOCK_TIMEOUT}'`;
+}
+
+/**
+ * Cuántas veces aparece `lock_timeout` como palabra fuera de comentarios y de textos entre comillas. Tiene que ser UNA: la
+ * primera sentencia. (`current_setting('lock_timeout')` de la verificación va entre comillas y no cuenta.) `set_config`
+ * con ese nombre también se rechaza, porque su nombre sí va entre comillas.
+ */
+function lockTimeoutMentions(sql: string): number {
+  const code = stripComments(sql);
+  if (/set_config\s*\(\s*'lock_timeout'/i.test(code)) return Number.POSITIVE_INFINITY;
+  const withoutLiterals = code.replace(/'(?:[^']|'')*'/g, "''");
+  return (withoutLiterals.match(/\block_timeout\b/gi) ?? []).length;
+}
+
+/**
+ * Sentencias de primer nivel que cortan la transacción del archivo o devuelven el valor: `begin`, `commit`, `rollback`,
+ * `end`, `start transaction`, `savepoint`, `release` y `reset`. (Un `begin` dentro de un cuerpo `$$` de plpgsql no cuenta.)
+ */
+function transactionControl(sql: string): string[] {
+  return topLevelStatements(sql).filter((statement) =>
+    /^(begin|commit|rollback|abort|end|start transaction|savepoint|release|reset)\b/i.test(
+      statement,
+    ),
+  );
+}
+
+/**
+ * ¿La SEGUNDA sentencia es el bloque `do $$ ... if current_setting('lock_timeout') <> '3s' then raise exception ...; end
+ * if; end $$`? Se lee del texto sin comentarios.
+ */
+function hasLockTimeoutVerification(sql: string): boolean {
+  const code = stripComments(sql).replace(/\s+/g, " ").trim();
+  const afterFirst = code.slice(code.indexOf(";") + 1).trim();
+  const block = /^do \$\$([\s\S]*?)\$\$/i.exec(afterFirst);
+  if (!block) return false;
+  return new RegExp(
+    `if current_setting\\('lock_timeout'\\) <> '${MIGRATION_LOCK_TIMEOUT}' then raise exception [\\s\\S]*?; end if;`,
+    "i",
+  ).test(block[1]);
 }
 
 function filesFrom(dir: "migrations" | "rollbacks"): string[] {
@@ -320,7 +409,7 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
     );
     expect(rows.map((r) => r.name)).toEqual([...FROZEN_ROLE_LITERAL_FUNCTIONS].sort());
   });
-  it("15. menor 4 del PR #35: toda migración y todo deshacer con fecha desde 20261109120000 empieza con `set local lock_timeout = '3s'`", () => {
+  it("15. menores 4 del PR #35 y 5 y 6 del PR #37: toda migración y todo deshacer con fecha desde 20261109120000 empieza con `set local lock_timeout = '3s'`, lo menciona una sola vez y no corta la transacción; desde 20261109130000, además, lo verifica", () => {
     const covered: string[] = [];
     for (const dir of ["migrations", "rollbacks"] as const) {
       for (const name of filesFrom(dir)) {
@@ -330,13 +419,29 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
           startsWithLockTimeout(sql),
           `${dir}/${name} debe empezar con set local lock_timeout = '${MIGRATION_LOCK_TIMEOUT}' (antes solo van comentarios)`,
         ).toBe(true);
+        expect(
+          lockTimeoutMentions(sql),
+          `${dir}/${name} debe mencionar lock_timeout una sola vez (fuera de comentarios y de textos entre comillas)`,
+        ).toBe(1);
+        expect(
+          transactionControl(sql),
+          `${dir}/${name} no puede traer begin, commit, rollback, end, savepoint ni reset a nivel de archivo: la CLI aplica cada archivo en su transacción`,
+        ).toEqual([]);
+        if (name.slice(0, 14) >= LOCK_TIMEOUT_VERIFIED_FROM) {
+          expect(
+            hasLockTimeoutVerification(sql),
+            `${dir}/${name} debe traer, justo después, do $$ if current_setting('lock_timeout') <> '${MIGRATION_LOCK_TIMEOUT}' then raise exception ...; end if; end $$;`,
+          ).toBe(true);
+        }
       }
     }
-    // La guardia no es vacía: cubre al menos la migración que la introdujo y su deshacer.
+    // La guardia no es vacía: cubre al menos la migración que la introdujo y su deshacer, y la primera que verifica.
     expect(covered).toEqual(
       expect.arrayContaining([
         "migrations/20261109120000_member_invitation_creator.sql",
         "rollbacks/20261109120000_member_invitation_creator.down.sql",
+        `migrations/${LOCK_TIMEOUT_VERIFIED_FROM}_invitation_audit_active_only.sql`,
+        `rollbacks/${LOCK_TIMEOUT_VERIFIED_FROM}_invitation_audit_active_only.down.sql`,
       ]),
     );
     // Cada migración con fecha desde entonces tiene su deshacer (así la regla vale también para él).
@@ -345,8 +450,10 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
     expect(downs).toEqual(ups);
   });
 
-  it("15b. la guardia 15 detecta lo que debe: sin `lock_timeout`, con otro valor, fuera de lugar, sin `local` o dentro de un comentario", () => {
-    const good = `-- Encabezado\n-- más encabezado\n\nset local lock_timeout = '3s';\nalter table public.x add column y int;\n`;
+  it("15b. la guardia 15 detecta lo que debe: sin `lock_timeout`, con otro valor, fuera de lugar, sin `local`, en un comentario, repetido, con begin/commit/reset o sin verificación", () => {
+    const verification = `do $$ begin\n  if current_setting('lock_timeout') <> '3s' then\n    raise exception 'lock_timeout vale %', current_setting('lock_timeout');\n  end if;\nend $$;\n`;
+    const good = `-- Encabezado\n-- más encabezado\n\nset local lock_timeout = '3s';\n${verification}alter table public.x add column y int;\n`;
+    // Primera sentencia
     expect(startsWithLockTimeout(good)).toBe(true);
     expect(startsWithLockTimeout("set  local  lock_timeout = '3s' ;")).toBe(true);
     expect(startsWithLockTimeout("alter table public.x add column y int;\n")).toBe(false);
@@ -359,5 +466,45 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
     expect(startsWithLockTimeout("set lock_timeout = '3s';\nselect 1;")).toBe(false);
     expect(startsWithLockTimeout("select 1;\nset local lock_timeout = '3s';")).toBe(false);
     expect(startsWithLockTimeout("")).toBe(false);
+    // Una sola mención: la verificación (entre comillas) y los comentarios no cuentan; una segunda orden sí.
+    expect(lockTimeoutMentions(good)).toBe(1);
+    expect(lockTimeoutMentions(`${good}-- set local lock_timeout = '1s';\n`)).toBe(1);
+    expect(lockTimeoutMentions(`${good}set local lock_timeout = '1s';\n`)).toBe(2);
+    expect(lockTimeoutMentions(`${good}set lock_timeout = 0;\n`)).toBe(2);
+    expect(lockTimeoutMentions(`${good}select set_config('lock_timeout', '0', true);\n`)).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+    expect(lockTimeoutMentions(`${good}alter role authenticator set lock_timeout = 0;\n`)).toBe(2);
+    expect(lockTimeoutMentions("select 1;")).toBe(0);
+    // begin / commit / reset a nivel de archivo, sí; el `begin` de plpgsql dentro de `$$`, no.
+    expect(transactionControl(good)).toEqual([]);
+    expect(
+      transactionControl(
+        `${good}create function app.f() returns void language plpgsql as $$ begin null; end $$;\n`,
+      ),
+    ).toEqual([]);
+    expect(transactionControl(`-- begin;\n${good}`)).toEqual([]);
+    expect(transactionControl(`begin;\n${good}`)).toEqual(["begin"]);
+    expect(transactionControl(`${good}commit;\n`)).toEqual(["commit"]);
+    expect(transactionControl(`${good}COMMIT;\n`)).toEqual(["COMMIT"]);
+    expect(transactionControl(`${good}end;\n`)).toEqual(["end"]);
+    expect(transactionControl(`${good}rollback;\n`)).toEqual(["rollback"]);
+    expect(transactionControl(`${good}start transaction;\n`)).toEqual(["start transaction"]);
+    expect(transactionControl(`${good}savepoint a;\n`)).toEqual(["savepoint a"]);
+    expect(transactionControl(`${good}reset lock_timeout;\n`)).toEqual(["reset lock_timeout"]);
+    expect(transactionControl(`${good}reset all;\n`)).toEqual(["reset all"]);
+    // Verificación: la segunda sentencia tiene que ser el bloque que compara con '3s' y lanza la excepción.
+    expect(hasLockTimeoutVerification(good)).toBe(true);
+    expect(hasLockTimeoutVerification("set local lock_timeout = '3s';\nselect 1;")).toBe(false);
+    expect(
+      hasLockTimeoutVerification(`set local lock_timeout = '3s';\nselect 1;\n${verification}`),
+    ).toBe(false);
+    expect(hasLockTimeoutVerification(good.replace("<> '3s'", "<> '5s'"))).toBe(false);
+    expect(hasLockTimeoutVerification(good.replace("raise exception", "raise notice"))).toBe(false);
+    expect(
+      hasLockTimeoutVerification(
+        `set local lock_timeout = '3s';\n${verification.replace(/^/gm, "-- ")}select 1;\n`,
+      ),
+    ).toBe(false);
   });
 });

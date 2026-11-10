@@ -59,9 +59,9 @@ async function checkRefusal() {
   try {
     await client.query(`insert into public.quote_packages
       (id, tenant_id, quote_id, send_key, issue_date, valid_until, email_subject, email_body_md,
-       customer_snapshot_enc, created_by, quote_revision)
+       customer_snapshot_enc, created_by, quote_revision, approval_rule_id)
       values (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), current_date,
-              current_date, 's', 'b', 'v1.x.y', gen_random_uuid(), 1)`);
+              current_date, 's', 'b', 'v1.x.y', gen_random_uuid(), 1, gen_random_uuid())`);
   } finally {
     await client.query("set session_replication_role = origin");
   }

@@ -43,7 +43,7 @@ Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por sepa
 hallazgos corregidos. Pruebas: `npm test`, `test:db`, `test:isolation` (504 ataques entre
 organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHub Actions.
 
-- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 42 migraciones. Datos de
+- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 46 migraciones. Datos de
   prueba: `npm run db:seed` (`ana`, `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
   `Prueba-Cotiza-2026`; Negocio Demo 1 y 2). Cómo levantarlo: `README.md`.
 - **Documentos de arquitectura:** `docs/arquitectura/modelo-datos.md` (aprobado) y
@@ -54,7 +54,38 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Traspaso del 2026-11-06 — lo más reciente (léelo antes que el del 2026-11-04)
+### Traspaso del 2026-11-10 — lo más reciente (léelo antes que el del 2026-11-06)
+
+**`main` está en `fcc2e99` (PR #37) y no hay PR abiertos.** 46 migraciones; la última es `20261109120000_member_invitation_creator`.
+Desde el traspaso anterior entraron los PR #31 a #37 (#31, #32 y #34 por José bajo la decisión 020 §5; #33, #35, #36 y #37 por Aarón):
+- **#33/#35/#37 (H-010):** al cancelar a un miembro se cancelan también las invitaciones que reenvió; el miembro queda a nombre de
+  quien envió el enlace; `members.invitation_created_by` (FK a `auth.users`, legible por cualquier miembro activo).
+- **#36:** el intento de aceptar una invitación ajena, hecho desde fuera de la organización, queda **sin autor** en la auditoría de
+  esa organización (sin id, IP ni navegador); la copia completa va a la organización «plataforma».
+- **Decisión 15 resuelta por Aarón:** la regla de aprobación es **por organización** y aplica a todos los que envían, incluido el
+  Dueño y el Administrador; la excepción por persona viene después. **H-040 (aprobaciones)** está desbloqueada y parte con su diseño
+  en `docs/arquitectura/sprint-5-h-040-aprobaciones.md` (agente `planificador`, es 🔒).
+- **Guardia 15:** toda migración y todo deshacer desde `20261109120000` empieza con `set local lock_timeout = '3s'`
+  (`docs/arquitectura/modelo-datos.md` §9.4). Aarón la ratificó.
+- Aarón aprobó que `tests/isolation/tables-read.test.ts` calcule la visibilidad **al momento de leer** (arregla un rojo que dependía
+  del orden de los archivos); aún no está hecho.
+
+**Verde local sobre `f437b87` (idéntico a `main`, informado por Aarón):** `db reset` + seed, typecheck, lint, 2.183 unitarias,
+`test:db` 1.070, `test:isolation` 1.204 (3 pendientes), `test:db:rollbacks` OK. **No se corrió e2e** sobre #36/#37: falta una corrida
+completa limpia de `chromium` con `E2E_PROD=1` en una máquina libre (no afirmar «149/149» sin ella).
+
+**Pendientes:**
+- **Menores de #36 y #37** (8 puntos que Aarón dejó «sin apuro», en el comentario del PR #37) más lo de `tables-read`: un solo PR de
+  seguimiento `fix/menores-36-37`. Solo el punto 1 (IP y navegador solo si el exmiembro está `active`) toca la base de datos.
+- **H-004a (verificación en dos pasos)** espera a Aarón: D1 (¿la base exige también el segundo paso, aal2?, recomendada B) y D2 (¿sola o
+  junto con H-004b?, recomendada sola). Diseño en `docs/arquitectura/` cuando se apruebe.
+- Orden siguiente: H-040 → H-004a → H-004b → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el ingreso) → H-004c.
+- Sigue de Aarón y del abogado la frase de la política de privacidad del #36 (editar `privacy.md` cambia su huella y exige versión
+  nueva en `legal_documents`). Del issue #11: CI apagado, `AGENTS.md`, decisión #17 y `npm audit` / decisión 015.
+- Anotado fuera de alcance: el Dueño ve `audit_log.id` en `select=*`; la secuencia es común a todas las organizaciones y deja ver
+  cuánta actividad hay. Se cierra con un permiso de lectura por columna, si se quiere.
+
+### Traspaso del 2026-11-06 — histórico (lo del 2026-11-10 lo actualiza; léelo antes que el del 2026-11-04)
 
 **Repositorio nuevo:** `github.com/mainbrain-cl/cotiza-prime` (organización de Main Brain, privado). La dirección
 antigua `avronygg/cotiza-prime` solo redirige: no se usa más. Quien tenga una copia vieja corre una vez
@@ -98,7 +129,7 @@ local: después `supabase db reset` y `npm run db:seed`). **La descripción del 
 - **Riesgo aceptado y documentado:** dentro del tope de 30 por hora, un Administrador puede quitar o bajar a quien no es
   Administrador, o cambiar precios y datos bancarios, sin que el Dueño reciba un correo; solo queda en el registro de
   actividad. Se cierra con los correos de aviso (decisión nº 17 y proveedor de correo, decisión 016).
-- La decisión 15 (quién envía sin aprobación) sigue sin resolverse y bloquea mezclar H-040.
+- ~~La decisión 15 (quién envía sin aprobación) sigue sin resolverse~~ **Resuelta** (ver el traspaso del 2026-11-10): H-040 ya se puede construir.
 - Las historias que ya tienen diseño aprobado son H-116 y H-042; cuál se construye primero lo decide José.
 - **Antes de la primera ida a producción:** toda migración y todo deshacer desde `20261109120000` empieza con `set local lock_timeout = '3s'` (guardia 15), y las migraciones anteriores que toman bloqueos fuertes se aplican sobre la base vacía antes de abrir el tráfico o en una ventana tranquila con `lock_timeout` desde la conexión: lista y forma en `docs/arquitectura/modelo-datos.md` §9.4.
 

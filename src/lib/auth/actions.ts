@@ -158,12 +158,20 @@ export async function signInAction(_previous: FormState, formData: FormData): Pr
   }
 
   await clearLoginFailures(parsed.data.email);
-  await logAuditEvent({ action: "session.login", result: "success", actorUserId: data.user.id });
-  // Con la verificación en dos pasos activa, la contraseña no basta: la sesión queda parcial y falta el código. El
-  // ingreso de cada organización se escribe después del código (la base no entrega ninguna con la sesión parcial).
-  if ((data.user.factors ?? []).some((factor) => factor.status === "verified")) {
-    redirect(SECOND_STEP_PATH);
-  }
+  // Con la verificación en dos pasos activa, la contraseña no basta: la sesión queda parcial y falta el código. El ingreso
+  // de la plataforma queda anotado como «solo contraseña, falta el código»: quien lee el registro no puede confundirlo con
+  // una sesión completa. El ingreso de cada organización se escribe después del código (con la sesión parcial la base no
+  // entrega ninguna). Para cuentas sin la verificación activa, nada cambia.
+  const secondStepPending = (data.user.factors ?? []).some(
+    (factor) => factor.status === "verified",
+  );
+  await logAuditEvent({
+    action: "session.login",
+    result: "success",
+    actorUserId: data.user.id,
+    ...(secondStepPending ? { details: { stage: "password", secondStepPending: true } } : {}),
+  });
+  if (secondStepPending) redirect(SECOND_STEP_PATH);
   // Además, un ingreso por cada organización de la persona: así cada Dueño ve cuándo entra su equipo.
   await logTenantLogins(supabase, data.user.id);
   // Si la persona venía de abrir el enlace de una invitación, vuelve a ella para unirse (H-009).

@@ -84,10 +84,13 @@ describe("signInAction y la verificación en dos pasos", () => {
     });
     expect(await redirectOf()).toBe("/ingresar/codigo");
     expect(logTenantLogins).not.toHaveBeenCalled();
-    // El ingreso de la plataforma sí queda: la contraseña fue correcta.
-    expect(logAuditEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "session.login", actorUserId: "u1" }),
-    );
+    // El ingreso de la plataforma sí queda, marcado como «solo contraseña, falta el código».
+    expect(logAuditEvent).toHaveBeenCalledWith({
+      action: "session.login",
+      result: "success",
+      actorUserId: "u1",
+      details: { stage: "password", secondStepPending: true },
+    });
   });
 
   it("con un factor a medias (sin verificar) o sin factores entra como siempre", async () => {
@@ -100,6 +103,13 @@ describe("signInAction y la verificación en dos pasos", () => {
       signInWithPassword.mockResolvedValue({ data: { user: { id: "u1", factors } }, error: null });
       expect(await redirectOf()).toBe("/");
       expect(logTenantLogins).toHaveBeenCalledTimes(1);
+      // Sin la verificación activa el registro es el de siempre: sin detalles.
+      expect(logAuditEvent).toHaveBeenLastCalledWith({
+        action: "session.login",
+        result: "success",
+        actorUserId: "u1",
+      });
+      logAuditEvent.mockClear();
     }
   });
 

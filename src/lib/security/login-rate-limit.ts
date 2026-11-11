@@ -107,6 +107,20 @@ export const INVITATION_LINK_MAX_PER_IP_PER_WINDOW = 30;
 export const INVITATION_LINK_WINDOW_SECONDS = SECONDS_PER_MINUTE;
 export const INVITATION_LINK_LOCK_SECONDS = SECONDS_PER_MINUTE;
 
+/**
+ * Código de la verificación en dos pasos (H-004a). Fallos de código por cuenta: 5 en 15 minutos bloquean 15 minutos, y
+ * 15 en el día bloquean 24 horas (ataque lento). Los fallos también cuentan por IP en el alcance `login_ip` (el mismo
+ * tope de 20 cada 15 minutos que la contraseña). Un mismo código no sirve dos veces para la misma cuenta durante 120
+ * segundos: GoTrue acepta el mismo código con un desafío nuevo dentro de su período, así que el bloqueo es propio.
+ * Los fallos llegan al máximo y bloquean: el intento número N es el que bloquea.
+ */
+export const MFA_MAX_FAILURES_PER_ACCOUNT = 5;
+export const MFA_WINDOW_SECONDS = 15 * SECONDS_PER_MINUTE;
+export const MFA_LOCK_SECONDS = 15 * SECONDS_PER_MINUTE;
+export const MFA_MAX_FAILURES_PER_ACCOUNT_PER_DAY = 15;
+export const MFA_DAY_SECONDS = 24 * 60 * SECONDS_PER_MINUTE;
+export const MFA_CODE_REUSE_SECONDS = 2 * SECONDS_PER_MINUTE;
+
 export type RateLimitScope =
   | "login_email"
   | "login_ip"
@@ -123,7 +137,10 @@ export type RateLimitScope =
   | "intake_read_ip"
   | "intake_submit_ip"
   | "intake_submit_ip_day"
-  | "invite_link_ip";
+  | "invite_link_ip"
+  | "mfa_verify_user"
+  | "mfa_verify_user_day"
+  | "mfa_code_used";
 
 /**
  * La tabla `auth_rate_limits` solo admite ciertos valores en su columna `scope`. Los pedidos de
@@ -148,6 +165,9 @@ const STORAGE_SCOPE: Record<RateLimitScope, string> = {
   intake_submit_ip: "intake_submit_ip",
   intake_submit_ip_day: "intake_submit_ip_day",
   invite_link_ip: "invite_link_ip",
+  mfa_verify_user: "mfa_verify_user",
+  mfa_verify_user_day: "mfa_verify_user_day",
+  mfa_code_used: "mfa_code_used",
 };
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
@@ -235,6 +255,22 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: INVITATION_LINK_MAX_PER_IP_PER_WINDOW + 1,
     windowSeconds: INVITATION_LINK_WINDOW_SECONDS,
     lockSeconds: INVITATION_LINK_LOCK_SECONDS,
+  },
+  mfa_verify_user: {
+    maxFailures: MFA_MAX_FAILURES_PER_ACCOUNT,
+    windowSeconds: MFA_WINDOW_SECONDS,
+    lockSeconds: MFA_LOCK_SECONDS,
+  },
+  mfa_verify_user_day: {
+    maxFailures: MFA_MAX_FAILURES_PER_ACCOUNT_PER_DAY,
+    windowSeconds: MFA_DAY_SECONDS,
+    lockSeconds: MFA_DAY_SECONDS,
+  },
+  // El primer registro pasa; el segundo (el mismo código otra vez) queda bloqueado.
+  mfa_code_used: {
+    maxFailures: 2,
+    windowSeconds: MFA_CODE_REUSE_SECONDS,
+    lockSeconds: MFA_CODE_REUSE_SECONDS,
   },
 };
 
@@ -556,4 +592,62 @@ export async function consumeInvitationLinkQuota(ip: string | null): Promise<boo
     keyHash: searchHash("invite_link_ip", PLATFORM_TENANT_ID, ipKey),
   };
   return !(await failOpen("invite_link_quota_ip", false, () => recordAll([target])));
+}
+
+function secondStepTargets(userId: string, ip: string | null): Target[] {
+  const targets: Target[] = [
+    {
+      scope: "mfa_verify_user",
+      keyHash: searchHash("mfa_verify_user", PLATFORM_TENANT_ID, userId),
+    },
+    {
+      scope: "mfa_verify_user_day",
+      keyHash: searchHash("mfa_verify_user_day", PLATFORM_TENANT_ID, userId),
+    },
+  ];
+  // Sin IP conocida no se limita por IP (un solo grupo "desconocido" bloquearía a todos); sigue el límite por cuenta.
+  if (ip) targets.push({ scope: "login_ip", keyHash: ipFingerprint("login_ip", ip) });
+  return targets;
+}
+
+/**
+ * ¿Esta cuenta (en los últimos 15 minutos o en el día) o esta IP está bloqueada para escribir el código de la
+ * verificación en dos pasos (H-004a)? Las claves son huellas de la cuenta: nunca el correo, la IP ni el código. Si el
+ * contador falla, se deja pasar y GoTrue verifica igual.
+ */
+export function isSecondStepLocked(userId: string, ip: string | null): Promise<boolean> {
+  return failOpen("mfa_check", false, () => anyLocked(secondStepTargets(userId, ip)));
+}
+
+/** Registra un código incorrecto. Devuelve `true` si con este fallo la cuenta o la IP quedó bloqueada. */
+export function recordSecondStepFailure(userId: string, ip: string | null): Promise<boolean> {
+  return failOpen("mfa_failure", false, () => recordAll(secondStepTargets(userId, ip)));
+}
+
+/** Un código correcto limpia los fallos de esa cuenta (los de la IP siguen su curso). */
+export function clearSecondStepFailures(userId: string): Promise<void> {
+  return failOpen("mfa_clear", undefined, async () => {
+    const admin = createAdminClient();
+    for (const scope of ["mfa_verify_user", "mfa_verify_user_day"] as const) {
+      const { error } = await admin.rpc("auth_limit_clear", {
+        p_scope: STORAGE_SCOPE[scope],
+        p_key_hash: searchHash(scope, PLATFORM_TENANT_ID, userId),
+      });
+      if (error) throw new Error(error.code ?? "rate_limit_clear_failed");
+    }
+  });
+}
+
+/**
+ * ¿Este código se puede usar? Responde `true` la primera vez que esta cuenta lo presenta y `false` si ya lo presentó en los
+ * últimos 120 segundos (sirva o no: el código incorrecto repetido tampoco vale). Va ANTES de pedirle la verificación a
+ * GoTrue, que acepta el mismo código dos veces dentro de su período. La clave es una huella de «cuenta|código» (HMAC con
+ * clave de la plataforma): el código nunca se guarda en claro. Si el contador falla, se deja pasar (GoTrue verifica igual).
+ */
+export async function consumeTotpCode(userId: string, code: string): Promise<boolean> {
+  const target: Target = {
+    scope: "mfa_code_used",
+    keyHash: searchHash("mfa_code_used", PLATFORM_TENANT_ID, `${userId}|${code}`),
+  };
+  return !(await failOpen("mfa_code_used", false, () => recordAll([target])));
 }

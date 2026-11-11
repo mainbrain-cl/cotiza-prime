@@ -14,6 +14,7 @@ const totals = (over = {}) => ({
   lineDiscountsClp: 0,
   globalDiscountClp: 0,
   totalClp: 2_350_000,
+  priceRebateClp: 0,
   ...over,
 });
 const conditional = (over: Partial<ApprovalRule>): ApprovalRule => ({
@@ -41,6 +42,23 @@ describe("approvalBlockMessage: el bloqueo de /enviar", () => {
     expect(APPROVAL_NOT_AVAILABLE_YET).toBe(
       "La solicitud de aprobación todavía no está disponible; ajusta la cotización o pide a quien administra la organización que revise la regla.",
     );
+  });
+  it("una rebaja de precio contra el catálogo cuenta como descuento y el mensaje lo dice", () => {
+    const message = approvalBlockMessage(
+      conditional({ discountThresholdBp: 1_000 }),
+      totals({ subtotalClp: 800_000, priceRebateClp: 200_000 }),
+    );
+    expect(message).toContain(
+      "el descuento (20%) supera 10% (incluye $200.000 por precios más bajos que el de catálogo)",
+    );
+    expect(message).toContain(APPROVAL_NOT_AVAILABLE_YET);
+    // sin la rebaja, el mismo precio no bloquea
+    expect(
+      approvalBlockMessage(
+        conditional({ discountThresholdBp: 1_000 }),
+        totals({ subtotalClp: 800_000 }),
+      ),
+    ).toBeNull();
   });
   it("exactamente en el umbral no bloquea", () => {
     expect(

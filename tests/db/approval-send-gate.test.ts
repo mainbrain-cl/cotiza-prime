@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { calculateQuote } from "../../src/lib/quotes/calc";
 import {
   actAsPostgres,
   connect,
@@ -19,6 +20,7 @@ import {
 } from "./helpers";
 import {
   PREPARE_SQL,
+  addCatalogItem,
   createQuoteWith,
   prepareArgs,
   prepareIds,
@@ -29,6 +31,7 @@ import {
   asUser,
   buildWorld,
   insertPackage,
+  line,
   newToken,
   sendQuoteAs,
   sha256Hex,
@@ -287,6 +290,256 @@ describe("según el monto y el descuento", () => {
       expect((await tryPrepare(db, w.sales, w.tenantA, q.quoteId, q.revision)).error?.message).toBe(
         "approval_required",
       );
+    });
+  });
+});
+
+describe("bajar el precio a mano cuenta como descuento (decisión de Aarón, 2026-11-11)", () => {
+  const CATALOG = 100_000;
+  /** Una cotización de una línea del catálogo con el precio que escribe la persona (el de catálogo lo pone el servidor). */
+  async function quoteAtPrice(price: number, over: Partial<QuoteSpec["lines"][number]> = {}) {
+    const catalogItemId = await addCatalogItem(db, w.tenantA, CATALOG);
+    return createQuoteWith(db, w.sales, w.tenantA, w.customerA, {
+      lines: [{ price, catalogItemId, ...over }],
+    });
+  }
+
+  it("con la regla «descuento mayor a 10 %»: el precio de catálogo pasa y el bajado a mano (con descuento 0) se bloquea", async () => {
+    await withTx(db, async () => {
+      await setRule(db, w.owner, w.tenantA, 1, "conditional", null, 1_000);
+      const atCatalog = await quoteAtPrice(CATALOG);
+      const lowered = await quoteAtPrice(85_000);
+      // el descuento declarado es 0: lo único que baja es el precio
+      expect(lowered.totals.lineDiscountsClp).toBe(0);
+      expect(lowered.totals.globalDiscountClp).toBe(0);
+
+      expect(
+        (await prepareOk(db, w.sales, w.tenantA, atCatalog.quoteId, atCatalog.revision)).result
+          .status,
+      ).toBe("prepared");
+      const blocked = await tryPrepare(db, w.sales, w.tenantA, lowered.quoteId, lowered.revision);
+      expect(blocked.error?.code).toBe(LOCKED);
+      expect(blocked.error?.message).toBe("approval_required");
+      expect(await sendFootprint(db, w.tenantA, lowered.quoteId)).toEqual({
+        packages: 0,
+        links: 0,
+        emails: 0,
+        locked: false,
+      });
+      // y la base lo cuenta como rebaja de precio
+      await actAsPostgres(db);
+      const { rows } = await db.query("select app.quote_approval_check($1, $2) -> 'metrics' as m", [
+        w.tenantA,
+        lowered.quoteId,
+      ]);
+      expect(rows[0].m).toMatchObject({
+        price_rebate_clp: 15_000,
+        discount_clp: 15_000,
+        discount_bp: 1_500,
+      });
+    });
+  });
+
+  it("el borde: 10 % exacto y 10,00 % redondeado pasan, 10,01 % se bloquea (D6)", async () => {
+    await withTx(db, async () => {
+      await setRule(db, w.owner, w.tenantA, 1, "conditional", null, 1_000);
+      for (const [price, blocks] of [
+        [91_000, false],
+        [90_000, false],
+        [89_999, false], // 10,001 % → 10,00 %
+        [89_990, true], // 10,01 %
+      ] as const) {
+        const q = await quoteAtPrice(price);
+        const attempt = await tryPrepare(db, w.sales, w.tenantA, q.quoteId, q.revision);
+        expect(attempt.error?.message ?? "prepared", `precio ${price}`).toBe(
+          blocks ? "approval_required" : "prepared",
+        );
+        await actAsPostgres(db);
+      }
+    });
+  });
+
+  it("con umbral 0 («cualquier descuento»): una rebaja de $1 se bloquea; a precio de catálogo no", async () => {
+    await withTx(db, async () => {
+      await setRule(db, w.owner, w.tenantA, 1, "conditional", null, 0);
+      const tiny = await quoteAtPrice(CATALOG - 1);
+      expect(
+        (await tryPrepare(db, w.sales, w.tenantA, tiny.quoteId, tiny.revision)).error?.message,
+      ).toBe("approval_required");
+      const same = await quoteAtPrice(CATALOG);
+      expect(
+        (await prepareOk(db, w.sales, w.tenantA, same.quoteId, same.revision)).result.status,
+      ).toBe("prepared");
+    });
+  });
+
+  it("un precio MAYOR al catálogo no cuenta como rebaja ni compensa la rebaja de otra línea", async () => {
+    await withTx(db, async () => {
+      await setRule(db, w.owner, w.tenantA, 1, "conditional", null, 1_000);
+      const dear = await quoteAtPrice(150_000);
+      expect(
+        (await prepareOk(db, w.sales, w.tenantA, dear.quoteId, dear.revision)).result.status,
+      ).toBe("prepared");
+      const a = await addCatalogItem(db, w.tenantA, CATALOG);
+      const b = await addCatalogItem(db, w.tenantA, CATALOG);
+      const mixed = await createQuoteWith(db, w.sales, w.tenantA, w.customerA, {
+        lines: [
+          { price: 60_000, catalogItemId: a }, // 40.000 de rebaja
+          { price: 200_000, catalogItemId: b }, // +100.000 sobre el catálogo
+        ],
+      });
+      // sin compensar: rebaja 40.000 sobre 300.000 (cada línea al mayor entre su catálogo y su precio) = 13,33 %; si la línea cara
+      // compensara, el neto sería negativo y no se bloquearía
+      const blocked = await tryPrepare(db, w.sales, w.tenantA, mixed.quoteId, mixed.revision);
+      expect(blocked.error?.message).toBe("approval_required");
+    });
+  });
+
+  it("una línea libre (sin catálogo) con precio bajo no suma rebaja", async () => {
+    await withTx(db, async () => {
+      await setRule(db, w.owner, w.tenantA, 1, "conditional", null, 0);
+      const free = await createQuoteWith(db, w.sales, w.tenantA, w.customerA, {
+        lines: [{ price: 1 }],
+      });
+      expect(
+        (await prepareOk(db, w.sales, w.tenantA, free.quoteId, free.revision)).result.status,
+      ).toBe("prepared");
+    });
+  });
+
+  it("con «Nunca» la rebaja no se mira: un precio de $1 sale", async () => {
+    await withTx(db, async () => {
+      const lowered = await quoteAtPrice(1);
+      expect(
+        (await prepareOk(db, w.sales, w.tenantA, lowered.quoteId, lowered.revision)).result.status,
+      ).toBe("prepared");
+    });
+  });
+
+  it("no se puede falsear el precio de catálogo: el servidor lo copia del catálogo, aunque el navegador mande otro", async () => {
+    await withTx(db, async () => {
+      const catalogItemId = await addCatalogItem(db, w.tenantA, CATALOG);
+      const { quoteId, revision } = await createQuoteWith(db, w.sales, w.tenantA, w.customerA, {
+        lines: [{ price: CATALOG, catalogItemId }],
+      });
+      await actAsPostgres(db);
+      const { rows } = await db.query(
+        "select id, catalog_unit_price_clp from public.quote_items where quote_id = $1",
+        [quoteId],
+      );
+      expect(Number(rows[0].catalog_unit_price_clp)).toBe(CATALOG);
+
+      // Reenviar el guardado con un «precio de catálogo» inventado (1) y el precio bajado: o se rechaza o se ignora
+      const calc = calculateQuote({
+        lines: [
+          {
+            quantityMilli: 1000,
+            unitPriceClp: 50_000,
+            taxTreatment: "taxable",
+            discount: { kind: "none" },
+          },
+        ],
+        globalDiscount: { kind: "none" },
+        taxRateBp: 1900,
+      });
+      if (!calc.ok) throw new Error("cálculo inválido");
+      await asUser(db, w.sales, w.tenantA);
+      await db.query("savepoint forge");
+      let forged: { code?: string } | null = null;
+      try {
+        await db.query("select public.save_quote_draft($1, $2, $3, $4, $5, $6)", [
+          quoteId,
+          revision,
+          randomUUID(),
+          JSON.stringify({ customer_id: w.customerA, global_discount: { kind: "none", value: 0 } }),
+          JSON.stringify([
+            line({
+              id: rows[0].id,
+              unit_price_clp: 50_000,
+              catalog_item_id: catalogItemId,
+              catalog_unit_price_clp: 1,
+              unit_cost_clp: 0,
+            }),
+          ]),
+          JSON.stringify(calc.totals),
+        ]);
+      } catch (error) {
+        forged = error as { code?: string };
+        await db.query("rollback to savepoint forge");
+      }
+      await actAsPostgres(db);
+      const after = await db.query(
+        "select catalog_unit_price_clp from public.quote_items where quote_id = $1",
+        [quoteId],
+      );
+      // pase lo que pase con el guardado, el precio de catálogo guardado sigue siendo el del catálogo
+      expect(Number(after.rows[0].catalog_unit_price_clp), JSON.stringify(forged)).toBe(CATALOG);
+
+      // y la regla ve la rebaja de verdad (50.000 contra 100.000) si el guardado pasó
+      await setRule(db, w.owner, w.tenantA, 1, "conditional", null, 1_000);
+      const check = await db.query("select app.quote_approval_check($1, $2) -> 'metrics' as m", [
+        w.tenantA,
+        quoteId,
+      ]);
+      if (forged === null) expect(check.rows[0].m.price_rebate_clp).toBe(50_000);
+    });
+  });
+
+  it("cambiar el servicio de una línea ya guardada, o escribir en quote_items, no sirve", async () => {
+    await withTx(db, async () => {
+      const cheap = await addCatalogItem(db, w.tenantA, 1_000);
+      const dear = await addCatalogItem(db, w.tenantA, CATALOG);
+      const { quoteId, revision } = await createQuoteWith(db, w.sales, w.tenantA, w.customerA, {
+        lines: [{ price: CATALOG, catalogItemId: dear }],
+      });
+      await actAsPostgres(db);
+      const { rows } = await db.query("select id from public.quote_items where quote_id = $1", [
+        quoteId,
+      ]);
+      const calc = calculateQuote({
+        lines: [
+          {
+            quantityMilli: 1000,
+            unitPriceClp: CATALOG,
+            taxTreatment: "taxable",
+            discount: { kind: "none" },
+          },
+        ],
+        globalDiscount: { kind: "none" },
+        taxRateBp: 1900,
+      });
+      if (!calc.ok) throw new Error("cálculo inválido");
+      // Cambiar el servicio de la línea (para que se congele otro precio de catálogo): rechazado
+      await asUser(db, w.sales, w.tenantA);
+      const swap = await expectSqlError(
+        db,
+        "select public.save_quote_draft($1, $2, $3, $4, $5, $6)",
+        [
+          quoteId,
+          revision,
+          randomUUID(),
+          JSON.stringify({ customer_id: w.customerA, global_discount: { kind: "none", value: 0 } }),
+          JSON.stringify([
+            line({ id: rows[0].id, unit_price_clp: CATALOG, catalog_item_id: cheap }),
+          ]),
+          JSON.stringify(calc.totals),
+        ],
+      );
+      expect(swap.message).toBe("catalog_item_changed");
+      // Escribir directo en la línea con su propio pase: sin permiso
+      const write = await expectSqlError(
+        db,
+        "update public.quote_items set catalog_unit_price_clp = 1 where quote_id = $1",
+        [quoteId],
+      );
+      expect(write.code).toBe("42501");
+      await actAsPostgres(db);
+      const { rows: stored } = await db.query(
+        "select catalog_item_id, catalog_unit_price_clp from public.quote_items where quote_id = $1",
+        [quoteId],
+      );
+      expect(stored[0].catalog_item_id).toBe(dear);
+      expect(Number(stored[0].catalog_unit_price_clp)).toBe(CATALOG);
     });
   });
 });

@@ -729,7 +729,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Criterios de aceptación**
 - [ ] Una cotización que cumple la regla no se puede enviar: la pantalla de enviar explica por qué ("el total ($2.350.000) supera $2.000.000") y el servidor la rechaza aunque la petición llegue sin pasar por la pantalla
 - [ ] Un envío rechazado no deja nada a medias: ni paquete, ni enlace, ni correo, ni candado de envío
-- [ ] El monto es el total con IVA y se pide aprobación solo si lo supera; el descuento suma los de cada línea y el general
+- [ ] El monto es el total con IVA y se pide aprobación solo si lo supera; el descuento suma los de cada línea, el general y lo que un servicio del catálogo cuesta menos que su precio de catálogo (bajar el precio a mano también cuenta como descuento)
 - [ ] Lo ya enviado no se vuelve a evaluar; reenviar sigue funcionando
 - [ ] Cada paquete enviado guarda qué versión de la regla regía
 

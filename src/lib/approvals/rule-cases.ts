@@ -39,6 +39,7 @@ function totals(over: Partial<ApprovalTotals>): ApprovalTotals {
     lineDiscountsClp: 0,
     globalDiscountClp: 0,
     totalClp: 1_190_000,
+    priceRebateClp: 0,
     ...over,
   };
 }
@@ -110,7 +111,13 @@ export const RULE_CASES: readonly RuleCase[] = [
   {
     name: "bruto $0: descuento 0",
     rule: discountOver(1_000),
-    totals: { subtotalClp: 0, lineDiscountsClp: 0, globalDiscountClp: 0, totalClp: 0 },
+    totals: {
+      subtotalClp: 0,
+      lineDiscountsClp: 0,
+      globalDiscountClp: 0,
+      totalClp: 0,
+      priceRebateClp: 0,
+    },
     discountBp: 0,
     reasons: [],
   },
@@ -143,7 +150,13 @@ export const RULE_CASES: readonly RuleCase[] = [
   {
     name: "«Siempre» con total $0: pide",
     rule: ALWAYS,
-    totals: { subtotalClp: 0, lineDiscountsClp: 0, globalDiscountClp: 0, totalClp: 0 },
+    totals: {
+      subtotalClp: 0,
+      lineDiscountsClp: 0,
+      globalDiscountClp: 0,
+      totalClp: 0,
+      priceRebateClp: 0,
+    },
     discountBp: 0,
     reasons: ["always"],
   },
@@ -185,7 +198,13 @@ export const RULE_CASES: readonly RuleCase[] = [
   {
     name: "montos en el máximo (10¹² − 1): sin desborde",
     rule: { mode: "conditional", amountThresholdClp: MAX - 1, discountThresholdBp: 9_999 },
-    totals: { subtotalClp: MAX, lineDiscountsClp: 0, globalDiscountClp: MAX, totalClp: MAX },
+    totals: {
+      subtotalClp: MAX,
+      lineDiscountsClp: 0,
+      globalDiscountClp: MAX,
+      totalClp: MAX,
+      priceRebateClp: 0,
+    },
     discountBp: 10_000,
     reasons: ["amount", "discount"],
   },
@@ -195,5 +214,94 @@ export const RULE_CASES: readonly RuleCase[] = [
     totals: totals({ totalClp: MAX }),
     discountBp: 0,
     reasons: [],
+  },
+  // --- Rebaja de precio contra el catálogo (decisión de Aarón, 2026-11-11) ---
+  {
+    name: "rebaja de precio sola de 20 % del valor de lista, sin descuento declarado: pide con umbral 10 %",
+    rule: discountOver(1_000),
+    totals: totals({ subtotalClp: 800_000, priceRebateClp: 200_000, totalClp: 952_000 }),
+    discountBp: 2_000,
+    reasons: ["discount"],
+  },
+  {
+    name: "rebaja de precio de 10 % exacto con umbral 10 %: no pide",
+    rule: discountOver(1_000),
+    totals: totals({ subtotalClp: 900_000, priceRebateClp: 100_000, totalClp: 1_071_000 }),
+    discountBp: 1_000,
+    reasons: [],
+  },
+  {
+    name: "rebaja de $1 sobre el 10 % exacto: a dos decimales sigue en 10,00 % (D6), no pide",
+    rule: discountOver(1_000),
+    totals: totals({ subtotalClp: 899_999, priceRebateClp: 100_001, totalClp: 1_070_999 }),
+    discountBp: 1_000,
+    reasons: [],
+  },
+  {
+    name: "rebaja de 10,01 % con umbral 10 %: pide",
+    rule: discountOver(1_000),
+    totals: totals({ subtotalClp: 899_900, priceRebateClp: 100_100, totalClp: 1_070_881 }),
+    discountBp: 1_001,
+    reasons: ["discount"],
+  },
+  {
+    name: "rebaja, descuento de línea y descuento general se suman sobre el mismo valor de lista",
+    rule: discountOver(2_000),
+    // Lista $1.000.000: rebaja $150.000, descuento de línea $50.000 y general $30.000 → $230.000 = 23 %.
+    totals: totals({
+      subtotalClp: 800_000,
+      lineDiscountsClp: 50_000,
+      globalDiscountClp: 30_000,
+      priceRebateClp: 150_000,
+      totalClp: 916_300,
+    }),
+    discountBp: 2_300,
+    reasons: ["discount"],
+  },
+  {
+    name: "la rebaja sola ni pasa 10 % ni lo hace el descuento declarado, pero juntos sí: pide",
+    rule: discountOver(1_000),
+    totals: totals({
+      subtotalClp: 880_000,
+      lineDiscountsClp: 60_000,
+      priceRebateClp: 60_000,
+      totalClp: 1_047_200,
+    }),
+    discountBp: 1_200,
+    reasons: ["discount"],
+  },
+  {
+    name: "umbral 0 y una rebaja de $1: pide",
+    rule: discountOver(0),
+    totals: totals({ subtotalClp: 999_999, priceRebateClp: 1, totalClp: 1_189_999 }),
+    discountBp: 0,
+    reasons: ["discount"],
+  },
+  {
+    name: "umbral 0 sin rebaja ni descuento: no pide",
+    rule: discountOver(0),
+    totals: totals({ priceRebateClp: 0 }),
+    discountBp: 0,
+    reasons: [],
+  },
+  {
+    name: "rebaja y monto: pasan los dos, en ese orden",
+    rule: { mode: "conditional", amountThresholdClp: 1_000_000, discountThresholdBp: 1_000 },
+    totals: totals({ subtotalClp: 700_000, priceRebateClp: 300_000, totalClp: 1_190_000 }),
+    discountBp: 3_000,
+    reasons: ["amount", "discount"],
+  },
+  {
+    name: "rebaja enorme: sin desborde",
+    rule: discountOver(9_999),
+    totals: {
+      subtotalClp: 1,
+      lineDiscountsClp: 0,
+      globalDiscountClp: 0,
+      totalClp: 1,
+      priceRebateClp: MAX - 1,
+    },
+    discountBp: 10_000,
+    reasons: ["discount"],
   },
 ];

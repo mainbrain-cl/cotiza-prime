@@ -10,9 +10,14 @@
  *
  * Qué se compara (decisiones D3 a D6 del diseño):
  *   · MONTO: el TOTAL CON IVA de la cotización; pide aprobación si lo supera ESTRICTAMENTE.
- *   · DESCUENTO: la suma de los descuentos de cada línea más el descuento general, sobre el valor ANTES de todo descuento y
+ *   · DESCUENTO: la suma de los descuentos de cada línea, el descuento general y la REBAJA DE PRECIO (decisión de Aarón,
+ *     2026-11-11: poner un precio menor al del catálogo cuenta igual que un descuento), sobre el valor ANTES de todo descuento y
  *     sin IVA, en centésimas de punto (1.000 = 10 %), redondeado mitad hacia arriba ANTES de comparar. Pide aprobación si lo
  *     supera estrictamente; con umbral 0, ante cualquier descuento en pesos.
+ *   · REBAJA DE PRECIO: por línea, max(0, cantidad × precio de catálogo − bruto de la línea). El precio de catálogo es el que la
+ *     línea congeló al agregarse (lo copia el servidor desde `catalog_items`, nunca viene del navegador). Nunca es negativa ni
+ *     compensa otra línea; una línea libre (sin catálogo) no suma nada. El valor de lista, la base del porcentaje, es el bruto
+ *     de las líneas más la rebaja.
  *   · Basta uno de los dos: monto O descuento. Los motivos salen siempre en el orden `always`, `amount`, `discount`.
  */
 import { roundHalfUpDiv } from "@/lib/money/rounding";
@@ -43,12 +48,16 @@ export type ApprovalTotals = {
   lineDiscountsClp: number;
   globalDiscountClp: number;
   totalClp: number;
+  /** Suma de las rebajas de precio de las líneas (ver `priceRebateOfLines`); 0 si ninguna línea costó menos que su catálogo. */
+  priceRebateClp: number;
 };
 
 export type ApprovalMetrics = {
   totalClp: number;
-  /** Descuentos de línea + descuento general, en pesos. */
+  /** Descuentos de línea + descuento general + rebaja de precio, en pesos. */
   discountClp: number;
+  /** La parte de ese descuento que es rebaja de precio contra el catálogo (0 si no hay). */
+  priceRebateClp: number;
   /** Ese descuento sobre el valor antes de descuentos, en centésimas de punto. */
   discountBp: number;
 };
@@ -63,13 +72,43 @@ function discountBpOf(grossClp: number, discountClp: number): number {
   return Number(roundHalfUpDiv(BigInt(discountClp) * BP_SCALE, gross));
 }
 
+const MILLI_PER_UNIT = BigInt(1000);
+
+/** Lo que de una línea importa para la rebaja de precio. */
+export type RebateLine = {
+  quantityMilli: number;
+  /** Bruto de la línea ya guardado: cantidad × precio puesto, antes de su descuento. */
+  grossClp: number;
+  /** Precio de catálogo congelado en la línea; `null` en una línea libre. */
+  catalogUnitPriceClp: number | null;
+};
+
+/**
+ * Rebaja de precio de una cotización: la suma, por línea con catálogo, de max(0, cantidad × catálogo − bruto), en pesos y con
+ * el mismo redondeo del bruto (mitad hacia arriba). Gemela de lo que calcula `app.quote_approval_check` desde `quote_items`.
+ */
+export function priceRebateOfLines(lines: readonly RebateLine[]): number {
+  let total = ZERO;
+  for (const line of lines) {
+    if (line.catalogUnitPriceClp === null) continue;
+    const list = roundHalfUpDiv(
+      BigInt(line.quantityMilli) * BigInt(line.catalogUnitPriceClp),
+      MILLI_PER_UNIT,
+    );
+    const rebate = list - BigInt(line.grossClp);
+    if (rebate > ZERO) total += rebate;
+  }
+  return Number(total);
+}
+
 /** Monto y descuento de una cotización, tal como los compara la regla. */
 export function approvalMetrics(totals: ApprovalTotals): ApprovalMetrics {
-  const grossClp = totals.subtotalClp + totals.lineDiscountsClp;
-  const discountClp = totals.lineDiscountsClp + totals.globalDiscountClp;
+  const grossClp = totals.subtotalClp + totals.lineDiscountsClp + totals.priceRebateClp;
+  const discountClp = totals.lineDiscountsClp + totals.globalDiscountClp + totals.priceRebateClp;
   return {
     totalClp: totals.totalClp,
     discountClp,
+    priceRebateClp: totals.priceRebateClp,
     discountBp: discountBpOf(grossClp, discountClp),
   };
 }

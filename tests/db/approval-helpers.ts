@@ -6,7 +6,31 @@ import { calculateQuote, type Discount, type QuoteTotals } from "../../src/lib/q
 import { actAsPostgres, type TestUser } from "./helpers";
 import { asUser, line, newToken, sha256Hex } from "./send-helpers";
 
-export type LineSpec = { price: number; qtyMilli?: number; discount?: Discount; exempt?: boolean };
+export type LineSpec = {
+  price: number;
+  qtyMilli?: number;
+  discount?: Discount;
+  exempt?: boolean;
+  /** Servicio del catálogo (ver `addCatalogItem`): el servidor congela SU precio de catálogo en la línea; `price` es el que escribe la persona. */
+  catalogItemId?: string;
+};
+
+/** Un servicio del catálogo (por unidad de servicio, afecto a IVA) de esa organización; devuelve su id. */
+export async function addCatalogItem(
+  db: Client,
+  tenantId: string,
+  unitPriceClp: number,
+  name = `Servicio ${randomUUID().slice(0, 6)}`,
+): Promise<string> {
+  await actAsPostgres(db);
+  const id = randomUUID();
+  await db.query(
+    `insert into public.catalog_items (id, tenant_id, name, unit, unit_price_clp, tax_treatment)
+     values ($1, $2, $3, 'service', $4, 'taxable')`,
+    [id, tenantId, name, unitPriceClp],
+  );
+  return id;
+}
 export type QuoteSpec = { lines: LineSpec[]; globalDiscount?: Discount };
 
 const toDb = (discount: Discount | undefined): { kind: string; value: number } =>
@@ -58,6 +82,7 @@ export async function createQuoteWith(
           tax_treatment: l.exempt ? "exempt" : "taxable",
           discount_kind: d.kind,
           discount_value: d.value,
+          ...(l.catalogItemId ? { catalog_item_id: l.catalogItemId } : {}),
         });
       }),
     ),

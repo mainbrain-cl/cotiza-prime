@@ -95,8 +95,14 @@ eliminaría la prueba de qué regla regía cada envío.
 SQL manda (la función de envío se puede llamar directo por la API con el pase de un Comercial); TypeScript sirve
 a la pantalla (frase, bloqueo del botón y, en el sprint 6, el motivo de H-043). Prueba de paridad entre ambas.
 
-- `grossClp = subtotalClp + lineDiscountsClp` (antes de todo descuento, sin IVA, incluye líneas exentas).
-- `discountClp = lineDiscountsClp + globalDiscountClp`.
+- **Decisión de Aarón (2026-11-11): bajar el precio a mano también es descuento.** `priceRebateClp` = suma, por línea con precio
+  de catálogo, de `max(0, cantidad × catálogo − bruto de la línea)` (redondeo mitad hacia arriba; `catálogo` es
+  `quote_items.catalog_unit_price_clp`, el que el servidor congeló al agregar la línea; nunca negativa ni compensa otra línea; las
+  líneas libres no suman). Migración `20261111100000_approval_price_rebate` (solo redefine `app.quote_approval_check`) y
+  `priceRebateOfLines` en TypeScript.
+- `grossClp = subtotalClp + lineDiscountsClp + priceRebateClp` (el **valor de lista**: antes de todo descuento y rebaja, sin IVA,
+  incluye líneas exentas; cada línea cuenta al mayor entre su catálogo y el precio puesto).
+- `discountClp = lineDiscountsClp + globalDiscountClp + priceRebateClp`.
 - `discountBp = grossClp === 0 ? 0 : roundHalfUpDiv(discountClp × 10.000, grossClp)` (centésimas de punto,
   mitad hacia arriba; en TypeScript con `BigInt`, porque 10¹² × 10⁴ pasa el entero seguro de JavaScript).
 - Motivo `amount` si `totalClp > umbral` (estrictamente mayor; el total **incluye IVA**). Motivo `discount`: si
@@ -196,8 +202,9 @@ revise la regla.» `prepareErrorMessage` revisa `approval_required` **antes** de
 H-041 es un tope **duro** por línea (no deja guardar; CP422; vive en `tenants.sales_max_line_discount_bp` y
 `price_locked`); H-040 es un umbral **blando** de toda la cotización (deja guardar, pide visto bueno; CP423;
 `approval_rules`). No se mezclan columnas ni funciones; al enviar, primero el tope de H-041 y después la
-compuerta de H-040. Hueco conocido: bajar el precio a mano no cuenta como descuento (lo cubren el bloqueo de
-H-041 y la regla por margen, PROYECTO §9.4). La regla por margen (sprint 10) será una tercera condición:
+compuerta de H-040. Bajar el precio a mano de un servicio del catálogo sí cuenta como descuento (decisión de
+Aarón, 2026-11-11, §3); lo que sigue fuera es una línea libre escrita a mano (§12). El bloqueo de H-041 y la regla por margen
+(PROYECTO §9.4) siguen cubriendo el resto. La regla por margen (sprint 10) será una tercera condición:
 columna opcional `margin_floor_bp` como versión nueva, y `ApprovalMetrics` gana `marginBp`.
 
 ## 9. Pruebas
@@ -254,7 +261,8 @@ aplica. PR delicado: queda abierto hasta que Aarón lo revise; después, el `rev
    cuando corresponda). La excepción por persona viene después** (§5: tabla aparte, sin tocar `approval_rules`). Se construyó así.
 3. **D3 · ¿El monto se compara con el total con IVA o con el neto?** Supuesto: total con IVA. **Decidida por José el 2026-11-04: total con IVA.**
 4. **D4 · ¿Qué cuenta como descuento?** Supuesto: descuentos de línea más el general, sobre el valor antes de
-   descuentos y sin IVA (no las rebajas de precio respecto del catálogo). **Decidida por José el 2026-11-04: ese criterio.**
+   descuentos y sin IVA (no las rebajas de precio respecto del catálogo). **Decidida por José el 2026-11-04: ese criterio. Ampliada por
+   Aarón el 2026-11-11: la rebaja de precio contra el catálogo también cuenta como descuento** (§3).
 
 **No bloquean (se construye con el supuesto):** D5 umbral de 0 % = «cualquier descuento» (permitido) · D6
 redondear el porcentaje a dos decimales antes de comparar (sí) · D7 regla de las organizaciones nuevas:
@@ -272,10 +280,15 @@ a mano en vez de dar descuento (lo cubren H-041 y el margen); una organización 
 
 **Riesgos aceptados al construir (revisión adversarial del 2026-11-10), para que Aarón decida:**
 
-- **Bajar el precio a mano no cuenta como descuento (I2).** `save_quote_draft` acepta `unit_price_clp` desde el navegador y H-041
-  (precios bloqueados) aún no está construida: quien arma la cotización puede escribir un precio menor al del catálogo y la regla
-  de descuento no lo ve. La pantalla lo dice («Cambiar el precio de un servicio no cuenta como descuento»). **Alternativa, no
-  implementada:** contar la rebaja contra `quote_items.catalog_unit_price_clp` como parte del descuento. Decisión de Aarón.
+- **Bajar el precio a mano (I2) — resuelto por decisión de Aarón (2026-11-11).** Antes quedaba fuera, porque `save_quote_draft`
+  acepta `unit_price_clp` desde el navegador. Ahora la regla de descuento cuenta también la rebaja contra el precio de catálogo
+  congelado en la línea (§3), en el servidor (`/enviar`) y en la puerta de envío de la base. **No se puede falsear el catálogo:**
+  `save_quote_draft` copia el precio desde `catalog_items` al agregar la línea («del catálogo, nunca del navegador»), lo conserva
+  en las líneas existentes, rechaza cambiar el servicio de una línea ya guardada (`catalog_item_changed`), ignora cualquier
+  `catalog_unit_price_clp` que mande el navegador y `quote_items` no tiene permisos de escritura. **Hueco que queda (riesgo
+  aceptado):** escribir el servicio a mano como línea libre, sin catálogo, con un precio menor: la base no puede saber que era el
+  mismo servicio, así que esa línea no suma rebaja (lo cubrirán H-041/H-042 y la regla por margen). Tampoco cuenta una baja del
+  catálogo posterior a agregar la línea (la línea guarda el precio de cuando se agregó).
 - **Una cuenta de Administrador puede mover la regla sin que el Dueño se entere (I3).** Un Administrador (o su cuenta robada)
   puede poner la regla en «Nunca», enviar y devolverla, o ponerla en «Siempre» y bloquear al Dueño. No hay aviso por correo hasta
   H-047 (D8). El rastro queda en el registro de actividad (`approval_rule.updated`, con la regla anterior y la nueva) y en
@@ -367,3 +380,8 @@ Dónde la construcción se aparta del texto de arriba o lo precisa. Cada punto e
 15. **La migración `approval_send_gate` se deja en un solo archivo** (M2): en una transacción los bloqueos se sueltan al confirmar,
     así que reordenar la columna, el relleno, la relación y el `not null` no acorta el `ACCESS EXCLUSIVE` sobre `quote_packages`; solo
     archivos separados lo harían. Se anotó en `modelo-datos.md` §9.4 para aplicarla sobre la base vacía.
+16. **Rebaja de precio contra el catálogo (decisión de Aarón, 2026-11-11).** `priceRebateClp` se suma al descuento y al valor de
+    lista (§3). Tercera migración `20261111100000_approval_price_rebate` (con su deshacer) en vez de editar las dos del PR;
+    `app.quote_approval_check` lee `quote_items` por el índice único `(tenant_id, quote_id, position)` y devuelve además
+    `metrics.price_rebate_clp`. La pantalla de la regla y `/enviar` lo explican («incluye $2.000 por precios más bajos que el de
+    catálogo»); el texto de ayuda ya no dice que cambiar el precio no es un descuento.

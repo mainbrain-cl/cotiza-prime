@@ -64,7 +64,12 @@ describe("describeApprovalRule: la frase de la regla", () => {
 });
 
 describe("describeApprovalReasons: por qué ESTA cotización necesita aprobación", () => {
-  const metrics = { totalClp: 2_350_000, discountClp: 300_000, discountBp: 1_250 };
+  const metrics = {
+    totalClp: 2_350_000,
+    discountClp: 300_000,
+    discountBp: 1_250,
+    priceRebateClp: 0,
+  };
 
   it("monto", () => {
     expect(
@@ -90,6 +95,19 @@ describe("describeApprovalReasons: por qué ESTA cotización necesita aprobació
       ),
     ).toBe("el total ($2.350.000) supera $2.000.000 y el descuento (12,5%) supera 10%");
   });
+  it("descuento con rebaja de precio: dice cuánto es por precios más bajos que el de catálogo", () => {
+    const withRebate = { ...metrics, priceRebateClp: 200_000 };
+    expect(
+      describeApprovalReasons(rule({ discountThresholdBp: 1_000 }), ["discount"], withRebate),
+    ).toBe(
+      "el descuento (12,5%) supera 10% (incluye $200.000 por precios más bajos que el de catálogo)",
+    );
+    expect(
+      describeApprovalReasons(rule({ discountThresholdBp: 0 }), ["discount"], withRebate),
+    ).toBe(
+      "la cotización tiene un descuento ($300.000) (incluye $200.000 por precios más bajos que el de catálogo)",
+    );
+  });
   it("siempre", () => {
     expect(describeApprovalReasons(rule({ mode: "always" }), ["always"], metrics)).toBe(
       "la organización pide aprobación para todas las cotizaciones",
@@ -104,7 +122,11 @@ describe("el texto de ayuda de la regla", () => {
   it("aclara qué cuenta como descuento y qué no", () => {
     expect(APPROVAL_RULE_HELP).toContain("El total incluye IVA.");
     expect(APPROVAL_RULE_HELP).toContain(
-      "Cambiar el precio de un servicio no cuenta como descuento",
+      "lo que un servicio del catálogo cuesta menos que su precio de catálogo",
     );
+    expect(APPROVAL_RULE_HELP).toContain(
+      "escrito a mano, que no es del catálogo, no cuenta como rebaja",
+    );
+    expect(APPROVAL_RULE_HELP).not.toContain("no cuenta como descuento");
   });
 });

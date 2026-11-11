@@ -8,7 +8,7 @@ import type { ApprovalMetrics, ApprovalReason, ApprovalRule } from "./rule";
 
 /** Texto de ayuda fijo, debajo de las opciones. */
 export const APPROVAL_RULE_HELP =
-  "El total incluye IVA. El descuento suma los descuentos de cada línea y el descuento general, sobre el valor antes de descuentos. Cambiar el precio de un servicio no cuenta como descuento.";
+  "El total incluye IVA. El descuento suma los descuentos de cada línea, el descuento general y lo que un servicio del catálogo cuesta menos que su precio de catálogo, sobre el valor de lista antes de descuentos. Un servicio escrito a mano, que no es del catálogo, no cuenta como rebaja.";
 
 /** Aviso fijo del formulario. */
 export const APPROVAL_RULE_SCOPE_NOTE =
@@ -55,10 +55,15 @@ export function describeApprovalReasons(
       );
     }
     if (reason === "discount" && rule.discountThresholdBp !== null) {
+      // Si parte del descuento es por poner un precio menor al del catálogo, se dice (sin jerga).
+      const rebate =
+        metrics.priceRebateClp > 0
+          ? ` (incluye ${formatClp(metrics.priceRebateClp)} por precios más bajos que el de catálogo)`
+          : "";
       pieces.push(
         rule.discountThresholdBp === 0
-          ? `la cotización tiene un descuento (${formatClp(metrics.discountClp)})`
-          : `el descuento (${formatPercentBp(metrics.discountBp)}%) supera ${formatPercentBp(rule.discountThresholdBp)}%`,
+          ? `la cotización tiene un descuento (${formatClp(metrics.discountClp)})${rebate}`
+          : `el descuento (${formatPercentBp(metrics.discountBp)}%) supera ${formatPercentBp(rule.discountThresholdBp)}%${rebate}`,
       );
     }
   }

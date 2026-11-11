@@ -11,11 +11,12 @@ import {
   APPROVAL_DISCOUNT_MAX_BP,
   approvalMetrics,
   approvalReasons,
+  priceRebateOfLines,
   type ApprovalRule,
   type ApprovalTotals,
 } from "../../src/lib/approvals/rule";
 import { actAsPostgres, connect, withTx } from "./helpers";
-import { createQuoteWith, type QuoteSpec } from "./approval-helpers";
+import { addCatalogItem, createQuoteWith, type QuoteSpec } from "./approval-helpers";
 import { buildWorld, type World } from "./send-helpers";
 
 let db: Client;
@@ -32,8 +33,8 @@ type SqlAnswer = { discountBp: number; reasons: string[] };
 
 /** Lo que responde la base para estos totales y esta regla. */
 async function sqlAnswer(rule: ApprovalRule, totals: ApprovalTotals): Promise<SqlAnswer> {
-  const gross = totals.subtotalClp + totals.lineDiscountsClp;
-  const discount = totals.lineDiscountsClp + totals.globalDiscountClp;
+  const gross = totals.subtotalClp + totals.lineDiscountsClp + totals.priceRebateClp;
+  const discount = totals.lineDiscountsClp + totals.globalDiscountClp + totals.priceRebateClp;
   const { rows } = await db.query<{ bp: number; reasons: string[] }>(
     `select app.approval_discount_bp($1::bigint, $2::bigint) as bp,
             app.approval_rule_reasons($3, $4::bigint, $5::integer, $6::bigint, $2::bigint,
@@ -89,7 +90,12 @@ describe("paridad SQL / TypeScript: casos al azar de semilla fija", () => {
       const lineDiscountsClp =
         random() < 0.4 ? 0 : int(Math.min(subtotalClp * 2, 10 ** 12 - 1 - subtotalClp));
       const globalDiscountClp = random() < 0.5 ? 0 : int(subtotalClp);
+      const priceRebateClp =
+        random() < 0.5
+          ? 0
+          : int(Math.min(subtotalClp, 10 ** 12 - 1 - subtotalClp - lineDiscountsClp));
       const totals: ApprovalTotals = {
+        priceRebateClp,
         subtotalClp,
         lineDiscountsClp,
         globalDiscountClp,
@@ -161,6 +167,52 @@ describe("paridad con cotizaciones de verdad (el cálculo oficial → quotes →
     ],
     ["sin descuento", { lines: [{ price: 40_000, qtyMilli: 2_500 }] }],
   ];
+  /** Cotizaciones con servicios del catálogo y precios puestos a mano: `rebate` es la rebaja que debe dar la cuenta, en pesos. */
+  type Cat = { a: string; b: string };
+  const catalogSpecs: [string, (cat: Cat) => QuoteSpec, number][] = [
+    ["a precio de catálogo", (c) => ({ lines: [{ price: 10_000, catalogItemId: c.a }] }), 0],
+    [
+      "precio bajado a mano ($8.000 contra $10.000, 2,5 unidades)",
+      (c) => ({ lines: [{ price: 8_000, qtyMilli: 2_500, catalogItemId: c.a }] }),
+      5_000,
+    ],
+    [
+      "precio mayor al catálogo, con un descuento de línea de 10 %",
+      (c) => ({
+        lines: [{ price: 12_000, discount: { kind: "percent", bp: 1_000 }, catalogItemId: c.a }],
+      }),
+      0,
+    ],
+    [
+      "una línea cara no compensa a una barata",
+      (c) => ({
+        lines: [
+          { price: 8_000, catalogItemId: c.a },
+          { price: 30_000, catalogItemId: c.b },
+        ],
+      }),
+      2_000,
+    ],
+    [
+      "una línea libre barata junto a una de catálogo a su precio: sin rebaja",
+      (c) => ({ lines: [{ price: 10_000, catalogItemId: c.a }, { price: 1 }] }),
+      0,
+    ],
+    [
+      "rebaja más descuento de línea y general",
+      (c) => ({
+        lines: [{ price: 9_000, discount: { kind: "percent", bp: 500 }, catalogItemId: c.a }],
+        globalDiscount: { kind: "percent", bp: 500 },
+      }),
+      1_000,
+    ],
+    [
+      "redondeo: 0,5 unidades de $1.001 de catálogo, puestas a $800",
+      (c) => ({ lines: [{ price: 800, qtyMilli: 500, catalogItemId: c.b }] }),
+      101,
+    ],
+    ["precio 0 contra el catálogo", (c) => ({ lines: [{ price: 0, catalogItemId: c.a }] }), 10_000],
+  ];
   const rules: ApprovalRule[] = [
     { mode: "never", amountThresholdClp: null, discountThresholdBp: null },
     { mode: "always", amountThresholdClp: null, discountThresholdBp: null },
@@ -172,7 +224,19 @@ describe("paridad con cotizaciones de verdad (el cálculo oficial → quotes →
 
   it("cada cotización contra cada regla: la base y TypeScript piden aprobación por los mismos motivos", async () => {
     await withTx(db, async () => {
-      for (const [name, spec] of specs) {
+      const cat: Cat = {
+        a: await addCatalogItem(db, w.tenantA, 10_000),
+        b: await addCatalogItem(db, w.tenantA, 1_001),
+      };
+      const cases = [
+        ...specs.map(([name, spec]) => ({ name, spec, expectedRebate: 0 })),
+        ...catalogSpecs.map(([name, build, expectedRebate]) => ({
+          name,
+          spec: build(cat),
+          expectedRebate,
+        })),
+      ];
+      for (const { name, spec, expectedRebate } of cases) {
         const { quoteId, totals } = await createQuoteWith(
           db,
           w.owner,
@@ -180,11 +244,31 @@ describe("paridad con cotizaciones de verdad (el cálculo oficial → quotes →
           w.customerA,
           spec,
         );
+        // La rebaja de precio sale de las líneas GUARDADAS, igual que en la pantalla de enviar.
+        await actAsPostgres(db);
+        const { rows: items } = await db.query<{
+          quantity_milli: string;
+          gross_clp: string;
+          catalog_unit_price_clp: string | null;
+        }>(
+          "select quantity_milli, gross_clp, catalog_unit_price_clp from public.quote_items where quote_id = $1",
+          [quoteId],
+        );
+        const priceRebateClp = priceRebateOfLines(
+          items.map((i) => ({
+            quantityMilli: Number(i.quantity_milli),
+            grossClp: Number(i.gross_clp),
+            catalogUnitPriceClp:
+              i.catalog_unit_price_clp === null ? null : Number(i.catalog_unit_price_clp),
+          })),
+        );
+        expect(priceRebateClp, name).toBe(expectedRebate);
         const ts = approvalMetrics({
           subtotalClp: totals.subtotalClp,
           lineDiscountsClp: totals.lineDiscountsClp,
           globalDiscountClp: totals.globalDiscountClp,
           totalClp: totals.totalClp,
+          priceRebateClp,
         });
         for (const rule of rules) {
           await actAsPostgres(db);
@@ -217,6 +301,7 @@ describe("paridad con cotizaciones de verdad (el cálculo oficial → quotes →
             total_clp: ts.totalClp,
             discount_clp: ts.discountClp,
             discount_bp: ts.discountBp,
+            price_rebate_clp: ts.priceRebateClp,
           });
         }
       }

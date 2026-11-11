@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
 import { loadCurrentApprovalRule } from "@/lib/approvals/queries";
+import { priceRebateOfLines } from "@/lib/approvals/rule";
 import {
   APPROVAL_RULE_UNAVAILABLE_MESSAGE,
   approvalBlockMessage,
@@ -61,6 +62,14 @@ export default async function SendQuotePage({
           lineDiscountsClp: quote.line_discounts_clp,
           globalDiscountClp: quote.global_discount_clp,
           totalClp: quote.total_clp,
+          // Bajar el precio de un servicio del catálogo también cuenta como descuento (decisión de Aarón, 2026-11-11).
+          priceRebateClp: priceRebateOfLines(
+            items.map((item) => ({
+              quantityMilli: item.quantity_milli,
+              grossClp: item.gross_clp,
+              catalogUnitPriceClp: item.catalog_unit_price_clp,
+            })),
+          ),
         })
       : null;
   let blocker: string | null = null;

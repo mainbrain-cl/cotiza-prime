@@ -186,11 +186,12 @@ test("el Dueño llega desde Configuración, ve «Nunca» de partida y la frase s
   await expect(page.getByTestId("approval-only-you")).toContainText(
     "Cuando llegue la solicitud de aprobación",
   );
-  // El texto de ayuda aclara que cambiar el precio no es un descuento
+  // El texto de ayuda aclara que un precio menor al del catálogo cuenta como descuento
   await page.getByTestId("approval-mode-conditional").check();
   await expect(
-    page.getByText("Cambiar el precio de un servicio no cuenta como descuento."),
+    page.getByText(/lo que un servicio del catálogo cuesta menos que su precio de catálogo/),
   ).toBeVisible();
+  await expect(page.getByText(/no cuenta como descuento/)).toHaveCount(0);
   // `aria-controls` solo existe mientras el bloque de condiciones está en pantalla
   await expect(page.getByTestId("approval-mode-conditional")).toHaveAttribute(
     "aria-controls",
@@ -416,6 +417,79 @@ test("al cambiar la regla, el envío lo nota enseguida: «Siempre» bloquea y «
   await salesPage.goto(sendUrl());
   await expect(salesPage.getByTestId("send-quote")).toBeVisible();
   await expect(salesPage.getByTestId("send-blocker")).toHaveCount(0);
+});
+
+test("bajar el precio a mano cuenta como descuento: se bloquea el envío con el motivo, y a precio de catálogo sale", async () => {
+  test.setTimeout(240_000);
+  const sales = salesPage;
+  // Regla: pide aprobación si el descuento supera 10 %. La cotización no tiene ningún descuento declarado.
+  await chooseAndSave(ownerPage, "conditional", { discount: "10" });
+  const price = sales.getByTestId("quote-line").nth(0).getByLabel("Precio unitario (neto)");
+  await sales.goto(`/o/${tenantId}/cotizaciones/${quoteId}`);
+  await expect(price).toHaveValue("10000");
+  await sales.goto(sendUrl());
+  await expect(sales.getByTestId("send-quote")).toBeVisible();
+
+  // Baja el precio de $10.000 a $8.000 (catálogo $10.000): 20 % de rebaja
+  await sales.goto(`/o/${tenantId}/cotizaciones/${quoteId}`);
+  await price.fill("8000");
+  await sales.getByTestId("save-quote").click();
+  await expect(sales.getByTestId("save-status")).toHaveText("Guardado.");
+  await sales.goto(sendUrl());
+  const blocker = sales.getByTestId("send-blocker");
+  await expect(blocker).toContainText(
+    "el descuento (20%) supera 10% (incluye $2.000 por precios más bajos que el de catálogo)",
+  );
+  await expect(blocker).toContainText(NOT_YET);
+  await expect(sales.getByTestId("send-quote")).toHaveCount(0);
+
+  // Forzando la base con su propio pase (sin pasar por la pantalla): rechazada
+  const token = await passwordToken(salesEmail);
+  const revision = await withDb(
+    async (db) =>
+      (
+        await db.query<{ revision: number }>("select revision from public.quotes where id = $1", [
+          quoteId,
+        ])
+      ).rows[0].revision,
+  );
+  const forced = await rpc(
+    token,
+    "prepare_quote_send",
+    {
+      p_quote_id: quoteId,
+      p_expected_revision: revision,
+      p_send_key: crypto.randomUUID(),
+      p_package_id: crypto.randomUUID(),
+      p_email_message_id: crypto.randomUUID(),
+      p_share_link_id: crypto.randomUUID(),
+      p_token_sha256: "a".repeat(64),
+      p_email_subject: "Su cotización",
+      p_email_body_md: "Hola",
+      p_to_email_enc: "v1.to.to",
+      p_to_email_hash: "b".repeat(64),
+      p_customer_snapshot_enc: "v1.snap.snap",
+    },
+    { [TENANT_HEADER]: tenantId },
+  );
+  expect(forced.status).toBeGreaterThanOrEqual(400);
+  expect(forced.json).toMatchObject({
+    code: "CP423",
+    message: "approval_required",
+    details: "discount",
+  });
+
+  // De vuelta al precio de catálogo: sale
+  await sales.goto(`/o/${tenantId}/cotizaciones/${quoteId}`);
+  await price.fill("10000");
+  await sales.getByTestId("save-quote").click();
+  await expect(sales.getByTestId("save-status")).toHaveText("Guardado.");
+  await sales.goto(sendUrl());
+  await expect(sales.getByTestId("send-quote")).toBeVisible();
+  await expect(sales.getByTestId("send-blocker")).toHaveCount(0);
+
+  // Dejar la regla como estaba para las pruebas siguientes
+  await chooseAndSave(ownerPage, "never");
 });
 
 test("dos pestañas del Dueño: la segunda en guardar recibe el aviso de que otra persona cambió la regla", async () => {

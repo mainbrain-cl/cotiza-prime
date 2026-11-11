@@ -5,6 +5,7 @@ import {
   approvalMetrics,
   approvalReasons,
   isApprovalMode,
+  priceRebateOfLines,
   requiresApproval,
   type ApprovalRule,
 } from "./rule";
@@ -20,7 +21,10 @@ describe("la tabla de casos de la regla de aprobación", () => {
       const metrics = approvalMetrics(c.totals);
       expect(metrics.discountBp).toBe(c.discountBp);
       expect(metrics.totalClp).toBe(c.totals.totalClp);
-      expect(metrics.discountClp).toBe(c.totals.lineDiscountsClp + c.totals.globalDiscountClp);
+      expect(metrics.discountClp).toBe(
+        c.totals.lineDiscountsClp + c.totals.globalDiscountClp + c.totals.priceRebateClp,
+      );
+      expect(metrics.priceRebateClp).toBe(c.totals.priceRebateClp);
       expect(approvalReasons(c.rule, metrics)).toEqual(c.reasons);
       expect(requiresApproval(c.rule, metrics)).toBe(c.reasons.length > 0);
     });
@@ -34,7 +38,13 @@ describe("bordes de la regla", () => {
     discountThresholdBp: null,
   });
   const totalOf = (totalClp: number) =>
-    approvalMetrics({ subtotalClp: totalClp, lineDiscountsClp: 0, globalDiscountClp: 0, totalClp });
+    approvalMetrics({
+      subtotalClp: totalClp,
+      lineDiscountsClp: 0,
+      globalDiscountClp: 0,
+      totalClp,
+      priceRebateClp: 0,
+    });
 
   it("el monto se compara con el total estrictamente mayor", () => {
     expect(approvalReasons(amountOver(2_000_000), totalOf(2_000_000))).toEqual([]);
@@ -49,6 +59,7 @@ describe("bordes de la regla", () => {
         lineDiscountsClp: 1,
         globalDiscountClp: 0,
         totalClp: 1,
+        priceRebateClp: 0,
       }).discountBp,
     ).toBe(1);
     // 1/30000 = 0,0033 % → 0,33 centésima → baja a 0, pero el umbral 0 mira pesos, no el porcentaje (D5).
@@ -57,6 +68,7 @@ describe("bordes de la regla", () => {
       lineDiscountsClp: 1,
       globalDiscountClp: 0,
       totalClp: 1,
+      priceRebateClp: 0,
     });
     expect(tiny.discountBp).toBe(0);
     expect(
@@ -78,6 +90,7 @@ describe("bordes de la regla", () => {
         lineDiscountsClp: 499_999_999_999,
         globalDiscountClp: 0,
         totalClp: 1,
+        priceRebateClp: 0,
       }).discountBp,
     ).toBe(5_000);
     // bruto = 10¹² − 1; descuento = 10¹² − 2 → 99,9999999999 % → 10.000 al redondear.
@@ -87,6 +100,7 @@ describe("bordes de la regla", () => {
         lineDiscountsClp: max - 1,
         globalDiscountClp: 0,
         totalClp: 1,
+        priceRebateClp: 0,
       }).discountBp,
     ).toBe(10_000);
   });
@@ -97,6 +111,7 @@ describe("bordes de la regla", () => {
       lineDiscountsClp: 0,
       globalDiscountClp: 0,
       totalClp: 1,
+      priceRebateClp: 0,
     });
     expect(
       approvalReasons(
@@ -113,5 +128,44 @@ describe("bordes de la regla", () => {
     expect(["never", "always", "conditional"].every(isApprovalMode)).toBe(true);
     expect(isApprovalMode("sometimes")).toBe(false);
     expect(isApprovalMode(null)).toBe(false);
+  });
+});
+
+describe("priceRebateOfLines: la rebaja de precio contra el catálogo", () => {
+  // Una línea de 2 unidades (2.000 milésimas) con catálogo $10.000: lista $20.000.
+  const line = (
+    grossClp: number,
+    catalogUnitPriceClp: number | null = 10_000,
+    quantityMilli = 2_000,
+  ) => ({
+    quantityMilli,
+    grossClp,
+    catalogUnitPriceClp,
+  });
+
+  it("precio de catálogo: sin rebaja", () => {
+    expect(priceRebateOfLines([line(20_000)])).toBe(0);
+  });
+  it("precio bajado a mano: cantidad × (catálogo − precio)", () => {
+    expect(priceRebateOfLines([line(15_000)])).toBe(5_000);
+  });
+  it("precio mayor que el catálogo: nunca una rebaja negativa", () => {
+    expect(priceRebateOfLines([line(26_000)])).toBe(0);
+  });
+  it("una línea cara no compensa a una barata", () => {
+    expect(priceRebateOfLines([line(15_000), line(26_000)])).toBe(5_000);
+    expect(priceRebateOfLines([line(26_000), line(15_000), line(18_000)])).toBe(7_000);
+  });
+  it("línea libre (sin catálogo): no suma", () => {
+    expect(priceRebateOfLines([line(1, null)])).toBe(0);
+    expect(priceRebateOfLines([])).toBe(0);
+  });
+  it("redondeo mitad hacia arriba, igual que el bruto: 0,5 unidades × $1.001 = $500,5 → $501", () => {
+    // lista = round(500 × 1001 / 1000) = round(500,5) = 501; bruto guardado $400
+    expect(priceRebateOfLines([line(400, 1_001, 500)])).toBe(101);
+  });
+  it("cantidades y montos grandes no pierden exactitud", () => {
+    const big = priceRebateOfLines([line(1, 999_999_999_999, 1_000)]);
+    expect(big).toBe(999_999_999_998);
   });
 });

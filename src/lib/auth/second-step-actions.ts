@@ -2,7 +2,12 @@
 
 import { redirect } from "next/navigation";
 import { logAuditEvent, type AuditAction } from "@/lib/audit/log";
-import { AUTH_MESSAGES, classifyAuthError } from "@/lib/auth/errors";
+import {
+  AUTH_MESSAGES,
+  MFA_LOCKED_DAY_MESSAGE,
+  MFA_SIGN_IN_FAILED_MESSAGE,
+  classifyAuthError,
+} from "@/lib/auth/errors";
 import type { FormState } from "@/lib/auth/form-state";
 import { activeTenantIdsOf, logTenantLogins } from "@/lib/auth/login-audit";
 import { ACCOUNT_SECURITY_NOTICES, ACCOUNT_SECURITY_PATH } from "@/lib/auth/paths";
@@ -18,10 +23,13 @@ import { getRequestContext } from "@/lib/http/request-context";
 import { serverLog } from "@/lib/log/server-log";
 import {
   RATE_LIMITED_MESSAGE,
+  beginSecondStepAttempt,
   clearSecondStepFailures,
   consumeTotpCode,
-  isSecondStepLocked,
+  isSecondStepIpLocked,
   recordSecondStepFailure,
+  releaseTotpCode,
+  type SecondStepContext,
 } from "@/lib/security/login-rate-limit";
 import { createClient } from "@/lib/supabase/server";
 import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
@@ -53,15 +61,20 @@ const errorCodeOf = (error: AuthErrorLike) => error.code ?? String(error.status 
 
 type CodeCheck = { ok: true; code: string } | { ok: false; state: FormState };
 
+/** Etapa de la verificación, para la auditoría y para el mensaje de «caducó». */
+type Stage = "sign_in" | "enrollment";
+
 /**
- * Lo que va ANTES de pedirle la verificación a Supabase: formato del código, bloqueo por intentos y código ya usado.
- * Devuelve el código limpio o el estado de error que se muestra.
+ * Lo que va ANTES de pedirle la verificación a Supabase: formato del código, bloqueo (de la IP, del día y de la ventana de
+ * 15 minutos) y código ya usado. Los intentos de la ventana se REGISTRAN aquí, antes de verificar, para que los envíos en
+ * paralelo no pasen del tope. Devuelve el código limpio o el estado de error que se muestra.
  */
 async function checkCodeBeforeVerifying(
   formData: FormData,
   userId: string,
   clientIp: string | null,
-  stage: "sign_in" | "enrollment",
+  stage: Stage,
+  context: SecondStepContext,
 ): Promise<CodeCheck> {
   const parsed = totpCodeSchema.safeParse({ code: readText(formData, CODE_FIELD) });
   if (!parsed.success) {
@@ -69,73 +82,72 @@ async function checkCodeBeforeVerifying(
   }
   const { code } = parsed.data;
 
-  if (await isSecondStepLocked(userId, clientIp)) {
+  const blocked = (await isSecondStepIpLocked(clientIp))
+    ? "short"
+    : await beginSecondStepAttempt(userId, context);
+  if (blocked !== "none") {
     await logAuditEvent({
       action: "session.mfa_locked",
       result: "denied",
       actorUserId: userId,
       details: { reason: "blocked", stage, factorType: MFA_FACTOR_TYPE },
     });
-    return { ok: false, state: { status: "error", message: RATE_LIMITED_MESSAGE } };
-  }
-
-  if (!(await consumeTotpCode(userId, code))) {
-    // Presentar de nuevo un código ya usado cuenta como un fallo.
-    const locked = await recordSecondStepFailure(userId, clientIp);
-    await auditFailure(userId, stage, "code_reused", locked);
     return {
       ok: false,
       state: {
         status: "error",
-        message: locked ? RATE_LIMITED_MESSAGE : AUTH_MESSAGES.mfa_code_reused,
+        message: blocked === "day" ? MFA_LOCKED_DAY_MESSAGE : RATE_LIMITED_MESSAGE,
       },
     };
+  }
+
+  if (!(await consumeTotpCode(userId, code))) {
+    // Presentar de nuevo un código ya usado cuenta como un fallo (el intento ya se registró al empezar).
+    await recordSecondStepFailure(userId, context, clientIp);
+    await auditFailure(userId, stage, "code_reused");
+    return { ok: false, state: { status: "error", message: AUTH_MESSAGES.mfa_code_reused } };
   }
   return { ok: true, code };
 }
 
-async function auditFailure(
-  userId: string,
-  stage: "sign_in" | "enrollment",
-  reason: string,
-  locked: boolean,
-): Promise<void> {
-  const details = { reason, stage, factorType: MFA_FACTOR_TYPE };
+async function auditFailure(userId: string, stage: Stage, reason: string): Promise<void> {
   await logAuditEvent({
     action: "session.mfa_failed",
     result: "failure",
     actorUserId: userId,
-    details,
+    details: { reason, stage, factorType: MFA_FACTOR_TYPE },
   });
-  if (locked) {
-    await logAuditEvent({
-      action: "session.mfa_locked",
-      result: "denied",
-      actorUserId: userId,
-      details: { ...details, reason: "threshold_reached" },
-    });
-  }
 }
 
 /**
- * Resultado de un `challengeAndVerify` que falló, convertido en el estado que ve la persona. Solo un código incorrecto
- * suma al bloqueo; el límite de Supabase (429) y los demás errores no.
+ * Resultado de un `challengeAndVerify` que falló, convertido en el estado que ve la persona. Un código incorrecto y el 429 de
+ * Supabase suman al tope del día y al de la IP. Si Supabase falló por otra cosa (la red, la IP no coincidió, la sesión
+ * cambió), el código NO se gastó: se libera para poder reintentar con el mismo código correcto.
  */
 async function failedVerification(
   error: AuthErrorLike,
   userId: string,
+  code: string,
   clientIp: string | null,
-  stage: "sign_in" | "enrollment",
+  stage: Stage,
+  context: SecondStepContext,
 ): Promise<FormState> {
   const kind = classifyAuthError(error);
   await serverLog("warn", "mfa_verify_failed", { stage, code: errorCodeOf(error) });
-  if (kind === "rate_limited") return { status: "error", message: RATE_LIMITED_MESSAGE };
-  if (kind === "mfa_invalid_code") {
-    const locked = await recordSecondStepFailure(userId, clientIp);
-    await auditFailure(userId, stage, kind, locked);
-    return { status: "error", message: locked ? RATE_LIMITED_MESSAGE : AUTH_MESSAGES[kind] };
+  if (kind === "rate_limited") {
+    await recordSecondStepFailure(userId, context, clientIp);
+    await releaseTotpCode(userId, code);
+    return { status: "error", message: RATE_LIMITED_MESSAGE };
   }
-  await auditFailure(userId, stage, kind, false);
+  if (kind === "mfa_invalid_code") {
+    await recordSecondStepFailure(userId, context, clientIp);
+    await auditFailure(userId, stage, kind);
+    return { status: "error", message: AUTH_MESSAGES[kind] };
+  }
+  await releaseTotpCode(userId, code);
+  await auditFailure(userId, stage, kind);
+  // «La activación caducó» solo tiene sentido al activar; al ingresar, lo que sirve es volver a empezar la sesión.
+  if (stage === "sign_in") return { status: "error", message: MFA_SIGN_IN_FAILED_MESSAGE };
   return { status: "error", message: AUTH_MESSAGES[kind === "unknown" ? "mfa_unavailable" : kind] };
 }
 
@@ -152,23 +164,26 @@ export async function verifySecondStepAction(
   const state = await getSessionState();
   const { clientIp } = await getRequestContext();
 
-  const checked = await checkCodeBeforeVerifying(formData, user.id, clientIp, "sign_in");
+  // Antes de verificar: después el pase ya no es el del enlace de recuperación. Decide también QUÉ contadores de intentos
+  // se usan: quien llega con el enlace del correo y quien llega con la contraseña sola no comparten bloqueo.
+  const recovery = await hasRecoverySession();
+  const counters: SecondStepContext = recovery ? "recovery" : "password";
+  const context = { recovery, invitation: await hasPendingInvitation() };
+
+  const checked = await checkCodeBeforeVerifying(formData, user.id, clientIp, "sign_in", counters);
   if (!checked.ok) return checked.state;
 
   const factorId = state.status === "second_step_pending" ? state.factorId : null;
-  if (!factorId) return { status: "error", message: AUTH_MESSAGES.mfa_unavailable };
-
-  // Antes de verificar: después el pase ya no es el del enlace de recuperación.
-  const context = {
-    recovery: await hasRecoverySession(),
-    invitation: await hasPendingInvitation(),
-  };
+  if (!factorId) {
+    await releaseTotpCode(user.id, checked.code);
+    return { status: "error", message: MFA_SIGN_IN_FAILED_MESSAGE };
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: checked.code });
-  if (error) return failedVerification(error, user.id, clientIp, "sign_in");
+  if (error) return failedVerification(error, user.id, checked.code, clientIp, "sign_in", counters);
 
-  await clearSecondStepFailures(user.id);
+  await clearSecondStepFailures(user.id, counters);
   await logAuditEvent({
     action: "session.mfa_verified",
     result: "success",
@@ -262,7 +277,13 @@ export async function confirmTotpEnrollmentAction(
   const { clientIp } = await getRequestContext();
   const factorId = readText(formData, FACTOR_FIELD) ?? "";
 
-  const checked = await checkCodeBeforeVerifying(formData, user.id, clientIp, "enrollment");
+  const checked = await checkCodeBeforeVerifying(
+    formData,
+    user.id,
+    clientIp,
+    "enrollment",
+    "password",
+  );
   if (!checked.ok) return checked.state;
 
   // El factor tiene que ser un TOTP SIN verificar de esta persona, visto con los factores al día.
@@ -276,12 +297,17 @@ export async function confirmTotpEnrollmentAction(
           entry.factor_type === MFA_FACTOR_TYPE &&
           entry.status === "unverified",
       );
-  if (!factor) return { status: "error", message: AUTH_MESSAGES.mfa_expired };
+  if (!factor) {
+    await releaseTotpCode(user.id, checked.code);
+    return { status: "error", message: AUTH_MESSAGES.mfa_expired };
+  }
 
   const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: checked.code });
-  if (error) return failedVerification(error, user.id, clientIp, "enrollment");
+  if (error) {
+    return failedVerification(error, user.id, checked.code, clientIp, "enrollment", "password");
+  }
 
-  await clearSecondStepFailures(user.id);
+  await clearSecondStepFailures(user.id, "password");
   const enrolled: { action: AuditAction } = { action: "session.mfa_enrolled" };
   const details = { stage: "enrollment", factorType: MFA_FACTOR_TYPE };
   await logAuditEvent({ ...enrolled, result: "success", actorUserId: user.id, details });

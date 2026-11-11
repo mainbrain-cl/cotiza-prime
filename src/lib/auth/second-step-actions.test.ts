@@ -13,7 +13,15 @@ const challengeAndVerify = vi.fn();
 const listFactors = vi.fn();
 const unenroll = vi.fn();
 const enroll = vi.fn();
-const supabase = { auth: { mfa: { challengeAndVerify, listFactors, unenroll, enroll } } };
+const tableReads = vi.fn();
+const rpcCalls = vi.fn();
+const requireActiveTenant = vi.fn();
+const requirePermission = vi.fn();
+const supabase = {
+  auth: { mfa: { challengeAndVerify, listFactors, unenroll, enroll } },
+  from: tableReads,
+  rpc: rpcCalls,
+};
 const logAuditEvent = vi.fn();
 const serverLog = vi.fn();
 const getSessionState = vi.fn();
@@ -23,7 +31,9 @@ const hasRecoverySession = vi.fn();
 const hasPendingInvitation = vi.fn();
 const logTenantLogins = vi.fn();
 const activeTenantIdsOf = vi.fn();
-const isSecondStepLocked = vi.fn();
+const isSecondStepIpLocked = vi.fn();
+const beginSecondStepAttempt = vi.fn();
+const releaseTotpCode = vi.fn();
 const recordSecondStepFailure = vi.fn();
 const clearSecondStepFailures = vi.fn();
 const consumeTotpCode = vi.fn();
@@ -52,10 +62,18 @@ vi.mock("@/lib/http/request-context", () => ({
 }));
 vi.mock("@/lib/security/login-rate-limit", () => ({
   RATE_LIMITED_MESSAGE: "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
-  isSecondStepLocked: (...args: unknown[]) => isSecondStepLocked(...args),
+  isSecondStepIpLocked: (...args: unknown[]) => isSecondStepIpLocked(...args),
+  beginSecondStepAttempt: (...args: unknown[]) => beginSecondStepAttempt(...args),
+  releaseTotpCode: (...args: unknown[]) => releaseTotpCode(...args),
   recordSecondStepFailure: (...args: unknown[]) => recordSecondStepFailure(...args),
   clearSecondStepFailures: (...args: unknown[]) => clearSecondStepFailures(...args),
   consumeTotpCode: (...args: unknown[]) => consumeTotpCode(...args),
+}));
+vi.mock("@/lib/tenant/active-tenant", () => ({
+  requireActiveTenant: (...args: unknown[]) => requireActiveTenant(...args),
+}));
+vi.mock("@/lib/permissions/require", () => ({
+  requirePermission: (...args: unknown[]) => requirePermission(...args),
 }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => supabase }));
 vi.mock("@/lib/team/invitation-cookie", () => ({
@@ -102,7 +120,13 @@ beforeEach(() => {
     hasPendingInvitation,
     logTenantLogins,
     activeTenantIdsOf,
-    isSecondStepLocked,
+    isSecondStepIpLocked,
+    beginSecondStepAttempt,
+    releaseTotpCode,
+    tableReads,
+    rpcCalls,
+    requireActiveTenant,
+    requirePermission,
     recordSecondStepFailure,
     clearSecondStepFailures,
     consumeTotpCode,
@@ -114,8 +138,9 @@ beforeEach(() => {
   requireUser.mockResolvedValue(USER);
   hasRecoverySession.mockResolvedValue(false);
   hasPendingInvitation.mockResolvedValue(false);
-  isSecondStepLocked.mockResolvedValue(false);
-  recordSecondStepFailure.mockResolvedValue(false);
+  isSecondStepIpLocked.mockResolvedValue(false);
+  beginSecondStepAttempt.mockResolvedValue("none");
+  recordSecondStepFailure.mockResolvedValue(undefined);
   consumeTotpCode.mockResolvedValue(true);
   challengeAndVerify.mockResolvedValue({ data: {}, error: null });
   activeTenantIdsOf.mockResolvedValue([]);
@@ -123,13 +148,15 @@ beforeEach(() => {
 
 const auditActions = () => logAuditEvent.mock.calls.map(([event]) => event.action);
 
+const WRONG = { error: { code: "mfa_verification_failed", status: 422 } };
+
 describe("verifySecondStepAction (código tras la contraseña)", () => {
   it("exige una sesión parcial: sin sesión o con sesión completa la redirección la hace session.ts y no se consulta nada", async () => {
     requirePendingSecondStep.mockRejectedValue(new RedirectSignal("/"));
     expect(await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "123456" })))).toBe(
       "/",
     );
-    expect(isSecondStepLocked).not.toHaveBeenCalled();
+    expect(beginSecondStepAttempt).not.toHaveBeenCalled();
     expect(challengeAndVerify).not.toHaveBeenCalled();
   });
 
@@ -139,35 +166,78 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
       const state = await verifySecondStepAction(IDLE, form({ code }));
       expect(state.status).toBe("error");
       expect(state.fieldErrors?.code).toBeTruthy();
-      expect(isSecondStepLocked).not.toHaveBeenCalled();
+      expect(beginSecondStepAttempt).not.toHaveBeenCalled();
       expect(consumeTotpCode).not.toHaveBeenCalled();
       expect(challengeAndVerify).not.toHaveBeenCalled();
     },
   );
 
-  it("cuenta bloqueada: responde «demasiados intentos» y NO llama a Supabase ni gasta el código", async () => {
-    isSecondStepLocked.mockResolvedValue(true);
+  it("bloqueo corto (15 min) de la cuenta: «demasiados intentos» y NO llama a Supabase ni gasta el código", async () => {
+    beginSecondStepAttempt.mockResolvedValue("short");
     const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
-    expect(state.message).toMatch(/Demasiados intentos/);
+    expect(state.message).toMatch(/Espera unos minutos/);
     expect(consumeTotpCode).not.toHaveBeenCalled();
     expect(challengeAndVerify).not.toHaveBeenCalled();
     expect(auditActions()).toEqual(["session.mfa_locked"]);
   });
 
-  it("el límite se revisa con la cuenta y la IP, ANTES de llamar a Supabase", async () => {
+  it("bloqueo del día (24 h): el mensaje dice «hoy» y «mañana», no «espera unos minutos»", async () => {
+    beginSecondStepAttempt.mockResolvedValue("day");
+    const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
+    expect(state.message).toMatch(/Demasiados intentos hoy\. Vuelve a intentarlo mañana/);
+    expect(state.message).not.toMatch(/unos minutos/);
+    expect(challengeAndVerify).not.toHaveBeenCalled();
+  });
+
+  it("IP bloqueada: mismo rechazo y no se registra un intento de la cuenta", async () => {
+    isSecondStepIpLocked.mockResolvedValue(true);
+    const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
+    expect(state.message).toMatch(/Demasiados intentos/);
+    expect(beginSecondStepAttempt).not.toHaveBeenCalled();
+    expect(challengeAndVerify).not.toHaveBeenCalled();
+  });
+
+  it("el intento se REGISTRA antes de llamar a Supabase, y la IP se revisa antes", async () => {
     const order: string[] = [];
-    isSecondStepLocked.mockImplementation(async () => (order.push("limite"), false));
+    isSecondStepIpLocked.mockImplementation(async () => (order.push("ip"), false));
+    beginSecondStepAttempt.mockImplementation(async () => (order.push("intento"), "none"));
+    consumeTotpCode.mockImplementation(async () => (order.push("codigo"), true));
     challengeAndVerify.mockImplementation(async () => (order.push("supabase"), { error: null }));
     await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "123456" })));
-    expect(order).toEqual(["limite", "supabase"]);
-    expect(isSecondStepLocked).toHaveBeenCalledWith(USER.id, IP);
+    expect(order).toEqual(["ip", "intento", "codigo", "supabase"]);
+    expect(isSecondStepIpLocked).toHaveBeenCalledWith(IP);
+    expect(beginSecondStepAttempt).toHaveBeenCalledWith(USER.id, "password");
+  });
+
+  it("envíos en paralelo: solo los que la base deja pasar llegan a Supabase (5 de 12)", async () => {
+    let seen = 0;
+    beginSecondStepAttempt.mockImplementation(async () => (++seen > 5 ? "short" : "none"));
+    challengeAndVerify.mockResolvedValue(WRONG);
+    const results = await Promise.all(
+      Array.from({ length: 12 }, () => verifySecondStepAction(IDLE, form({ code: "123456" }))),
+    );
+    expect(challengeAndVerify.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(results.filter((r) => /Espera unos minutos/.test(r.message ?? ""))).toHaveLength(7);
+  });
+
+  it("el camino de recuperación usa OTROS contadores que el ingreso con contraseña", async () => {
+    await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "123456" })));
+    expect(beginSecondStepAttempt).toHaveBeenLastCalledWith(USER.id, "password");
+    expect(clearSecondStepFailures).toHaveBeenLastCalledWith(USER.id, "password");
+    hasRecoverySession.mockResolvedValue(true);
+    challengeAndVerify.mockResolvedValueOnce(WRONG);
+    await verifySecondStepAction(IDLE, form({ code: "654321" }));
+    expect(beginSecondStepAttempt).toHaveBeenLastCalledWith(USER.id, "recovery");
+    expect(recordSecondStepFailure).toHaveBeenLastCalledWith(USER.id, "recovery", IP);
+    await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "246801" })));
+    expect(clearSecondStepFailures).toHaveBeenLastCalledWith(USER.id, "recovery");
   });
 
   it("un código ya usado cuenta como fallo, se avisa y NO se llama a Supabase", async () => {
     consumeTotpCode.mockResolvedValue(false);
     const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
     expect(state.message).toBe("Ese código ya se usó. Espera el siguiente.");
-    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, IP);
+    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, "password", IP);
     expect(challengeAndVerify).not.toHaveBeenCalled();
     expect(logAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -177,15 +247,13 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
     );
   });
 
-  it("un código incorrecto suma un fallo, deja auditoría y no muestra el código", async () => {
-    challengeAndVerify.mockResolvedValue({
-      error: { code: "mfa_verification_failed", status: 422 },
-    });
+  it("un código incorrecto suma al tope del día y de la IP, deja auditoría y no muestra el código", async () => {
+    challengeAndVerify.mockResolvedValue(WRONG);
     const state = await verifySecondStepAction(IDLE, form({ code: "654321" }));
     expect(state.status).toBe("error");
     expect(state.message).toMatch(/El código no coincide/);
     expect(JSON.stringify(state)).not.toContain("654321");
-    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, IP);
+    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, "password", IP);
     expect(logAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "session.mfa_failed",
@@ -194,41 +262,46 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
       }),
     );
     expect(clearSecondStepFailures).not.toHaveBeenCalled();
+    // El código SÍ se gastó (Supabase lo juzgó): no se libera.
+    expect(releaseTotpCode).not.toHaveBeenCalled();
   });
 
-  it("el fallo que llena el cupo bloquea: mensaje de demasiados intentos y auditoría mfa_locked", async () => {
-    challengeAndVerify.mockResolvedValue({
-      error: { code: "mfa_verification_failed", status: 422 },
-    });
-    recordSecondStepFailure.mockResolvedValue(true);
-    const state = await verifySecondStepAction(IDLE, form({ code: "654321" }));
-    expect(state.message).toMatch(/Demasiados intentos/);
-    expect(auditActions()).toEqual(["session.mfa_failed", "session.mfa_locked"]);
-  });
-
-  it("el 429 de Supabase no cuenta como fallo", async () => {
+  it("el 429 de Supabase cuenta como fallo de la cuenta y de la IP", async () => {
     challengeAndVerify.mockResolvedValue({
       error: { code: "over_request_rate_limit", status: 429 },
     });
     const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
     expect(state.message).toMatch(/Demasiados intentos/);
-    expect(recordSecondStepFailure).not.toHaveBeenCalled();
+    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, "password", IP);
   });
 
-  it("otros errores de Supabase (por ejemplo, IP distinta) no suman al bloqueo y dan un mensaje claro", async () => {
-    challengeAndVerify.mockResolvedValue({
-      error: { code: "mfa_ip_address_mismatch", status: 422 },
-    });
-    const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
-    expect(state.message).toMatch(/No pudimos verificar el código/);
-    expect(recordSecondStepFailure).not.toHaveBeenCalled();
+  it("si Supabase falla por otra cosa (IP distinta, sesión), el código NO se gastó: se libera, no suma fallo y el mensaje es el de ingresar de nuevo", async () => {
+    for (const code of [
+      "mfa_ip_address_mismatch",
+      "mfa_challenge_expired",
+      "mfa_factor_not_found",
+      "algo_raro",
+    ]) {
+      releaseTotpCode.mockClear();
+      recordSecondStepFailure.mockClear();
+      challengeAndVerify.mockResolvedValue({ error: { code, status: 422 } });
+      const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
+      expect(state.message, code).toBe(
+        "No pudimos verificar el código. Cierra sesión y vuelve a ingresar.",
+      );
+      expect(state.message, code).not.toMatch(/activación caducó/);
+      expect(releaseTotpCode, code).toHaveBeenCalledWith(USER.id, "123456");
+      expect(recordSecondStepFailure, code).not.toHaveBeenCalled();
+    }
   });
 
-  it("sin factor de aplicación verificado no se llama a Supabase", async () => {
+  it("sin factor de aplicación verificado no se llama a Supabase y el código se libera", async () => {
     getSessionState.mockResolvedValue({ ...PENDING_STATE, factorId: null });
     const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
     expect(state.status).toBe("error");
+    expect(state.message).toMatch(/Cierra sesión y vuelve a ingresar/);
     expect(challengeAndVerify).not.toHaveBeenCalled();
+    expect(releaseTotpCode).toHaveBeenCalledWith(USER.id, "123456");
   });
 
   it("desafío y verificación van en UNA sola llamada con el factor y el código", async () => {
@@ -237,10 +310,10 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
     expect(challengeAndVerify).toHaveBeenCalledWith({ factorId: FACTOR_ID, code: "123456" });
   });
 
-  it("éxito: limpia los fallos, audita, escribe el ingreso por organización con el MISMO cliente y va al inicio", async () => {
+  it("éxito: limpia los intentos, audita, escribe el ingreso por organización con el MISMO cliente y va al inicio", async () => {
     const target = await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "123456" })));
     expect(target).toBe("/");
-    expect(clearSecondStepFailures).toHaveBeenCalledWith(USER.id);
+    expect(clearSecondStepFailures).toHaveBeenCalledWith(USER.id, "password");
     expect(logAuditEvent).toHaveBeenCalledWith({
       action: "session.mfa_verified",
       result: "success",
@@ -262,10 +335,9 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
   });
 
   it("la auditoría y el registro nunca llevan el código, la clave ni el uri", async () => {
-    challengeAndVerify.mockResolvedValue({
-      error: { code: "mfa_verification_failed", status: 422 },
-    });
+    challengeAndVerify.mockResolvedValue(WRONG);
     await verifySecondStepAction(IDLE, form({ code: "987654" }));
+    challengeAndVerify.mockResolvedValue({ error: null });
     await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "246801" })));
     const everything = JSON.stringify([...logAuditEvent.mock.calls, ...serverLog.mock.calls]);
     expect(everything).not.toMatch(/987654|246801|otpauth|secret/);
@@ -274,9 +346,12 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
     }
   });
 
-  it("no consulta rol ni organización activa (es de la cuenta)", async () => {
+  it("no consulta rol ni organización activa ni lee tablas: es de la cuenta", async () => {
     await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "123456" })));
-    expect(JSON.stringify(Object.keys(supabase))).not.toMatch(/from|rpc/);
+    expect(requireActiveTenant).not.toHaveBeenCalled();
+    expect(requirePermission).not.toHaveBeenCalled();
+    expect(tableReads).not.toHaveBeenCalled();
+    expect(rpcCalls).not.toHaveBeenCalled();
   });
 });
 
@@ -359,9 +434,13 @@ describe("startTotpEnrollmentAction (activar, paso 1)", () => {
     for (const [, , fields] of serverLog.mock.calls) expect(Object.keys(fields)).toEqual(["code"]);
   });
 
-  it("no mira rol ni organización: solo exige una sesión completa", async () => {
+  it("no mira rol ni organización: solo exige una sesión completa, y no lee tablas", async () => {
     await startTotpEnrollmentAction();
     expect(requireUser).toHaveBeenCalledTimes(1);
+    expect(requireActiveTenant).not.toHaveBeenCalled();
+    expect(requirePermission).not.toHaveBeenCalled();
+    expect(tableReads).not.toHaveBeenCalled();
+    expect(rpcCalls).not.toHaveBeenCalled();
   });
 });
 
@@ -384,7 +463,7 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
   });
 
   it("bloqueada: no llama a Supabase", async () => {
-    isSecondStepLocked.mockResolvedValue(true);
+    beginSecondStepAttempt.mockResolvedValue("short");
     const state = await confirmTotpEnrollmentAction(IDLE, fields());
     expect(state.message).toMatch(/Demasiados intentos/);
     expect(challengeAndVerify).not.toHaveBeenCalled();
@@ -430,7 +509,7 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
     });
     const state = await confirmTotpEnrollmentAction(IDLE, fields());
     expect(state.message).toMatch(/El código no coincide/);
-    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, IP);
+    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, "password", IP);
     expect(logAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "session.mfa_failed",
@@ -439,11 +518,19 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
     );
   });
 
+  it("si Supabase falla por otra cosa, el código se libera y el mensaje es el de activar de nuevo (no el de ingresar)", async () => {
+    challengeAndVerify.mockResolvedValue({ error: { code: "mfa_challenge_expired", status: 422 } });
+    const state = await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(state.message).toBe("La activación caducó. Vuelve a empezar.");
+    expect(releaseTotpCode).toHaveBeenCalledWith(USER.id, "123456");
+    expect(recordSecondStepFailure).not.toHaveBeenCalled();
+  });
+
   it("éxito: verifica en una llamada, audita en la plataforma y en cada organización, y vuelve a la pantalla con el aviso", async () => {
     const target = await redirectOf(() => confirmTotpEnrollmentAction(IDLE, fields()));
     expect(target).toBe("/cuenta/seguridad?aviso=activada");
     expect(challengeAndVerify).toHaveBeenCalledWith({ factorId: FACTOR_ID, code: "123456" });
-    expect(clearSecondStepFailures).toHaveBeenCalledWith(USER.id);
+    expect(clearSecondStepFailures).toHaveBeenCalledWith(USER.id, "password");
     const enrolled = logAuditEvent.mock.calls
       .map(([event]) => event)
       .filter((event) => event.action === "session.mfa_enrolled");
@@ -453,8 +540,12 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
     }
   });
 
-  it("no mira rol ni organización activa", async () => {
+  it("no mira rol ni organización activa ni lee tablas (solo recorre las organizaciones para auditar)", async () => {
     await redirectOf(() => confirmTotpEnrollmentAction(IDLE, fields()));
     expect(requireUser).toHaveBeenCalledTimes(1);
+    expect(requireActiveTenant).not.toHaveBeenCalled();
+    expect(requirePermission).not.toHaveBeenCalled();
+    expect(tableReads).not.toHaveBeenCalled();
+    expect(rpcCalls).not.toHaveBeenCalled();
   });
 });

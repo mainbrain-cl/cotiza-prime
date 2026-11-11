@@ -108,18 +108,24 @@ export const INVITATION_LINK_WINDOW_SECONDS = SECONDS_PER_MINUTE;
 export const INVITATION_LINK_LOCK_SECONDS = SECONDS_PER_MINUTE;
 
 /**
- * Código de la verificación en dos pasos (H-004a). Fallos de código por cuenta: 5 en 15 minutos bloquean 15 minutos, y
- * 15 en el día bloquean 24 horas (ataque lento). Los fallos también cuentan por IP en el alcance `login_ip` (el mismo
- * tope de 20 cada 15 minutos que la contraseña). Un mismo código no sirve dos veces para la misma cuenta durante 120
- * segundos: GoTrue acepta el mismo código con un desafío nuevo dentro de su período, así que el bloqueo es propio.
- * Los fallos llegan al máximo y bloquean: el intento número N es el que bloquea.
+ * Código de la verificación en dos pasos (H-004a). Intentos permitidos por cuenta: 5 en 15 minutos (el sexto bloquea 15
+ * minutos), y 15 FALLOS en el día (el décimo sexto bloquea 24 horas: ataque lento). Los intentos en la ventana de 15
+ * minutos se cuentan ANTES de hablar con Supabase (así los intentos en paralelo no pasan de 5) y se limpian al acertar; los
+ * fallos del día se cuentan después y no se limpian al acertar. Los fallos también cuentan por IP en el alcance `login_ip`
+ * (el mismo tope de 20 cada 15 minutos que la contraseña). Un mismo código no sirve dos veces para la misma cuenta durante
+ * 120 segundos: Supabase acepta el mismo código con un desafío nuevo dentro de su período, así que el bloqueo es propio.
+ *
+ * Los contadores de la cuenta son DOS familias separadas: el camino del ingreso con contraseña y el del enlace de
+ * recuperación del correo. Quien solo tiene la contraseña no puede así bloquear la recuperación por correo (ni al revés).
  */
-export const MFA_MAX_FAILURES_PER_ACCOUNT = 5;
+export const MFA_MAX_ATTEMPTS_PER_ACCOUNT = 5;
 export const MFA_WINDOW_SECONDS = 15 * SECONDS_PER_MINUTE;
 export const MFA_LOCK_SECONDS = 15 * SECONDS_PER_MINUTE;
 export const MFA_MAX_FAILURES_PER_ACCOUNT_PER_DAY = 15;
 export const MFA_DAY_SECONDS = 24 * 60 * SECONDS_PER_MINUTE;
 export const MFA_CODE_REUSE_SECONDS = 2 * SECONDS_PER_MINUTE;
+/** Cuántas veces se REGISTRA el mismo código antes de bloquearlo: el primer registro pasa, el segundo bloquea. */
+export const MFA_CODE_REGISTRATIONS_TO_BLOCK = 2;
 
 export type RateLimitScope =
   | "login_email"
@@ -256,8 +262,9 @@ const RULES: Record<RateLimitScope, Rule> = {
     windowSeconds: INVITATION_LINK_WINDOW_SECONDS,
     lockSeconds: INVITATION_LINK_LOCK_SECONDS,
   },
+  // El intento número N+1 es el que bloquea: los primeros N pasan (como las cuotas de arriba).
   mfa_verify_user: {
-    maxFailures: MFA_MAX_FAILURES_PER_ACCOUNT,
+    maxFailures: MFA_MAX_ATTEMPTS_PER_ACCOUNT + 1,
     windowSeconds: MFA_WINDOW_SECONDS,
     lockSeconds: MFA_LOCK_SECONDS,
   },
@@ -268,7 +275,7 @@ const RULES: Record<RateLimitScope, Rule> = {
   },
   // El primer registro pasa; el segundo (el mismo código otra vez) queda bloqueado.
   mfa_code_used: {
-    maxFailures: 2,
+    maxFailures: MFA_CODE_REGISTRATIONS_TO_BLOCK,
     windowSeconds: MFA_CODE_REUSE_SECONDS,
     lockSeconds: MFA_CODE_REUSE_SECONDS,
   },
@@ -594,48 +601,100 @@ export async function consumeInvitationLinkQuota(ip: string | null): Promise<boo
   return !(await failOpen("invite_link_quota_ip", false, () => recordAll([target])));
 }
 
-function secondStepTargets(userId: string, ip: string | null): Target[] {
-  const targets: Target[] = [
-    {
-      scope: "mfa_verify_user",
-      keyHash: searchHash("mfa_verify_user", PLATFORM_TENANT_ID, userId),
-    },
-    {
-      scope: "mfa_verify_user_day",
-      keyHash: searchHash("mfa_verify_user_day", PLATFORM_TENANT_ID, userId),
-    },
-  ];
-  // Sin IP conocida no se limita por IP (un solo grupo "desconocido" bloquearía a todos); sigue el límite por cuenta.
-  if (ip) targets.push({ scope: "login_ip", keyHash: ipFingerprint("login_ip", ip) });
-  return targets;
+/** Qué camino trae a la persona al código: el ingreso con contraseña, o el enlace de recuperación del correo. */
+export type SecondStepContext = "password" | "recovery";
+
+/** Resultado de empezar un intento: pasa, o está bloqueada un rato (`short`) o hasta mañana (`day`). */
+export type SecondStepBlock = "none" | "short" | "day";
+
+/**
+ * Huella de la cuenta para un contador del código. El camino de recuperación usa OTRA huella (`<cuenta>|recovery`) con el
+ * mismo alcance de la tabla: así los fallos de uno no bloquean al otro. Nunca el correo, la IP ni el código.
+ */
+function secondStepAccountKey(
+  scope: "mfa_verify_user" | "mfa_verify_user_day",
+  userId: string,
+  context: SecondStepContext,
+) {
+  return searchHash(
+    scope,
+    PLATFORM_TENANT_ID,
+    context === "recovery" ? `${userId}|recovery` : userId,
+  );
+}
+
+function secondStepAttemptTarget(userId: string, context: SecondStepContext): Target {
+  return {
+    scope: "mfa_verify_user",
+    keyHash: secondStepAccountKey("mfa_verify_user", userId, context),
+  };
+}
+
+function secondStepDayTarget(userId: string, context: SecondStepContext): Target {
+  return {
+    scope: "mfa_verify_user_day",
+    keyHash: secondStepAccountKey("mfa_verify_user_day", userId, context),
+  };
+}
+
+/** ¿Esta IP ya falló demasiados códigos (o contraseñas)? Solo lee. Sin IP conocida no se limita por IP. */
+export function isSecondStepIpLocked(ip: string | null): Promise<boolean> {
+  if (!ip) return Promise.resolve(false);
+  return failOpen("mfa_ip_check", false, () =>
+    anyLocked([{ scope: "login_ip", keyHash: ipFingerprint("login_ip", ip) }]),
+  );
 }
 
 /**
- * ¿Esta cuenta (en los últimos 15 minutos o en el día) o esta IP está bloqueada para escribir el código de la
- * verificación en dos pasos (H-004a)? Las claves son huellas de la cuenta: nunca el correo, la IP ni el código. Si el
- * contador falla, se deja pasar y GoTrue verifica igual.
+ * Empieza un intento de escribir el código (H-004a): primero mira si la cuenta ya falló demasiado en el día (solo lee) y
+ * después REGISTRA el intento en la ventana de 15 minutos, de modo que los intentos en paralelo no pasan de 5 (cada uno
+ * lo cuenta la base de datos de a uno). El sexto intento, y los que sigan, quedan bloqueados. Se llama ANTES de hablar con
+ * Supabase. Si el contador falla, se deja pasar (Supabase verifica igual).
  */
-export function isSecondStepLocked(userId: string, ip: string | null): Promise<boolean> {
-  return failOpen("mfa_check", false, () => anyLocked(secondStepTargets(userId, ip)));
+export async function beginSecondStepAttempt(
+  userId: string,
+  context: SecondStepContext,
+): Promise<SecondStepBlock> {
+  const dayLocked = await failOpen("mfa_day_check", false, () =>
+    anyLocked([secondStepDayTarget(userId, context)]),
+  );
+  if (dayLocked) return "day";
+  const shortLocked = await failOpen("mfa_attempt", false, () =>
+    recordAll([secondStepAttemptTarget(userId, context)]),
+  );
+  return shortLocked ? "short" : "none";
 }
 
-/** Registra un código incorrecto. Devuelve `true` si con este fallo la cuenta o la IP quedó bloqueada. */
-export function recordSecondStepFailure(userId: string, ip: string | null): Promise<boolean> {
-  return failOpen("mfa_failure", false, () => recordAll(secondStepTargets(userId, ip)));
+/**
+ * Un código incorrecto (o un 429 de Supabase): suma al tope del día de la cuenta y al de la IP. El intento de la ventana de
+ * 15 minutos ya se contó al empezar.
+ */
+export async function recordSecondStepFailure(
+  userId: string,
+  context: SecondStepContext,
+  ip: string | null,
+): Promise<void> {
+  const targets = [secondStepDayTarget(userId, context)];
+  if (ip) targets.push({ scope: "login_ip", keyHash: ipFingerprint("login_ip", ip) });
+  await failOpen("mfa_failure", false, () => recordAll(targets));
 }
 
-/** Un código correcto limpia los fallos de esa cuenta (los de la IP siguen su curso). */
-export function clearSecondStepFailures(userId: string): Promise<void> {
+/** Un código correcto limpia los intentos de la ventana de 15 minutos de esa cuenta en ese camino (no los del día ni la IP). */
+export function clearSecondStepFailures(userId: string, context: SecondStepContext): Promise<void> {
   return failOpen("mfa_clear", undefined, async () => {
-    const admin = createAdminClient();
-    for (const scope of ["mfa_verify_user", "mfa_verify_user_day"] as const) {
-      const { error } = await admin.rpc("auth_limit_clear", {
-        p_scope: STORAGE_SCOPE[scope],
-        p_key_hash: searchHash(scope, PLATFORM_TENANT_ID, userId),
-      });
-      if (error) throw new Error(error.code ?? "rate_limit_clear_failed");
-    }
+    const { error } = await createAdminClient().rpc("auth_limit_clear", {
+      p_scope: STORAGE_SCOPE.mfa_verify_user,
+      p_key_hash: secondStepAttemptTarget(userId, context).keyHash,
+    });
+    if (error) throw new Error(error.code ?? "rate_limit_clear_failed");
   });
+}
+
+function totpCodeTarget(userId: string, code: string): Target {
+  return {
+    scope: "mfa_code_used",
+    keyHash: searchHash("mfa_code_used", PLATFORM_TENANT_ID, `${userId}|${code}`),
+  };
 }
 
 /**
@@ -645,9 +704,19 @@ export function clearSecondStepFailures(userId: string): Promise<void> {
  * clave de la plataforma): el código nunca se guarda en claro. Si el contador falla, se deja pasar (GoTrue verifica igual).
  */
 export async function consumeTotpCode(userId: string, code: string): Promise<boolean> {
-  const target: Target = {
-    scope: "mfa_code_used",
-    keyHash: searchHash("mfa_code_used", PLATFORM_TENANT_ID, `${userId}|${code}`),
-  };
-  return !(await failOpen("mfa_code_used", false, () => recordAll([target])));
+  return !(await failOpen("mfa_code_used", false, () => recordAll([totpCodeTarget(userId, code)])));
+}
+
+/**
+ * Libera un código que `consumeTotpCode` registró pero que Supabase no llegó a juzgar (falló la red, la IP no coincidió…):
+ * reintentar con el MISMO código correcto no debe dar «ya se usó». No se llama cuando Supabase sí dijo que era incorrecto.
+ */
+export function releaseTotpCode(userId: string, code: string): Promise<void> {
+  return failOpen("mfa_code_release", undefined, async () => {
+    const { error } = await createAdminClient().rpc("auth_limit_clear", {
+      p_scope: STORAGE_SCOPE.mfa_code_used,
+      p_key_hash: totpCodeTarget(userId, code).keyHash,
+    });
+    if (error) throw new Error(error.code ?? "rate_limit_clear_failed");
+  });
 }

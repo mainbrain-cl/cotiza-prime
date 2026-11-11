@@ -55,3 +55,11 @@ export const AUTH_MESSAGES: Record<AuthFailureKind, string> = {
   mfa_unavailable: "No pudimos verificar el código. Intenta de nuevo en unos minutos.",
   unknown: "No pudimos completar la acción. Intenta de nuevo en unos minutos.",
 };
+
+/** Bloqueo de 24 horas por demasiados códigos incorrectos en el día (H-004a): no es cuestión de esperar unos minutos. */
+export const MFA_LOCKED_DAY_MESSAGE =
+  "Demasiados intentos hoy. Vuelve a intentarlo mañana o pide ayuda al equipo de Cotiza Prime.";
+
+/** Al ingresar, la verificación no se pudo completar por algo que no es el código (la sesión o el factor cambiaron). */
+export const MFA_SIGN_IN_FAILED_MESSAGE =
+  "No pudimos verificar el código. Cierra sesión y vuelve a ingresar.";

@@ -105,6 +105,10 @@ precio). Diseño y riesgos: `docs/arquitectura/sprint-5-h-040-aprobaciones.md` (
 empieza con el diseño del `planificador` (Opus) y necesita a Aarón (o una decisión explícita de José).
 
 **Pendientes:**
+- **Antes del lanzamiento (decisión 021, 2026-11-11):** frenar la fuerza bruta contra el código del segundo paso con el hook
+  `mfa_verification_attempt` de Supabase (opción A, elegida por José de forma provisional; **Aarón debe ratificarla**). Exige: confirmar en el panel de
+  producción que el plan lo incluye y que Aarón aprueba el gasto, construir el hook (historia por abrir), activarlo y probarlo en producción, y dejar
+  escrito quién desbloquea cuentas. Sin eso no se lanza (ni se promete «aunque conozcan tu contraseña» en H-004c).
 - Orden siguiente: H-004a → H-004b → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el ingreso) → H-004c.
 - La frase de la política de privacidad del #36 la ve Aarón con el abogado (editar `privacy.md` cambia su huella y exige versión nueva en
   `legal_documents`). Del issue #11: CI apagado, `AGENTS.md`, decisión #17 y `npm audit` / decisión 015.

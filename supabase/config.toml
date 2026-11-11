@@ -258,6 +258,13 @@ enabled = true
 subject = "Tu contraseña de Cotiza Prime cambió"
 content_path = "./supabase/templates/password_changed_notification.html"
 
+# H-004a: aviso a la persona de que activó la verificación en dos pasos (alguien con su contraseña podría activar su propio
+# teléfono y dejarla fuera: este correo es la alerta).
+[auth.email.notification.mfa_factor_enrolled]
+enabled = true
+subject = "Activaste la verificación en dos pasos en Cotiza Prime"
+content_path = "./supabase/templates/mfa_factor_enrolled_notification.html"
+
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
 enable_signup = false

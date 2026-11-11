@@ -1,11 +1,12 @@
 "use client";
 
 import { Menu } from "@base-ui/react/menu";
-import { Ellipsis, LogOut } from "lucide-react";
+import { Ellipsis, LogOut, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTransition } from "react";
 import { signOutAction } from "@/lib/auth/actions";
+import { ACCOUNT_SECURITY_PATH } from "@/lib/auth/paths";
 import { cn } from "@/lib/utils";
 import {
   MOBILE_PRIMARY_SEGMENTS,
@@ -108,6 +109,13 @@ export function MobileNav({
                 </Menu.LinkItem>
               ))}
               <Menu.Separator className="my-1.5 h-px bg-border" />
+              <Menu.LinkItem
+                render={<Link href={ACCOUNT_SECURITY_PATH} />}
+                className="flex min-h-11 items-center gap-3 rounded-sm px-3 py-2 text-sm font-semibold outline-none data-highlighted:bg-accent-soft data-highlighted:text-accent"
+              >
+                <ShieldCheck aria-hidden strokeWidth={1.75} className="size-5" />
+                Seguridad de tu cuenta
+              </Menu.LinkItem>
               <Menu.Item
                 onClick={() => startTransition(() => signOutAction())}
                 disabled={pending}

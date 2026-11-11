@@ -1,9 +1,10 @@
-import { LogOut } from "lucide-react";
+import { LogOut, ShieldCheck } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { LegalFooter } from "@/components/legal/legal-footer";
 import { Dock, DockItem } from "@/components/react-bits/dock";
 import { signOutAction } from "@/lib/auth/actions";
+import { ACCOUNT_SECURITY_PATH } from "@/lib/auth/paths";
 import { logoUrl } from "@/lib/brand/logo";
 import { APP_ENV, isTestEnv } from "@/lib/env/app-env";
 import { ROLE_LABELS, type MemberRole } from "@/lib/permissions/matrix";
@@ -69,6 +70,13 @@ export function AppShell({
           <TenantSwitcher activeTenantId={activeTenantId} tenants={switcherTenants} collapsed />
           <SidebarNav basePath={basePath} role={role} badges={badges} />
           <div className="mt-auto flex flex-col items-center gap-2 border-t border-border pt-3">
+            {/* La seguridad de la cuenta es de la persona, no de la organización: va aquí abajo, fuera del menú
+                «Principal», y la ven los cinco roles. */}
+            <DockItem
+              href={ACCOUNT_SECURITY_PATH}
+              label="Seguridad de tu cuenta"
+              icon={<ShieldCheck aria-hidden strokeWidth={1.75} className="size-5" />}
+            />
             <form action={signOutAction}>
               <DockItem
                 type="submit"

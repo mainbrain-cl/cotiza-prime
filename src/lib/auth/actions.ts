@@ -23,6 +23,7 @@ import {
 import {
   clearRecoverySession,
   getOptionalUser,
+  getSessionState,
   hasRecoverySession,
   requireUser,
 } from "@/lib/auth/session";
@@ -186,7 +187,9 @@ export async function signInAction(_previous: FormState, formData: FormData): Pr
  * «Cerrar sesión e ingresar con otro correo» de la propia invitación la conserva.
  */
 async function performSignOut(keepInvitation: boolean): Promise<void> {
-  const user = await getOptionalUser();
+  // La sesión parcial (falta el código de la verificación en dos pasos) también cierra y también queda en la auditoría.
+  const state = await getSessionState();
+  const user = state.status === "signed_out" ? null : state.user;
   const supabase = await createClient();
   // `local`: cierra esta sesión y deja las de otros dispositivos.
   const { error } = await supabase.auth.signOut({ scope: "local" });

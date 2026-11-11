@@ -23,8 +23,12 @@ vi.mock("next/headers", () => ({
     delete: (name: string) => deleted.push(name),
   }),
 }));
+const sessionState = vi.fn();
+const USER = { id: "u", email: "x@ejemplo.test", emailVerified: true };
+const audit = vi.fn();
 vi.mock("@/lib/auth/session", () => ({
-  getOptionalUser: async () => ({ id: "u", email: "x@ejemplo.test", emailVerified: true }),
+  getOptionalUser: async () => USER,
+  getSessionState: () => sessionState(),
   requireUser: async () => ({ id: "u" }),
   hasRecoverySession: async () => false,
   clearRecoverySession: async () => undefined,
@@ -35,7 +39,7 @@ vi.mock("@/lib/team/invitation-cookie", () => ({
   hasPendingInvitation: async () => true,
 }));
 vi.mock("@/lib/log/server-log", () => ({ serverLog: vi.fn() }));
-vi.mock("@/lib/audit/log", () => ({ logAuditEvent: vi.fn() }));
+vi.mock("@/lib/audit/log", () => ({ logAuditEvent: (event: unknown) => audit(event) }));
 vi.mock("@/lib/http/request-context", () => ({
   getAppOrigin: () => "http://localhost",
   getRequestContext: async () => ({ requestId: "r", clientIp: null, userAgent: null }),
@@ -59,6 +63,12 @@ beforeEach(() => {
   signOut.mockReset().mockResolvedValue({ error: null });
   clearInvitation.mockClear();
   deleted.length = 0;
+  audit.mockReset();
+  sessionState.mockReset().mockResolvedValue({
+    status: "complete",
+    user: USER,
+    secondStep: { active: false, since: null },
+  });
 });
 
 describe("cierre de sesión normal", () => {
@@ -80,5 +90,22 @@ describe("«Cerrar sesión e ingresar con otro correo»", () => {
     expect(await redirectOf(signOutKeepingInvitationAction)).toBe("/ingresar?aviso=sesion-cerrada");
     expect(signOut).toHaveBeenCalledTimes(1);
     expect(clearInvitation).not.toHaveBeenCalled();
+  });
+});
+
+describe("cierre de sesión y verificación en dos pasos (H-004a)", () => {
+  it("una sesión parcial (falta el código) también cierra y queda en la auditoría con su autor", async () => {
+    sessionState.mockResolvedValue({ status: "second_step_pending", user: USER });
+    expect(await redirectOf(signOutAction)).toBe("/ingresar?aviso=sesion-cerrada");
+    expect(signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "session.logout", actorUserId: USER.id }),
+    );
+  });
+
+  it("sin sesión cierra igual y no escribe auditoría", async () => {
+    sessionState.mockResolvedValue({ status: "signed_out" });
+    expect(await redirectOf(signOutAction)).toBe("/ingresar?aviso=sesion-cerrada");
+    expect(audit).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,8 @@ const upA = read("migrations", `${A}.sql`);
 const upB = read("migrations", `${B}.sql`);
 const downA = read("rollbacks", `${A}.down.sql`);
 const downB = read("rollbacks", `${B}.down.sql`);
+const upC = read("migrations", "20261111100000_approval_price_rebate.sql");
+const downC = read("rollbacks", "20261111100000_approval_price_rebate.down.sql");
 
 const code = (sql: string) =>
   sql
@@ -67,16 +69,16 @@ async function clearPersonVersions() {
 
 describe("los archivos", () => {
   it("AR1 · `lock_timeout` de 3 s es la primera sentencia de las dos migraciones y de los dos deshacer", () => {
-    for (const sql of [upA, upB, downA, downB]) {
+    for (const sql of [upA, upB, upC, downA, downB, downC]) {
       expect(firstStatement(sql)).toBe("set local lock_timeout = '3s'");
     }
     // `lock_timeout` aparece una sola vez por archivo (y en el verificador de la migración), sin begin/commit.
-    for (const sql of [upA, upB, downA, downB]) {
+    for (const sql of [upA, upB, upC, downA, downB, downC]) {
       expect(code(sql).match(/set\s+local\s+lock_timeout/gi)).toHaveLength(1);
       expect(code(sql)).not.toMatch(/^\s*(begin|commit)\s*;/im);
     }
     // Desde 20261109130000 (PR #38) también los deshacer traen, como segunda sentencia, el verificador de `lock_timeout`.
-    for (const sql of [upA, upB, downA, downB]) {
+    for (const sql of [upA, upB, upC, downA, downB, downC]) {
       const second = code(sql).split(";").slice(1).join(";").trimStart();
       expect(second).toMatch(
         /^do \$\$ begin\s+if current_setting\('lock_timeout'\) <> '3s' then\s+raise exception [\s\S]*?;\s+end if;/i,
@@ -199,12 +201,15 @@ describe("el deshacer de H-040b (el control en el envío)", () => {
 });
 
 describe("el deshacer de H-040a (la regla)", () => {
-  it("AR6 · se NIEGA mientras exista la columna del paquete: primero va el de H-040b", () =>
+  it("AR6 · se NIEGA mientras exista la rebaja de precio (20261111100000) y mientras exista la columna del paquete: el orden es 3, 2 y 1", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
       await clearPersonVersions();
-      const error = await expectSqlError(db, downA);
-      expect(error.message).toMatch(/deshaga antes 20261110120000_approval_send_gate/);
+      const rebate = await expectSqlError(db, downA);
+      expect(rebate.message).toMatch(/deshaga primero 20261111100000_approval_price_rebate/);
+      await db.query(downC);
+      const column = await expectSqlError(db, downA);
+      expect(column.message).toMatch(/deshaga antes 20261110120000_approval_send_gate/);
       expect(await tableExists()).toBe(true);
     }));
 
@@ -212,6 +217,7 @@ describe("el deshacer de H-040a (la regla)", () => {
     withTx(db, async () => {
       await actAsPostgres(db);
       await clearPersonVersions();
+      await db.query(downC);
       await db.query(downB);
       await db.query(
         `insert into public.approval_rules (tenant_id, version, mode, created_by)
@@ -232,6 +238,7 @@ describe("el deshacer de H-040a (la regla)", () => {
     withTx(db, async () => {
       await actAsPostgres(db);
       await clearPersonVersions();
+      await db.query(downC);
       await db.query(downB);
       await db.query(downA);
       expect(await tableExists()).toBe(false);
@@ -246,6 +253,7 @@ describe("el deshacer de H-040a (la regla)", () => {
 
       await db.query(upA);
       await db.query(upB);
+      await db.query(upC);
       expect(await tableExists()).toBe(true);
       expect((await functionsLeft()).length).toBeGreaterThanOrEqual(10);
       // Toda organización vuelve a tener su versión 1 «Nunca», y los paquetes ya existentes apuntan a ella.

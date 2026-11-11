@@ -4,8 +4,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
-import { loadCurrentApprovalRule } from "@/lib/approvals/queries";
-import { priceRebateOfLines } from "@/lib/approvals/rule";
+import { loadActiveCatalogPrices, loadCurrentApprovalRule } from "@/lib/approvals/queries";
+import { priceRebateOfLines, ruleLooksAtDiscount } from "@/lib/approvals/rule";
 import {
   APPROVAL_RULE_UNAVAILABLE_MESSAGE,
   approvalBlockMessage,
@@ -55,21 +55,39 @@ export default async function SendQuotePage({
     customer !== null && customer !== "unreadable" ? (customer.email ?? null) : null;
 
   // Lo que impide enviar, dicho con claridad (la acción de enviar lo vuelve a verificar).
+  // Bajar el precio de un servicio del catálogo también cuenta como descuento (decisión de Aarón, 2026-11-11), pero solo si la
+  // regla mira el descuento. La rebaja se mide contra el menor entre el precio guardado en la línea y el de hoy del servicio
+  // (decisión de José): por eso se leen los precios de hoy aquí, en el servidor. Si no se pueden leer, no se deja enviar.
+  let priceRebateClp = BigInt(0);
+  let rebateUnreadable = false;
+  if (approvalRule.status === "ok" && ruleLooksAtDiscount(approvalRule.current.rule)) {
+    const catalogIds = items.flatMap((item) =>
+      item.catalog_item_id ? [item.catalog_item_id] : [],
+    );
+    const prices = await loadActiveCatalogPrices(active, catalogIds);
+    if (prices === null) {
+      rebateUnreadable = true;
+    } else {
+      priceRebateClp = priceRebateOfLines(
+        items.map((item) => ({
+          quantityMilli: item.quantity_milli,
+          grossClp: item.gross_clp,
+          catalogUnitPriceClp: item.catalog_unit_price_clp,
+          currentCatalogUnitPriceClp: item.catalog_item_id
+            ? (prices.get(item.catalog_item_id) ?? null)
+            : null,
+        })),
+      );
+    }
+  }
   const approvalBlock =
-    approvalRule.status === "ok"
+    approvalRule.status === "ok" && !rebateUnreadable
       ? approvalBlockMessage(approvalRule.current.rule, {
           subtotalClp: quote.subtotal_clp,
           lineDiscountsClp: quote.line_discounts_clp,
           globalDiscountClp: quote.global_discount_clp,
           totalClp: quote.total_clp,
-          // Bajar el precio de un servicio del catálogo también cuenta como descuento (decisión de Aarón, 2026-11-11).
-          priceRebateClp: priceRebateOfLines(
-            items.map((item) => ({
-              quantityMilli: item.quantity_milli,
-              grossClp: item.gross_clp,
-              catalogUnitPriceClp: item.catalog_unit_price_clp,
-            })),
-          ),
+          priceRebateClp,
         })
       : null;
   let blocker: string | null = null;
@@ -82,7 +100,7 @@ export default async function SendQuotePage({
   } else if (!customerEmail) {
     blocker =
       "Este cliente no tiene correo. Agrégalo en su ficha para poder enviarle la cotización.";
-  } else if (approvalRule.status !== "ok") {
+  } else if (approvalRule.status !== "ok" || rebateUnreadable) {
     blocker = APPROVAL_RULE_UNAVAILABLE_MESSAGE;
   } else if (approvalBlock) {
     blocker = approvalBlock;

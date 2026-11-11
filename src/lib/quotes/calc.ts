@@ -30,7 +30,8 @@ export const PERCENT_MAX_BP = 10_000;
 export const TAX_RATE_MAX_BP = 10_000;
 
 const ZERO = BigInt(0);
-const MILLI_PER_UNIT = BigInt(1000);
+/** Milésimas por unidad (la cantidad se guarda en milésimas). */
+export const MILLI_PER_UNIT = BigInt(1000);
 const BP_DIVISOR = BigInt(PERCENT_MAX_BP);
 
 export type Discount =

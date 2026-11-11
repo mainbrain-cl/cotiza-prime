@@ -14,13 +14,17 @@
  *     2026-11-11: poner un precio menor al del catálogo cuenta igual que un descuento), sobre el valor ANTES de todo descuento y
  *     sin IVA, en centésimas de punto (1.000 = 10 %), redondeado mitad hacia arriba ANTES de comparar. Pide aprobación si lo
  *     supera estrictamente; con umbral 0, ante cualquier descuento en pesos.
- *   · REBAJA DE PRECIO: por línea, max(0, cantidad × precio de catálogo − bruto de la línea). El precio de catálogo es el que la
- *     línea congeló al agregarse (lo copia el servidor desde `catalog_items`, nunca viene del navegador). Nunca es negativa ni
- *     compensa otra línea; una línea libre (sin catálogo) no suma nada. El valor de lista, la base del porcentaje, es el bruto
- *     de las líneas más la rebaja.
+ *   · REBAJA DE PRECIO: por línea, max(0, cantidad × precio de lista − bruto de la línea), donde el precio de lista es el MENOR
+ *     entre el precio de catálogo que la línea congeló al agregarse (lo copia el servidor desde `catalog_items`, nunca viene del
+ *     navegador) y el precio de hoy del servicio si sigue activo (decisión de José: si el catálogo bajó y la persona iguala el
+ *     precio nuevo, no hay rebaja falsa; si subió, el menor sigue siendo el guardado). Nunca es negativa ni compensa otra línea;
+ *     una línea libre (sin catálogo) no suma nada. Solo se calcula si la regla mira el descuento (`ruleLooksAtDiscount`). El
+ *     valor de lista, la base del porcentaje, es el bruto de las líneas más la rebaja. Todo en `bigint`: cantidad × precio
+ *     llega a 10²¹.
  *   · Basta uno de los dos: monto O descuento. Los motivos salen siempre en el orden `always`, `amount`, `discount`.
  */
 import { roundHalfUpDiv } from "@/lib/money/rounding";
+import { MILLI_PER_UNIT } from "@/lib/quotes/calc";
 
 export const APPROVAL_MODES = ["never", "always", "conditional"] as const;
 export type ApprovalMode = (typeof APPROVAL_MODES)[number];
@@ -49,7 +53,7 @@ export type ApprovalTotals = {
   globalDiscountClp: number;
   totalClp: number;
   /** Suma de las rebajas de precio de las líneas (ver `priceRebateOfLines`); 0 si ninguna línea costó menos que su catálogo. */
-  priceRebateClp: number;
+  priceRebateClp: number | bigint;
 };
 
 export type ApprovalMetrics = {
@@ -66,13 +70,10 @@ const ZERO = BigInt(0);
 const BP_SCALE = BigInt(APPROVAL_BP_SCALE);
 
 /** Descuento en centésimas de punto: mitad hacia arriba; bruto 0 → 0. `bigint` porque 10¹² × 10⁴ pasa el entero seguro. */
-function discountBpOf(grossClp: number, discountClp: number): number {
-  const gross = BigInt(grossClp);
+function discountBpOf(gross: bigint, discount: bigint): number {
   if (gross <= ZERO) return 0;
-  return Number(roundHalfUpDiv(BigInt(discountClp) * BP_SCALE, gross));
+  return Number(roundHalfUpDiv(discount * BP_SCALE, gross));
 }
-
-const MILLI_PER_UNIT = BigInt(1000);
 
 /** Lo que de una línea importa para la rebaja de precio. */
 export type RebateLine = {
@@ -81,35 +82,50 @@ export type RebateLine = {
   grossClp: number;
   /** Precio de catálogo congelado en la línea; `null` en una línea libre. */
   catalogUnitPriceClp: number | null;
+  /** Precio de hoy del servicio en el catálogo si sigue ACTIVO; `null` si está inactivo (entonces vale solo el guardado). */
+  currentCatalogUnitPriceClp?: number | null;
 };
 
+/** ¿La regla mira el descuento? Solo entonces se calcula la rebaja de precio (igual que `app.quote_approval_check`). */
+export function ruleLooksAtDiscount(rule: ApprovalRule): boolean {
+  return rule.mode === "conditional" && rule.discountThresholdBp !== null;
+}
+
 /**
- * Rebaja de precio de una cotización: la suma, por línea con catálogo, de max(0, cantidad × catálogo − bruto), en pesos y con
- * el mismo redondeo del bruto (mitad hacia arriba). Gemela de lo que calcula `app.quote_approval_check` desde `quote_items`.
+ * Rebaja de precio de una cotización: la suma, por línea con catálogo, de max(0, cantidad × precio de lista − bruto), en pesos y
+ * con el mismo redondeo del bruto (mitad hacia arriba). El precio de lista es el menor entre el catálogo guardado en la línea y
+ * el de hoy del servicio activo. Gemela de lo que calcula `app.quote_approval_check` desde `quote_items` y `catalog_items`.
+ * Devuelve `bigint`: sobre 2⁵³ un número de JavaScript perdería exactitud.
  */
-export function priceRebateOfLines(lines: readonly RebateLine[]): number {
+export function priceRebateOfLines(lines: readonly RebateLine[]): bigint {
   let total = ZERO;
   for (const line of lines) {
     if (line.catalogUnitPriceClp === null) continue;
+    const saved = BigInt(line.catalogUnitPriceClp);
+    const today =
+      line.currentCatalogUnitPriceClp === null || line.currentCatalogUnitPriceClp === undefined
+        ? saved
+        : BigInt(line.currentCatalogUnitPriceClp);
     const list = roundHalfUpDiv(
-      BigInt(line.quantityMilli) * BigInt(line.catalogUnitPriceClp),
+      BigInt(line.quantityMilli) * (today < saved ? today : saved),
       MILLI_PER_UNIT,
     );
     const rebate = list - BigInt(line.grossClp);
     if (rebate > ZERO) total += rebate;
   }
-  return Number(total);
+  return total;
 }
 
 /** Monto y descuento de una cotización, tal como los compara la regla. */
 export function approvalMetrics(totals: ApprovalTotals): ApprovalMetrics {
-  const grossClp = totals.subtotalClp + totals.lineDiscountsClp + totals.priceRebateClp;
-  const discountClp = totals.lineDiscountsClp + totals.globalDiscountClp + totals.priceRebateClp;
+  const rebate = BigInt(totals.priceRebateClp);
+  const gross = BigInt(totals.subtotalClp) + BigInt(totals.lineDiscountsClp) + rebate;
+  const discount = BigInt(totals.lineDiscountsClp) + BigInt(totals.globalDiscountClp) + rebate;
   return {
     totalClp: totals.totalClp,
-    discountClp,
-    priceRebateClp: totals.priceRebateClp,
-    discountBp: discountBpOf(grossClp, discountClp),
+    discountClp: Number(discount),
+    priceRebateClp: Number(rebate),
+    discountBp: discountBpOf(gross, discount),
   };
 }
 

@@ -1,8 +1,9 @@
 -- Deshace 20261111100000_approval_price_rebate.sql
 -- Devuelve `app.quote_approval_check` a su definición de 20261110110000_approval_rules.sql (mismas firma, lenguaje y permisos):
 -- vuelve a contar solo los descuentos de línea y el general, sin la rebaja de precio, y `metrics` pierde `price_rebate_clp`. No
--- toca datos ni tablas. Se NIEGA a correr si la función vigente ya no nombra la rebaja (otra migración la redefinió o ya se
--- deshizo): la versión que este archivo repone no la conocería.
+-- toca datos ni tablas. Se NIEGA a correr si la función vigente no es EXACTAMENTE la de esta migración (se compara el md5 de su
+-- cuerpo con el del cuerpo de 20261111100000_approval_price_rebate.sql; la prueba lo recalcula del archivo): otra migración la
+-- redefinió o ya se deshizo, y reponer la anterior pisaría ese cambio. Va ANTES del deshacer de 20261110110000_approval_rules.
 set local lock_timeout = '3s';
 
 do $$ begin
@@ -13,9 +14,10 @@ end $$;
 
 do $$ begin
   if not exists (
-       select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'app' and p.proname = 'quote_approval_check' and p.prosrc ~ '\mprice_rebate_clp\M') then
-    raise exception 'no se puede deshacer 20261111100000_approval_price_rebate: la funcion app.quote_approval_check vigente ya no nombra la rebaja de precio: otra migracion la redefinio o ya se deshizo; revise el orden de los deshacer';
+       select 1 from pg_proc p
+        where p.oid = to_regprocedure('app.quote_approval_check(uuid, uuid)')::oid
+          and md5(p.prosrc) = 'fabb61bf52b0abab8b6063e301643f2e') then
+    raise exception 'no se puede deshacer 20261111100000_approval_price_rebate: la funcion app.quote_approval_check vigente ya no es la de esta migracion: otra migracion la redefinio o ya se deshizo; revise el orden de los deshacer';
   end if;
 end $$;
 

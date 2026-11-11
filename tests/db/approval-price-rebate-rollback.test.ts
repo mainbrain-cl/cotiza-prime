@@ -3,6 +3,7 @@
 // descuento). Redefine solo `app.quote_approval_check`. Aquí: que el archivo y su deshacer empiezan con `lock_timeout` y su
 // verificador, que el deshacer devuelve la función EXACTAMENTE a su texto anterior (con los mismos atributos y permisos), que se
 // puede volver a aplicar, que se niega a correr dos veces, y que el cambio se nota (con la rebaja se pide aprobación; sin ella, no).
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
@@ -92,8 +93,30 @@ describe("la migración approval_price_rebate y su deshacer", () => {
       await actAsPostgres(db);
       await db.query(down);
       const error = await expectSqlError(db, down);
-      expect(error.message).toMatch(/ya no nombra la rebaja de precio/);
+      expect(error.message).toMatch(/ya no es la de esta migracion/);
       expect((await definition()).src).toBe(functionBodyIn(previous, "app.quote_approval_check"));
+    }));
+
+  it("PR3b · el md5 que exige el deshacer es el del cuerpo de la migración (se recalcula del archivo)", () => {
+    const md5 = createHash("md5")
+      .update(functionBodyIn(up, "app.quote_approval_check"))
+      .digest("hex");
+    expect(code(down)).toContain(`md5(p.prosrc) = '${md5}'`);
+  });
+
+  it("PR3c · si la función vigente es OTRA que también nombra la rebaja, el deshacer se NIEGA y no la pisa", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      await db.query(`create or replace function app.quote_approval_check(p_tenant uuid, p_quote_id uuid) returns jsonb
+        language plpgsql stable security definer set search_path = '' as $f$
+        begin
+          -- otra migración la redefinió y sigue nombrando price_rebate_clp
+          return jsonb_build_object('required', false, 'price_rebate_clp', 0);
+        end $f$`);
+      const before = await definition();
+      const error = await expectSqlError(db, down);
+      expect(error.message).toMatch(/ya no es la de esta migracion/);
+      expect((await definition()).src).toBe(before.src);
     }));
 
   it("PR4 · con el deshacer, un precio bajado a mano deja de contar; con la migración, cuenta", () =>
@@ -104,6 +127,12 @@ describe("la migración approval_price_rebate y su deshacer", () => {
         lines: [{ price: 80_000, catalogItemId }],
       });
       await actAsPostgres(db);
+      // La rebaja solo se calcula si la regla mira el descuento: «según el descuento, 10 %».
+      await db.query(
+        `insert into public.approval_rules (tenant_id, version, mode, discount_threshold_bp, created_by)
+         select $1, max(version) + 1, 'conditional', 1000, $2 from public.approval_rules where tenant_id = $1`,
+        [w.tenantA, w.owner.id],
+      );
       const metrics = async () =>
         (
           await db.query("select app.quote_approval_check($1, $2) -> 'metrics' as m", [

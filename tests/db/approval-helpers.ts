@@ -21,13 +21,14 @@ export async function addCatalogItem(
   tenantId: string,
   unitPriceClp: number,
   name = `Servicio ${randomUUID().slice(0, 6)}`,
+  exempt = false,
 ): Promise<string> {
   await actAsPostgres(db);
   const id = randomUUID();
   await db.query(
     `insert into public.catalog_items (id, tenant_id, name, unit, unit_price_clp, tax_treatment)
-     values ($1, $2, $3, 'service', $4, 'taxable')`,
-    [id, tenantId, name, unitPriceClp],
+     values ($1, $2, $3, 'service', $4, $5)`,
+    [id, tenantId, name, unitPriceClp, exempt ? "exempt" : "taxable"],
   );
   return id;
 }

@@ -109,3 +109,30 @@ export async function countActiveApprovers(active: ActiveTenant): Promise<number
   return (data as { role: string }[]).filter((member) => canEver(member.role, "quote.approve"))
     .length;
 }
+
+/**
+ * El precio de HOY de los servicios del catálogo dados, solo de los que siguen ACTIVOS (un servicio inactivo no aparece: para la
+ * rebaja de precio vale entonces solo el precio que la línea guardó). Se lee con el pase de la persona y la organización activa.
+ * `null` si no se pudo leer: quien llama debe tratarlo como un fallo, no como «sin servicios».
+ */
+export async function loadActiveCatalogPrices(
+  active: ActiveTenant,
+  catalogItemIds: readonly string[],
+): Promise<Map<string, number> | null> {
+  const prices = new Map<string, number>();
+  if (catalogItemIds.length === 0) return prices;
+  const { data, error } = await active.supabase
+    .from("catalog_items")
+    .select("id, unit_price_clp")
+    .eq("tenant_id", active.tenantId)
+    .eq("is_active", true)
+    .in("id", [...catalogItemIds]);
+  if (error || !data) {
+    await serverLog("error", "catalog_prices_failed", { code: error?.code });
+    return null;
+  }
+  for (const row of data as { id: string; unit_price_clp: number | string }[]) {
+    prices.set(row.id, Number(row.unit_price_clp));
+  }
+  return prices;
+}

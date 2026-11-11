@@ -49,7 +49,7 @@ describe("approvalBlockMessage: el bloqueo de /enviar", () => {
       totals({ subtotalClp: 800_000, priceRebateClp: 200_000 }),
     );
     expect(message).toContain(
-      "el descuento (20%) supera 10% (incluye $200.000 por precios más bajos que el de catálogo)",
+      "el descuento (20%) supera 10% (incluye $200.000 por precios más bajos que los del catálogo)",
     );
     expect(message).toContain(APPROVAL_NOT_AVAILABLE_YET);
     // sin la rebaja, el mismo precio no bloquea
@@ -59,6 +59,24 @@ describe("approvalBlockMessage: el bloqueo de /enviar", () => {
         totals({ subtotalClp: 800_000 }),
       ),
     ).toBeNull();
+  });
+  it("regla de solo monto con rebaja: el motivo es solo el monto y el mensaje NO habla de rebaja", () => {
+    const message = approvalBlockMessage(
+      conditional({ amountThresholdClp: 2_000_000 }),
+      totals({ subtotalClp: 800_000, priceRebateClp: 200_000 }),
+    );
+    expect(message).toContain("el total ($2.350.000) supera $2.000.000");
+    expect(message).not.toContain("incluye");
+    expect(message).not.toContain("descuento");
+  });
+  it("con umbral 0, la frase no lleva dos paréntesis seguidos", () => {
+    const message = approvalBlockMessage(
+      conditional({ discountThresholdBp: 0 }),
+      totals({ subtotalClp: 800_000, priceRebateClp: 200_000 }),
+    );
+    expect(message).toContain(
+      "la cotización tiene un descuento de $200.000, que incluye $200.000 por precios más bajos que los del catálogo",
+    );
   });
   it("exactamente en el umbral no bloquea", () => {
     expect(

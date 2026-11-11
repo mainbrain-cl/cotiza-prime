@@ -189,7 +189,9 @@ test("el Dueño llega desde Configuración, ve «Nunca» de partida y la frase s
   // El texto de ayuda aclara que un precio menor al del catálogo cuenta como descuento
   await page.getByTestId("approval-mode-conditional").check();
   await expect(
-    page.getByText(/lo que un servicio del catálogo cuesta menos que su precio de catálogo/),
+    page.getByText(
+      /la rebaja: lo que un servicio del catálogo cuesta menos que su precio de catálogo \(el menor entre el que tenía al agregarlo y el de hoy\)/,
+    ),
   ).toBeVisible();
   await expect(page.getByText(/no cuenta como descuento/)).toHaveCount(0);
   // `aria-controls` solo existe mientras el bloque de condiciones está en pantalla
@@ -438,7 +440,7 @@ test("bajar el precio a mano cuenta como descuento: se bloquea el envío con el 
   await sales.goto(sendUrl());
   const blocker = sales.getByTestId("send-blocker");
   await expect(blocker).toContainText(
-    "el descuento (20%) supera 10% (incluye $2.000 por precios más bajos que el de catálogo)",
+    "el descuento (20%) supera 10% (incluye $2.000 por precios más bajos que los del catálogo)",
   );
   await expect(blocker).toContainText(NOT_YET);
   await expect(sales.getByTestId("send-quote")).toHaveCount(0);

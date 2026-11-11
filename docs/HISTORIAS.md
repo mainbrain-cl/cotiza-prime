@@ -729,7 +729,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Criterios de aceptación**
 - [ ] Una cotización que cumple la regla no se puede enviar: la pantalla de enviar explica por qué ("el total ($2.350.000) supera $2.000.000") y el servidor la rechaza aunque la petición llegue sin pasar por la pantalla
 - [ ] Un envío rechazado no deja nada a medias: ni paquete, ni enlace, ni correo, ni candado de envío
-- [ ] El monto es el total con IVA y se pide aprobación solo si lo supera; el descuento suma los de cada línea, el general y lo que un servicio del catálogo cuesta menos que su precio de catálogo (bajar el precio a mano también cuenta como descuento)
+- [ ] El monto es el total con IVA y se pide aprobación solo si lo supera; el descuento suma los de cada línea, el general y lo que un servicio del catálogo cuesta menos que su precio de catálogo (bajar el precio a mano también cuenta como descuento, contra el menor entre el precio de catálogo que tenía al agregarlo y el de hoy)
 - [ ] Lo ya enviado no se vuelve a evaluar; reenviar sigue funcionando
 - [ ] Cada paquete enviado guarda qué versión de la regla regía
 
@@ -737,7 +737,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-040a, H-029
 **Datos personales:** no
-**Notas técnicas:** 🔒 entra a `main` junto con H-040a. Disparador `quote_packages_approval_gate` (antes de insertar un paquete) y columna `quote_packages.approval_rule_id`; no reescribe `prepare_quote_send` (así no choca con H-041). D1: se aplica desde ya, aunque «Solicitar aprobación» llegue en el sprint 6; mientras tanto, lo que cumple la regla no sale, y el sprint 6 debe cambiar el disparador para dejar pasar el paquete de una solicitud aprobada.
+**Notas técnicas:** 🔒 entra a `main` junto con H-040a. Disparador `quote_packages_approval_gate` (antes de insertar un paquete) y columna `quote_packages.approval_rule_id`; no reescribe `prepare_quote_send` (así no choca con H-041). D1: se aplica desde ya, aunque «Solicitar aprobación» llegue en el sprint 6; mientras tanto, lo que cumple la regla no sale, y el sprint 6 debe cambiar el disparador para dejar pasar el paquete de una solicitud aprobada. **Decisión de Aarón (2026-11-11), con ajuste de José:** bajar el precio de un servicio del catálogo también cuenta como descuento (contra el menor entre el precio de catálogo guardado en la línea y el de hoy), con una tercera migración `20261111100000_approval_price_rebate`; lo que sigue fuera (línea libre, renombrar una línea de catálogo más barata, bajar la cantidad) no lo cubre H-042: H-041 debe fijar también el nombre de las líneas de catálogo (diseño §12).
 
 ---
 

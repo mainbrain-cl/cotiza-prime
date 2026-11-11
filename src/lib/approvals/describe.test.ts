@@ -83,7 +83,7 @@ describe("describeApprovalReasons: por qué ESTA cotización necesita aprobació
   });
   it("descuento con umbral 0", () => {
     expect(describeApprovalReasons(rule({ discountThresholdBp: 0 }), ["discount"], metrics)).toBe(
-      "la cotización tiene un descuento ($300.000)",
+      "la cotización tiene un descuento de $300.000",
     );
   });
   it("los dos, en orden", () => {
@@ -100,12 +100,12 @@ describe("describeApprovalReasons: por qué ESTA cotización necesita aprobació
     expect(
       describeApprovalReasons(rule({ discountThresholdBp: 1_000 }), ["discount"], withRebate),
     ).toBe(
-      "el descuento (12,5%) supera 10% (incluye $200.000 por precios más bajos que el de catálogo)",
+      "el descuento (12,5%) supera 10% (incluye $200.000 por precios más bajos que los del catálogo)",
     );
     expect(
       describeApprovalReasons(rule({ discountThresholdBp: 0 }), ["discount"], withRebate),
     ).toBe(
-      "la cotización tiene un descuento ($300.000) (incluye $200.000 por precios más bajos que el de catálogo)",
+      "la cotización tiene un descuento de $300.000, que incluye $200.000 por precios más bajos que los del catálogo",
     );
   });
   it("siempre", () => {
@@ -122,7 +122,7 @@ describe("el texto de ayuda de la regla", () => {
   it("aclara qué cuenta como descuento y qué no", () => {
     expect(APPROVAL_RULE_HELP).toContain("El total incluye IVA.");
     expect(APPROVAL_RULE_HELP).toContain(
-      "lo que un servicio del catálogo cuesta menos que su precio de catálogo",
+      "la rebaja: lo que un servicio del catálogo cuesta menos que su precio de catálogo (el menor entre el que tenía al agregarlo y el de hoy)",
     );
     expect(APPROVAL_RULE_HELP).toContain(
       "escrito a mano, que no es del catálogo, no cuenta como rebaja",

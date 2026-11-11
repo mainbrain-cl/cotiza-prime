@@ -2,10 +2,12 @@
 -- Quita, en orden: el disparador de `tenants` y su función, `set_approval_rule`, las funciones internas, la tabla
 -- `approval_rules` (con sus disparadores, su política y su índice) y las constantes. Los registros de auditoría
 -- `approval_rule.updated` se conservan (la auditoría es de solo agregar).
--- Se NIEGA a correr en dos casos, a propósito:
+-- Se NIEGA a correr en tres casos, a propósito:
 --   (1) si ya hay versiones creadas por personas (`created_by` no vacío): borrarlas elimina la prueba de qué regla regía cada
 --       envío. La versión 1 que crea el sistema sí se puede perder (es «Nunca», igual que no tener tabla);
---   (2) si todavía existe `quote_packages.approval_rule_id` (20261110120000): primero se deshace esa migración.
+--   (2) si todavía existe `quote_packages.approval_rule_id` (20261110120000): primero se deshace esa migración;
+--   (3) si `app.quote_approval_check` nombra `price_rebate_clp` (20261111100000 sigue aplicada): primero se deshace esa migración.
+--   Orden: 20261111100000, luego 20261110120000 y por último este archivo.
 set local lock_timeout = '3s';
 
 do $$ begin
@@ -15,6 +17,11 @@ do $$ begin
 end $$;
 
 do $$ begin
+  if exists (
+       select 1 from pg_proc p
+        where p.oid = to_regprocedure('app.quote_approval_check(uuid, uuid)')::oid and p.prosrc ~* '\mprice_rebate_clp\M') then
+    raise exception 'no se puede deshacer 20261110110000_approval_rules: deshaga primero 20261111100000_approval_price_rebate (app.quote_approval_check todavia nombra la rebaja de precio)';
+  end if;
   if exists (
        select 1 from information_schema.columns
         where table_schema = 'public' and table_name = 'quote_packages' and column_name = 'approval_rule_id') then

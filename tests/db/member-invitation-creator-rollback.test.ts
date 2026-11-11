@@ -14,14 +14,8 @@ import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { invitationEmailBinding } from "../../src/lib/team/invitation-code";
-import {
-  actAsPostgres,
-  connect,
-  createUser,
-  expectSqlError,
-  withTx,
-  type TestUser,
-} from "./helpers";
+import { actAsPostgres, connect, createUser, expectSqlError, type TestUser } from "./helpers";
+import { undoMfaGate, withTxBeforeMfaGate as withTx } from "./before-mfa-gate";
 import { functionBodyIn } from "./migration-files";
 import { asUser, buildWorld, newToken, sha256Hex, type World } from "./send-helpers";
 
@@ -386,6 +380,7 @@ describe("la migración member_invitation_creator y su deshacer", () => {
       // (a) El valor: lo fija cada archivo, solo hasta el fin de su transacción.
       await db.query("begin");
       try {
+        await undoMfaGate(db);
         await db.query(down);
         expect(
           (await db.query<{ lock_timeout: string }>("show lock_timeout")).rows[0].lock_timeout,
@@ -408,6 +403,10 @@ describe("la migración member_invitation_creator y su deshacer", () => {
       const started = Date.now();
       let code: string | undefined;
       try {
+        // Para que la guarda de este deshacer pase sin tocar `members` (deshacer la migración de H-004a bloquea esa tabla
+        // y se quedaría esperando a la otra conexión), solo se repone la función de ESTA migración, sin el segundo paso.
+        const accept = up.slice(up.indexOf("create or replace function public.accept_invitation("));
+        await db.query(accept.slice(0, accept.indexOf("\nend $$;") + "\nend $$;".length));
         await db.query(down);
       } catch (error) {
         code = (error as { code?: string }).code;
@@ -422,9 +421,13 @@ describe("la migración member_invitation_creator y su deshacer", () => {
       await holder.query("rollback");
       await actAsPostgres(db);
       expect(await hasColumn()).toBe(true);
-      expect((await definition(ACCEPT_SIG)).src).toBe(
-        functionBodyIn(up, "public.accept_invitation"),
-      );
+      // (La vigente lleva además la línea del segundo paso de H-004a, que esta prueba no deshizo en la base real.)
+      expect(
+        (await definition(ACCEPT_SIG)).src.replace(
+          "  if app.second_step_pending() then\n    raise exception 'second_step_required' using errcode = '42501';\n  end if;\n",
+          "",
+        ),
+      ).toBe(functionBodyIn(up, "public.accept_invitation"));
     } finally {
       await holder.query("rollback").catch(() => undefined);
       await holder.end();

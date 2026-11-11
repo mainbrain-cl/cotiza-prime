@@ -30,6 +30,31 @@ const up = read("migrations", `${NAME}.sql`);
 const down = read("rollbacks", `${NAME}.down.sql`);
 /** La migración donde nacieron las dos funciones: a su texto vuelve el deshacer. */
 const original = read("migrations", "20261001120200_tenants_profiles_members.sql");
+/** Las cuatro funciones públicas (ronda 1): la migración que las define hoy y la línea que esta migración les agrega. */
+const PUBLIC_FUNCTIONS = [
+  {
+    name: "public.create_tenant",
+    signature: "public.create_tenant(text, text, text, text, text)",
+    source: read("migrations", "20261001140100_create_tenant_contact_email_check.sql"),
+  },
+  {
+    name: "public.accept_invitation",
+    signature: "public.accept_invitation(text)",
+    source: read("migrations", "20261109120000_member_invitation_creator.sql"),
+  },
+  {
+    name: "public.invitation_preview",
+    signature: "public.invitation_preview(text)",
+    source: read("migrations", "20261105100000_invitation_preview_read_only.sql"),
+  },
+  {
+    name: "public.accept_current_legal_documents",
+    signature: "public.accept_current_legal_documents()",
+    source: read("migrations", "20261001120400_legal.sql"),
+  },
+] as const;
+const GATE_LINE =
+  "  if app.second_step_pending() then\n    raise exception 'second_step_required' using errcode = '42501';\n  end if;\n";
 
 const TENANT_ID = "app.current_tenant_id()";
 const MY_TENANTS = "app.my_tenant_ids()";
@@ -80,6 +105,23 @@ const membersPolicy = async (): Promise<string> =>
     )
   ).rows[0].qual;
 
+const GATED_POLICIES = [
+  ["profiles", "profiles_select"],
+  ["profiles", "profiles_update"],
+  ["legal_acceptances", "legal_acceptances_select"],
+] as const;
+
+/** Texto (qual + with_check) de las tres políticas que la ronda 1 cierra (members_select va aparte). */
+async function gatedPolicies(): Promise<Record<string, string>> {
+  const { rows } = await db.query<{ policyname: string; text: string }>(
+    `select policyname, coalesce(qual, '') || ' ' || coalesce(with_check, '') as text
+       from pg_policies where schemaname = 'public' and (tablename, policyname) in (${GATED_POLICIES.map(
+         ([table, name]) => `('${table}', '${name}')`,
+       ).join(", ")})`,
+  );
+  return Object.fromEntries(rows.map((row) => [row.policyname, row.text]));
+}
+
 const scopeCheck = async (): Promise<string> =>
   (
     await db.query<{ def: string }>(
@@ -98,12 +140,14 @@ describe("la migración mfa_session_gate y su deshacer", () => {
     }
     const defined = (sql: string) =>
       [...code(sql).matchAll(/create (?:or replace )?function ([a-z_.]+)\(/gi)].map((m) => m[1]);
+    const publicNames = PUBLIC_FUNCTIONS.map((f) => f.name);
     expect(defined(up)).toEqual([
       "app.second_step_pending",
       "app.current_tenant_id",
       "app.my_tenant_ids",
+      ...publicNames,
     ]);
-    expect(defined(down)).toEqual(["app.current_tenant_id", "app.my_tenant_ids"]);
+    expect(defined(down)).toEqual(["app.current_tenant_id", "app.my_tenant_ids", ...publicNames]);
     expect(code(down)).toMatch(/drop function app\.second_step_pending\(\);/);
     expect(code(down)).not.toMatch(/\b(truncate|alter\s+table\s+public\.(?!auth_rate_limits))\b/i);
     // Toda función con `security definer` fija `search_path` vacío.
@@ -131,6 +175,15 @@ describe("la migración mfa_session_gate y su deshacer", () => {
         "",
       );
       expect(newMyTenants).toBe(functionBodyIn(original, "app.my_tenant_ids"));
+
+      // Las cuatro públicas: la vigente es la del archivo, y quitando SOLO la línea nueva queda el cuerpo de la
+      // migración donde se definió por última vez.
+      for (const fn of PUBLIC_FUNCTIONS) {
+        const inFile = functionBodyIn(up, fn.name);
+        expect((await definition(fn.signature))!.src, fn.name).toBe(inFile);
+        expect(inFile.split(GATE_LINE).length, `${fn.name}: una sola línea nueva`).toBe(2);
+        expect(inFile.replace(GATE_LINE, ""), fn.name).toBe(functionBodyIn(fn.source, fn.name));
+      }
     }));
 
   it("MR3 · el deshacer devuelve las funciones EXACTAMENTE a su texto anterior, con los mismos atributos y permisos, y la política a la anterior", () =>
@@ -141,8 +194,13 @@ describe("la migración mfa_session_gate y su deshacer", () => {
         mine: (await definition(MY_TENANTS))!,
         pending: (await definition(PENDING))!,
         policy: await membersPolicy(),
+        policies: await gatedPolicies(),
+        publics: await Promise.all(PUBLIC_FUNCTIONS.map((fn) => definition(fn.signature))),
         scopes: await scopeCheck(),
       };
+      expect(
+        Object.values(before.policies).every((qual) => qual.includes("second_step_pending")),
+      ).toBe(true);
       expect(before.pending).toMatchObject({ secdef: true, anon: false, auth: true });
       expect(before.policy).toContain("second_step_pending");
       expect(before.scopes).toContain("mfa_code_used");
@@ -161,6 +219,17 @@ describe("la migración mfa_session_gate y su deshacer", () => {
       }
       expect(await definition(PENDING)).toBeNull();
       expect(await membersPolicy()).not.toContain("second_step_pending");
+      for (const qual of Object.values(await gatedPolicies())) {
+        expect(qual).not.toContain("second_step_pending");
+      }
+      // Las cuatro públicas vuelven EXACTAMENTE a su texto anterior, con los mismos atributos y permisos.
+      for (const [index, fn] of PUBLIC_FUNCTIONS.entries()) {
+        const restored = (await definition(fn.signature))!;
+        const gated = before.publics[index]!;
+        expect(restored.src, fn.name).toBe(functionBodyIn(fn.source, fn.name));
+        expect({ ...restored, src: "" }, fn.name).toEqual({ ...gated, src: "" });
+        expect(restored, fn.name).toMatchObject({ secdef: true, anon: false, auth: true });
+      }
       expect(await scopeCheck()).not.toContain("mfa_");
       expect(await scopeCheck()).toContain("invite_link_ip");
 
@@ -170,6 +239,10 @@ describe("la migración mfa_session_gate y su deshacer", () => {
       expect((await definition(MY_TENANTS))!.src).toBe(before.mine.src);
       expect((await definition(PENDING))!.src).toBe(before.pending.src);
       expect(await membersPolicy()).toBe(before.policy);
+      expect(await gatedPolicies()).toEqual(before.policies);
+      for (const [index, fn] of PUBLIC_FUNCTIONS.entries()) {
+        expect((await definition(fn.signature))!.src, fn.name).toBe(before.publics[index]!.src);
+      }
       expect(await scopeCheck()).toBe(before.scopes);
     }));
 
@@ -178,14 +251,19 @@ describe("la migración mfa_session_gate y su deshacer", () => {
       await actAsPostgres(db);
       await db.query(down);
       const error = await expectSqlError(db, down);
-      expect(error.message).toMatch(/ya no son las de esta migracion/);
+      expect(error.message).toMatch(/ya no es la de esta migracion/);
       expect((await definition(TENANT_ID))!.src).toBe(
         functionBodyIn(original, "app.current_tenant_id"),
       );
     }));
 
   it("MR4b · los md5 que exige el deshacer son los de los cuerpos de la migración (se recalculan del archivo)", () => {
-    for (const name of ["app.second_step_pending", "app.current_tenant_id", "app.my_tenant_ids"]) {
+    for (const name of [
+      "app.second_step_pending",
+      "app.current_tenant_id",
+      "app.my_tenant_ids",
+      ...PUBLIC_FUNCTIONS.map((fn) => fn.name),
+    ]) {
       expect(code(down)).toContain(`md5(p.prosrc) = '${md5(functionBodyIn(up, name))}'`);
     }
   });
@@ -201,8 +279,37 @@ describe("la migración mfa_session_gate y su deshacer", () => {
         end $f$`);
       const before = await definition(TENANT_ID);
       const error = await expectSqlError(db, down);
-      expect(error.message).toMatch(/ya no son las de esta migracion/);
+      expect(error.message).toMatch(/ya no es la de esta migracion/);
       expect((await definition(TENANT_ID))!.src).toBe(before!.src);
+    }));
+
+  it("MR4d · si una de las políticas ya no es la de esta migración, el deshacer se NIEGA y no cambia nada", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      await db.query(
+        "alter policy profiles_update on public.profiles using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()))",
+      );
+      const before = await gatedPolicies();
+      const error = await expectSqlError(db, down);
+      expect(error.message).toMatch(/ya no es la de esta migracion/);
+      expect(await gatedPolicies()).toEqual(before);
+      expect(await definition(PENDING)).not.toBeNull();
+    }));
+
+  it("MR4e · si OTRA función o política nombra `second_step_pending`, el deshacer se NIEGA (borrarla la rompería)", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      await db.query(`create function app.otra_usa_el_segundo_paso() returns boolean
+        language sql stable security definer set search_path = '' as $f$ select app.second_step_pending() $f$`);
+      const byFunction = await expectSqlError(db, down);
+      expect(byFunction.message).toMatch(/otra funcion o politica nombra/);
+      await db.query("drop function app.otra_usa_el_segundo_paso()");
+      await db.query(
+        "create policy otra_politica on public.catalog_items for select to authenticated using (not (select app.second_step_pending()))",
+      );
+      const byPolicy = await expectSqlError(db, down);
+      expect(byPolicy.message).toMatch(/otra funcion o politica nombra/);
+      expect(await definition(PENDING)).not.toBeNull();
     }));
 
   it("MR5 · con el deshacer la base deja de exigir el segundo paso; con la migración, lo exige; y los contadores nuevos se borran", () =>

@@ -511,6 +511,160 @@ describe("La base exige el segundo paso (D1-B)", () => {
     }));
 });
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Sección 2b · Las puertas que usan `auth.uid()` sin pasar por la organización (ronda 1 de correcciones).
+// ---------------------------------------------------------------------------------------------------------------------
+describe("La base exige el segundo paso en las puertas con auth.uid() y sin organización", () => {
+  const ANY_TOKEN = "a".repeat(64);
+  const GATE_MESSAGE = /second_step_required/;
+
+  /** Una cuenta (con perfil) y, si se pide, un factor verificado. */
+  async function account(client: Client, factor: "none" | "verified" | "unverified") {
+    const user = await createUser(client);
+    if (factor !== "none") await addFactor(client, user.id, factor);
+    return user;
+  }
+
+  const PUBLIC_CALLS: {
+    name: string;
+    sql: string;
+    params: unknown[];
+    works: (row: unknown) => void;
+  }[] = [
+    {
+      name: "create_tenant",
+      sql: "select public.create_tenant('Empresa Puerta', '76086428-5', 'services') as r",
+      params: [],
+      works: (r) => expect(r).toMatch(/^[0-9a-f-]{36}$/),
+    },
+    {
+      name: "invitation_preview",
+      sql: "select public.invitation_preview($1) as r",
+      params: [ANY_TOKEN],
+      works: (r) => expect(r).toEqual({ result: "not_found" }),
+    },
+    {
+      name: "accept_invitation",
+      sql: "select public.accept_invitation($1) as r",
+      params: [ANY_TOKEN],
+      works: (r) => expect(r).toEqual({ result: "not_found" }),
+    },
+    {
+      name: "accept_current_legal_documents",
+      sql: "select public.accept_current_legal_documents() as r",
+      params: [],
+      works: (r) => expect(typeof r).toBe("number"),
+    },
+  ];
+
+  it.each(PUBLIC_CALLS)(
+    "$name · con factor verificado y pase aal1 se rechaza con 42501 «second_step_required» y no deja nada",
+    ({ sql, params }) =>
+      withTx(db, async () => {
+        const user = await account(db, "verified");
+        await actAsLevel(db, user, null, "aal1");
+        const error = await expectSqlError(db, sql, params);
+        expect(error.code).toBe("42501");
+        expect(error.message).toMatch(GATE_MESSAGE);
+        await actAsPostgres(db);
+        // No quedó nada a nombre de la cuenta: ni organización creada ni membresía.
+        expect(
+          (await db.query("select 1 from public.members where user_id = $1", [user.id])).rowCount,
+        ).toBe(0);
+        expect(
+          (await db.query("select 1 from public.tenants where created_by = $1", [user.id]))
+            .rowCount,
+        ).toBe(0);
+      }),
+  );
+
+  it.each(PUBLIC_CALLS)(
+    "$name · con pase aal2, con un factor sin verificar o sin factor funciona como antes",
+    ({ sql, params, works }) =>
+      withTx(db, async () => {
+        const verified = await account(db, "verified");
+        const unverified = await account(db, "unverified");
+        const plain = await account(db, "none");
+        for (const [user, level] of [
+          [verified, "aal2"],
+          [unverified, "aal1"],
+          [plain, "aal1"],
+          [plain, null],
+        ] as const) {
+          await db.query("savepoint puerta");
+          await actAsLevel(db, user, null, level);
+          works((await db.query(sql, params)).rows[0].r);
+          await actAsPostgres(db);
+          await db.query("rollback to savepoint puerta");
+        }
+      }),
+  );
+
+  it("el perfil propio: con el segundo paso pendiente no se lee ni se cambia; con aal2 o sin factor, sí", () =>
+    withTx(db, async () => {
+      const gated = await account(db, "verified");
+      const plain = await account(db, "none");
+      const read = async (user: TestUser, level: "aal1" | "aal2" | null) => {
+        await actAsLevel(db, user, null, level);
+        const rows = (
+          await db.query("select user_id from public.profiles where user_id = $1", [user.id])
+        ).rowCount;
+        const changed = (
+          await db.query(
+            "update public.profiles set full_name = 'Nombre nuevo' where user_id = $1",
+            [user.id],
+          )
+        ).rowCount;
+        await actAsPostgres(db);
+        return { rows, changed };
+      };
+      expect(await read(gated, "aal1")).toEqual({ rows: 0, changed: 0 });
+      expect(await read(gated, null)).toEqual({ rows: 0, changed: 0 });
+      expect(await read(gated, "aal2")).toEqual({ rows: 1, changed: 1 });
+      expect(await read(plain, "aal1")).toEqual({ rows: 1, changed: 1 });
+      // Un cambio que intenta pasar por otro usuario tampoco funciona (la condición de siempre).
+      await actAsLevel(db, plain, null, "aal2");
+      expect(
+        (
+          await db.query("update public.profiles set full_name = 'Ajeno' where user_id = $1", [
+            gated.id,
+          ])
+        ).rowCount,
+      ).toBe(0);
+    }));
+
+  it("las aceptaciones propias de los términos: con el segundo paso pendiente no se leen; con aal2, sí", () =>
+    withTx(db, async () => {
+      const user = await account(db, "verified");
+      await actAsLevel(db, user, null, "aal2");
+      await db.query("select public.accept_current_legal_documents()");
+      const own = async (level: "aal1" | "aal2") => {
+        await actAsLevel(db, user, null, level);
+        const n = Number(
+          (await db.query<{ n: string }>("select count(*) as n from public.legal_acceptances"))
+            .rows[0].n,
+        );
+        await actAsPostgres(db);
+        return n;
+      };
+      expect(await own("aal2")).toBeGreaterThan(0);
+      expect(await own("aal1")).toBe(0);
+    }));
+
+  it("los documentos vigentes (legal_documents) siguen siendo públicos: se leen con la sesión parcial y sin sesión", () =>
+    withTx(db, async () => {
+      const user = await account(db, "verified");
+      await actAsLevel(db, user, null, "aal1");
+      expect(
+        Number((await db.query("select count(*) as n from public.legal_documents")).rows[0].n),
+      ).toBeGreaterThan(0);
+      await actAsAnon(db);
+      expect(
+        Number((await db.query("select count(*) as n from public.legal_documents")).rows[0].n),
+      ).toBeGreaterThan(0);
+    }));
+});
+
 describe("La base exige el segundo paso, con pases reales por HTTP (PostgREST + GoTrue)", () => {
   it("H1 · un pase aal1 de una cuenta con factor no lee nada con la cabecera de su organización; el aal2 de la misma cuenta sí", async () => {
     // La cuenta y su organización se crean y se confirman (no hay transacción: hablan PostgREST y GoTrue).

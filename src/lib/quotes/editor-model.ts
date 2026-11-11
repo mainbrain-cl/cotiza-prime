@@ -35,6 +35,11 @@ export type EditorLine = {
   catalogItemId: string | null;
   /** El servicio del catálogo de esta línea hoy está desactivado (informativo). */
   catalogInactive: boolean;
+  /**
+   * Precio de catálogo con que se cargó la línea (`null` en las líneas libres). Solo sirve para avisar
+   * que un precio más bajo cuenta como descuento; la decisión de verdad la toma el servidor al enviar.
+   */
+  catalogPriceClp: number | null;
   name: string;
   description: string;
   unit: string;
@@ -230,6 +235,7 @@ export function newFreeLine(id: string): EditorLine {
     id,
     catalogItemId: null,
     catalogInactive: false,
+    catalogPriceClp: null,
     name: "",
     description: "",
     unit: "service",
@@ -257,6 +263,7 @@ export function newCatalogLine(
     id,
     catalogItemId: item.id,
     catalogInactive: false,
+    catalogPriceClp: item.unitPriceClp,
     name: item.name,
     description: item.description ?? "",
     unit: item.unit,
@@ -273,6 +280,7 @@ export function lineFromSaved(
   row: {
     id: string;
     catalog_item_id: string | null;
+    catalog_unit_price_clp: number | null;
     name: string;
     description: string | null;
     unit: string;
@@ -288,6 +296,7 @@ export function lineFromSaved(
     id: row.id,
     catalogItemId: row.catalog_item_id,
     catalogInactive,
+    catalogPriceClp: row.catalog_item_id === null ? null : row.catalog_unit_price_clp,
     name: row.name,
     description: row.description ?? "",
     unit: row.unit,
@@ -302,6 +311,19 @@ export function lineFromSaved(
           ? String(row.discount_value)
           : "",
   };
+}
+
+/**
+ * Precio de catálogo de la línea cuando el precio escrito es más bajo (en pesos enteros); `null` si no hay
+ * rebaja que avisar: línea libre, precio vacío o inválido, o precio igual o mayor al del catálogo.
+ */
+export function priceBelowCatalog(
+  line: Pick<EditorLine, "catalogPriceClp" | "price">,
+): number | null {
+  if (line.catalogPriceClp === null) return null;
+  const typed = parseMoney(line.price);
+  if (!typed.ok) return null;
+  return typed.value < line.catalogPriceClp ? line.catalogPriceClp : null;
 }
 
 /** Mueve una línea una posición (-1 arriba, +1 abajo). Devuelve el mismo arreglo si no se puede. */

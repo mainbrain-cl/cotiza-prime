@@ -20,6 +20,7 @@ import {
   moveLine,
   newCatalogLine,
   newFreeLine,
+  priceBelowCatalog,
   type DiscountKind,
   type EditorLine,
   type EditorState,
@@ -371,6 +372,7 @@ export function QuoteEditor({
                 const err = (field: string) => view.errors[`items.${index}.${field}`];
                 const lineTotal = totals?.lines[index]?.totalClp;
                 const fromCatalog = line.catalogItemId !== null;
+                const belowCatalogPrice = priceBelowCatalog(line);
                 const idFor = (field: string) => `${line.id}-${field}`;
                 return (
                   <li
@@ -482,12 +484,29 @@ export function QuoteEditor({
                           value={line.price}
                           onChange={(event) => updateLine(index, { price: event.target.value })}
                           aria-invalid={Boolean(err("price"))}
-                          aria-describedby={err("price") ? idFor("price-error") : undefined}
+                          aria-describedby={
+                            [
+                              err("price") ? idFor("price-error") : null,
+                              belowCatalogPrice !== null ? idFor("price-below-catalog") : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" ") || undefined
+                          }
                           autoComplete="off"
                           disabled={blocked}
                           className="tabular-nums"
                         />
                         <FieldError id={idFor("price-error")} message={err("price")} />
+                        {belowCatalogPrice !== null ? (
+                          <p
+                            id={idFor("price-below-catalog")}
+                            data-testid="price-below-catalog"
+                            className="text-xs text-fg-muted"
+                          >
+                            Bajo el precio de catálogo ({formatClp(belowCatalogPrice)}): cuenta como
+                            descuento al enviar.
+                          </p>
+                        ) : null}
                       </div>
                       <div className="flex flex-col gap-1.5">
                         <label htmlFor={idFor("unit")} className="text-sm font-semibold text-fg">
@@ -581,10 +600,21 @@ export function QuoteEditor({
                           onChange={(event) => updateLine(index, { discount: event.target.value })}
                           disabled={blocked || line.discountKind === "none"}
                           aria-invalid={Boolean(err("discount"))}
-                          aria-describedby={err("discount") ? idFor("discount-error") : undefined}
+                          aria-describedby={
+                            line.discountKind === "none"
+                              ? idFor("discount-hint")
+                              : err("discount")
+                                ? idFor("discount-error")
+                                : undefined
+                          }
                           autoComplete="off"
                           className="tabular-nums"
                         />
+                        {line.discountKind === "none" ? (
+                          <p id={idFor("discount-hint")} className="text-xs text-fg-subtle">
+                            Elige un tipo de descuento para escribir un valor.
+                          </p>
+                        ) : null}
                         <FieldError id={idFor("discount-error")} message={err("discount")} />
                       </div>
                       <div className="col-span-2 flex flex-col gap-1.5 md:col-span-1">
@@ -754,12 +784,23 @@ export function QuoteEditor({
                 }
                 disabled={blocked || state.globalDiscountKind === "none"}
                 aria-invalid={Boolean(view.errors.globalDiscount)}
-                aria-describedby={view.errors.globalDiscount ? "global-discount-error" : undefined}
+                aria-describedby={
+                  state.globalDiscountKind === "none"
+                    ? "global-discount-hint"
+                    : view.errors.globalDiscount
+                      ? "global-discount-error"
+                      : undefined
+                }
                 autoComplete="off"
                 className="tabular-nums"
               />
             </div>
             <div className="col-span-2">
+              {state.globalDiscountKind === "none" ? (
+                <p id="global-discount-hint" className="text-xs text-fg-subtle">
+                  Elige un tipo de descuento para escribir un valor.
+                </p>
+              ) : null}
               <FieldError id="global-discount-error" message={view.errors.globalDiscount} />
             </div>
           </div>

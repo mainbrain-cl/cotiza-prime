@@ -429,3 +429,44 @@ test("H-027: vigencia en días o con fecha, por defecto la de la organización; 
     await page.evaluate(() => (window as unknown as { __xss?: number }).__xss),
   ).toBeUndefined();
 });
+
+test("el editor avisa cuando un precio queda bajo el de catálogo y explica el campo de descuento deshabilitado", async ({
+  page,
+}) => {
+  test.setTimeout(300_000);
+  const { tenantId, customerId } = await setup(page, "aviso-rebaja");
+  await page.goto(`/o/${tenantId}/cotizaciones/nueva`);
+  await page.getByRole("button", { name: /Cliente Existente Ltda/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${tenantId}/cotizaciones/[0-9a-f-]{36}$`));
+  expect(customerId).toBeTruthy();
+
+  await addFromCatalog(page, "Servicio Alfa");
+  const line = lines(page).nth(0);
+  const warning = line.getByTestId("price-below-catalog");
+  await expect(warning).toHaveCount(0);
+
+  // Bajar el precio avisa, con el precio de catálogo; devolverlo (o subirlo) quita el aviso
+  await line.getByLabel("Precio unitario (neto)").fill("6.000");
+  await expect(warning).toContainText("Bajo el precio de catálogo ($10.000)");
+  await expect(warning).toContainText("cuenta como descuento");
+  await line.getByLabel("Precio unitario (neto)").fill("10.000");
+  await expect(warning).toHaveCount(0);
+  await line.getByLabel("Precio unitario (neto)").fill("12.000");
+  await expect(warning).toHaveCount(0);
+
+  // Una línea libre no tiene precio de catálogo: nunca avisa
+  await page.getByRole("button", { name: "Agregar línea libre" }).click();
+  await lines(page).nth(1).getByLabel("Precio unitario (neto)").fill("1");
+  await expect(lines(page).nth(1).getByTestId("price-below-catalog")).toHaveCount(0);
+
+  // El campo del monto está deshabilitado con «Sin descuento» y dice por qué; al elegir un tipo se habilita
+  const amount = line.getByLabel("Monto del descuento");
+  await expect(amount).toBeDisabled();
+  await expect(amount).toHaveAccessibleDescription(
+    "Elige un tipo de descuento para escribir un valor.",
+  );
+  await line.getByLabel("Descuento", { exact: true }).selectOption("amount");
+  await expect(amount).toBeEnabled();
+  await expect(line.getByText("Elige un tipo de descuento para escribir un valor.")).toHaveCount(0);
+  await expect(page.getByText("Elige un tipo de descuento para escribir un valor.")).toHaveCount(2);
+});

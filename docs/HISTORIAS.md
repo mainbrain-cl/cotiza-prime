@@ -135,7 +135,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-002
 **Datos personales:** no
-**Notas técnicas:** H-004 se partió en tres (2026-11-02, según el diseño del sprint 5, `docs/arquitectura/sprint-5-equipo-y-permisos.md` §5b y §7). Esta es la primera: activar y pedir el código al ingresar.
+**Notas técnicas:** H-004 se partió en tres (2026-11-02, según el diseño del sprint 5, `docs/arquitectura/sprint-5-equipo-y-permisos.md` §5b y §7). Esta es la primera: activar y pedir el código al ingresar. **Construida el 2026-11-11** (registro de construcción en ese documento). Decisiones de Aarón: **D1 = B** (la base de datos también exige el segundo paso: migración `20261112100000_mfa_session_gate`) y **D2 = se integra sola**, sin H-004b (quien activa y pierde el teléfono queda fuera hasta que H-004b traiga los códigos de respaldo; mientras tanto se quita el factor a mano). Activar la verificación **cierra las sesiones de la persona en sus otros dispositivos** (lo hace Supabase Auth). **Con la verificación activa, recuperar la contraseña pide el código ANTES de elegir la nueva** (cambia H-003 solo para esas cuentas). Un mismo código no sirve dos veces en 120 s y hay un límite propio de intentos (5 fallos en 15 min, 15 en el día). Sin activar nada cambia: ninguna cuenta existente se ve afectada. Riesgos conocidos (ver el registro): la fuerza bruta directa contra Supabase Auth no la frena la aplicación, y las funciones públicas que solo usan `auth.uid()` siguen ejecutables con la contraseña sola.
 
 ---
 

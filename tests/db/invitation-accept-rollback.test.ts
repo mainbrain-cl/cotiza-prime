@@ -51,6 +51,12 @@ describe("el deshacer de invitation_accept", () => {
   it("borra las funciones, quita los dos alcances y borra sus contadores; lo ya aceptado queda", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      // Los contadores de alcances de migraciones POSTERIORES (20261112100000_mfa_session_gate: `mfa_*`) no caben en la lista
+      // de alcances de antes; en una base con uso real (las pruebas e2e los dejan) esta migración no se podría deshacer ni
+      // volver a aplicar sin que el deshacer de la posterior los borre antes. Aquí se borran dentro de la transacción.
+      await db.query(
+        "delete from public.auth_rate_limits where scope in ('mfa_verify_user', 'mfa_verify_user_day', 'mfa_code_used')",
+      );
       for (const signature of FUNCTIONS) expect(await exists(signature), signature).toBe(true);
 
       // Un contador de cada alcance nuevo y uno de un alcance de antes.
@@ -114,6 +120,12 @@ describe("el deshacer de invitation_accept", () => {
   it("la migración se puede volver a aplicar después de deshacerla", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      // Los contadores de alcances de migraciones POSTERIORES (20261112100000_mfa_session_gate: `mfa_*`) no caben en la lista
+      // de alcances de antes; en una base con uso real (las pruebas e2e los dejan) esta migración no se podría deshacer ni
+      // volver a aplicar sin que el deshacer de la posterior los borre antes. Aquí se borran dentro de la transacción.
+      await db.query(
+        "delete from public.auth_rate_limits where scope in ('mfa_verify_user', 'mfa_verify_user_day', 'mfa_code_used')",
+      );
       const up = readFileSync(path.join(ROOT, "migrations", `${NAME}.sql`), "utf8");
       await db.query(down);
       await db.query(up);

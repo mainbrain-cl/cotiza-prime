@@ -1,6 +1,9 @@
 import { randomInt, randomUUID } from "node:crypto";
+import jsQR from "jsqr";
+import sharp from "sharp";
 import { APP_ROUTES } from "../tests/isolation/registry";
 import { freshTotp, totpAt } from "../src/test/totp";
+import type { Browser } from "@playwright/test";
 import { expect, randomTestIp, test, type Page } from "./fixtures";
 import {
   TEST_PASSWORD,
@@ -17,7 +20,7 @@ import {
 // desde la clave que muestra la pantalla (src/test/totp.ts), igual que los calcularía el teléfono.
 test.describe.configure({ mode: "serial" });
 
-const CODE_LABEL = "Código de 6 dígitos";
+const CODE_LABEL = "Código de 6 números";
 const SECOND_STEP_URL = /\/ingresar\/codigo$/;
 const NEW_PASSWORD = "otra-clave-nueva-456";
 const STEP_SECONDS = 30;
@@ -29,6 +32,8 @@ type Account = {
   secret: string;
   /** Período (de 30 s) del último código usado: el siguiente tiene que ser de otro período. */
   usedStep: number;
+  /** Solo si la prueba de recuperar la contraseña la cambió. */
+  password?: string;
 };
 
 /** Un código que NO sirve: ninguno de los de este período ni el anterior o el siguiente (Supabase tolera uno de margen). */
@@ -78,7 +83,7 @@ async function createAccountWithSecondStep(page: Page, label: string): Promise<A
 /** Ingresa solo con la contraseña (sesión parcial) en un navegador sin sesión. */
 async function logInPartially(page: Page, account: Account) {
   await page.context().clearCookies();
-  await logIn(page, account.email);
+  await logIn(page, account.email, account.password);
   await expect(page).toHaveURL(SECOND_STEP_URL);
 }
 
@@ -86,6 +91,18 @@ async function nextCode(account: Account): Promise<string> {
   const { code, step } = await freshTotp(account.secret, { avoidStep: account.usedStep });
   account.usedStep = step;
   return code;
+}
+
+/** Lee un código QR de una captura de pantalla (se agranda sin suavizar para que la lectura no dependa del tamaño). */
+async function readQr(png: Buffer): Promise<string> {
+  const { data, info } = await sharp(png)
+    .resize({ width: 800, kernel: "nearest" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const result = jsQR(new Uint8ClampedArray(data), info.width, info.height);
+  if (!result) throw new Error("No se pudo leer el código QR de la pantalla");
+  return result.data;
 }
 
 let main: Account;
@@ -132,6 +149,11 @@ test("activar: desde el menú, con el QR y la clave; un código incorrecto no ac
   const secretText = await page.getByTestId("totp-secret").innerText();
   expect(secretText).toMatch(/^([A-Z2-7]{4} ){3,}[A-Z2-7]{1,4}$/);
   const secret = secretText.replace(/\s/g, "");
+  // El QR se lee de verdad (como lo haría la cámara) y trae la MISMA clave que se muestra para escribir a mano.
+  const scanned = await readQr(await qr.screenshot());
+  expect(scanned).toMatch(/^otpauth:\/\/totp\//);
+  expect(new URL(scanned).searchParams.get("secret")).toBe(secret);
+  expect(scanned).toContain("Cotiza%20Prime");
   // Ni la clave ni el código viajan en la dirección.
   expect(page.url()).not.toContain(secret);
 
@@ -230,13 +252,14 @@ test("un código usado no sirve otra vez; el del período siguiente sí", async 
   await expect(page).toHaveURL(new RegExp(`/o/${main.tenantId}$`));
 });
 
-test("el límite: cinco códigos incorrectos bloquean y entonces ni el correcto se acepta", async ({
+test("el límite: cinco intentos y el sexto se rechaza, también el código correcto; el camino de recuperación por correo NO queda bloqueado", async ({
   page,
+  browser,
 }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(420_000);
   const account = await createAccountWithSecondStep(page, "limite");
   await logInPartially(page, account);
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
     await submitCode(page, wrongCode(account.secret));
     // El botón vuelve a «Verificar» cuando termina la respuesta de este intento.
     await expect(page.getByRole("button", { name: "Verificar" })).toBeVisible();
@@ -249,6 +272,29 @@ test("el límite: cinco códigos incorrectos bloquean y entonces ni el correcto 
   await submitCode(page, await nextCode(account));
   await expect(page.getByText(RATE_LIMITED)).toBeVisible();
   await expect(page).toHaveURL(SECOND_STEP_URL);
+
+  // Quien solo tiene la contraseña (y gastó los intentos del ingreso) no puede cerrarle el camino al dueño que llega con el
+  // enlace de recuperación del correo: ese camino tiene sus propios contadores, y el código correcto entra.
+  const baseURL = test.info().project.use.baseURL;
+  const context = await browser.newContext({
+    baseURL,
+    extraHTTPHeaders: { "x-forwarded-for": randomTestIp() },
+  });
+  const ownerPage = await context.newPage();
+  await ownerPage.goto("/recuperar-contrasena");
+  await ownerPage.getByLabel("Correo").fill(account.email);
+  await ownerPage.getByRole("button", { name: "Enviar enlace" }).click();
+  await expect(ownerPage.getByTestId("reset-request-sent")).toBeVisible();
+  await openVerificationLink(
+    ownerPage,
+    await waitForVerificationLink(account.email, "Reset"),
+    "/auth/recuperar",
+  );
+  await expect(ownerPage).toHaveURL(SECOND_STEP_URL);
+  await ownerPage.getByLabel(CODE_LABEL).fill(await nextCode(account));
+  await ownerPage.getByRole("button", { name: "Verificar" }).click();
+  await expect(ownerPage).toHaveURL(/\/restablecer-contrasena$/);
+  await context.close();
 });
 
 test("recuperar la contraseña con la verificación activa: primero el código, después la contraseña nueva", async ({
@@ -286,6 +332,7 @@ test("recuperar la contraseña con la verificación activa: primero el código, 
   await page.context().clearCookies();
   await logIn(page, main.email, NEW_PASSWORD);
   await expect(page).toHaveURL(SECOND_STEP_URL);
+  main.password = NEW_PASSWORD;
   await context.close();
 });
 
@@ -298,6 +345,13 @@ test("en el teléfono (375 px, con movimiento reducido): el código y la activac
   await page.emulateMedia({ reducedMotion: "reduce" });
   const email = uniqueEmail("movil");
   await signUpAndVerify(page, email, "Persona Ficticia");
+  // Con «reducir movimiento», la animación de entrada de la tarjeta queda sin duración (no se mueve).
+  const entryAnimation = async () =>
+    page.evaluate(() => {
+      const el = document.querySelector("main .animate-enter");
+      return el ? getComputedStyle(el).animationDuration : "sin-tarjeta";
+    });
+  expect(await entryAnimation()).toBe("0s");
   await createTenant(page, "Empresa Móvil", "76086428-5");
 
   const noOverflow = async (where: string) => {
@@ -347,7 +401,140 @@ test("en el teléfono (375 px, con movimiento reducido): el código y la activac
   await page.context().clearCookies();
   await logIn(page, email);
   await expect(page).toHaveURL(SECOND_STEP_URL);
+  expect(await entryAnimation()).toBe("0s");
   await noOverflow("código");
   await tooSmall("código");
   await expect(page.getByLabel(CODE_LABEL)).toHaveAttribute("inputmode", "numeric");
+});
+
+test("cerrar sesión desde la pantalla del código: la sesión parcial se cierra y vuelve a ingresar", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  await logInPartially(page, main);
+  await page.getByRole("button", { name: "Cerrar sesión" }).click();
+  await expect(page).toHaveURL(/\/ingresar\?aviso=sesion-cerrada$/);
+  // Ya sin sesión, la pantalla del código no deja pasar a nadie.
+  await page.goto("/ingresar/codigo");
+  await expect(page).toHaveURL(/\/ingresar$/);
+  await page.goto(`/o/${main.tenantId}`);
+  await expect(page).toHaveURL(/\/ingresar$/);
+});
+
+const MAILBOX_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:56324";
+
+/** Espera el correo de la invitación y devuelve el enlace tal como lo recibe la persona. */
+async function waitForInviteLink(address: string): Promise<string> {
+  let link: string | null = null;
+  await expect
+    .poll(
+      async () => {
+        const search = await fetch(
+          `${MAILBOX_URL}/api/v1/search?query=${encodeURIComponent(`to:${address}`)}`,
+        );
+        const { messages } = (await search.json()) as { messages?: { ID: string }[] };
+        for (const { ID } of messages ?? []) {
+          const mail = (await (await fetch(`${MAILBOX_URL}/api/v1/message/${ID}`)).json()) as {
+            Subject: string;
+            HTML: string;
+          };
+          if (!mail.Subject.includes("te invitó a")) continue;
+          link =
+            /href="(https?:\/\/[^"]*\/invitacion\/[A-Za-z0-9_-]{43})"/.exec(mail.HTML)?.[1] ?? null;
+        }
+        return link;
+      },
+      { message: `Esperaba el correo de la invitación a ${address}`, timeout: 30_000 },
+    )
+    .not.toBeNull();
+  return link!;
+}
+
+async function newOwner(browser: Browser) {
+  const baseURL = test.info().project.use.baseURL;
+  const context = await browser.newContext({
+    baseURL,
+    extraHTTPHeaders: { "x-forwarded-for": randomTestIp() },
+  });
+  const page = await context.newPage();
+  await signUpAndVerify(page, uniqueEmail("dueno-mfa"), "Dueña Ficticia");
+  const tenantId = await createTenant(page, "Empresa Invita", "76086428-5");
+  return { context, page, tenantId };
+}
+
+async function invite(ownerPage: Page, tenantId: string, email: string, role: string) {
+  await ownerPage.goto(`/o/${tenantId}/equipo`);
+  await ownerPage.getByTestId("invite-email").fill(email);
+  await ownerPage.getByTestId(`invite-role-${role}`).click();
+  await ownerPage.getByTestId("invite-submit").click();
+  await expect(ownerPage.getByText(`Enviamos la invitación a ${email}.`)).toBeVisible();
+}
+
+test("una invitación con la verificación activa: primero el código y después se retoma la invitación", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(420_000);
+  const owner = await newOwner(browser);
+  // La persona invitada ya tiene la verificación activa (su propia cuenta y organización).
+  const invitee = await createAccountWithSecondStep(page, "invitada");
+  await invite(owner.page, owner.tenantId, invitee.email, "sales");
+  const link = await waitForInviteLink(invitee.email);
+
+  const baseURL = test.info().project.use.baseURL;
+  const context = await browser.newContext({
+    baseURL,
+    extraHTTPHeaders: { "x-forwarded-for": randomTestIp() },
+  });
+  const inviteePage = await context.newPage();
+  await inviteePage.goto(link);
+  await expect(inviteePage).toHaveURL(/\/invitacion$/);
+  await inviteePage.getByRole("link", { name: "Ingresar", exact: true }).click();
+  await logIn(inviteePage, invitee.email);
+  // La contraseña sola no basta: primero el código; la invitación sigue esperando en el navegador.
+  await expect(inviteePage).toHaveURL(SECOND_STEP_URL);
+  await inviteePage.goto("/invitacion");
+  await expect(inviteePage).toHaveURL(SECOND_STEP_URL);
+  await inviteePage.getByLabel(CODE_LABEL).fill(await nextCode(invitee));
+  await inviteePage.getByRole("button", { name: "Verificar" }).click();
+  await expect(inviteePage).toHaveURL(/\/invitacion$/);
+  await expect(inviteePage.getByTestId("invitation-sentence")).toContainText("Empresa Invita");
+  await inviteePage.getByRole("button", { name: "Unirme", exact: true }).click();
+  await expect(inviteePage).toHaveURL(new RegExp(`/o/${owner.tenantId}$`));
+  await context.close();
+  await owner.context.close();
+});
+
+test("un Comercial activa la verificación en su propia cuenta (cualquier rol puede, de punta a punta)", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(420_000);
+  const owner = await newOwner(browser);
+  const email = uniqueEmail("comercial");
+  await signUpAndVerify(page, email, "Comercial Ficticia");
+  await createTenant(page, "Empresa Propia Comercial", "76086428-5");
+  await invite(owner.page, owner.tenantId, email, "sales");
+  const link = await waitForInviteLink(email);
+  await page.goto(link);
+  await expect(page).toHaveURL(/\/invitacion$/);
+  await page.getByRole("button", { name: "Unirme", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${owner.tenantId}$`));
+
+  // Ya como Comercial de esa organización, activa la verificación desde el menú.
+  await page
+    .locator('aside[aria-label="Menú lateral"]')
+    .getByRole("link", { name: "Seguridad de tu cuenta" })
+    .click();
+  await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
+  await page.getByRole("button", { name: "Activar la verificación en dos pasos" }).click();
+  const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
+  await page.getByRole("button", { name: "Ya la escaneé" }).click();
+  await submitCode(page, (await freshTotp(secret)).code);
+  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await expect(page.getByTestId("two-step-active")).toBeVisible();
+  // Y la organización del Dueño sigue abierta con sus permisos de Comercial.
+  await page.goto(`/o/${owner.tenantId}`);
+  await expect(page).toHaveURL(new RegExp(`/o/${owner.tenantId}$`));
+  await owner.context.close();
 });

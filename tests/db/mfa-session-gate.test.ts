@@ -160,7 +160,7 @@ describe("Comportamiento de Supabase Auth (paso 0 de H-004a)", () => {
     expect((await auth(mine.accessToken, "GET", "user")).status).toBe(200);
   });
 
-  it("(a) con un factor verificado y un pase aal1, GoTrue no deja activar otro, ni quitar el verificado, ni cambiar la contraseña", async () => {
+  it("(a) con un factor verificado y un pase aal1, GoTrue no deja activar otro, ni quitar el verificado, ni cambiar la contraseña ni el correo", async () => {
     const account = await newAccount();
     await enrollAndVerify(await signIn(account.email), "principal");
     const partial = await signIn(account.email);
@@ -185,6 +185,14 @@ describe("Comportamiento de Supabase Auth (paso 0 de H-004a)", () => {
     });
     expect(password.status).toBe(401);
     expect(password.json!.error_code).toBe("insufficient_aal");
+
+    // Cambiar el correo (la puerta para tomar la cuenta por el otro lado) pide el mismo nivel: con pase aal1 y factor
+    // verificado, también se rechaza.
+    const email = await auth(partial.accessToken, "PUT", "user", {
+      email: `otro-${randomUUID().slice(0, 8)}@ejemplo.test`,
+    });
+    expect(email.status).toBe(401);
+    expect(email.json!.error_code).toBe("insufficient_aal");
   });
 
   it("el ingreso con contraseña y GET /user traen la lista de factores con su estado (la app decide con eso)", async () => {

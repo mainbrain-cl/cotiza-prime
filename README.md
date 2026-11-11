@@ -44,6 +44,11 @@ esta base no usa (analítica, vector, tiempo real, Studio), levantarla sin ellos
   levantó antes de ese cambio, reiniciarla. Las pruebas lo exigen solo con `E2E_EXPECT_MFA_ENROLLED_MAIL=1`.
 - **Quitar el factor de una cuenta local** (aún no hay desactivar en la pantalla, es H-004b): en Studio, `auth.mfa_factors`,
   borrar la fila; o `delete from auth.mfa_factors where user_id = '…';` en `psql` (base local, puerto 56322).
+- **Desbloquear los intentos de una cuenta (soporte)**: los contadores del código viven en `auth_rate_limits` con las huellas
+  `mfa_verify_user` (ventana de 15 min) y `mfa_verify_user_day` (día) del ingreso con contraseña, y las mismas con el sufijo
+  `|recovery` del camino de recuperación por correo. No se leen a mano (son huellas): en `psql` local,
+  `delete from public.auth_rate_limits where scope in ('mfa_verify_user', 'mfa_verify_user_day', 'mfa_code_used');` los limpia
+  todos; en producción, **antes de desbloquear verificar la identidad de la persona** (decisión pendiente 8).
 - **Si todos los códigos fallan**, mira el reloj de la máquina virtual de Docker: tras suspender el equipo en macOS se
   atrasa. Compara `docker exec supabase_auth_cotiza-prime date -u` con `date -u`; si difieren, reinicia Docker.
 - Las pruebas de punta a punta de este flujo: `E2E_PROD=1 npx playwright test --project=chromium e2e/mfa.spec.ts --workers=1`.

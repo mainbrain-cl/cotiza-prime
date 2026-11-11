@@ -172,7 +172,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-004a, H-004b, H-011
 **Datos personales:** no
-**Notas técnicas:** 🔒 cambia el pase de sesión de las cuentas de prueba en todas las pruebas, por eso va sola y al final del sprint 5. Requisito heredado de H-092 m11: `active.role` debe ser el rol efectivo, o la aplicación y la base discrepan (el editor del formulario ya tolera el `42501` del tope). Los supuestos 1 a 3 del diseño (queda como Observador; también obligatoria en pruebas; puede desactivarla) están en `sprint-5-equipo-y-permisos.md` §8.
+**Notas técnicas:** **Ya cerrado en H-004a (ronda 1, no se duplica aquí):** con el segundo paso pendiente (contraseña sola), la base rechaza `create_tenant`, `accept_invitation`, `invitation_preview` y `accept_current_legal_documents`, y las políticas `profiles_select`, `profiles_update`, `legal_acceptances_select` y `members_select` no entregan filas propias; la guardia 16 de `tests/db/schema-guards.test.ts` avisa si aparece otra política o función expuesta con `auth.uid()` sin organización y sin `app.second_step_pending()`. H-004c suma lo que falta: `app.effective_role()`. **Notas técnicas:** 🔒 cambia el pase de sesión de las cuentas de prueba en todas las pruebas, por eso va sola y al final del sprint 5. Requisito heredado de H-092 m11: `active.role` debe ser el rol efectivo, o la aplicación y la base discrepan (el editor del formulario ya tolera el `42501` del tope). Los supuestos 1 a 3 del diseño (queda como Observador; también obligatoria en pruebas; puede desactivarla) están en `sprint-5-equipo-y-permisos.md` §8.
 
 ---
 
@@ -2000,6 +2000,28 @@ antes del piloto, porque la aceptación de términos es prueba de consentimiento
 sobre las pantallas nuevas. Pendiente de la revisión de H-028: si la generación del PDF falla, la
 pestaña nueva que abre el botón hoy muestra un texto plano ("No pudimos generar el PDF."); debe
 mostrar una página amable, con la marca de la aplicación y un botón para reintentar o volver.
+
+---
+
+### H-117 · Frenar los códigos incorrectos del segundo paso dentro de Supabase · M01, M18
+
+**Como** Dueño de una organización
+**quiero** que nadie pueda probar códigos del segundo paso a gran velocidad aunque conozca mi contraseña
+**para** que el segundo paso proteja de verdad la cuenta, y no solo la pantalla de la aplicación.
+
+**Criterios de aceptación**
+- [ ] Al sexto código incorrecto seguido de una cuenta (5 fallos cada 15 minutos), Supabase rechaza el siguiente intento aunque llegue directo a su API, sin pasar por la pantalla de Cotiza Prime
+- [ ] Al llegar a 15 fallos en el día, la cuenta queda bloqueada 24 horas
+- [ ] Ya bloqueada la cuenta, el código correcto también se rechaza
+- [ ] El camino de recuperación por correo tiene contadores APARTE de los del ingreso con contraseña (misma regla que H-004a): quien solo tiene la contraseña no puede bloquear al dueño que llega con el enlace del correo, ni al revés
+- [ ] Hay una forma documentada de desbloquear una cuenta y de apagar el límite en una emergencia, con el procedimiento para verificar la identidad de la persona antes de desbloquear o de quitarle un factor
+- [ ] La función del hook tiene su deshacer con guardas, y una prueba con Supabase Auth real reproduce el ataque (probar códigos directo a `/auth/v1/factors/…/verify` con un pase de solo contraseña) y confirma el bloqueo
+
+**Prioridad:** núcleo
+**Tamaño:** mediano
+**Depende de:** H-004a
+**Datos personales:** no
+**Notas técnicas:** 🔒 sprint 6 o antes del lanzamiento (decisión 021, `docs/decisiones/021-limite-de-intentos-del-segundo-paso.md`; opción A, provisional hasta que Aarón la ratifique). Hook de Supabase Auth `mfa_verification_attempt` (`[auth.hook.mfa_verification_attempt]`): una función de base de datos con candado por cuenta que cuenta los intentos y rechaza; reutiliza los alcances de `auth_rate_limits` de H-004a (`mfa_verify_user` y `mfa_verify_user_day`), con la misma separación de contadores para el camino de recuperación (huella `<cuenta>|recovery`). Exige confirmar antes que el plan de Supabase de producción incluye el hook (posible costo) y que Aarón lo apruebe. Migración con la guardia 15 (`lock_timeout`). Hay que coordinarla con los contadores propios de la aplicación (`src/lib/security/login-rate-limit.ts`) para que no se cuenten dos veces el mismo intento.
 
 ---
 

@@ -26,7 +26,7 @@ export function CodeField({
 
   return (
     <Field
-      label="Código de 6 dígitos"
+      label="Código de 6 números"
       hint="Son 6 números; cambian cada 30 segundos."
       error={error}
       required

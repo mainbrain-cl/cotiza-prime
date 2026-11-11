@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Copy, ShieldCheck } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { CodeField } from "@/components/auth/code-field";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,8 @@ import {
 } from "@/lib/auth/second-step-actions";
 
 const COPIED_FEEDBACK_MS = 2000;
+/** Lado del código QR en pantalla (px): lo bastante grande para que la cámara del teléfono lo lea. */
+const QR_SIZE_PX = 200;
 
 type Phase =
   | { name: "idle" }
@@ -76,6 +79,22 @@ function EnablePanel() {
   const [alreadyActive, setAlreadyActive] = useState(false);
   const [pending, startTransition] = useTransition();
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const activateRef = useRef<HTMLButtonElement>(null);
+  const cancelledRef = useRef(false);
+  const router = useRouter();
+
+  // Al cancelar, el foco vuelve al botón «Activar» (si no, se pierde al desaparecer el paso).
+  useEffect(() => {
+    if (phase.name === "idle" && cancelledRef.current) {
+      cancelledRef.current = false;
+      activateRef.current?.focus();
+    }
+  }, [phase.name]);
+
+  function cancel() {
+    cancelledRef.current = true;
+    setPhase({ name: "idle" });
+  }
 
   // Al llegar al paso de escanear, el foco pasa a su título. En el paso del código el foco va directo al campo
   // (autoFocus): es lo único que hay que hacer ahí.
@@ -88,15 +107,17 @@ function EnablePanel() {
     startTransition(async () => {
       const result = await startTotpEnrollmentAction();
       if (result.status === "started") setPhase({ name: "scan", enrollment: result.enrollment });
-      else if (result.status === "already_active") setAlreadyActive(true);
-      else setStartError(result.message);
+      else if (result.status === "already_active") {
+        setAlreadyActive(true);
+        router.refresh();
+      } else setStartError(result.message);
     });
   }
 
   if (alreadyActive) {
     return (
       <FormAlert tone="success">
-        La verificación en dos pasos ya está activa. Recarga la página.
+        La verificación en dos pasos ya está activa. Actualizando…
       </FormAlert>
     );
   }
@@ -108,12 +129,18 @@ function EnablePanel() {
         {startError ? <FormAlert>{startError}</FormAlert> : null}
         <p className="text-fg-muted">
           Además de tu contraseña, te pediremos un código de 6 números que genera una aplicación en
-          tu teléfono. Así, aunque alguien conozca tu contraseña, no podrá entrar.
+          tu teléfono. Así tu cuenta queda mejor protegida.
         </p>
         <p className="text-sm text-fg-subtle">
           Al activarla cerraremos tu sesión en tus otros dispositivos.
         </p>
-        <Button size="lg" onClick={start} disabled={pending} aria-disabled={pending}>
+        <Button
+          ref={activateRef}
+          size="lg"
+          onClick={start}
+          disabled={pending}
+          aria-disabled={pending}
+        >
           {pending ? "Preparando…" : "Activar la verificación en dos pasos"}
         </Button>
       </div>
@@ -128,14 +155,14 @@ function EnablePanel() {
           enrollment={phase.enrollment}
           headingRef={headingRef}
           onNext={() => setPhase({ name: "confirm", enrollment: phase.enrollment })}
-          onCancel={() => setPhase({ name: "idle" })}
+          onCancel={cancel}
         />
       ) : (
         <ConfirmStep
           enrollment={phase.enrollment}
           headingRef={headingRef}
           onBack={() => setPhase({ name: "scan", enrollment: phase.enrollment })}
-          onCancel={() => setPhase({ name: "idle" })}
+          onCancel={cancel}
         />
       )}
     </div>
@@ -183,9 +210,10 @@ function ScanStep({
         <img
           src={enrollment.qrCode}
           alt="Código QR para tu aplicación de códigos"
-          width={200}
-          height={200}
-          className="bg-white size-[200px] rounded-md p-3"
+          width={QR_SIZE_PX}
+          height={QR_SIZE_PX}
+          style={{ width: QR_SIZE_PX, height: QR_SIZE_PX }}
+          className="bg-white rounded-md p-3"
         />
       </div>
       <div className="flex flex-col gap-2">
@@ -198,16 +226,13 @@ function ScanStep({
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="secondary" size="sm" onClick={copy}>
-            {copied ? (
-              <>
-                <Check aria-hidden /> Copiada
-              </>
-            ) : (
-              <>
-                <Copy aria-hidden /> Copiar
-              </>
-            )}
+            {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+            {copied ? "Copiada" : "Copiar"}
           </Button>
+          {/* El cambio de «Copiar» a «Copiada» se anuncia a lectores de pantalla sin mover el foco. */}
+          <span role="status" aria-live="polite" className="sr-only">
+            {copied ? "Clave copiada." : ""}
+          </span>
           <a
             href={enrollment.uri}
             className="inline-flex min-h-11 items-center font-semibold text-accent underline-offset-4 hover:underline md:hidden"

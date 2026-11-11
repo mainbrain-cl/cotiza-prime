@@ -56,8 +56,8 @@ la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con
 
 ### Traspaso del 2026-11-11 — lo más reciente (léelo antes que el del 2026-11-06)
 
-**`main` está en `1e5bae0` (PR #38). Abiertos: #39 (este documento) y #40 (H-040, en borrador).** 47 migraciones; la última es
-`20261109130000_invitation_audit_active_only`. Desde el traspaso del 2026-11-06 entraron los PR #31 a #38 (#31, #32 y #34 por José bajo
+**`main` está en el PR #40 (H-040, mezclado el 2026-11-11). No hay PR abiertos.** 50 migraciones; la última es
+`20261111100000_approval_price_rebate`. Desde el traspaso del 2026-11-06 entraron los PR #31 a #38 (#31, #32 y #34 por José bajo
 la decisión 020 §5; #33, #35, #36, #37 y #38 por Aarón):
 - **#33/#35/#37 (H-010):** al cancelar a un miembro se cancelan también las invitaciones que reenvió; el miembro queda a nombre de
   quien envió el enlace; `members.invitation_created_by` (FK a `auth.users`, legible por cualquier miembro activo).
@@ -76,7 +76,7 @@ la decisión 020 §5; #33, #35, #36, #37 y #38 por Aarón):
 OK. **No se corrió e2e.** Falta una corrida completa limpia de `chromium` con `E2E_PROD=1` en una máquina libre (no afirmar
 «149/149» sin ella).
 
-**En curso: H-040 (PR #40, `feat/h-040-aprobaciones`, en borrador).** Tabla `approval_rules`, función de decisión (SQL y TypeScript), pantalla
+**H-040 — mezclado (PR #40, 2026-11-11).** Tabla `approval_rules`, función de decisión (SQL y TypeScript), pantalla
 Configuración → Aprobaciones y control al enviar. Migraciones `20261110110000`, `20261110120000` y `20261111100000` (esta última, la rebaja de
 precio). Diseño y riesgos: `docs/arquitectura/sprint-5-h-040-aprobaciones.md` (§12). **Decisiones de Aarón (2026-11-11):**
 1. La regla por descuento **también cuenta la rebaja contra el precio de catálogo** (no se espera a H-041), en el servidor (`send-block`) y en la
@@ -89,22 +89,23 @@ precio). Diseño y riesgos: `docs/arquitectura/sprint-5-h-040-aprobaciones.md` (
 3. Un Administrador cambia la regla sin aviso al Dueño: **aceptado hasta H-047** (queda en el registro de actividad y en `quote_packages.approval_rule_id`).
 4. Todo miembro lee la regla y el Comercial ve el umbral en `/enviar`: está bien.
 5. Bloqueo largo de la migración 2 sobre `quote_packages`: aceptado (se aplica sobre la base vacía).
-- **Estado (2026-11-11):** rebasado sobre `main`, con las revisiones Opus normal y adversarial hechas (sin bloqueantes) y las correcciones aplicadas.
-  Falta que Aarón vea la pantalla en el navegador y decida los puntos 1 (ajuste) y 2 (hueco). Con la regla en «Siempre», un monto o un descuento, lo que la
-  cumpla **no se puede enviar hasta el sprint 6** («Solicitar aprobación»), tampoco las cotizaciones del Dueño.
+- **Estado (2026-11-11):** mezclado en `main` **por decisión de José (agencia), sin revisión previa de Aarón**, con las revisiones Opus normal y
+  adversarial hechas (sin bloqueantes) y las correcciones aplicadas. José vio la pantalla en local: con la regla «descuento sobre 10 %», bajar el precio de
+  una línea de $6.500 a $3.000 bloquea el envío (53,85 %, «incluye $3.500 por precios más bajos que los del catálogo») y devolver el precio lo desbloquea.
+  Verde local tras traer `main`: lint y tipos limpios, 2.321 unitarias (1 omitida), `test:db` 1.206, `test:isolation` 1.257 (3 pendientes),
+  `test:db:rollbacks` OK; **sin e2e `chromium` completo ni CI**. **A Aarón le queda confirmar** el ajuste del punto 1 (menor entre catálogo guardado y de
+  hoy) y aceptar el hueco del punto 2. Con la regla en «Siempre», un monto o un descuento, lo que la cumpla **no se puede enviar hasta el sprint 6**
+  («Solicitar aprobación»), tampoco las cotizaciones del Dueño.
+- **Menores del #38: mezclados (PR #41, 2026-11-11, también por decisión de José).**
+- **Mejora de uso anotada (sin historia aún):** el editor de cotizaciones no avisa que bajar el precio de una línea bajo el de catálogo cuenta como
+  descuento, ni por qué el campo «Monto del descuento» está deshabilitado con «Sin descuento» (hay que elegir el tipo primero).
 
 **H-004a (verificación en dos pasos): desbloqueada.** Aarón decidió **D1 = B** (la base también exige el segundo paso, aal2) y **D2 = sola**
-(no junto con H-004b). **Fecha de migración: NO usar `20261110100000`** (quedaría antes que las del #40); tomar una fecha nueva, posterior a la última de
-`main` (y a `20261111100000` si el #40 ya entró) al construirla, y con `lock_timeout` y su verificación.
+(no junto con H-004b). **Fecha de migración: posterior a `20261111100000`** (la última de `main`), con `lock_timeout` y su verificación. Es delicada:
+empieza con el diseño del `planificador` (Opus) y necesita a Aarón (o una decisión explícita de José).
 
 **Pendientes:**
-- **Menores del #38** (Aarón, PR siguiente, ninguno bloquea; casi todo pruebas): (1) la exención de `tables-read.test.ts:256-261` solo para filas
-  de perfiles o la columna del nombre; (2) `forbiddenTexts` no debe perdonar el correo de ex miembros; (3) guarda por md5 en
-  `20261109110000_accept_denied_outsider_anonymous.down.sql`; (4) con «Ex» activa revisar también navegador y correlación
-  (`invitation-accept.test.ts:336-337`); (5) dejar escrito qué hacer si el md5 fijo de un deshacer no coincide en un ambiente real; (6) ajustar el título de la
-  guardia 15 (es estática).
-- Orden siguiente: H-040 (punto 1 de Aarón y su revisión) → H-004a → H-004b → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el
-  ingreso) → H-004c.
+- Orden siguiente: H-004a → H-004b → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el ingreso) → H-004c.
 - La frase de la política de privacidad del #36 la ve Aarón con el abogado (editar `privacy.md` cambia su huella y exige versión nueva en
   `legal_documents`). Del issue #11: CI apagado, `AGENTS.md`, decisión #17 y `npm audit` / decisión 015.
 - Anotado fuera de alcance: el Dueño ve `audit_log.id` en `select=*`; la secuencia es común a todas las organizaciones y deja ver

@@ -1,20 +1,19 @@
 # H-040 · Configurar cuándo se exige aprobación (M09) — plan de construcción
 
-> **Estado: diseño del `planificador` (Opus), 2026-11-02. Sin construir.** Es una historia 🔒 delicada (controla
-> qué sale al cliente): por la decisión 020 §5 su PR queda abierto hasta que Aarón lo revise. Las decisiones
-> D1 a D12 (§11) llevan un supuesto por defecto; las que bloquean la construcción están marcadas. La decisión 15
-> (quién puede enviar directo) sigue siendo de Aarón.
+> **Estado: construida el 2026-11-10 (rama `feat/h-040-aprobaciones`), en dos partes que entran juntas a `main`: H-040a
+> (regla, función que decide y pantalla) y H-040b (control en el envío). El PR queda abierto hasta que Aarón lo revise** (es una
+> historia 🔒 delicada: controla qué sale al cliente; decisión 020 §5). Diseño del `planificador` (Opus) del 2026-11-02;
+> D1, D3 y D4 decididas por José el 2026-11-04; **D2 (decisión 15) resuelta por Aarón** (ver §11). Lo que cambió al construir
+> está en «Decisiones por defecto aplicadas al construir (2026-11-10)», al final.
 >
-> **Antes de construir:** las fechas de las migraciones se asignan en ese momento. Cada migración debe tener
-> fecha **única** y posterior a la última integrada en `main` (`20261102100000` ya la usa el pendiente m11 de
-> H-092).
->
-> **Actualización del 2026-11-04.** Se verificaron las premisas contra `main` (sección «Verificación del
-> 2026-11-04», al final) y José decidió **D1, D3 y D4 con los supuestos del diseño** (§11). Queda abierta solo la
-> **D2 (decisión 15, de Aarón)**: **no impide construir**, porque la tabla de la regla no cambia con ninguna de sus
-> respuestas (§5), pero el PR queda abierto hasta que Aarón la responda. La fecha de migración que se había
-> reservado (`20261102120000`) quedó por detrás de la de H-009 (`20261103100000`): la propuesta nueva es
-> `20261104120000`, y se confirma al construir con la regla de siempre (única y posterior a la última de `main`).
+> **Migraciones (tres), cada una con su deshacer en `supabase/rollbacks/`:** `20261110110000_approval_rules.sql` (H-040a),
+> `20261110120000_approval_send_gate.sql` (H-040b) y `20261111100000_approval_price_rebate.sql` (la rebaja de precio, decisión de
+> Aarón del 2026-11-11). Orden para deshacer: 3, 2 y 1. **Si H-040 entra antes que H-004a, H-004a toma una fecha posterior a
+> `20261111100000`** (se quita la reserva de `20261110100000`: ya no hace falta).
+
+**Actualización del 2026-11-04 (histórica).** Se verificaron las premisas contra `main` (sección «Verificación del
+2026-11-04», al final) y José decidió **D1, D3 y D4 con los supuestos del diseño** (§11). La D2 quedó entonces con Aarón; la
+fecha de migración que se había reservado (`20261102120000`) quedó por detrás de la de H-009 y se reemplazó por las tres de arriba.
 
 **En pocas palabras.** Hoy no hay ningún lugar donde se guarde una regla de aprobación, y el envío no revisa
 nada: cualquier cotización sale directo. Se proponen cuatro piezas:
@@ -97,8 +96,21 @@ eliminaría la prueba de qué regla regía cada envío.
 SQL manda (la función de envío se puede llamar directo por la API con el pase de un Comercial); TypeScript sirve
 a la pantalla (frase, bloqueo del botón y, en el sprint 6, el motivo de H-043). Prueba de paridad entre ambas.
 
-- `grossClp = subtotalClp + lineDiscountsClp` (antes de todo descuento, sin IVA, incluye líneas exentas).
-- `discountClp = lineDiscountsClp + globalDiscountClp`.
+- **Decisión de Aarón (2026-11-11): bajar el precio a mano también es descuento.** `priceRebateClp` = suma, por línea con precio
+  de catálogo, de `max(0, cantidad × precio de lista − bruto de la línea)` (redondeo mitad hacia arriba, igual que el bruto), con
+  **precio de lista = el MENOR entre el precio de catálogo guardado en la línea** (`quote_items.catalog_unit_price_clp`, el que el
+  servidor congeló al agregarla) **y el precio de HOY del servicio** en `catalog_items` (solo si sigue activo y es de la misma
+  organización; si está inactivo, solo el guardado: un servicio con líneas no se puede borrar, la relación lo impide). **Ajuste de
+  José:** así, si el catálogo bajó y la persona iguala el precio nuevo, no hay una rebaja falsa; si el catálogo subió después de
+  agregar la línea, el menor sigue siendo el guardado y no genera rebaja ni abre un hueco. Nunca es negativa ni compensa otra línea;
+  las líneas libres no suman. **Solo se calcula si la regla mira el descuento** (`conditional` con umbral de descuento): con
+  «Nunca», «Siempre» o solo monto vale 0 y no se lee `quote_items`. Todo en `numeric` en SQL y en `bigint` en TypeScript
+  (cantidad × precio llega a 10²¹): una rebaja enorme da un descuento de 100 % y bloquea por `discount`, nunca un error de
+  desborde. Migración `20261111100000_approval_price_rebate` (solo redefine `app.quote_approval_check`), `priceRebateOfLines` y
+  `ruleLooksAtDiscount` en TypeScript; `/enviar` lee en el servidor los precios de hoy (`loadActiveCatalogPrices`).
+- `grossClp = subtotalClp + lineDiscountsClp + priceRebateClp` (el **valor de lista**: antes de todo descuento y rebaja, sin IVA,
+  incluye líneas exentas; cada línea cuenta al mayor entre su catálogo y el precio puesto).
+- `discountClp = lineDiscountsClp + globalDiscountClp + priceRebateClp`.
 - `discountBp = grossClp === 0 ? 0 : roundHalfUpDiv(discountClp × 10.000, grossClp)` (centésimas de punto,
   mitad hacia arriba; en TypeScript con `BigInt`, porque 10¹² × 10⁴ pasa el entero seguro de JavaScript).
 - Motivo `amount` si `totalClp > umbral` (estrictamente mayor; el total **incluye IVA**). Motivo `discount`: si
@@ -108,7 +120,8 @@ a la pantalla (frase, bloqueo del botón y, en el sprint 6, el motivo de H-043).
 Contrato TypeScript (`src/lib/approvals/rule.ts`, sin `server-only`): `ApprovalRule`, `ApprovalReason`,
 `approvalMetrics`, `approvalReasons`, `requiresApproval`. Contrato SQL (esquema `app`, sin permiso de ejecución
 para nadie con sesión): `app.approval_discount_bp`, `app.approval_rule_reasons` (inmutables) y
-`app.quote_approval_check(p_tenant, p_quote_id) returns jsonb` → `{required, reasons, rule_id, rule_version}`,
+`app.quote_approval_check(p_tenant, p_quote_id) returns jsonb` → `{required, reasons, rule_id, rule_version, mode, metrics}` con
+`metrics = {total_clp, discount_clp, discount_bp, price_rebate_clp}`,
 **el único punto** que decide a quién se le aplica la regla (§5) y que usará también el sprint 6.
 
 **Casos de borde** (tabla compartida `src/lib/approvals/rule-cases.ts`, usada por la prueba unitaria y la de
@@ -128,6 +141,15 @@ paridad):
 | `always` con total $0; `never` | Pide; Nunca pide |
 | Regla combinada | `["amount"]`, `["discount"]` o ambos, siempre en ese orden |
 | Montos en el máximo (10¹² − 1) | Sin desborde |
+| Rebaja de precio sola de 20 % con umbral 10 % / de 10 % exacto / de 10,01 % | Pide / No pide / Pide |
+| Rebaja + descuento de línea + descuento general (suman sobre el mismo valor de lista) | Pide si la suma pasa el umbral |
+| Catálogo guardado $10.000, catálogo de hoy $8.000 y la persona pone $8.000 | Sin rebaja (el menor) |
+| Catálogo guardado $10.000, de hoy $15.000 (subió) y la persona pone $8.000 | Rebaja contra $10.000 |
+| Servicio inactivo que además bajó | Vale solo el guardado |
+| Precio mayor al catálogo en una línea y menor en otra | La cara no compensa a la barata |
+| Línea exenta de IVA con rebaja; línea libre barata | Cuenta (sobre el neto); no suma |
+| Regla «Nunca», «Siempre» o solo monto con una rebaja enorme | `price_rebate_clp` 0, sin leer las líneas |
+| 10 líneas de 10⁶ unidades a $10¹² de catálogo, regla de descuento | 100 %: bloquea por `discount`, sin desborde |
 
 ## 4. La frase
 
@@ -136,12 +158,14 @@ paridad):
 cotizaciones.» · «Se pide aprobación si el total supera $2.000.000.» · «…si el descuento supera 10%.» (con
 decimales «12,5%»; umbral 0: «…si la cotización tiene cualquier descuento.») · «…si el total supera
 $2.000.000 o el descuento supera 10%.» Texto de ayuda fijo: «El total incluye IVA. El descuento suma los
-descuentos de cada línea y el descuento general, sobre el valor antes de descuentos.» Para H-043 queda lista
+descuentos de cada línea, el descuento general y la rebaja: lo que un servicio del catálogo cuesta menos que su precio de catálogo (el
+menor entre el que tenía al agregarlo y el de hoy). Todo se mide sobre el valor de lista, antes de descuentos. Un servicio escrito a
+mano, que no es del catálogo, no cuenta como rebaja.» Para H-043 queda lista
 `describeApprovalReasons(reasons, metrics)`.
 
 ## 5. Decisión 15: quién puede enviar directo
 
-Supuesto: **por organización, con excepción por persona**. La excepción no se construye ahora; para no cerrarle
+**Resuelto por Aarón: por organización, con excepción por persona más adelante.** La excepción no se construye ahora; para no cerrarle
 el paso, la tabla de la regla **no tiene columnas de rol ni de persona** y todo pasa por
 `app.quote_approval_check`, que conoce al autor. La excepción futura sería una tabla aparte
 `approval_rule_exemptions (tenant_id, member_id, …)` más una columna en `quote_packages` que registre la
@@ -198,8 +222,9 @@ revise la regla.» `prepareErrorMessage` revisa `approval_required` **antes** de
 H-041 es un tope **duro** por línea (no deja guardar; CP422; vive en `tenants.sales_max_line_discount_bp` y
 `price_locked`); H-040 es un umbral **blando** de toda la cotización (deja guardar, pide visto bueno; CP423;
 `approval_rules`). No se mezclan columnas ni funciones; al enviar, primero el tope de H-041 y después la
-compuerta de H-040. Hueco conocido: bajar el precio a mano no cuenta como descuento (lo cubren el bloqueo de
-H-041 y la regla por margen, PROYECTO §9.4). La regla por margen (sprint 10) será una tercera condición:
+compuerta de H-040. Bajar el precio a mano de un servicio del catálogo sí cuenta como descuento (decisión de
+Aarón, 2026-11-11, §3); lo que sigue fuera es una línea libre escrita a mano (§12). El bloqueo de H-041 y la regla por margen
+(PROYECTO §9.4) siguen cubriendo el resto. La regla por margen (sprint 10) será una tercera condición:
 columna opcional `margin_floor_bp` como versión nueva, y `ApprovalMetrics` gana `marginBp`.
 
 ## 9. Pruebas
@@ -217,7 +242,12 @@ columna opcional `margin_floor_bp` como versión nueva, y `ApprovalMetrics` gana
   paquete, enlace, correo ni candado; umbral exacto pasa y un peso más se bloquea; `never` deja el
   `approval_rule_id`; el reenvío sigue funcionando tras cambiar a `always`); la regla cambia justo antes de
   enviar (los dos órdenes del candado); paridad SQL/TypeScript con la tabla de casos y casos al azar con
-  semilla fija; guardias de esquema; y el deshacer en `test:db:rollbacks`.
+  semilla fija; guardias de esquema; y el deshacer en `test:db:rollbacks`. **Rebaja de precio** (`approval-rule-parity`,
+  `approval-send-gate`, `approval-price-rebate-rollback`): casos fijos y 3.000 al azar de la función pura; cotizaciones reales con
+  líneas de catálogo; 400 cotizaciones al azar con líneas insertadas y comparadas con la función REAL de la base (rebaja exacta,
+  también sobre 2⁵³); catálogo que baja, sube o se desactiva; envío con precio bajado a mano por `prepare_quote_send`
+  (bloquea con CP423 y `detail` = discount), bordes de 10 %, umbral 0, línea libre, exenta y desborde; el precio de catálogo no se
+  falsea; y el deshacer exige el md5 del cuerpo de la función y se niega si otro la redefinió.
 - **Aislamiento:** registrar `approval_rules` (`ISOLATION_TABLES`), `set_approval_rule` (`RPC_CASES`) y la ruta
   (`APP_ROUTES`); Ana con la cabecera de B (canario: B con umbral 1.234.567 que nunca aparece desde A); Mixta
   cambia A sin tocar B y la auditoría queda con el `tenant_id` de A; Ex con su pase vigente; B en `always` no
@@ -225,7 +255,8 @@ columna opcional `margin_floor_bp` como versión nueva, y `ApprovalMetrics` gana
 - **Punta a punta** (`e2e/approval-rules.spec.ts`): Ana configura $2.000.000 o 10 %, ve la frase, guarda y
   recarga; Carla ve «No tienes permiso» por URL directa; la Comercial con una cotización sobre el umbral ve el
   bloqueo y, si fuerza la acción, queda rechazada; dos pestañas de Administrador (conflicto); 375 px, sin
-  conexión y teclado. **Se corre la batería completa**: el disparador toca todos los envíos existentes.
+  conexión y teclado; y, con una regla de descuento, la Comercial baja el precio en el editor y `/enviar` lo bloquea explicando la
+  rebaja. **Se corre la batería completa**: el disparador toca todos los envíos existentes.
 
 ## 10. Datos personales, orden y tamaño
 
@@ -251,17 +282,20 @@ aplica. PR delicado: queda abierto hasta que Aarón lo revise; después, el `rev
    Supuesto: sí. Lo que cumple la regla no sale; como parte en «Nunca», nada cambia si nadie la toca. La
    alternativa (guardar sin aplicar) da una falsa sensación de control. Bloquea el paso 4. **Decidida por José el 2026-11-04: sí, se aplica desde ya.**
 2. **D2 · ¿A quién aplica?** (decisión 15, de Aarón). Supuesto: a todos los que envían, incluidos Dueño y
-   Administrador, con el aviso de «nadie más puede aprobar». **Pendiente de Aarón: no impide construir (§5), sí mezclar.**
+   Administrador, con el aviso de «nadie más puede aprobar». **Resuelta por Aarón: la regla de aprobación es POR
+   ORGANIZACIÓN y aplica a TODOS los que envían, incluido el Dueño y el Administrador (con el aviso de «nadie más puede aprobar»
+   cuando corresponda). La excepción por persona viene después** (§5: tabla aparte, sin tocar `approval_rules`). Se construyó así.
 3. **D3 · ¿El monto se compara con el total con IVA o con el neto?** Supuesto: total con IVA. **Decidida por José el 2026-11-04: total con IVA.**
 4. **D4 · ¿Qué cuenta como descuento?** Supuesto: descuentos de línea más el general, sobre el valor antes de
-   descuentos y sin IVA (no las rebajas de precio respecto del catálogo). **Decidida por José el 2026-11-04: ese criterio.**
+   descuentos y sin IVA (no las rebajas de precio respecto del catálogo). **Decidida por José el 2026-11-04: ese criterio. Ampliada por
+   Aarón el 2026-11-11: la rebaja de precio contra el catálogo también cuenta como descuento** (§3).
 
 **No bloquean (se construye con el supuesto):** D5 umbral de 0 % = «cualquier descuento» (permitido) · D6
 redondear el porcentaje a dos decimales antes de comparar (sí) · D7 regla de las organizaciones nuevas:
 «Nunca» (el paso 10 del onboarding la cambiará) · D8 aviso por correo al Dueño cuando un Administrador cambia
 la regla (no por ahora; llega con H-047) · D9 permiso propio (no; `settings.manage`) · D10 los demás roles ven
 la regla (no tienen pantalla; el Comercial ve el motivo al enviar) · D11 para el sprint 6: autoaprobación (no) y
-solicitud pendiente si la regla se relaja (se mantiene) · D12 partir H-040 en a y b en `HISTORIAS.md` (sí).
+solicitud pendiente si la regla se relaja (se mantiene) · D12 partir H-040 en a y b en `HISTORIAS.md` (sí; hecho el 2026-11-10: `HISTORIAS.md` tiene H-040a y H-040b).
 
 ## 12. Riesgos y qué NO hacer
 
@@ -269,6 +303,43 @@ Riesgos aceptados: partir una cotización en dos para quedar bajo el monto (fuer
 a mano en vez de dar descuento (lo cubren H-041 y el margen); una organización de una sola persona con
 «Siempre» queda sin poder enviar (aviso en pantalla, depende de D2); la lógica del disparador queda «escondida»
 (se documenta en la cabecera de la migración y en el plan del sprint 6).
+
+**Riesgos aceptados al construir (revisión adversarial del 2026-11-10), para que Aarón decida:**
+
+- **Bajar el precio a mano (I2) — resuelto en parte, con el alcance real que Aarón debe aceptar.** Antes quedaba fuera, porque
+  `save_quote_draft` acepta `unit_price_clp` desde el navegador. Ahora la regla de descuento cuenta la rebaja contra el precio de
+  catálogo (§3, el menor entre el guardado y el de hoy), en el servidor (`/enviar`) y en la puerta de envío de la base. **No se
+  puede falsear el catálogo:** `save_quote_draft` copia el precio desde `catalog_items` al agregar la línea («del catálogo, nunca
+  del navegador»), lo conserva en las líneas existentes, rechaza cambiar el servicio de una línea ya guardada
+  (`catalog_item_changed`), ignora cualquier `catalog_unit_price_clp` que mande el navegador y `quote_items` no tiene permisos de
+  escritura.
+  - **Bloqueo de más, ya resuelto:** si el catálogo bajaba después de agregar la línea, igualar el precio nuevo daba una rebaja
+    falsa. Ahora se mide contra el menor entre el guardado y el de hoy. **Nota:** SUBIR el catálogo después de agregar la línea no
+    genera rebaja (el menor sigue siendo el guardado). Carrera rara y documentada: si el Administrador SUBE el catálogo entre que
+    se abre el editor y se guarda, la línea queda con una rebaja fantasma (con umbral 0 se bloquea).
+  - **Hueco que queda (riesgo aceptado), más ancho que «línea libre»:** la base no puede saber que se cobra menos por el MISMO
+    servicio si la persona (a) lo escribe a mano como **línea libre**, sin catálogo; (b) **renombra una línea de catálogo más
+    barata** (el navegador puede editar el nombre de una línea de catálogo, `quote-editor.tsx:386-394`; el `catalog_item_id` queda
+    en el servicio barato y el cliente lee otro nombre); o (c) **baja la cantidad** (horas, km) manteniendo el precio unitario.
+    **H-042 NO lo cubre** (D2 solo ordena la lista del Comercial, no controla lo que vende). **H-041 (pregunta 18) debe fijar
+    también el nombre de las líneas de catálogo.** Aarón debe aceptarlo con este alcance real.
+  - **Para M14 («duplicar») y §6.8 («versión 2»):** al copiar una cotización no se debe copiar `catalog_unit_price_clp` sin decidirlo
+    (copiaría un precio de catálogo viejo como si fuera el de hoy); lo normal es volver a pedirlo al catálogo vigente.
+- **Una cuenta de Administrador puede mover la regla sin que el Dueño se entere (I3).** Un Administrador (o su cuenta robada)
+  puede poner la regla en «Nunca», enviar y devolverla, o ponerla en «Siempre» y bloquear al Dueño. No hay aviso por correo hasta
+  H-047 (D8). El rastro queda en el registro de actividad (`approval_rule.updated`, con la regla anterior y la nueva) y en
+  `quote_packages.approval_rule_id` de cada envío.
+- **«Siempre» frena todos los envíos hasta el sprint 6 (I1).** Tampoco puede enviar el Dueño. La pantalla lo dice en claro, pide
+  confirmar antes de guardar «Siempre» y `/enviar` no sugiere «ajustar la cotización» en ese caso.
+- **Quién lee la regla (M7).** El criterio original decía «solo el Dueño y los Administradores la ven»; por D10 y por H-040b, todo
+  miembro la lee por la API y el Comercial ve el umbral en el motivo de `/enviar`. Consecuencia que Aarón debe conocer: el umbral
+  (por ejemplo, $2.000.000) no es secreto para el equipo de venta.
+
+**Para más adelante (M9):** (a) M18, la retención y el borrado de una organización cancelada, necesitará una excepción en
+`approval_rules` como la de `audit_log` (`app.retention_purge`), porque hoy la tabla no permite borrar ni con la llave maestra;
+(b) deshacer **solo** la migración 2 (`approval_send_gate`) deja la regla visible y configurable, pero la base ya no la aplica: el
+orden correcto es deshacer 3, después 2 y por último 1, y los deshacer lo exigen (el de 1 se niega si la función nombra la rebaja
+o si existe la columna del paquete); el aviso de la pantalla, en cambio, no sabe distinguirlo.
 
 **No hacer:** guardar la regla como columnas editables de `tenants` ni dar permisos de edición a
 `authenticated` · permitir editar o borrar versiones ni «para corregir» · evaluar solo en la pantalla o solo en
@@ -302,3 +373,54 @@ Contrastado con `origin/main` (última migración `20261102100000`; H-009 trae `
 - **Sigue sin poder verificarse:** la implementación de H-041 (no está construida) y por tanto cómo reescribe
   `prepare_quote_send`; por eso el control va en un disparador de `quote_packages` (§7) y no en esa función.
 
+## Decisiones por defecto aplicadas al construir (2026-11-10)
+
+Dónde la construcción se aparta del texto de arriba o lo precisa. Cada punto es un supuesto que Aarón puede revertir.
+
+1. **Dos migraciones, no una.** `20261110110000_approval_rules` (H-040a: tabla, versión 1, disparador de `tenants`, funciones
+   `app.approval_*`, `app.quote_approval_check` y `set_approval_rule`) y `20261110120000_approval_send_gate` (H-040b: columna
+   `quote_packages.approval_rule_id` y disparador del envío). Cada una con su deshacer; las dos entran juntas a `main`.
+2. **Sin `approvals.configure`:** se reutiliza `settings.manage` (D9) y no se tocó la matriz ni `permissions-parity.test.ts`.
+3. **`app.quote_approval_check` devuelve además `mode` y `metrics`** (`total_clp`, `discount_clp`, `discount_bp`), para que las
+   pruebas comparen las cifras y el sprint 6 las reutilice. Sin la regla, rechaza con `approval_rule_missing` (CP423).
+4. **Candado:** `set_approval_rule` toma el candado **exclusivo** `approval_rule:{organización}` y el disparador del envío toma el
+   **compartido**: dos envíos no se esperan entre sí, pero un cambio de regla espera a que termine el envío en curso, y el
+   paquete queda anotado con la versión que de verdad rigió (probado con dos conexiones en los dos órdenes).
+5. **El disparador del envío no evalúa una cotización que no existe en esa organización:** deja que la relación compuesta
+   rechace la fila (23503), como ya hace `quote_packages_set_revision` (una prueba anterior lo exige).
+6. **El error del envío lleva los motivos en `detail`** (`amount`, `discount`, `always`); la aplicación igual arma su frase con la
+   función de TypeScript y el mensaje se distingue del «ya no está en borrador» por el motivo (`approval_required`), revisado
+   antes del CP423 genérico (`approvalPrepareError` en `src/lib/approvals/send-block.ts`).
+7. **Alcance que se ve y no estaba en el diseño:** la pantalla de la regla avisa, cuando la regla no es «Nunca»: «Por ahora, una
+   cotización que cumpla la regla no se puede enviar: la solicitud de aprobación llega pronto. Quien la armó puede ajustarla (por
+   ejemplo, bajar el descuento) para que salga.» Es la consecuencia directa de D1 (sin «Solicitar aprobación» todavía) y se dice
+   en claro. El aviso de «Hoy solo tú puedes aprobar» sale solo si quien configura puede aprobar y hay menos de dos miembros
+   activos con ese permiso.
+8. **Guardar se llama a mano** (no con `action` del formulario): sin conexión, la llamada falla, el aviso lo cuenta y lo escrito
+   queda en pantalla (cuarto estado del diseño). «Último cambio» dice «Todavía nadie ha cambiado esta regla.» mientras rija la
+   versión 1 del sistema.
+9. **Registro de actividad:** `approval_rule.updated` (recurso «Regla de aprobación») cuenta el cambio con la misma frase de la
+   pantalla: «Antes: … Ahora: …». La auditoría guarda montos y porcentajes, nunca datos personales.
+10. **Los deshacer se niegan a perder la prueba de qué regla regía un envío:** el de H-040b si algún paquete apunta a una versión
+    creada por una persona, y el de H-040a si hay versiones creadas por personas o si la columna del paquete sigue existiendo.
+    Consecuencia en desarrollo: las pruebas de base dejan versiones de personas confirmadas en la base local; `test:db:rollbacks`
+    vacía la base antes, como ya hace con los demás registros legales.
+11. **La fixture de aislamiento** deja la regla de A en «según el monto» con $7.654.321 y la de B con $1.234.567 (canario numérico
+    de la regla); lo que la fixture envía con `pg` ocurre antes y no pasa por la regla.
+12. **`scripts/check-rollbacks.mjs`:** la fila de prueba de `quote_packages` lleva ahora `approval_rule_id`.
+13. **No se construyó:** el aviso por correo al Dueño cuando un Administrador cambia la regla (D8, llega con H-047), la excepción
+    por persona, la regla por margen, ni «Solicitar aprobación» (sprint 6, que además debe cambiar el disparador del envío).
+14. **Revisión adversarial (2026-11-10):** los deshacer traen el verificador de `lock_timeout` (guardia 15 del PR #38); «Siempre» pide
+    confirmación antes de guardarse y se explica en la pantalla y en `/enviar` (I1); el texto de ayuda aclara que cambiar el precio
+    no es un descuento (I2); el aviso «Hoy solo tú puedes aprobar» dice que depende de que llegue la solicitud de aprobación (M4);
+    `approval_required` ya no se registra como advertencia del servidor (M6).
+15. **La migración `approval_send_gate` se deja en un solo archivo** (M2): en una transacción los bloqueos se sueltan al confirmar,
+    así que reordenar la columna, el relleno, la relación y el `not null` no acorta el `ACCESS EXCLUSIVE` sobre `quote_packages`; solo
+    archivos separados lo harían. Se anotó en `modelo-datos.md` §9.4 para aplicarla sobre la base vacía.
+16. **Rebaja de precio contra el catálogo (decisión de Aarón, 2026-11-11, con el ajuste de José).** `priceRebateClp` se suma al
+    descuento y al valor de lista (§3), contra el menor entre el precio guardado en la línea y el de hoy del servicio activo. Tercera
+    migración `20261111100000_approval_price_rebate` (con su deshacer, que exige el md5 del cuerpo de la función) en vez de editar
+    las dos del PR; `app.quote_approval_check` lee `quote_items` por el índice único `(tenant_id, quote_id, position)` y
+    `catalog_items` por `(tenant_id, id)`, solo si la regla mira el descuento, y devuelve además `metrics.price_rebate_clp`.
+    **Solo `/enviar` muestra «incluye $2.000 por precios más bajos que los del catálogo»** (el motivo del bloqueo); la pantalla de la
+    regla solo trae el texto de ayuda, que ya no dice que cambiar el precio no es un descuento.

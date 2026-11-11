@@ -393,6 +393,23 @@ export const ISOLATION_TABLES: TableSpec[] = [
     ownWriteAccepted: false,
   },
   {
+    name: "approval_rules",
+    visibility: "business",
+    // Todo miembro de la organización activa la lee; nadie escribe directo (solo `set_approval_rule`) y el historial es de solo agregar.
+    idColumn: "id",
+    ownedByB: byTenantB,
+    readColumns: "id,tenant_id,version,mode,amount_threshold_clp",
+    insertAttack: (fx, tenant) => ({
+      tenant_id: tenant,
+      version: 99,
+      mode: "always",
+      created_by: fx.personas.ana.userId,
+    }),
+    updateAttack: () => ({ mode: "never", amount_threshold_clp: 1 }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
     name: "numbering_settings",
     visibility: "business",
     idColumn: "tenant_id",
@@ -712,6 +729,16 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: true,
   },
   delete_text_snippet: { args: { p_snippet_id: randomUUID() }, writesActiveTenant: true },
+  // Sprint 5 · la regla de aprobación (H-040a). Los argumentos son válidos en forma y apuntan a nada propio.
+  set_approval_rule: {
+    args: {
+      p_expected_version: 1,
+      p_mode: "always",
+      p_amount_threshold_clp: null,
+      p_discount_threshold_bp: null,
+    },
+    writesActiveTenant: true,
+  },
   // Sprint 5 · aceptar una invitación (H-009). Corren con sesión y SIN organización activa (la persona todavía no es
   // miembro; la organización la define la invitación y la decide la base), por eso no exigen una propia.
   invitation_preview: { args: { p_token_sha256: "a".repeat(64) }, writesActiveTenant: false },
@@ -842,6 +869,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/clientes/[customerId]/editar", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/actividad", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/configuracion/aprobaciones", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/empresa", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/marca", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/numeracion", kind: "page", scope: "tenant" },

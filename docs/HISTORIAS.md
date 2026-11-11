@@ -698,7 +698,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 # Fase 3 — Control
 
-### H-040 · Configurar cuándo se exige aprobación · M09
+### H-040a · Configurar cuándo se exige aprobación · M09
 
 **Como** Administrador
 **quiero** decidir qué cotizaciones necesitan mi visto bueno antes de salir
@@ -708,13 +708,36 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 - [ ] Elijo una opción: siempre, nunca, sobre cierto monto total, o sobre cierto porcentaje de descuento
 - [ ] Puedo combinar monto y descuento (basta con que se cumpla una)
 - [ ] Veo en una frase cómo quedó la regla ("Se pide aprobación si el total supera $2.000.000 o el descuento supera 10%")
-- [ ] El cambio aplica a las cotizaciones que se envíen desde ahora
+- [ ] La regla es de la organización y aplica a todos los que envían, también al Dueño y a los Administradores; si nadie más puede aprobar, la pantalla me lo avisa
+- [ ] El Dueño y los Administradores la ven y la cambian en Configuración; los demás roles no tienen esa pantalla, pero el servidor les deja leer la regla (el Comercial ve el motivo en la pantalla de enviar). Cada cambio queda con quién y cuándo, y el registro de actividad cuenta cómo era antes y cómo es ahora
+- [ ] Si dos personas editan a la vez, la segunda recibe un aviso y no pisa el cambio de la primera
 
 **Prioridad:** núcleo
 **Tamaño:** mediano
 **Depende de:** H-011
 **Datos personales:** no
-**Notas técnicas:** 🔒 controla qué sale al cliente; no se mezcla sin Aarón. Diseño en `docs/arquitectura/sprint-5-h-040-aprobaciones.md`: tabla `approval_rules` con historial, una función única que decide si se pide aprobación y un control en el envío; unos 3,5 días. Se propone partirla en H-040a (regla, función y pantalla) y H-040b (control en el envío), que entran juntas a `main`; pendiente de decidir (D12). Bloquea su construcción la decisión 15 (quién puede enviar sin aprobación, de Aarón) y D1, D3 y D4.
+**Notas técnicas:** 🔒 controla qué sale al cliente; no se mezcla sin Aarón. H-040 se partió en dos (D12, 2026-11-10): esta es la regla, la función que decide (escrita una vez en SQL y una en TypeScript, con prueba de que responden igual) y la pantalla; **entra a `main` junto con H-040b**. Diseño en `docs/arquitectura/sprint-5-h-040-aprobaciones.md`: tabla `approval_rules` con historial (solo agregar), `app.quote_approval_check` y `set_approval_rule`. Decisiones: D1, D3 y D4 de José (2026-11-04); D2 (decisión 15) de Aarón: por organización, aplica a todos los que envían, con excepción por persona más adelante.
+
+---
+
+### H-040b · Que el envío respete la regla de aprobación · M09
+
+**Como** Administrador
+**quiero** que una cotización que cumple la regla no pueda salir hacia el cliente
+**para** que nadie la envíe sin el visto bueno que exige mi organización.
+
+**Criterios de aceptación**
+- [ ] Una cotización que cumple la regla no se puede enviar: la pantalla de enviar explica por qué ("el total ($2.350.000) supera $2.000.000") y el servidor la rechaza aunque la petición llegue sin pasar por la pantalla
+- [ ] Un envío rechazado no deja nada a medias: ni paquete, ni enlace, ni correo, ni candado de envío
+- [ ] El monto es el total con IVA y se pide aprobación solo si lo supera; el descuento suma los de cada línea, el general y lo que un servicio del catálogo cuesta menos que su precio de catálogo (bajar el precio a mano también cuenta como descuento, contra el menor entre el precio de catálogo que tenía al agregarlo y el de hoy)
+- [ ] Lo ya enviado no se vuelve a evaluar; reenviar sigue funcionando
+- [ ] Cada paquete enviado guarda qué versión de la regla regía
+
+**Prioridad:** núcleo
+**Tamaño:** mediano
+**Depende de:** H-040a, H-029
+**Datos personales:** no
+**Notas técnicas:** 🔒 entra a `main` junto con H-040a. Disparador `quote_packages_approval_gate` (antes de insertar un paquete) y columna `quote_packages.approval_rule_id`; no reescribe `prepare_quote_send` (así no choca con H-041). D1: se aplica desde ya, aunque «Solicitar aprobación» llegue en el sprint 6; mientras tanto, lo que cumple la regla no sale, y el sprint 6 debe cambiar el disparador para dejar pasar el paquete de una solicitud aprobada. **Decisión de Aarón (2026-11-11), con ajuste de José:** bajar el precio de un servicio del catálogo también cuenta como descuento (contra el menor entre el precio de catálogo guardado en la línea y el de hoy), con una tercera migración `20261111100000_approval_price_rebate`; lo que sigue fuera (línea libre, renombrar una línea de catálogo más barata, bajar la cantidad) no lo cubre H-042: H-041 debe fijar también el nombre de las líneas de catálogo (diseño §12).
 
 ---
 

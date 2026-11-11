@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { encryptPii } from "@/lib/crypto/pii";
 import { searchHash } from "@/lib/crypto/search-hash";
+import { approvalPrepareError } from "@/lib/approvals/send-block";
 import { getCustomer } from "@/lib/customers/queries";
 import { BASIC_FORMAT_ERROR_MESSAGES, parseBasicFormat } from "@/lib/email/basic-format";
 import { buildQuoteEmail, MAX_PDF_BYTES } from "@/lib/email/quote-email";
@@ -126,7 +127,7 @@ const MSG_FILE_MISSING =
 const MSG_CONFIRM_FAILED =
   "El correo salió, pero no pudimos registrarlo. Avisa al equipo antes de volver a enviarlo.";
 
-type SupabaseError = { code?: string; message?: string };
+type SupabaseError = { code?: string; message?: string; details?: string | null };
 
 const failure = (message: string, fieldErrors?: Record<string, string>): SendQuoteResult => ({
   status: "error",
@@ -147,7 +148,9 @@ function prepareErrorMessage(error: SupabaseError): string {
     case SQLSTATE_NOT_FOUND:
       return MSG_NOT_FOUND;
     case SQLSTATE_NOT_ALLOWED:
-      return MSG_NOT_DRAFT;
+      // La regla de aprobación (H-040b) rechaza con el mismo código que "ya no está en borrador": se distingue por el
+      // motivo, y ANTES del mensaje general.
+      return approvalPrepareError(message, error.details) ?? MSG_NOT_DRAFT;
     case SQLSTATE_CONFLICT:
       return message.startsWith("send_in_progress") ? MSG_IN_PROGRESS_OTHER : MSG_CHANGED;
     case SQLSTATE_INVALID:
@@ -359,7 +362,13 @@ export async function sendQuoteAction(
     p_customer_snapshot_enc: snapshotEnc,
   });
   if (prepareError) {
-    if (prepareError.code !== SQLSTATE_CONFLICT && prepareError.code !== SQLSTATE_FORBIDDEN) {
+    // Esperados (no son un fallo nuestro): choque de revisión o de envío, falta de permiso y la regla de aprobación.
+    const expected =
+      prepareError.code === SQLSTATE_CONFLICT ||
+      prepareError.code === SQLSTATE_FORBIDDEN ||
+      (prepareError.code === SQLSTATE_NOT_ALLOWED &&
+        (prepareError.message ?? "").startsWith("approval_required"));
+    if (!expected) {
       await serverLog("warn", "quote_send_prepare_failed", { code: prepareError.code });
     }
     return failure(prepareErrorMessage(prepareError));

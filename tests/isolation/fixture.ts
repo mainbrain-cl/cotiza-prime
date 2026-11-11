@@ -95,8 +95,18 @@ export interface OrgData {
   invitation: InvitationData | null;
   /** Textos guardados (H-048a), creados por la dueña con su pase (A y B; C no tiene). */
   snippets: SnippetsData | null;
+  /** La regla de aprobación (H-040), cambiada por la dueña con su pase (A y B; C no la cambia). */
+  approval: ApprovalData | null;
   /** La fila de `members` de la dueña (H-010): sirve para atacar y abrir la ficha de un miembro (`/equipo/[memberId]`). */
   ownerMemberId: string;
+}
+
+/** La regla de aprobación vigente de una organización: «según el monto», con un umbral distinto en A y en B (canario numérico). */
+export interface ApprovalData {
+  ruleId: string;
+  version: number;
+  /** Umbral de monto en pesos: si aparece en una respuesta de otra organización, hay filtración. */
+  amountThresholdClp: number;
 }
 
 /** Dos textos guardados de una organización: uno del correo (texto inicial) y unas condiciones. Ambos llevan el canario. */
@@ -270,6 +280,7 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       intake: null,
       invitation: null,
       snippets: null,
+      approval: null,
       ownerMemberId: (
         await db.query<{ id: string }>(
           "select id from public.members where tenant_id = $1 and user_id = $2",
@@ -470,6 +481,11 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
   for (const key of ["A", "B"] as const) {
     orgs[key].snippets = await buildSnippetsData(orgs[key], personas[owners[key]], key);
   }
+  // La regla de aprobación de A y de B (H-040), por el camino legítimo (la función con el pase de la dueña). Va DESPUÉS de las
+  // cotizaciones enviadas: lo que la fixture envía con `pg` sí pasa por el disparador del envío, pero con la regla «Nunca» de entonces; después la regla cambia y esos paquetes quedan anotados con la versión 1.
+  for (const key of ["A", "B"] as const) {
+    orgs[key].approval = await buildApprovalData(orgs[key], personas[owners[key]], key);
+  }
   // C: un cliente, y luego se archiva
   {
     const id = randomUUID();
@@ -546,6 +562,34 @@ async function buildSnippetsData(
     conditionsName,
     conditionsBody,
   };
+}
+
+/** Umbrales de monto de la regla de A y de B: números distintos y reconocibles (el de B es el canario de la regla). */
+export const APPROVAL_AMOUNT_BY_ORG: Record<"A" | "B", number> = { A: 7_654_321, B: 1_234_567 };
+
+async function buildApprovalData(
+  data: OrgData,
+  owner: Persona,
+  key: OrgKey,
+): Promise<ApprovalData> {
+  const amountThresholdClp = APPROVAL_AMOUNT_BY_ORG[key as "A" | "B"];
+  const result = await mustOk<{ changed: boolean; id: string; version: number }>(
+    rpc(
+      owner.session.accessToken,
+      "set_approval_rule",
+      {
+        p_expected_version: 1,
+        p_mode: "conditional",
+        p_amount_threshold_clp: amountThresholdClp,
+        p_discount_threshold_bp: null,
+      },
+      org(data.tenantId),
+    ),
+    `set_approval_rule ${key}`,
+  );
+  if (!result.changed || result.version !== 2)
+    throw new Error(`Fixture: la regla de aprobación de ${key} no se cambió`);
+  return { ruleId: result.id, version: result.version, amountThresholdClp };
 }
 
 async function buildInvitationData(

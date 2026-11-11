@@ -230,3 +230,33 @@ describe("quién hizo cada acción (auditActorText)", () => {
     expect(auditActorText(base)).toBe("Alguien que ya no está en el equipo");
   });
 });
+
+describe("la regla de aprobación en el registro de actividad (H-040)", () => {
+  it("nombra la acción y el recurso", () => {
+    expect(actionLabel("approval_rule.updated")).toBe("Cambió la regla de aprobación");
+    expect(isKnownAuditAction("approval_rule.updated")).toBe(true);
+    expect(resourceLabel("approval_rule")).toBe("Regla de aprobación");
+  });
+
+  it("cuenta la regla de antes y la de ahora con la misma frase de la pantalla", () => {
+    expect(
+      describeAuditEntry({
+        action: "approval_rule.updated",
+        details: {
+          version: 3,
+          old: { mode: "never", amount_threshold_clp: null, discount_threshold_bp: null },
+          new: { mode: "conditional", amount_threshold_clp: 2000000, discount_threshold_bp: 1000 },
+        },
+      }),
+    ).toBe(
+      "Antes: No se pide aprobación: las cotizaciones se envían directo. Ahora: Se pide aprobación si el total supera $2.000.000 o el descuento supera 10%.",
+    );
+  });
+
+  it("si el detalle no tiene la forma esperada, no inventa nada", () => {
+    expect(
+      describeAuditEntry({ action: "approval_rule.updated", details: { old: 1, new: "x" } }),
+    ).toBeNull();
+    expect(describeAuditEntry({ action: "approval_rule.updated", details: {} })).toBeNull();
+  });
+});

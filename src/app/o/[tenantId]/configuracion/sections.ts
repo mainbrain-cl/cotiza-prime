@@ -3,6 +3,7 @@ import {
   FileText,
   Hash,
   Palette,
+  ShieldCheck,
   ScrollText,
   UsersRound,
   type LucideIcon,
@@ -51,6 +52,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     description:
       "Escribe una vez el correo base, las condiciones, las exclusiones y las notas al pie.",
     icon: FileText,
+    permission: "settings.manage",
+  },
+  {
+    path: "configuracion/aprobaciones",
+    title: "Aprobaciones",
+    description: "Elige cuándo una cotización necesita visto bueno antes de salir.",
+    icon: ShieldCheck,
     permission: "settings.manage",
   },
   {

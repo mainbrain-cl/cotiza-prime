@@ -64,6 +64,7 @@ const PAGES: Readonly<Record<string, { who: readonly MemberRole[]; heading: stri
   "/o/[tenantId]/clientes/[customerId]/editar": { who: WRITERS, heading: "Editar cliente" },
   "/o/[tenantId]/configuracion": { who: MANAGERS, heading: "Configuración" },
   "/o/[tenantId]/configuracion/actividad": { who: OWNER_ONLY, heading: "Registro de actividad" },
+  "/o/[tenantId]/configuracion/aprobaciones": { who: MANAGERS, heading: "Aprobaciones" },
   "/o/[tenantId]/configuracion/empresa": { who: MANAGERS, heading: "Tu empresa" },
   "/o/[tenantId]/configuracion/marca": { who: MANAGERS, heading: "Tu marca" },
   "/o/[tenantId]/configuracion/numeracion": {

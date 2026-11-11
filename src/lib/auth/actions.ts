@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { logAuditEvent } from "@/lib/audit/log";
 import { AUTH_MESSAGES, classifyAuthError } from "@/lib/auth/errors";
+import { logTenantLogins } from "@/lib/auth/login-audit";
 import type { FormState } from "@/lib/auth/form-state";
 import {
   ACCEPT_TERMS_PATH,
@@ -158,21 +159,7 @@ export async function signInAction(_previous: FormState, formData: FormData): Pr
   await clearLoginFailures(parsed.data.email);
   await logAuditEvent({ action: "session.login", result: "success", actorUserId: data.user.id });
   // Además, un ingreso por cada organización de la persona: así cada Dueño ve cuándo entra su equipo.
-  const { data: memberships } = await supabase
-    .from("members")
-    .select("tenant_id, tenants!inner(status, kind)")
-    .eq("user_id", data.user.id)
-    .eq("status", "active")
-    .eq("tenants.status", "active")
-    .eq("tenants.kind", "organization");
-  for (const membership of (memberships ?? []) as { tenant_id: string }[]) {
-    await logAuditEvent({
-      action: "session.login",
-      result: "success",
-      actorUserId: data.user.id,
-      tenantId: membership.tenant_id,
-    });
-  }
+  await logTenantLogins(supabase, data.user.id);
   // Si la persona venía de abrir el enlace de una invitación, vuelve a ella para unirse (H-009).
   redirect((await hasPendingInvitation()) ? INVITATION_ACCEPT_PATH : HOME_PATH);
 }

@@ -7,6 +7,10 @@ export type AuthFailureKind =
   | "reauthentication_needed"
   | "invalid_credentials"
   | "email_not_confirmed"
+  | "mfa_invalid_code"
+  | "mfa_expired"
+  | "mfa_code_reused"
+  | "mfa_unavailable"
   | "unknown";
 
 type AuthErrorLike = { code?: string | null; status?: number | null };
@@ -23,6 +27,14 @@ export function classifyAuthError(error: AuthErrorLike): AuthFailureKind {
   if (error.code === "reauthentication_needed") return "reauthentication_needed";
   if (error.code === "invalid_credentials") return "invalid_credentials";
   if (error.code === "email_not_confirmed") return "email_not_confirmed";
+  // Verificación en dos pasos (H-004a). `mfa_code_reused` no lo entrega Supabase: lo decide el bloqueo propio de códigos usados.
+  if (error.code === "mfa_verification_failed") return "mfa_invalid_code";
+  if (error.code === "mfa_challenge_expired" || error.code === "mfa_factor_not_found") {
+    return "mfa_expired";
+  }
+  if (error.code === "insufficient_aal" || error.code === "mfa_ip_address_mismatch") {
+    return "mfa_unavailable";
+  }
   return "unknown";
 }
 
@@ -36,5 +48,10 @@ export const AUTH_MESSAGES: Record<AuthFailureKind, string> = {
   invalid_credentials: "Correo o contraseña incorrectos.",
   email_not_confirmed:
     "Todavía no verificas tu correo. Abre el enlace que te enviamos al registrarte y luego ingresa.",
+  mfa_invalid_code:
+    "El código no coincide. Escribe el que muestra ahora tu aplicación (cambia cada 30 segundos) y revisa que la hora de tu teléfono esté al día.",
+  mfa_expired: "La activación caducó. Vuelve a empezar.",
+  mfa_code_reused: "Ese código ya se usó. Espera el siguiente.",
+  mfa_unavailable: "No pudimos verificar el código. Intenta de nuevo en unos minutos.",
   unknown: "No pudimos completar la acción. Intenta de nuevo en unos minutos.",
 };

@@ -42,6 +42,29 @@ export const signInSchema = z.object({
     .max(PASSWORD_MAX_LENGTH, "Correo o contraseña incorrectos."),
 });
 
+/** Largo del código de la aplicación de verificación (TOTP). */
+export const TOTP_CODE_LENGTH = 6;
+/** Tope del texto que se acepta antes de limpiarlo (el código se puede pegar con espacios o guiones). */
+const TOTP_RAW_MAX_LENGTH = 32;
+const TOTP_FORMAT_MESSAGE = `El código tiene ${TOTP_CODE_LENGTH} números. Revisa que no falten ni sobren.`;
+
+/**
+ * Código de la verificación en dos pasos (H-004a). Se limpian espacios y guiones («123 456» o «123-456» se pegan tal
+ * cual lo muestra la aplicación) y después tiene que haber exactamente 6 dígitos: ninguna letra ni otro símbolo.
+ */
+export const totpCodeSchema = z.object({
+  code: z
+    .string({ error: "Escribe el código de 6 números." })
+    .max(TOTP_RAW_MAX_LENGTH, TOTP_FORMAT_MESSAGE)
+    .transform((value) => value.replace(/[\s-]/g, ""))
+    .pipe(
+      z
+        .string()
+        .min(1, "Escribe el código de 6 números.")
+        .regex(new RegExp(`^[0-9]{${TOTP_CODE_LENGTH}}$`), TOTP_FORMAT_MESSAGE),
+    ),
+});
+
 export const forgotPasswordSchema = z.object({ email: emailField });
 
 export const resetPasswordSchema = z

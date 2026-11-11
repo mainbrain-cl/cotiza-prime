@@ -827,6 +827,69 @@ describe("guardias estáticas del aislamiento", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("14. (H-004a) la sesión y su nivel de seguridad solo se miran en session.ts; el alta, la verificación y el borrado de factores, solo en second-step-actions.ts", () => {
+    const only = (pattern: RegExp, allowed: string) =>
+      sourceFiles
+        .filter((f) => pattern.test(stripComments(read(f))))
+        .map(rel)
+        .filter((f) => f !== allowed);
+    // Quién es la persona y a qué nivel llegó: un solo archivo (recordatorio permanente del proyecto).
+    expect(
+      only(
+        /\.(getUser|getClaims|getSession|getAuthenticatorAssuranceLevel)\s*\(/,
+        "src/lib/auth/session.ts",
+      ),
+    ).toEqual([]);
+    // Los factores: solo las acciones de la verificación en dos pasos.
+    expect(
+      only(
+        /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/,
+        "src/lib/auth/second-step-actions.ts",
+      ),
+    ).toEqual([]);
+    // Y esas acciones no usan la llave maestra ni nombran los métodos de sesión.
+    const actions = stripComments(read(path.join(SRC, "lib/auth/second-step-actions.ts")));
+    expect(/admin-client|createAdminClient/.test(actions)).toBe(false);
+    expect(/\.(getUser|getClaims|getSession)\s*\(/.test(actions)).toBe(false);
+  });
+
+  it("14b. (H-004a) serverLog en la verificación en dos pasos nunca recibe el código, la clave, el uri, el QR ni el correo", () => {
+    const files = [
+      "src/lib/auth/second-step-actions.ts",
+      "src/lib/auth/session.ts",
+      "src/lib/security/login-rate-limit.ts",
+    ];
+    // Ningún campo con la clave, el uri, el QR, el correo o el tipo de dato secreto...
+    const forbidden = /\b(secret|uri|qrCode|qr_code|email|totp)\b/i;
+    for (const file of files) {
+      for (const call of serverLogCalls(stripComments(read(path.join(ROOT, file))))) {
+        expect(forbidden.test(call), `${file}: ${call}`).toBe(false);
+        // ...y todo `code:` es el código de un ERROR (nunca el de 6 números que escribió la persona).
+        for (const match of call.matchAll(/\bcode:\s*([^,}]+)/g)) {
+          expect(match[1], `${file}: ${call}`).toMatch(/error/i);
+        }
+      }
+    }
+  });
+
+  it("14c. (H-004a) la guardia 14 detecta de verdad una violación", () => {
+    expect(
+      /\.(getUser|getClaims|getSession|getAuthenticatorAssuranceLevel)\s*\(/.test(
+        "await supabase.auth.getClaims()",
+      ),
+    ).toBe(true);
+    expect(
+      /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/.test(
+        "supabase.auth.mfa.unenroll({ factorId })",
+      ),
+    ).toBe(true);
+    expect(
+      /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/.test(
+        "supabase.auth.mfa.getAuthenticatorAssuranceLevel()",
+      ),
+    ).toBe(false);
+  });
+
   it("7. la guardia detecta de verdad: el texto de una violación sí coincide con las reglas", () => {
     // Evita que una regla quede inútil por un error en su expresión regular.
     expect(/x-cp-tenant-id/i.test('headers["X-CP-Tenant-Id"]')).toBe(true);

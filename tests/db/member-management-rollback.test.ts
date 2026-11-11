@@ -258,7 +258,14 @@ describe("el deshacer de member_management", () => {
     withTx(db, async () => {
       await actAsPostgres(db);
       const before = await policy();
-      const membersBefore = await policyOf("members");
+      // Una migración POSTERIOR (20261112100000_mfa_session_gate, H-004a) le agrega a la rama «filas propias» la exigencia
+      // de que el segundo paso no esté pendiente. Aplicar esta migración de nuevo repone la política de ESTA migración:
+      // se compara contra la vigente sin esa exigencia.
+      const membersBefore = (await policyOf("members")).replace(
+        "(((user_id = ( SELECT auth.uid() AS uid)) AND (NOT ( SELECT app.second_step_pending() AS second_step_pending))) OR ",
+        "((user_id = ( SELECT auth.uid() AS uid)) OR ",
+      );
+      expect(membersBefore).not.toContain("second_step_pending");
       await db.query(down);
       await db.query(up);
       for (const signature of FUNCTIONS) expect(await exists(signature), signature).toBe(true);

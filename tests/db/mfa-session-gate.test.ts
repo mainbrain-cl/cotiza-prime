@@ -8,9 +8,9 @@
 //
 // Solo cuentas nuevas `@ejemplo.test` creadas aquí: JAMÁS se activa un factor en las personas de la semilla ni de la
 // fixture de aislamiento (activar uno cierra las demás sesiones de esa cuenta).
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Client } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { freshTotp } from "../../src/test/totp";
 import {
   adminCreateUser,
@@ -19,7 +19,18 @@ import {
   TEST_PASSWORD,
   type Session,
 } from "../support/local-supabase";
-import { actAsPostgres, connect, withTx } from "./helpers";
+import { rest } from "../support/local-supabase";
+import {
+  TENANT_HEADER,
+  actAsAnon,
+  actAsPostgres,
+  connect,
+  createTenantAs,
+  createUser,
+  expectSqlError,
+  withTx,
+  type TestUser,
+} from "./helpers";
 
 /** Lo que de verdad usan estas pruebas de las respuestas de GoTrue. */
 type AuthJson = {
@@ -93,6 +104,9 @@ async function enrollAndVerify(
   expect(verified.status).toBe(200);
   return { factorId, secret, aal2: verified.json!.access_token as string, step };
 }
+
+// Hablan con GoTrue de verdad (arranque en frío, esperas de período del código): más holgura que los 30 s de siempre.
+vi.setConfig({ testTimeout: 90_000 });
 
 let db: Client;
 beforeAll(async () => {
@@ -314,4 +328,232 @@ describe("Comportamiento de Supabase Auth (paso 0 de H-004a)", () => {
       await expect(db.query("select count(*) from auth.mfa_factors")).rejects.toThrow();
       await db.query("rollback to savepoint s");
     }));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Sección 2 · La base exige el segundo paso (D1-B).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Pasa a actuar como `authenticated` con un pase del nivel indicado (`aal1` = solo contraseña, `aal2` = contraseña y código). */
+async function actAsLevel(
+  client: Client,
+  user: TestUser,
+  tenantId: string | null,
+  aal: "aal1" | "aal2" | null,
+): Promise<void> {
+  await client.query("reset role");
+  await client.query("select set_config('request.jwt.claims', $1, true)", [
+    JSON.stringify({ sub: user.id, role: "authenticated", ...(aal ? { aal } : {}) }),
+  ]);
+  await client.query("select set_config('request.jwt.claim.sub', $1, true)", [user.id]);
+  await client.query("select set_config('request.headers', $1, true)", [
+    JSON.stringify(tenantId ? { [TENANT_HEADER]: tenantId } : {}),
+  ]);
+  await client.query("set local role authenticated");
+}
+
+async function addFactor(client: Client, userId: string, status: "verified" | "unverified") {
+  await client.query("reset role");
+  await client.query(
+    `insert into auth.mfa_factors (id, user_id, friendly_name, factor_type, status, created_at, updated_at, secret)
+     values (gen_random_uuid(), $1, $2, 'totp', $3, now(), now(), 'x')`,
+    [userId, `factor-${randomUUID().slice(0, 6)}`, status],
+  );
+}
+
+/** Una organización con su Dueño, un servicio de catálogo y un cliente. */
+async function ownerWithData(client: Client) {
+  const owner = await createUser(client);
+  const tenantId = await createTenantAs(client, owner);
+  await client.query(
+    `insert into public.catalog_items (tenant_id, name, unit, unit_price_clp) values ($1, 'Flete', 'service', 1000)`,
+    [tenantId],
+  );
+  await client.query(
+    `insert into public.customers (id, tenant_id, kind, display_name) values (gen_random_uuid(), $1, 'company', 'Cliente de prueba')`,
+    [tenantId],
+  );
+  return { owner, tenantId };
+}
+
+type Counts = { tenants: number; members: number; catalog: number; customers: number; ids: number };
+
+async function counts(client: Client): Promise<Counts> {
+  const n = async (sql: string) => Number((await client.query<{ n: string }>(sql)).rows[0].n);
+  return {
+    tenants: await n("select count(*) as n from public.tenants"),
+    members: await n("select count(*) as n from public.members"),
+    catalog: await n("select count(*) as n from public.catalog_items"),
+    customers: await n("select count(*) as n from public.customers"),
+    ids: await n("select count(*) as n from app.my_tenant_ids()"),
+  };
+}
+
+const SEES_EVERYTHING: Counts = { tenants: 1, members: 1, catalog: 1, customers: 1, ids: 1 };
+const SEES_NOTHING: Counts = { tenants: 0, members: 0, catalog: 0, customers: 0, ids: 0 };
+
+describe("La base exige el segundo paso (D1-B)", () => {
+  it("D1 · sin factor, con pase aal1 (o sin nivel): todo igual que antes", () =>
+    withTx(db, async () => {
+      const { owner, tenantId } = await ownerWithData(db);
+      for (const level of ["aal1", null] as const) {
+        await actAsLevel(db, owner, tenantId, level);
+        expect(await counts(db)).toEqual(SEES_EVERYTHING);
+        expect((await db.query("select app.current_tenant_id() as t")).rows[0].t).toBe(tenantId);
+      }
+    }));
+
+  it("D2 · con un factor SIN verificar y pase aal1: todo igual que antes (activar a medias no bloquea a nadie)", () =>
+    withTx(db, async () => {
+      const { owner, tenantId } = await ownerWithData(db);
+      await addFactor(db, owner.id, "unverified");
+      await actAsLevel(db, owner, tenantId, "aal1");
+      expect(await counts(db)).toEqual(SEES_EVERYTHING);
+    }));
+
+  it("D3 · con un factor verificado y pase aal1 (sesión parcial): no ve nada de ninguna organización", () =>
+    withTx(db, async () => {
+      const { owner, tenantId } = await ownerWithData(db);
+      await addFactor(db, owner.id, "verified");
+      await actAsLevel(db, owner, tenantId, "aal1");
+      expect(await counts(db)).toEqual(SEES_NOTHING);
+      const resolved = await db.query(
+        "select app.current_tenant_id() as t, app.current_member_role() as r",
+      );
+      expect(resolved.rows[0]).toEqual({ t: null, r: null });
+      // Un pase sin nivel también cuenta como aal1.
+      await actAsLevel(db, owner, tenantId, null);
+      expect(await counts(db)).toEqual(SEES_NOTHING);
+    }));
+
+  it("D4 · con un factor verificado y pase aal1 no puede escribir: ni agregar, ni cambiar, ni borrar", () =>
+    withTx(db, async () => {
+      const { owner, tenantId } = await ownerWithData(db);
+      await addFactor(db, owner.id, "verified");
+      await actAsLevel(db, owner, tenantId, "aal1");
+      const insert = await expectSqlError(
+        db,
+        `insert into public.catalog_items (tenant_id, name, unit, unit_price_clp) values ($1, 'Colado', 'service', 1)`,
+        [tenantId],
+      );
+      expect(insert.code).toBe("42501");
+      expect((await db.query("update public.catalog_items set unit_price_clp = 1")).rowCount).toBe(
+        0,
+      );
+      expect((await db.query("update public.catalog_items set is_active = false")).rowCount).toBe(
+        0,
+      );
+      expect((await db.query("update public.customers set display_name = 'x'")).rowCount).toBe(0);
+      // Y los datos siguen intactos para quien sí pasó el segundo paso.
+      await actAsLevel(db, owner, tenantId, "aal2");
+      const rows = await db.query("select name, unit_price_clp from public.catalog_items");
+      expect(rows.rows).toEqual([{ name: "Flete", unit_price_clp: "1000" }]);
+    }));
+
+  it("D5 · con un factor verificado y pase aal2: ve y cambia sus datos como siempre", () =>
+    withTx(db, async () => {
+      const { owner, tenantId } = await ownerWithData(db);
+      await addFactor(db, owner.id, "verified");
+      await actAsLevel(db, owner, tenantId, "aal2");
+      expect(await counts(db)).toEqual(SEES_EVERYTHING);
+      expect(
+        (await db.query("update public.catalog_items set unit_price_clp = 2000")).rowCount,
+      ).toBe(1);
+    }));
+
+  it("D6 · el factor de OTRA cuenta no afecta a esta persona", () =>
+    withTx(db, async () => {
+      const { owner, tenantId } = await ownerWithData(db);
+      const other = await createUser(db);
+      await addFactor(db, other.id, "verified");
+      await actAsLevel(db, owner, tenantId, "aal1");
+      expect(await counts(db)).toEqual(SEES_EVERYTHING);
+    }));
+
+  it("D7 · la función no la ejecuta nadie anónimo, y la nombran las funciones centrales", () =>
+    withTx(db, async () => {
+      const { owner } = await ownerWithData(db);
+      await actAsLevel(db, owner, null, "aal2");
+      // Con sesión sí puede (la nombra una política); solo dice si la propia sesión está a medias.
+      expect((await db.query("select app.second_step_pending() as p")).rows[0].p).toBe(false);
+      await actAsAnon(db);
+      const denied = await expectSqlError(db, "select app.second_step_pending()");
+      expect(denied.code).toBe("42501");
+      await actAsPostgres(db);
+      const users = await db.query<{ n: string }>(
+        `select count(*) as n from pg_proc p
+          where p.proname in ('current_tenant_id', 'my_tenant_ids') and p.pronamespace = 'app'::regnamespace
+            and p.prosrc like '%app.second_step_pending()%'`,
+      );
+      expect(Number(users.rows[0].n)).toBe(2);
+    }));
+
+  it("D8 · los tres alcances nuevos del límite de intentos se aceptan; uno desconocido sigue rechazado", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      for (const scope of ["mfa_verify_user", "mfa_verify_user_day", "mfa_code_used"]) {
+        const key = randomBytes(32).toString("hex");
+        await db.query("select public.auth_limit_record_failure($1, $2, 5, 900, 900)", [
+          scope,
+          key,
+        ]);
+        const rows = await db.query(
+          "select count(*)::int as n from public.auth_rate_limits where scope = $1 and key_hash = $2",
+          [scope, key],
+        );
+        expect(rows.rows[0].n).toBe(1);
+      }
+      const unknown = await expectSqlError(
+        db,
+        "select public.auth_limit_record_failure('mfa_otro', 'x', 5, 900, 900)",
+      );
+      expect(unknown.code).toBe("23514");
+    }));
+});
+
+describe("La base exige el segundo paso, con pases reales por HTTP (PostgREST + GoTrue)", () => {
+  it("H1 · un pase aal1 de una cuenta con factor no lee nada con la cabecera de su organización; el aal2 de la misma cuenta sí", async () => {
+    // La cuenta y su organización se crean y se confirman (no hay transacción: hablan PostgREST y GoTrue).
+    const account = await newAccount();
+    await db.query("begin");
+    const tenantId = await createTenantAs(db, { id: account.id, email: account.email });
+    await db.query(
+      `insert into public.customers (id, tenant_id, kind, display_name) values (gen_random_uuid(), $1, 'company', 'Cliente HTTP')`,
+      [tenantId],
+    );
+    await db.query("commit");
+
+    const header = { [TENANT_HEADER]: tenantId };
+    const before = await signIn(account.email);
+    const open = await rest(before.accessToken, "customers?select=display_name", {
+      headers: header,
+    });
+    expect(open.json).toEqual([{ display_name: "Cliente HTTP" }]);
+
+    const enrolled = await enrollAndVerify(await signIn(account.email), "principal");
+
+    // Pase aal1 nuevo (solo contraseña): la cuenta ya tiene el segundo paso activo.
+    const partial = await signIn(account.email);
+    expect(claimsOf(partial.accessToken).aal).toBe("aal1");
+    for (const path of [
+      "customers?select=display_name",
+      "tenants?select=tenant_id",
+      "members?select=id",
+      "catalog_items?select=id",
+    ]) {
+      const res = await rest(partial.accessToken, path, { headers: header });
+      expect(res.status).toBe(200);
+      expect(res.json).toEqual([]);
+    }
+    const write = await rest(partial.accessToken, "catalog_items", {
+      method: "POST",
+      headers: { ...header, prefer: "return=minimal" },
+      body: { tenant_id: tenantId, name: "Colado", unit: "service", unit_price_clp: 1 },
+    });
+    expect([401, 403]).toContain(write.status);
+
+    // El pase aal2 sí ve lo suyo.
+    const full = await rest(enrolled.aal2, "customers?select=display_name", { headers: header });
+    expect(full.json).toEqual([{ display_name: "Cliente HTTP" }]);
+  });
 });

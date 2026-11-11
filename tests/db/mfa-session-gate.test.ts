@@ -689,16 +689,31 @@ describe("La base exige el segundo paso, con pases reales por HTTP (PostgREST + 
     // Pase aal1 nuevo (solo contraseña): la cuenta ya tiene el segundo paso activo.
     const partial = await signIn(account.email);
     expect(claimsOf(partial.accessToken).aal).toBe("aal1");
-    for (const path of [
-      "customers?select=display_name",
-      "tenants?select=tenant_id",
-      "members?select=id",
-      "catalog_items?select=id",
-    ]) {
-      const res = await rest(partial.accessToken, path, { headers: header });
-      expect(res.status).toBe(200);
-      expect(res.json).toEqual([]);
+    // Todas las tablas de `public` que la API expone (el catálogo, no una lista a mano): cero filas o rechazo. La única que se lee
+    // es `legal_documents`, que es pública. `select=*` lo rechazan las tablas con columnas privadas: también es un rechazo.
+    const tables = (
+      await db.query<{ relname: string }>(
+        `select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+          where n.nspname = 'public' and c.relkind in ('r', 'p')
+            and has_table_privilege('authenticated', c.oid, 'select') order by 1`,
+      )
+    ).rows.map((row) => row.relname);
+    expect(tables.length).toBeGreaterThan(15);
+    for (const table of tables) {
+      const res = await rest(partial.accessToken, `${table}?select=*&limit=1`, { headers: header });
+      if (table === "legal_documents") {
+        expect(res.status, table).toBe(200);
+        continue;
+      }
+      const rejected = res.status >= 400;
+      const empty = res.status === 200 && Array.isArray(res.json) && res.json.length === 0;
+      expect(rejected || empty, `${table}: ${res.status} ${res.text.slice(0, 100)}`).toBe(true);
     }
+    // Las que muestran filas con el pase completo: el control de que el barrido no mira en vacío.
+    const stillThere = await rest(enrolled.aal2, "customers?select=display_name&limit=1", {
+      headers: header,
+    });
+    expect(stillThere.json).toEqual([{ display_name: "Cliente HTTP" }]);
     const write = await rest(partial.accessToken, "catalog_items", {
       method: "POST",
       headers: { ...header, prefer: "return=minimal" },

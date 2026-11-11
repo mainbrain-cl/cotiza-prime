@@ -76,22 +76,26 @@ la decisión 020 §5; #33, #35, #36, #37 y #38 por Aarón):
 OK. **No se corrió e2e.** Falta una corrida completa limpia de `chromium` con `E2E_PROD=1` en una máquina libre (no afirmar
 «149/149» sin ella).
 
-**En curso: H-040 (PR #40, `feat/h-040-aprobaciones`).** Tabla `approval_rules`, función de decisión (SQL y TypeScript), pantalla
-Configuración → Aprobaciones y control al enviar. Migraciones `20261110110000` y `20261110120000`. Diseño y riesgos:
-`docs/arquitectura/sprint-5-h-040-aprobaciones.md` (§12). **Decisiones de Aarón (2026-11-11):**
-1. La regla por descuento **también cuenta la rebaja contra el precio de catálogo** que la línea ya guarda (no se espera a H-041), en el
-   servidor (`send-block`) y en la puerta de envío de la base, con pruebas que fuercen la llamada con un precio bajado a mano.
-2. Un Administrador cambia la regla sin aviso al Dueño: **aceptado hasta H-047** (queda en el registro de actividad y en
-   `quote_packages.approval_rule_id`).
-3. Todo miembro lee la regla y el Comercial ve el umbral en `/enviar`: está bien.
-4. Bloqueo largo de la migración 2 sobre `quote_packages`: aceptado (se aplica sobre la base vacía).
-- **Antes de mezclar:** rebasar sobre `main`, repetir `test:db`, y que Aarón vea la pantalla en el navegador (nadie la ha visto); después van las
-  revisiones Opus normal y adversarial. Con la regla en «Siempre», un monto o un descuento, lo que la cumpla **no se puede enviar hasta el
-  sprint 6** («Solicitar aprobación»), tampoco las cotizaciones del Dueño.
+**En curso: H-040 (PR #40, `feat/h-040-aprobaciones`, en borrador).** Tabla `approval_rules`, función de decisión (SQL y TypeScript), pantalla
+Configuración → Aprobaciones y control al enviar. Migraciones `20261110110000`, `20261110120000` y `20261111100000` (esta última, la rebaja de
+precio). Diseño y riesgos: `docs/arquitectura/sprint-5-h-040-aprobaciones.md` (§12). **Decisiones de Aarón (2026-11-11):**
+1. La regla por descuento **también cuenta la rebaja contra el precio de catálogo** (no se espera a H-041), en el servidor (`send-block`) y en la
+   puerta de envío de la base. **Ajuste de José tras las revisiones Opus (Aarón debe confirmarlo):** el catálogo de referencia es el **menor entre el
+   precio guardado en la línea y el precio de hoy del servicio**, para que una baja del catálogo no bloquee la venta. Solo se calcula cuando la regla
+   mira el descuento.
+2. **Hueco que queda (Aarón debe aceptarlo con este alcance):** escribir el servicio a mano como línea libre con precio menor, **agregar un servicio
+   más barato del catálogo y cambiarle el nombre al de uno caro**, o bajar la cantidad. H-042 no lo cubre (D2: ordena, no controla); lo cerraría H-041
+   (pregunta 18) fijando también el nombre de las líneas de catálogo.
+3. Un Administrador cambia la regla sin aviso al Dueño: **aceptado hasta H-047** (queda en el registro de actividad y en `quote_packages.approval_rule_id`).
+4. Todo miembro lee la regla y el Comercial ve el umbral en `/enviar`: está bien.
+5. Bloqueo largo de la migración 2 sobre `quote_packages`: aceptado (se aplica sobre la base vacía).
+- **Estado (2026-11-11):** rebasado sobre `main`, con las revisiones Opus normal y adversarial hechas (sin bloqueantes) y las correcciones aplicadas.
+  Falta que Aarón vea la pantalla en el navegador y decida los puntos 1 (ajuste) y 2 (hueco). Con la regla en «Siempre», un monto o un descuento, lo que la
+  cumpla **no se puede enviar hasta el sprint 6** («Solicitar aprobación»), tampoco las cotizaciones del Dueño.
 
 **H-004a (verificación en dos pasos): desbloqueada.** Aarón decidió **D1 = B** (la base también exige el segundo paso, aal2) y **D2 = sola**
-(no junto con H-004b). **Fecha de migración: NO usar `20261110100000`** (quedaría antes que las del #40 y una base que ya las tenga podría
-saltársela); tomar una fecha nueva, posterior a la última de `main` al construirla, y con `lock_timeout` y su verificación.
+(no junto con H-004b). **Fecha de migración: NO usar `20261110100000`** (quedaría antes que las del #40); tomar una fecha nueva, posterior a la última de
+`main` (y a `20261111100000` si el #40 ya entró) al construirla, y con `lock_timeout` y su verificación.
 
 **Pendientes:**
 - **Menores del #38** (Aarón, PR siguiente, ninguno bloquea; casi todo pruebas): (1) la exención de `tables-read.test.ts:256-261` solo para filas

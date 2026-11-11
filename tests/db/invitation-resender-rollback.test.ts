@@ -400,15 +400,19 @@ describe("el deshacer de invitation_resender", () => {
       true,
     );
     expect(code.indexOf("do $$")).toBeLessThan(code.indexOf("create or replace function"));
-    // Busca la columna como palabra entera (`p_resent_by` de una ayuda no cuenta) en `public` y `app`.
-    expect(code).toContain("p.prosrc ~ '\\mresent_by\\M'");
+    // Busca la columna como palabra entera (`p_resent_by` de una ayuda no cuenta) en `public` y `app`, sin distinguir
+    // mayúsculas (`~*`).
+    expect(code).toContain("p.prosrc ~* '\\mresent_by\\M'");
+    expect(code).not.toMatch(/prosrc ~ '/);
+    // Las excepciones van por FIRMA completa (`to_regprocedure`), no por nombre: leídas del propio archivo.
+    expect(code).toContain("to_regprocedure(t.sig)::oid = p.oid");
     const excluded = [
-      ...code.slice(0, code.indexOf("end $$")).matchAll(/'((?:app|public)\.[a-z_]+)'/g),
+      ...code.slice(0, code.indexOf("end $$")).matchAll(/'((?:app|public)\.[a-z_]+\([^']*\))'/g),
     ]
       .map((m) => m[1])
       .sort();
     // Exactamente las funciones que ese archivo redefine (`create or replace`) o borra (`drop function`): ni una más ni una
-    // menos (seis). Se leen del propio archivo, para que la lista no se desfase si alguien cambia uno de los dos lados.
+    // menos (seis). Los nombres se leen del propio archivo y las firmas deben ser las de las constantes de esta prueba.
     const touched = [
       ...code.matchAll(
         /(?:create or replace function|drop function if exists) ((?:app|public)\.[a-z_]+)\(/g,
@@ -417,13 +421,9 @@ describe("el deshacer de invitation_resender", () => {
       .map((m) => m[1])
       .sort();
     expect(touched).toHaveLength(6);
-    expect(excluded).toEqual(touched);
-    for (const signature of [STATE, RESEND_SIG, CANCEL, ...NEW_OBJECTS]) {
-      const name = signature.split("(")[0];
-      expect(excluded, name).toContain(name);
-    }
+    expect(excluded.map((signature) => signature.split("(")[0])).toEqual(touched);
+    expect(excluded).toEqual([STATE, RESEND_SIG, CANCEL, ...NEW_OBJECTS].sort());
   });
-
   it("RB7 · fuera de orden se niega: con la migración posterior (D3) puesta, el deshacer falla, nombra `accept_invitation` y no cambia nada", () =>
     withTx(db, async () => {
       await actAsPostgres(db);

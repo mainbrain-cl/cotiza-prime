@@ -8,7 +8,7 @@
 // volver a aplicar, que se niega a correr si otra función usa la columna, que el cambio hace lo que dice y que el tope de
 // espera funciona. Se ejecutan los archivos reales dentro de una transacción que se deshace (salvo el bloqueo de MC6, que
 // usa dos conexiones); el deshacer completo y en orden lo prueba `npm run test:db:rollbacks`. Todo es ficticio.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
@@ -339,8 +339,13 @@ describe("la migración member_invitation_creator y su deshacer", () => {
   it("MC7 · el deshacer se niega a reponer la función de D3 si la vigente no es la de esta migración (ya se deshizo, o D3 también); en el estado normal pasa", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
-      const refusal =
-        "la funcion public.accept_invitation vigente ya no nombra invitation_created_by";
+      const refusal = "la funcion public.accept_invitation vigente ya no es la de esta migracion";
+      // El md5 escrito en el deshacer es el del cuerpo de la función de la migración (se recalcula del archivo).
+      const written = /md5\(p\.prosrc\) = '([0-9a-f]{32})'/.exec(down)?.[1];
+      expect(written, "el deshacer compara el md5 del cuerpo").toBeDefined();
+      expect(written).toBe(
+        createHash("md5").update(functionBodyIn(up, "public.accept_invitation")).digest("hex"),
+      );
       // Estado normal: la vigente es la de esta migración, el deshacer corre.
       expect((await definition(ACCEPT_SIG)).src).toContain("invitation_created_by");
       await db.query(down);
@@ -358,6 +363,19 @@ describe("la migración member_invitation_creator y su deshacer", () => {
       // (c) Reaplicando en orden (D3 y luego esta), vuelve al estado normal y el deshacer pasa otra vez.
       await db.query(d3Migration);
       await db.query(up);
+      // (d) Una función que sigue nombrando la columna pero NO es la de esta migración (otra la editó) también se niega.
+      const def = (
+        await db.query<{ d: string }>("select pg_get_functiondef($1::regprocedure) as d", [
+          ACCEPT_SIG,
+        ])
+      ).rows[0].d;
+      expect(def).toContain("\nbegin\n");
+      await db.query(def.replace("\nbegin\n", "\nbegin\n  -- editada por otra migración\n"));
+      const edited = await expectSqlError(db, down);
+      expect(edited.message).toContain(refusal);
+      expect(await hasColumn()).toBe(true);
+      // Con la función original puesta de nuevo, pasa.
+      await db.query(def);
       await db.query(down);
       expect(await hasColumn()).toBe(false);
     }));

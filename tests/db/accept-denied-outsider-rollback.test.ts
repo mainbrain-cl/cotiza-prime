@@ -1,4 +1,4 @@
-// H-009/H-010 · decisión de Aarón en el PR #33 (2026-11-09) · migración 20261109110000_accept_denied_outsider_anonymous.
+// H-009/H-010 · decisión de Aarón en el PR #35 (2026-11-09), construida en el PR #36 · migración 20261109110000_accept_denied_outsider_anonymous.
 // Una sola función cambia: `app.invitation_audit_wrong_email` deja de guardar el id, la IP, el navegador y la correlación
 // de alguien de FUERA de la organización en el registro de esa organización (y escribe la copia completa en la
 // organización «plataforma»). Aquí se prueba que el «deshacer» la devuelve EXACTAMENTE a su texto anterior (lenguaje
@@ -21,6 +21,9 @@ const read = (dir: string, file: string) => readFileSync(path.join(ROOT, dir, fi
 const up = read("migrations", `${NAME}.sql`);
 const down = read("rollbacks", `${NAME}.down.sql`);
 const acceptMigration = read("migrations", "20261103100000_invitation_accept.sql");
+// Desde 20261109130000 la ayuda la vuelve a redefinir otra migración (quien fue quitado ya no entrega su IP). Para probar
+// ESTA migración, la definición vigente tiene que ser la suya: se deshace primero lo más nuevo.
+const downNewest = read("rollbacks", "20261109130000_invitation_audit_active_only.down.sql");
 
 const AUDIT_SIG = "app.invitation_audit_wrong_email(public.invitations, uuid, text)";
 const ACCEPT_SIG = "public.accept_invitation(text)";
@@ -147,6 +150,7 @@ describe("el deshacer de accept_denied_outsider_anonymous", () => {
   it("AD2 · la definición vigente es la de esta migración (plpgsql); tras el deshacer, la de 20261103100000 (sql); mismos atributos y permisos", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(downNewest);
       const current = await definition(AUDIT_SIG);
       expect(current.src.trim()).toBe(bodyIn(up, AUDIT_SIG).trim());
       expect(current.lang).toBe("plpgsql");
@@ -170,6 +174,7 @@ describe("el deshacer de accept_denied_outsider_anonymous", () => {
   it("AD3 · con la migración, alguien de fuera no deja su id en la organización; tras el deshacer, VUELVE a dejarlo; al reaplicar, otra vez no", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(downNewest);
       const outsider = await createUser(db);
       const person = await createUser(db);
       const insider = w.sales;

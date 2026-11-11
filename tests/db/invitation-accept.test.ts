@@ -1997,7 +1997,7 @@ describe("la auditoría de quien prueba un código con otro correo (invitation.a
     }));
 });
 
-describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en el PR #33, 2026-11-09)", () => {
+describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en el PR #35, construida en el PR #36, 2026-11-09)", () => {
   const IP = "203.0.113.7";
   const AGENT = "Navegador-de-prueba/1.0";
   const headers = () => ({
@@ -2109,7 +2109,7 @@ describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en
       expect(await platformRows(p.id)).toHaveLength(1);
     }));
 
-  it("3 · quien fue miembro (quitado) conserva su id: tuvo fila en `members`", () =>
+  it("3 · quien fue miembro (quitado) conserva su id pero no entrega su IP, su navegador ni su correlación actuales (menor 1 del PR #36)", () =>
     withTx(setup, async () => {
       const person = await newPerson();
       const former = await newPerson();
@@ -2123,9 +2123,23 @@ describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en
       const p = await inviteAs(w.owner, person.email, "viewer");
       expect(await acceptWithHeaders(former, p.tokenSha)).toEqual({ result: "wrong_email" });
       const rows = await orgRows(w.tenantA, p.id);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ actor_user_id: former.id, user_agent: AGENT });
-      expect(rows[0].origin_ip).toBe(IP);
+      expect(rows).toEqual([
+        {
+          tenant_id: w.tenantA,
+          actor_type: "user",
+          actor_user_id: former.id,
+          origin_ip: null,
+          user_agent: null,
+          correlation_id: null,
+          result: "denied",
+          details: { reason: "wrong_email", step: "accept" },
+        },
+      ]);
+      // La copia completa de la plataforma sí lleva su IP y su navegador de hoy.
+      const copies = await platformRows(p.id);
+      expect(copies).toHaveLength(1);
+      expect(copies[0]).toMatchObject({ actor_user_id: former.id, user_agent: AGENT });
+      expect(copies[0].origin_ip).toBe(IP);
     }));
 
   it("4 · el Dueño de OTRA organización (con la invitación de A) queda sin autor en A y no se escribe nada en B", () =>
@@ -2155,7 +2169,7 @@ describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en
       expect(copies[0].actor_user_id).toBe(w.ownerB.id);
     }));
 
-  it("5 · el trabajo es el mismo: miembro y de fuera dejan exactamente 1 fila en la organización y 1 en la plataforma, con la misma respuesta", () =>
+  it("5 · mismo resultado para miembro y de fuera: exactamente 1 fila en la organización y 1 en la plataforma, la misma respuesta y el mismo contador de fallos (no mide tiempo)", () =>
     withTx(setup, async () => {
       const person = await newPerson();
       const outsider = await newPerson();
@@ -2173,6 +2187,9 @@ describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en
       expect(await failuresOf(w.sales)).toEqual(await failuresOf(outsider));
     }));
 
+  // Protege contra un retroceso: si la ayuda dejara de atrapar una IP o una correlación mal escritas, el intento
+  // abortaría y no quedaría contado. No prueba el paso de `sql` a `plpgsql` (la IP mal escrita ya la atrapaba
+  // `app.write_audit`); lo que cuida es que esta fila, escrita con INSERT directo, siga haciéndolo.
   it("6 · una IP o una correlación mal escritas no abortan el intento: se cuenta y se audita igual", () =>
     withTx(setup, async () => {
       const person = await newPerson();
@@ -2235,6 +2252,21 @@ describe("el intento de alguien de fuera queda sin autor (decisión de Aarón en
       "select prosrc as src from pg_proc where oid = 'app.invitation_audit_wrong_email(public.invitations, uuid, text)'::regprocedure",
     );
     expect(src[0].src).not.toMatch(/for\s+(update|share|no key update|key share)/i);
+    // Esta migración (la de «intentos ajenos») y la que la afinó después (`..._invitation_audit_active_only`) no
+    // definen `accept_invitation`: lo que sigue comprueba su texto contra la ÚLTIMA que sí la define, y sin esto sería
+    // casi una tautología (la última podría ser justo una de ellas).
+    for (const name of [
+      "20261109110000_accept_denied_outsider_anonymous.sql",
+      "20261109130000_invitation_audit_active_only.sql",
+    ]) {
+      const sql = readMigrations().find((m) => m.name === name)?.sql;
+      expect(sql, `no encontré ${name}`).toBeDefined();
+      const code = sql!
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n");
+      expect(code, name).not.toMatch(/function\s+public\.accept_invitation\(/i);
+    }
     // `accept_invitation` es EXACTAMENTE la de la última migración que la define: esta migración (la de «intentos ajenos»)
     // no la tocó. Se busca sola, para no atar la prueba a una versión que una migración posterior vuelva a redefinir.
     const latest = latestMigrationDefining(

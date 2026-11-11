@@ -149,7 +149,8 @@ async function allowed(spec: TableSpec, row: Row, ctx: Context): Promise<boolean
       if (row.user_id === ctx.me) return true;
       if (!ctx.active) return false;
       // Desde H-010 también se lee el nombre de quien tuvo una fila en `members` de la organización activa y ya se fue.
-      return (await peopleOfOrgs(db, [ctx.active.tenantId])).has(row.user_id as string);
+      // Se usa lo calculado junto a ESTA lectura (`ctx.visiblePeople`), no una consulta aparte hecha después.
+      return ctx.visiblePeople.has(row.user_id as string);
     }
     case "own-user":
       return ctx.me !== null && row.user_id === ctx.me;
@@ -184,13 +185,46 @@ interface Evaluated {
   ctx: Context;
 }
 
+/** Una firma comparable de todo lo que se espera ver, para saber si cambió entre dos momentos. */
+const signatureOf = (ctx: Context): string =>
+  JSON.stringify({
+    me: ctx.me,
+    active: ctx.active,
+    legit: [...ctx.legitOrgs].sort(),
+    people: [...ctx.visiblePeople].sort(),
+    member: [...ctx.memberOrgs].sort(),
+  });
+
+/**
+ * Pide la tabla y calcula lo que se debe ver AL MOMENTO DE LEER, no con una foto tomada antes: se calcula lo esperado
+ * antes y después de pedir, y solo se acepta la lectura si no cambió entre las dos (si otra prueba, o un ciclo de vida,
+ * agregó o quitó una membresía justo en medio, se vuelve a leer). Así la respuesta y lo esperado son del mismo instante y
+ * el resultado no depende del orden de los archivos. La regla no se relaja: sigue siendo la de quien tiene o tuvo una fila
+ * en `members` de la organización activa.
+ */
+async function readAtASteadyMoment(
+  spec: TableSpec,
+  s: Scenario,
+  select: string,
+): Promise<{ res: HttpResult; ctx: Context }> {
+  const token = s.persona ? await tokenOf(s.persona) : null;
+  let before = await contextOf(spec, s);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await rest(token, `${spec.name}?select=${select}`, {
+      headers: { Prefer: "count=exact", ...tenantHeader(s.header) },
+    });
+    const after = await contextOf(spec, s);
+    if (signatureOf(after) === signatureOf(before)) return { res, ctx: after };
+    before = after;
+  }
+  throw new Error(
+    `${spec.name} · ${s.label}: las membresías siguen cambiando mientras se lee; otra prueba está escribiendo a la vez`,
+  );
+}
+
 /** Pide una tabla y verifica TODO lo que no se puede negociar. Devuelve lo leído para más pruebas. */
 async function readAndCheck(spec: TableSpec, s: Scenario, select: string): Promise<Evaluated> {
-  const token = s.persona ? await tokenOf(s.persona) : null;
-  const res = await rest(token, `${spec.name}?select=${select}`, {
-    headers: { Prefer: "count=exact", ...tenantHeader(s.header) },
-  });
-  const ctx = await contextOf(spec, s);
+  const { res, ctx } = await readAtASteadyMoment(spec, s, select);
   const rows = (Array.isArray(res.json) ? res.json : []) as Row[];
 
   if (res.status >= 400) {
@@ -215,7 +249,16 @@ async function readAndCheck(spec: TableSpec, s: Scenario, select: string): Promi
   // X8: ningún texto delatador, salvo en las filas propias de las tablas de personas
   const ownRowsExempt = spec.visibility === "profiles" || spec.visibility === "own-user";
   const toScan = ownRowsExempt ? rows.filter((r) => r.user_id !== ctx.me) : rows;
-  const text = JSON.stringify(toScan);
+  let text = JSON.stringify(toScan);
+  // El nombre completo de una persona que SÍ puede verse (p. ej. Carla, Dueña de C y ex miembro de A: desde H-010
+  // `app.current_tenant_people()` deja a A leer su nombre) lleva dentro el canario de su organización (`Carla CANARIO-C-…`).
+  // Ese nombre exacto se quita del texto antes de buscar lo prohibido; cualquier otra aparición del canario sigue fallando.
+  for (const key of PERSONA_KEYS) {
+    const persona = fixture().personas[key];
+    if (ctx.visiblePeople.has(persona.userId) && persona.fullName) {
+      text = text.replaceAll(persona.fullName, "");
+    }
+  }
   for (const forbidden of forbiddenTexts(ctx)) {
     expect(text, `${spec.name}: aparece "${forbidden}"`).not.toContain(forbidden);
   }

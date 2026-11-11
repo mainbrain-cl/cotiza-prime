@@ -2248,6 +2248,8 @@ describe("quién ve `invited_by` e `invitation_created_by` (menor 1 del PR #35)"
       expect(outside.rowCount).toBe(0);
       // Y `list_members()` no expone ninguna de las dos columnas.
       const listed = await call<Record<string, unknown>[]>(w.owner, w.tenantA, LIST);
+      // Sin esto la prueba pasaría con una lista vacía.
+      expect(listed.length).toBeGreaterThan(0);
       for (const row of listed) {
         expect(row).not.toHaveProperty("invitation_created_by");
         expect(row).not.toHaveProperty("invited_by");

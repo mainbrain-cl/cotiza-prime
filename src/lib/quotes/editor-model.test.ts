@@ -7,6 +7,7 @@ import {
   moveLine,
   newCatalogLine,
   newFreeLine,
+  priceBelowCatalog,
   type EditorLine,
   type EditorState,
 } from "./editor-model";
@@ -152,7 +153,49 @@ describe("líneas", () => {
       unit: "km",
       taxTreatment: "exempt",
       quantity: "1",
+      catalogPriceClp: 15_000,
     });
+  });
+
+  it("avisa cuando el precio escrito es más bajo que el del catálogo", () => {
+    const fromCatalog = (price: string) => ({ catalogPriceClp: 6500, price });
+    expect(priceBelowCatalog(fromCatalog("3000"))).toBe(6500);
+    expect(priceBelowCatalog(fromCatalog("6499"))).toBe(6500);
+    expect(priceBelowCatalog(fromCatalog("6500"))).toBeNull();
+    expect(priceBelowCatalog(fromCatalog("9000"))).toBeNull();
+    expect(priceBelowCatalog(fromCatalog("0"))).toBe(6500);
+    // El campo acepta puntos de miles, igual que al guardar.
+    expect(priceBelowCatalog(fromCatalog("3.000"))).toBe(6500);
+    expect(priceBelowCatalog(fromCatalog("6.500"))).toBeNull();
+    // Vacío o ilegible: no hay rebaja que avisar (el error del campo ya lo dice la validación).
+    expect(priceBelowCatalog(fromCatalog(""))).toBeNull();
+    expect(priceBelowCatalog(fromCatalog("abc"))).toBeNull();
+    expect(priceBelowCatalog(fromCatalog("-5"))).toBeNull();
+    // Una línea libre no tiene precio de catálogo contra el que comparar.
+    expect(priceBelowCatalog({ catalogPriceClp: null, price: "1" })).toBeNull();
+  });
+
+  it("una línea guardada conserva el precio de catálogo con que se cargó; la libre no", () => {
+    const row = {
+      id: "a",
+      name: "Servicio",
+      description: null,
+      unit: "service",
+      tax_treatment: "taxable" as const,
+      quantity_milli: 1000,
+      unit_price_clp: 3000,
+      discount_kind: "none" as const,
+      discount_value: 0,
+    };
+    expect(
+      lineFromSaved({ ...row, catalog_item_id: "cat-1", catalog_unit_price_clp: 6500 }, false)
+        .catalogPriceClp,
+    ).toBe(6500);
+    expect(
+      lineFromSaved({ ...row, catalog_item_id: null, catalog_unit_price_clp: null }, false)
+        .catalogPriceClp,
+    ).toBeNull();
+    expect(newFreeLine("z").catalogPriceClp).toBeNull();
   });
 
   it("una línea guardada vuelve a mostrarse con coma y se lee igual", () => {
@@ -160,6 +203,7 @@ describe("líneas", () => {
       {
         id: "a",
         catalog_item_id: null,
+        catalog_unit_price_clp: null,
         name: "Servicio",
         description: null,
         unit: "service",

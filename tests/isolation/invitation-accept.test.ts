@@ -133,6 +133,9 @@ async function lastDenied(tenantId: string, invitationId: string): Promise<Denie
   return rows[0];
 }
 
+/** El navegador que manda `call`: así «navegador nulo» en el intento de alguien de fuera quiere decir que la función lo descartó. */
+const CLIENT_USER_AGENT = "Prueba-Aislamiento/1.0";
+
 /** Lo que tiene que cumplir un intento de alguien de FUERA: sin autor, IP, navegador ni correlación. */
 const ANONYMOUS_ATTEMPT = {
   actor_type: "user",
@@ -170,6 +173,7 @@ const call = async (
       // decir que la función los descartó, no que nadie los mandó.
       "x-cp-client-ip": "203.0.113.7",
       "x-cp-request-id": randomUUID(),
+      "user-agent": CLIENT_USER_AGENT,
     },
   );
 
@@ -295,6 +299,7 @@ describe("Ataque 2 · quien está en A y en B, quien fue quitada y quien solo mi
     // Quien es de B conserva también su IP y su correlación: así queda probado que las cabeceras que manda `call`
     // llegan de verdad a la función, y que «nulo» en el intento de alguien de fuera es porque la función las descartó.
     expect(mixtaRow.origin_ip).toBe("203.0.113.7/32");
+    expect(mixtaRow.user_agent).toBe(CLIENT_USER_AGENT);
     expect(mixtaRow.correlation_id).not.toBeNull();
     expect(await platformDenied(fx.personas.mixta.userId, b.invitationId)).toBe(platformBefore + 1);
     expect(
@@ -335,6 +340,8 @@ describe("Ataque 2 · quien está en A y en B, quien fue quitada y quien solo mi
     } else {
       expect(statusRows[0].status).toBe("active");
       expect(last.origin_ip, "Ex activa: con IP").toBe("203.0.113.7/32");
+      expect(last.user_agent, "Ex activa: con navegador").toBe(CLIENT_USER_AGENT);
+      expect(last.correlation_id, "Ex activa: con correlación").not.toBeNull();
     }
     // Su estado en A es el que tenía (quitada, o miembro si todavía no corrió el ciclo de vida): no cambia por esto.
     expect(

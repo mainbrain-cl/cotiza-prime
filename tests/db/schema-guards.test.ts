@@ -476,7 +476,11 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
     );
     expect(rows.map((r) => r.name)).toEqual([...FROZEN_ROLE_LITERAL_FUNCTIONS].sort());
   });
-  it("15. menores 4 del PR #35 y 5 y 6 del PR #37: toda migración y todo deshacer con fecha desde 20261109120000 empieza con `set local lock_timeout = '3s'`, lo menciona una sola vez y no corta la transacción; desde 20261109130000, además, lo verifica", () => {
+  // Esta guardia es ESTÁTICA: lee los archivos y comprueba que el texto traiga `set local lock_timeout = '3s'` y, desde
+  // 20261109130000, el bloque que lo verifica. NO mide que el valor quede puesto al aplicar: eso lo hace el propio bloque
+  // `do $$ ... current_setting('lock_timeout') ...` cuando la migración corre de verdad (y las pruebas MC6 de cada archivo, con
+  // dos conexiones). Menor 6 del PR #38.
+  it("15. (estática: lee los archivos, no los aplica) menores 4 del PR #35 y 5 y 6 del PR #37: el texto de toda migración y todo deshacer con fecha desde 20261109120000 empieza con `set local lock_timeout = '3s'`, lo menciona una sola vez y no trae begin/commit/reset; desde 20261109130000, además, trae el bloque que lo verifica al aplicarse", () => {
     const covered: string[] = [];
     for (const dir of ["migrations", "rollbacks"] as const) {
       for (const name of filesFrom(dir)) {

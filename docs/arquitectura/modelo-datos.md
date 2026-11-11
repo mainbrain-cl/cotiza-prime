@@ -929,6 +929,19 @@ Las migraciones posteriores al sprint 1 se listan en el sprint que las crea.
 - **Verificado el 2026-11-10: la CLI de Supabase sí respeta `set local lock_timeout`.** `npx supabase migration up` aplicó `20261109130000`, cuya verificación habría lanzado una excepción si `current_setting('lock_timeout')` no fuera `3s`: se aplicó sin error, así que la CLI corre cada archivo dentro de una transacción. (Una prueba anterior con un archivo temporal de 1 s dio lo mismo.) Esto corrige el «pendiente de verificar» que había aquí.
 - **`psql -f` necesita `-1`** (`--single-transaction`) para que `set local` valga: sin él cada sentencia corre sola, PostgreSQL avisa «SET LOCAL can only be used in transaction blocks» y el valor no se aplica (se comprobó: la verificación de `20261109130000` detiene el archivo con «lock_timeout no quedo en 3s (vale 0)»). Para archivos sin verificación (los anteriores a esa fecha) usar `PGOPTIONS='-c lock_timeout=3s'` como arriba, o `-1`.
 
+**Si un deshacer se niega porque «la función vigente ya no es la de esta migración» (guarda por `md5`).** *En simple: el deshacer solo repone la versión anterior de una función si la que hay hoy es exactamente la que dejó su migración; si no lo es, se detiene sin cambiar nada, porque reponer la anterior pasaría por encima de lo que vino después.* Hoy lo hacen `20261109110000_accept_denied_outsider_anonymous.down.sql` (función `app.invitation_audit_wrong_email`) y `20261109120000_member_invitation_creator.down.sql` (función `public.accept_invitation`); cada uno lleva escrito el `md5` del cuerpo (`pg_proc.prosrc`) de la función de su migración, y la prueba de cada deshacer lo recalcula desde el archivo de la migración.
+
+1. **Primero, el orden.** El mensaje casi siempre significa que falta deshacer antes una migración más nueva (por ejemplo, `20261109130000` antes que `20261109110000`) o que este deshacer ya corrió. Se deshace en orden inverso al de las migraciones; con eso la guarda pasa sola.
+2. **Si el orden es el correcto y aun así se niega**, hay que ver qué función hay realmente y comparar con el `md5` escrito en el archivo (la cifra de 32 caracteres después de `md5(p.prosrc) =`):
+   ```sql
+   select md5(prosrc) from pg_proc
+    where oid = to_regprocedure('app.invitation_audit_wrong_email(public.invitations, uuid, text)');
+   -- o public.accept_invitation(text), según el deshacer
+   ```
+   Si da `null`, la función no existe con esa firma. Si da otra cifra, el cuerpo es distinto: o lo cambió una migración posterior (volver al punto 1) o alguien lo aplicó a mano, por ejemplo pegándolo en el editor SQL de Supabase con una diferencia de espacios, comentarios o saltos de línea. Para ver la diferencia, `select prosrc from pg_proc where oid = to_regprocedure('…')` y compararla con el cuerpo entre `$$` de la migración.
+3. **La guarda nunca se fuerza ni se edita para que pase** (no se cambia el `md5` del archivo, no se comenta el bloque ni se corre el resto a mano) sin una decisión de quien tenga el permiso de deshacer fuera de orden (hoy, Aarón; decisión 020). Esa persona decide entre: (a) reaplicar primero la migración para dejar la función exactamente como la deja el archivo y después deshacer; (b) deshacer lo que vino después; o (c) aceptar el deshacer fuera de orden, y entonces queda **registrado en `docs/decisiones/`** con el motivo y con lo que se pierde (por ejemplo, volver a guardar el id de personas de fuera en la auditoría de una organización). En PRUEBAS, `supabase db reset` rehace todo sin necesidad de forzar nada.
+4. **Esta guarda se agregó a `20261109110000` después de integrada** (menor 3 del PR #38, precedente: punto 7 del #38, guardas más estrictas en deshacer ya integrados). Otros deshacer ya integrados no se editan para esto sin una decisión igual.
+
 ---
 
 ## 10. Dónde puede fallar y cómo se evita

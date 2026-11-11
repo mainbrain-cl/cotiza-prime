@@ -175,6 +175,15 @@ function forbiddenTexts(ctx: Context): string[] {
     texts.push(persona.userId, persona.email);
     if (persona.fullName.includes("CANARIO")) texts.push(persona.fullName);
   }
+  // El correo de una persona que SÍ puede verse (p. ej. un ex miembro, o Carla desde H-010) tampoco puede aparecer en la
+  // lectura de ninguna tabla: ninguna columna legible de estas tablas lleva correos (`members` guarda el id, no el correo;
+  // el correo solo lo entrega `list_members()` a quien maneja el equipo, y eso no es una lectura de tabla). Lo único que se
+  // perdona es el propio correo de quien lee.
+  for (const key of PERSONA_KEYS) {
+    const persona = fx.personas[key];
+    if (persona.userId === ctx.me || !ctx.visiblePeople.has(persona.userId)) continue;
+    texts.push(persona.email);
+  }
   texts.push("test.platform_event");
   return texts;
 }
@@ -222,6 +231,23 @@ async function readAtASteadyMoment(
   );
 }
 
+/**
+ * El nombre completo de una persona que SÍ puede verse (p. ej. Carla, Dueña de C y ex miembro de A: desde H-010
+ * `app.current_tenant_people()` deja a A leer su nombre) lleva dentro el canario de su organización (`Carla CANARIO-C-…`).
+ * La exención es lo más estrecha posible: solo en una fila de `profiles` de ESA persona (`user_id`), solo en la columna
+ * `full_name` y solo si el valor es exactamente su nombre. Un nombre copiado en cualquier otra columna, en otra tabla,
+ * en un texto libre o en un JSON de auditoría (`details`) no se perdona y sigue fallando.
+ */
+function withoutLegitimateName(spec: TableSpec, row: Row, ctx: Context): Row {
+  if (spec.visibility !== "profiles" || typeof row.user_id !== "string") return row;
+  if (!ctx.visiblePeople.has(row.user_id)) return row;
+  const persona = PERSONA_KEYS.map((key) => fixture().personas[key]).find(
+    (p) => p.userId === row.user_id,
+  );
+  if (!persona?.fullName || row.full_name !== persona.fullName) return row;
+  return { ...row, full_name: "" };
+}
+
 /** Pide una tabla y verifica TODO lo que no se puede negociar. Devuelve lo leído para más pruebas. */
 async function readAndCheck(spec: TableSpec, s: Scenario, select: string): Promise<Evaluated> {
   const { res, ctx } = await readAtASteadyMoment(spec, s, select);
@@ -249,16 +275,7 @@ async function readAndCheck(spec: TableSpec, s: Scenario, select: string): Promi
   // X8: ningún texto delatador, salvo en las filas propias de las tablas de personas
   const ownRowsExempt = spec.visibility === "profiles" || spec.visibility === "own-user";
   const toScan = ownRowsExempt ? rows.filter((r) => r.user_id !== ctx.me) : rows;
-  let text = JSON.stringify(toScan);
-  // El nombre completo de una persona que SÍ puede verse (p. ej. Carla, Dueña de C y ex miembro de A: desde H-010
-  // `app.current_tenant_people()` deja a A leer su nombre) lleva dentro el canario de su organización (`Carla CANARIO-C-…`).
-  // Ese nombre exacto se quita del texto antes de buscar lo prohibido; cualquier otra aparición del canario sigue fallando.
-  for (const key of PERSONA_KEYS) {
-    const persona = fixture().personas[key];
-    if (ctx.visiblePeople.has(persona.userId) && persona.fullName) {
-      text = text.replaceAll(persona.fullName, "");
-    }
-  }
+  const text = JSON.stringify(toScan.map((row) => withoutLegitimateName(spec, row, ctx)));
   for (const forbidden of forbiddenTexts(ctx)) {
     expect(text, `${spec.name}: aparece "${forbidden}"`).not.toContain(forbidden);
   }

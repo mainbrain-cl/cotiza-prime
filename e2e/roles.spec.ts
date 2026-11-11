@@ -393,6 +393,29 @@ for (const role of MEMBER_ROLES) {
       ).toEqual([...MENU[role]]);
     });
 
+    test("ve «Seguridad de tu cuenta», fuera del menú de la organización, y el botón para activar la verificación (sin activarla)", async ({
+      page,
+    }) => {
+      const A = loadFixture().orgs.A;
+      await openSettled(page, `/o/${A.tenantId}`);
+      const link = page
+        .locator('aside[aria-label="Menú lateral"]')
+        .getByRole("link", { name: "Seguridad de tu cuenta" });
+      await expect(link).toHaveCount(1);
+      await expect(
+        page
+          .locator('nav[aria-label="Principal"]')
+          .getByRole("link", { name: "Seguridad de tu cuenta" }),
+      ).toHaveCount(0);
+      await link.click();
+      await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
+      await expect(firstHeading(page)).toHaveText("Seguridad de tu cuenta");
+      // Solo se mira: activar un factor cerraría las demás sesiones de la persona y rompería la fixture.
+      await expect(
+        page.getByRole("button", { name: "Activar la verificación en dos pasos" }),
+      ).toBeVisible();
+    });
+
     test("cada pantalla muestra su contenido o «No tienes permiso para esto», y sin datos cuando no corresponde", async ({
       page,
     }) => {

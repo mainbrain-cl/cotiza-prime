@@ -77,9 +77,10 @@ function EnablePanel() {
   const [pending, startTransition] = useTransition();
   const headingRef = useRef<HTMLHeadingElement>(null);
 
-  // Al cambiar de paso, el foco pasa al título del paso nuevo.
+  // Al llegar al paso de escanear, el foco pasa a su título. En el paso del código el foco va directo al campo
+  // (autoFocus): es lo único que hay que hacer ahí.
   useEffect(() => {
-    if (phase.name !== "idle") headingRef.current?.focus();
+    if (phase.name === "scan") headingRef.current?.focus();
   }, [phase.name]);
 
   function start() {

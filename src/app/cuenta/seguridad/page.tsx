@@ -31,7 +31,7 @@ export default async function AccountSecurityPage({
       footer={
         <Link
           href={HOME_PATH}
-          className="font-semibold text-accent underline-offset-4 hover:underline"
+          className="inline-flex min-h-11 items-center font-semibold text-accent underline-offset-4 hover:underline"
         >
           Volver a Cotiza Prime
         </Link>

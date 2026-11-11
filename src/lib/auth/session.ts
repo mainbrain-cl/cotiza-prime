@@ -44,7 +44,12 @@ export type SessionUser = {
  */
 export type SessionState =
   | { status: "signed_out" }
-  | { status: "second_step_pending"; user: SessionUser }
+  | {
+      status: "second_step_pending";
+      user: SessionUser;
+      /** El factor de aplicación de códigos ya verificado contra el que se escribe el código (`null` si no hay). */
+      factorId: string | null;
+    }
   | {
       status: "complete";
       user: SessionUser;
@@ -77,7 +82,8 @@ export const getSessionState = cache(async (): Promise<SessionState> => {
 
   const { data: claims, error: claimsError } = await supabase.auth.getClaims();
   if (claimsError || claims?.claims.aal !== SECOND_STEP_ASSURANCE_LEVEL) {
-    return { status: "second_step_pending", user };
+    const totp = verified.find((factor) => factor.factor_type === "totp");
+    return { status: "second_step_pending", user, factorId: totp?.id ?? null };
   }
   const since = verified.map((factor) => factor.created_at).sort()[0] ?? null;
   return { status: "complete", user, secondStep: { active: true, since } };

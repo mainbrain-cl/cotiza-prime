@@ -3,8 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthCard } from "@/components/auth/auth-card";
 import { FormAlert } from "@/components/ui/form-controls";
-import { HOME_PATH, LOGIN_NOTICES, SIGNUP_PATH } from "@/lib/auth/paths";
-import { getOptionalUser } from "@/lib/auth/session";
+import { HOME_PATH, LOGIN_NOTICES, SECOND_STEP_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
+import { getSessionState } from "@/lib/auth/session";
 import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = { title: "Ingresar · Cotiza Prime" };
@@ -30,7 +30,10 @@ const NOTICES: Record<string, { tone: "success" | "warning"; text: string }> = {
 };
 
 export default async function LoginPage({ searchParams }: PageProps<"/ingresar">) {
-  if (await getOptionalUser()) redirect(HOME_PATH);
+  // Con la contraseña ya correcta pero sin el código, se sigue en la pantalla del código; con sesión completa, al inicio.
+  const session = await getSessionState();
+  if (session.status === "second_step_pending") redirect(SECOND_STEP_PATH);
+  if (session.status === "complete") redirect(HOME_PATH);
 
   const { aviso } = await searchParams;
   const notice = typeof aviso === "string" ? NOTICES[aviso] : undefined;

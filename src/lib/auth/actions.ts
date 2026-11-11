@@ -13,6 +13,7 @@ import {
   HOME_PATH,
   LOGIN_NOTICES,
   LOGIN_PATH,
+  SECOND_STEP_PATH,
 } from "@/lib/auth/paths";
 import {
   fieldErrorsOf,
@@ -158,6 +159,11 @@ export async function signInAction(_previous: FormState, formData: FormData): Pr
 
   await clearLoginFailures(parsed.data.email);
   await logAuditEvent({ action: "session.login", result: "success", actorUserId: data.user.id });
+  // Con la verificación en dos pasos activa, la contraseña no basta: la sesión queda parcial y falta el código. El
+  // ingreso de cada organización se escribe después del código (la base no entrega ninguna con la sesión parcial).
+  if ((data.user.factors ?? []).some((factor) => factor.status === "verified")) {
+    redirect(SECOND_STEP_PATH);
+  }
   // Además, un ingreso por cada organización de la persona: así cada Dueño ve cuándo entra su equipo.
   await logTenantLogins(supabase, data.user.id);
   // Si la persona venía de abrir el enlace de una invitación, vuelve a ella para unirse (H-009).

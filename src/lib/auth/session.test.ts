@@ -142,6 +142,7 @@ describe("getSessionState (verificación en dos pasos)", () => {
     expect(await getSessionState()).toEqual({
       status: "second_step_pending",
       user: { id: USER.id, email: USER.email, emailVerified: true },
+      factorId: VERIFIED.id,
     });
   });
 

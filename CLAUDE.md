@@ -43,7 +43,7 @@ Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por sepa
 hallazgos corregidos. Pruebas: `npm test`, `test:db`, `test:isolation` (504 ataques entre
 organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHub Actions.
 
-- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 42 migraciones. Datos de
+- **Base:** Next.js 16 + Supabase local en Docker (puertos **56320–56329**). 47 migraciones. Datos de
   prueba: `npm run db:seed` (`ana`, `beto`, `mixta`, `ex` `@ejemplo.test`, contraseña
   `Prueba-Cotiza-2026`; Negocio Demo 1 y 2). Cómo levantarlo: `README.md`.
 - **Documentos de arquitectura:** `docs/arquitectura/modelo-datos.md` (aprobado) y
@@ -54,7 +54,63 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Traspaso del 2026-11-06 — lo más reciente (léelo antes que el del 2026-11-04)
+### Traspaso del 2026-11-11 — lo más reciente (léelo antes que el del 2026-11-06)
+
+**`main` está en `1e5bae0` (PR #38). Abiertos: #39 (este documento) y #40 (H-040, en borrador).** 47 migraciones; la última es
+`20261109130000_invitation_audit_active_only`. Desde el traspaso del 2026-11-06 entraron los PR #31 a #38 (#31, #32 y #34 por José bajo
+la decisión 020 §5; #33, #35, #36, #37 y #38 por Aarón):
+- **#33/#35/#37 (H-010):** al cancelar a un miembro se cancelan también las invitaciones que reenvió; el miembro queda a nombre de
+  quien envió el enlace; `members.invitation_created_by` (FK a `auth.users`, legible por cualquier miembro activo).
+- **#36/#38:** el intento de aceptar una invitación ajena, hecho desde fuera de la organización, queda **sin autor** en la auditoría de
+  esa organización; la copia completa va a la organización «plataforma». Quien **fue** miembro conserva su id, pero su IP, navegador y
+  correlación solo se guardan si hoy está `active`.
+- **Guardia 15** (`modelo-datos.md` §9.1 y §9.4): toda migración y todo deshacer desde `20261109120000` empieza con
+  `set local lock_timeout = '3s'`; desde `20261109130000` también traen justo después un `do $$ … current_setting('lock_timeout') <> '3s' …`
+  que lo verifica. La CLI de Supabase sí respeta el `set local`; `psql -f` necesita `-1`.
+- **`tests/isolation/tables-read.test.ts`** (aprobado por Aarón): calcula la visibilidad al momento de leer y quita del texto el nombre exacto de
+  las personas visibles antes de buscar el canario de otra organización (causa real del rojo «CANARIO-C»).
+- **Decisión 15 resuelta por Aarón:** la regla de aprobación es **por organización** y aplica a todos los que envían, incluido el
+  Dueño y el Administrador; la excepción por persona viene después.
+
+**Verde local sobre el #38 (Aarón, sin CI):** 2.183 unitarias, `test:db` 1.075, `test:isolation` 1.204 (3 pendientes), `test:db:rollbacks`
+OK. **No se corrió e2e.** Falta una corrida completa limpia de `chromium` con `E2E_PROD=1` en una máquina libre (no afirmar
+«149/149» sin ella).
+
+**En curso: H-040 (PR #40, `feat/h-040-aprobaciones`, en borrador).** Tabla `approval_rules`, función de decisión (SQL y TypeScript), pantalla
+Configuración → Aprobaciones y control al enviar. Migraciones `20261110110000`, `20261110120000` y `20261111100000` (esta última, la rebaja de
+precio). Diseño y riesgos: `docs/arquitectura/sprint-5-h-040-aprobaciones.md` (§12). **Decisiones de Aarón (2026-11-11):**
+1. La regla por descuento **también cuenta la rebaja contra el precio de catálogo** (no se espera a H-041), en el servidor (`send-block`) y en la
+   puerta de envío de la base. **Ajuste de José tras las revisiones Opus (Aarón debe confirmarlo):** el catálogo de referencia es el **menor entre el
+   precio guardado en la línea y el precio de hoy del servicio**, para que una baja del catálogo no bloquee la venta. Solo se calcula cuando la regla
+   mira el descuento.
+2. **Hueco que queda (Aarón debe aceptarlo con este alcance):** escribir el servicio a mano como línea libre con precio menor, **agregar un servicio
+   más barato del catálogo y cambiarle el nombre al de uno caro**, o bajar la cantidad. H-042 no lo cubre (D2: ordena, no controla); lo cerraría H-041
+   (pregunta 18) fijando también el nombre de las líneas de catálogo.
+3. Un Administrador cambia la regla sin aviso al Dueño: **aceptado hasta H-047** (queda en el registro de actividad y en `quote_packages.approval_rule_id`).
+4. Todo miembro lee la regla y el Comercial ve el umbral en `/enviar`: está bien.
+5. Bloqueo largo de la migración 2 sobre `quote_packages`: aceptado (se aplica sobre la base vacía).
+- **Estado (2026-11-11):** rebasado sobre `main`, con las revisiones Opus normal y adversarial hechas (sin bloqueantes) y las correcciones aplicadas.
+  Falta que Aarón vea la pantalla en el navegador y decida los puntos 1 (ajuste) y 2 (hueco). Con la regla en «Siempre», un monto o un descuento, lo que la
+  cumpla **no se puede enviar hasta el sprint 6** («Solicitar aprobación»), tampoco las cotizaciones del Dueño.
+
+**H-004a (verificación en dos pasos): desbloqueada.** Aarón decidió **D1 = B** (la base también exige el segundo paso, aal2) y **D2 = sola**
+(no junto con H-004b). **Fecha de migración: NO usar `20261110100000`** (quedaría antes que las del #40); tomar una fecha nueva, posterior a la última de
+`main` (y a `20261111100000` si el #40 ya entró) al construirla, y con `lock_timeout` y su verificación.
+
+**Pendientes:**
+- **Menores del #38** (Aarón, PR siguiente, ninguno bloquea; casi todo pruebas): (1) la exención de `tables-read.test.ts:256-261` solo para filas
+  de perfiles o la columna del nombre; (2) `forbiddenTexts` no debe perdonar el correo de ex miembros; (3) guarda por md5 en
+  `20261109110000_accept_denied_outsider_anonymous.down.sql`; (4) con «Ex» activa revisar también navegador y correlación
+  (`invitation-accept.test.ts:336-337`); (5) dejar escrito qué hacer si el md5 fijo de un deshacer no coincide en un ambiente real; (6) ajustar el título de la
+  guardia 15 (es estática).
+- Orden siguiente: H-040 (punto 1 de Aarón y su revisión) → H-004a → H-004b → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el
+  ingreso) → H-004c.
+- La frase de la política de privacidad del #36 la ve Aarón con el abogado (editar `privacy.md` cambia su huella y exige versión nueva en
+  `legal_documents`). Del issue #11: CI apagado, `AGENTS.md`, decisión #17 y `npm audit` / decisión 015.
+- Anotado fuera de alcance: el Dueño ve `audit_log.id` en `select=*`; la secuencia es común a todas las organizaciones y deja ver
+  cuánta actividad hay. Se cierra con un permiso de lectura por columna, si se quiere.
+
+### Traspaso del 2026-11-06 — histórico (lo del 2026-11-11 lo actualiza; léelo antes que el del 2026-11-04)
 
 **Repositorio nuevo:** `github.com/mainbrain-cl/cotiza-prime` (organización de Main Brain, privado). La dirección
 antigua `avronygg/cotiza-prime` solo redirige: no se usa más. Quien tenga una copia vieja corre una vez
@@ -98,7 +154,7 @@ local: después `supabase db reset` y `npm run db:seed`). **La descripción del 
 - **Riesgo aceptado y documentado:** dentro del tope de 30 por hora, un Administrador puede quitar o bajar a quien no es
   Administrador, o cambiar precios y datos bancarios, sin que el Dueño reciba un correo; solo queda en el registro de
   actividad. Se cierra con los correos de aviso (decisión nº 17 y proveedor de correo, decisión 016).
-- La decisión 15 (quién envía sin aprobación) sigue sin resolverse y bloquea mezclar H-040.
+- ~~La decisión 15 (quién envía sin aprobación) sigue sin resolverse~~ **Resuelta** (ver el traspaso del 2026-11-10): H-040 ya se puede construir.
 - Las historias que ya tienen diseño aprobado son H-116 y H-042; cuál se construye primero lo decide José.
 - **Antes de la primera ida a producción:** toda migración y todo deshacer desde `20261109120000` empieza con `set local lock_timeout = '3s'` (guardia 15), y las migraciones anteriores que toman bloqueos fuertes se aplican sobre la base vacía antes de abrir el tráfico o en una ventana tranquila con `lock_timeout` desde la conexión: lista y forma en `docs/arquitectura/modelo-datos.md` §9.4.
 

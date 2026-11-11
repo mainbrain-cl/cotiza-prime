@@ -4,15 +4,25 @@
 // organización «plataforma»). Aquí se prueba que el «deshacer» la devuelve EXACTAMENTE a su texto anterior (lenguaje
 // `sql`, mismos permisos), que con el deshacer el id de alguien de fuera VUELVE a quedar en el registro (por eso la
 // migración hace falta), que la migración se puede volver a aplicar y que `accept_invitation` es la misma en los dos
-// sentidos. Se ejecutan los archivos reales dentro de una transacción que se deshace; el deshacer completo y en orden lo
+// sentidos y que el deshacer se NIEGA a correr si la función vigente ya no es la de esta migración (por ejemplo, si no se
+// deshizo antes 20261109130000). Se ejecutan los archivos reales dentro de una transacción que se deshace; el deshacer completo y en orden lo
 // prueba `npm run test:db:rollbacks`. Todo es ficticio.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { invitationEmailBinding } from "../../src/lib/team/invitation-code";
-import { actAs, actAsPostgres, connect, createUser, withTx, type TestUser } from "./helpers";
+import {
+  actAs,
+  actAsPostgres,
+  connect,
+  createUser,
+  expectSqlError,
+  withTx,
+  type TestUser,
+} from "./helpers";
+import { functionBodyIn } from "./migration-files";
 import { asUser, buildWorld, newToken, sha256Hex, type World } from "./send-helpers";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "supabase");
@@ -212,10 +222,57 @@ describe("el deshacer de accept_denied_outsider_anonymous", () => {
   it("AD4 · `accept_invitation` es la misma con la migración y tras el deshacer", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(downNewest);
       const before = await definition(ACCEPT_SIG);
       await db.query(down);
       expect(await definition(ACCEPT_SIG)).toEqual(before);
       await db.query(up);
       expect(await definition(ACCEPT_SIG)).toEqual(before);
+    }));
+
+  it("AD5 · el deshacer se niega a correr si la función vigente no es la de esta migración (md5 del cuerpo): sin deshacer antes 20261109130000, con el deshacer ya corrido o con una función editada; en el orden correcto pasa", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      const refusal =
+        "la funcion app.invitation_audit_wrong_email vigente ya no es la de esta migracion";
+      // El md5 escrito en el deshacer es el del cuerpo de la función de la migración (se recalcula del archivo).
+      const written = /md5\(p\.prosrc\) = '([0-9a-f]{32})'/.exec(down)?.[1];
+      expect(written, "el deshacer compara el md5 del cuerpo").toBeDefined();
+      expect(written).toBe(
+        createHash("md5")
+          .update(functionBodyIn(up, "app.invitation_audit_wrong_email"))
+          .digest("hex"),
+      );
+      // (a) Fuera de orden: la vigente es la de 20261109130000 (solo quien tuvo fila activa deja su id). Se niega y no cambia nada.
+      const newest = await definition(AUDIT_SIG);
+      expect(newest.lang).toBe("plpgsql");
+      const early = await expectSqlError(db, down);
+      expect(early.message).toContain(refusal);
+      expect(early.message).toContain("revise el orden de los deshacer");
+      expect(await definition(AUDIT_SIG)).toEqual(newest);
+      // (b) En orden: primero lo más nuevo y luego este; pasa y deja la función original (lenguaje sql).
+      await db.query(downNewest);
+      expect((await definition(AUDIT_SIG)).src.trim()).toBe(bodyIn(up, AUDIT_SIG).trim());
+      await db.query(down);
+      expect((await definition(AUDIT_SIG)).lang).toBe("sql");
+      // (c) Repetirlo con la original puesta (ya se deshizo) también se niega.
+      const again = await expectSqlError(db, down);
+      expect(again.message).toContain(refusal);
+      expect((await definition(AUDIT_SIG)).lang).toBe("sql");
+      // (d) Una función de esta migración editada por otra (otro cuerpo, mismo lenguaje) se niega; con la original, pasa.
+      await db.query(up);
+      const def = (
+        await db.query<{ d: string }>("select pg_get_functiondef($1::regprocedure) as d", [
+          AUDIT_SIG,
+        ])
+      ).rows[0].d;
+      expect(def).toContain("\nbegin\n");
+      await db.query(def.replace("\nbegin\n", "\nbegin\n  -- editada por otra migracion\n"));
+      const edited = await expectSqlError(db, down);
+      expect(edited.message).toContain(refusal);
+      expect((await definition(AUDIT_SIG)).src).toContain("editada por otra migracion");
+      await db.query(def);
+      await db.query(down);
+      expect((await definition(AUDIT_SIG)).lang).toBe("sql");
     }));
 });

@@ -120,9 +120,11 @@ async function auditFailure(userId: string, stage: Stage, reason: string): Promi
 }
 
 /**
- * Resultado de un `challengeAndVerify` que falló, convertido en el estado que ve la persona. Un código incorrecto y el 429 de
- * Supabase suman al tope del día y al de la IP. Si Supabase falló por otra cosa (la red, la IP no coincidió, la sesión
- * cambió), el código NO se gastó: se libera para poder reintentar con el mismo código correcto.
+ * Resultado de un `challengeAndVerify` que falló, convertido en el estado que ve la persona. Solo un código incorrecto
+ * suma al tope del día y al de la IP. Si Supabase falló por otra cosa (la red, la IP no coincidió, la sesión cambió) o
+ * respondió 429, el código NO se juzgó: se libera para poder reintentar con el mismo código correcto. El 429 no suma al tope
+ * del día ni al de la IP: no prueba nada contra la persona (puede ser el límite compartido de Supabase por una IP ajena), y
+ * el intento ya contó en la ventana de 15 minutos al registrarse antes de llamar a Supabase.
  */
 async function failedVerification(
   error: AuthErrorLike,
@@ -135,7 +137,6 @@ async function failedVerification(
   const kind = classifyAuthError(error);
   await serverLog("warn", "mfa_verify_failed", { stage, code: errorCodeOf(error) });
   if (kind === "rate_limited") {
-    await recordSecondStepFailure(userId, context, clientIp);
     await releaseTotpCode(userId, code);
     return { status: "error", message: RATE_LIMITED_MESSAGE };
   }

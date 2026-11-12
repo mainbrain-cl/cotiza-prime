@@ -266,13 +266,16 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
     expect(releaseTotpCode).not.toHaveBeenCalled();
   });
 
-  it("el 429 de Supabase cuenta como fallo de la cuenta y de la IP", async () => {
+  it("el 429 de Supabase libera el código y NO suma al tope del día ni al de la IP (el intento ya contó en la ventana)", async () => {
     challengeAndVerify.mockResolvedValue({
       error: { code: "over_request_rate_limit", status: 429 },
     });
     const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
     expect(state.message).toMatch(/Demasiados intentos/);
-    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, "password", IP);
+    expect(releaseTotpCode).toHaveBeenCalledWith(USER.id, "123456");
+    expect(recordSecondStepFailure).not.toHaveBeenCalled();
+    // El intento de la ventana de 15 minutos se registró antes de hablar con Supabase.
+    expect(beginSecondStepAttempt).toHaveBeenCalledTimes(1);
   });
 
   it("si Supabase falla por otra cosa (IP distinta, sesión), el código NO se gastó: se libera, no suma fallo y el mensaje es el de ingresar de nuevo", async () => {
@@ -348,6 +351,7 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
 
   it("no consulta rol ni organización activa ni lee tablas: es de la cuenta", async () => {
     await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "123456" })));
+    expect(challengeAndVerify).toHaveBeenCalled();
     expect(requireActiveTenant).not.toHaveBeenCalled();
     expect(requirePermission).not.toHaveBeenCalled();
     expect(tableReads).not.toHaveBeenCalled();
@@ -516,6 +520,16 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
         details: { reason: "mfa_invalid_code", stage: "enrollment", factorType: "totp" },
       }),
     );
+  });
+
+  it("el 429 de Supabase al activar libera el código y no suma al tope del día ni al de la IP", async () => {
+    challengeAndVerify.mockResolvedValue({
+      error: { code: "over_request_rate_limit", status: 429 },
+    });
+    const state = await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(state.message).toMatch(/Demasiados intentos/);
+    expect(releaseTotpCode).toHaveBeenCalledWith(USER.id, "123456");
+    expect(recordSecondStepFailure).not.toHaveBeenCalled();
   });
 
   it("si Supabase falla por otra cosa, el código se libera y el mensaje es el de activar de nuevo (no el de ingresar)", async () => {

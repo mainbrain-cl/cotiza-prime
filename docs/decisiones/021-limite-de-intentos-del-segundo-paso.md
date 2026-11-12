@@ -42,8 +42,9 @@ que solo viene en los planes Team o Enterprise de Supabase (del orden de US$599 
 1. Construir la opción B según el diseño que haga el `planificador` (historia H-117, delicada, con revisión adversarial).
 2. **Producción:** al crear el proyecto de Supabase de producción, en la misma lista que Confirm email y Secure email change de
    H-009: **apagar los factores por teléfono y WebAuthn** (la base cuenta cualquier factor verificado y la aplicación solo maneja
-   TOTP), **medir el cupo de verificaciones** de Supabase Auth (todas salen de la IP del servidor) y **encender el aviso por
-   correo del segundo paso** (hoy solo está en `supabase/config.toml` local).
+   TOTP), **medir el cupo de verificaciones** de Supabase Auth (todas salen de la IP del servidor). El aviso por correo al activar ya
+   no es el de Supabase: lo enviamos nosotros con el enlace para anular (H-118, `docs/arquitectura/h-118-anular-activacion.md`; el aviso
+   de Supabase se apaga allí), así que lo que hay que dejar listo en producción es el proveedor de correo (decisión 016, Resend).
 3. Probar el bloqueo en producción con una cuenta de prueba.
 
 ## Procedimiento de soporte para quitar un segundo factor (Aarón, 2026-11-12)
@@ -60,7 +61,7 @@ hábiles de 9 a 19 h; fuera de ese horario, al siguiente día hábil.
 ## Seguimientos, en este orden (Aarón, 2026-11-12)
 
 0. **Prioritario antes del piloto:** enlace de un solo uso en el correo de aviso al activar, para **anular la activación**
-   (historia **H-118**). Cierra el caso de quien tiene la contraseña de una cuenta sin segundo paso, activa el suyo y deja fuera al
+   (historia **H-118**; diseño en `docs/arquitectura/h-118-anular-activacion.md`, decidido por José el 2026-11-12). Cierra el caso de quien tiene la contraseña de una cuenta sin segundo paso, activa el suyo y deja fuera al
    dueño. Mientras no exista, vale el procedimiento de soporte de arriba.
 1. Pedir la contraseña de nuevo antes de activar (H-004b). No cierra el caso anterior (el atacante ya la sabe), pero se mantiene
    por otras razones.

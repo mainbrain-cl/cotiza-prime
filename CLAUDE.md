@@ -56,8 +56,8 @@ la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con
 
 ### Traspaso del 2026-11-11 — lo más reciente (léelo antes que el del 2026-11-06)
 
-**`main` está en el PR #40 (H-040, mezclado el 2026-11-11). No hay PR abiertos.** 50 migraciones; la última es
-`20261111100000_approval_price_rebate`. Desde el traspaso del 2026-11-06 entraron los PR #31 a #38 (#31, #32 y #34 por José bajo
+**`main` está en el PR #44 (H-004a, mezclado el 2026-11-12). No hay PR abiertos.** 51 migraciones; la última es
+`20261112100000_mfa_session_gate`. Desde el traspaso del 2026-11-06 entraron los PR #31 a #38 (#31, #32 y #34 por José bajo
 la decisión 020 §5; #33, #35, #36, #37 y #38 por Aarón):
 - **#33/#35/#37 (H-010):** al cancelar a un miembro se cancelan también las invitaciones que reenvió; el miembro queda a nombre de
   quien envió el enlace; `members.invitation_created_by` (FK a `auth.users`, legible por cualquier miembro activo).
@@ -100,8 +100,8 @@ precio). Diseño y riesgos: `docs/arquitectura/sprint-5-h-040-aprobaciones.md` (
 - **Mejora de uso anotada (sin historia aún):** el editor de cotizaciones no avisa que bajar el precio de una línea bajo el de catálogo cuenta como
   descuento, ni por qué el campo «Monto del descuento» está deshabilitado con «Sin descuento» (hay que elegir el tipo primero).
 
-**H-004a (verificación en dos pasos): construida, en revisión (PR #44, rama `feat/h-004a-dos-pasos`).** Con la base también exigiendo el segundo
-paso (D1 = B de Aarón) y sin H-004b (D2). Delicada: revisión adversarial y no se mezcla sin Aarón. Migración `20261112100000_mfa_session_gate` (**51 archivos
+**H-004a (verificación en dos pasos): mezclada el 2026-11-12 (PR #44) por decisión de José (agencia), SIN revisión de Aarón** (decisión 020: historia delicada; Aarón debe revisarla después). Con la base también exigiendo el segundo
+paso (D1 = B de Aarón) y sin H-004b (D2). Pasó revisión Opus normal y adversarial (ronda 1) y una ronda 2 sobre los cambios, sin bloqueantes. **Verde local sobre el código mezclado:** lint, tipos y formato limpios; 2.449 unitarias (1 omitida); `test:db` 1.247; `test:isolation` 1.267 (3 pendientes); e2e `chromium` 171 de 171 y `isolation` 48 de 48 (app compilada, `--workers=1`); `test:db:rollbacks` OK (sobre la ronda 1; la ronda 2 no tocó migraciones). José la probó en escritorio con una app de códigos en iPhone; el móvil emulado (390 px, claro y oscuro) se revisó en capturas. **NO probado: el ingreso con código en un iPhone real, Firefox, Safari ni lector de pantalla.** Migración `20261112100000_mfa_session_gate` (**51 archivos
 en `supabase/migrations/` con ésta**; las cuentas de «42 migraciones» de los traspasos de abajo estaban desactualizadas). Como todavía no está en `main`, las
 correcciones de la ronda 1 se editaron EN la misma migración (no hay otra). Cómo probarla: `README.md`, «Probar la verificación en dos pasos». Detalle, lo comprobado de
 Supabase Auth y los riesgos: `docs/arquitectura/sprint-5-equipo-y-permisos.md`, «Registro de construcción — H-004a». Cerrado en la ronda 1: con la contraseña sola
@@ -114,7 +114,7 @@ tampoco se puede crear una organización, ni ver o aceptar invitaciones, ni acep
   `mfa_verification_attempt` de Supabase (opción A, elegida por José de forma provisional; **Aarón debe ratificarla**). Exige: confirmar en el panel de
   producción que el plan lo incluye y que Aarón aprueba el gasto, construir el hook (historia por abrir), activarlo y probarlo en producción, y dejar
   escrito quién desbloquea cuentas. Sin eso no se lanza (ni se promete «aunque conozcan tu contraseña» en H-004c).
-- Orden siguiente: H-004a → H-004b → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el ingreso) → H-004c.
+- Orden siguiente: H-004b → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el ingreso) → H-004c. **H-117** (hook del segundo paso, decisión 021) se construye antes del lanzamiento; Aarón decide cuándo.
 - La frase de la política de privacidad del #36 la ve Aarón con el abogado (editar `privacy.md` cambia su huella y exige versión nueva en
   `legal_documents`). Del issue #11: CI apagado, `AGENTS.md`, decisión #17 y `npm audit` / decisión 015.
 - Anotado fuera de alcance: el Dueño ve `audit_log.id` en `select=*`; la secuencia es común a todas las organizaciones y deja ver

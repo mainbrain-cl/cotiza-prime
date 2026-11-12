@@ -381,10 +381,17 @@ describe("la migración member_invitation_creator y su deshacer", () => {
       await db.query("begin");
       try {
         await undoMfaGate(db);
+        // Sin esto, el 3 s que dejó el deshacer del segundo paso haría pasar la comprobación sin probar nada: se vuelve a 0
+        // y se mide lo que fija CADA archivo.
+        await db.query("set local lock_timeout = 0");
+        expect(
+          (await db.query<{ lock_timeout: string }>("show lock_timeout")).rows[0].lock_timeout,
+        ).toBe("0");
         await db.query(down);
         expect(
           (await db.query<{ lock_timeout: string }>("show lock_timeout")).rows[0].lock_timeout,
         ).toBe(`${LOCK_TIMEOUT_SECONDS}s`);
+        await db.query("set local lock_timeout = 0");
         await db.query(up);
         expect(
           (await db.query<{ lock_timeout: string }>("show lock_timeout")).rows[0].lock_timeout,

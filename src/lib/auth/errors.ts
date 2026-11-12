@@ -70,6 +70,13 @@ export const MFA_LOCKED_DAY_MESSAGE =
 export const MFA_LOCKED_DAY_PASSWORD_MESSAGE =
   "Demasiados intentos. Si no fuiste tú, alguien puede tener tu contraseña: usa «¿Olvidaste tu contraseña?» para entrar con un enlace a tu correo y cámbiala.";
 
+/**
+ * El mismo bloqueo de 24 horas pero al ACTIVAR la verificación (menor 4 de la revisión de Aarón al PR #44): ahí lo más probable
+ * es la hora del teléfono, no que alguien tenga la contraseña, así que el texto orienta a revisarla.
+ */
+export const MFA_LOCKED_DAY_ENROLLMENT_MESSAGE =
+  "Demasiados intentos hoy. Revisa que la fecha y la hora de tu teléfono estén en automático e inténtalo de nuevo mañana. Si sigue fallando, pide ayuda al equipo de Cotiza Prime.";
+
 /** Al ingresar, la verificación no se pudo completar por algo que no es el código (la sesión o el factor cambiaron). */
 export const MFA_SIGN_IN_FAILED_MESSAGE =
   "No pudimos verificar el código. Cierra sesión y vuelve a ingresar.";

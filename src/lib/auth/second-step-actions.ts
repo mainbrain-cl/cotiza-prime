@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { logAuditEvent, type AuditAction } from "@/lib/audit/log";
 import {
   AUTH_MESSAGES,
+  MFA_LOCKED_DAY_ENROLLMENT_MESSAGE,
   MFA_LOCKED_DAY_MESSAGE,
   MFA_LOCKED_DAY_PASSWORD_MESSAGE,
   MFA_SIGN_IN_FAILED_MESSAGE,
@@ -103,16 +104,21 @@ async function checkCodeBeforeVerifying(
   }
 
   if (!(await consumeTotpCode(userId, code))) {
-    // Presentar de nuevo un código ya usado cuenta como un fallo (el intento ya se registró al empezar).
-    await recordSecondStepFailure(userId, context, clientIp);
+    // Un código ya usado NO es un código incorrecto (menor 5 de la revisión de Aarón al PR #44): quien lo escribe en dos
+    // dispositivos dentro de 2 minutos no suma al tope del día ni al de la IP. El intento sí contó en la ventana de 15
+    // minutos al registrarse arriba, y por eso repetirlo igual tiene freno.
     await auditFailure(userId, stage, "code_reused");
     return { ok: false, state: { status: "error", message: AUTH_MESSAGES.mfa_code_reused } };
   }
   return { ok: true, code };
 }
 
-/** El bloqueo de 24 h con la contraseña orienta a recuperarla; el del enlace del correo no tiene esa salida. */
+/**
+ * El bloqueo de 24 h con la contraseña orienta a recuperarla; el del enlace del correo no tiene esa salida; el de la
+ * activación orienta a revisar la hora del teléfono.
+ */
 function lockedDayMessageFor(context: SecondStepContext): string {
+  if (context === "enrollment") return MFA_LOCKED_DAY_ENROLLMENT_MESSAGE;
   return context === "password" ? MFA_LOCKED_DAY_PASSWORD_MESSAGE : MFA_LOCKED_DAY_MESSAGE;
 }
 
@@ -284,12 +290,13 @@ export async function confirmTotpEnrollmentAction(
   const { clientIp } = await getRequestContext();
   const factorId = readText(formData, FACTOR_FIELD) ?? "";
 
+  // Contadores PROPIOS de la activación (menor 4): no comparten tope con el ingreso con contraseña.
   const checked = await checkCodeBeforeVerifying(
     formData,
     user.id,
     clientIp,
     "enrollment",
-    "password",
+    "enrollment",
   );
   if (!checked.ok) return checked.state;
 
@@ -311,10 +318,10 @@ export async function confirmTotpEnrollmentAction(
 
   const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: checked.code });
   if (error) {
-    return failedVerification(error, user.id, checked.code, clientIp, "enrollment", "password");
+    return failedVerification(error, user.id, checked.code, clientIp, "enrollment", "enrollment");
   }
 
-  await clearSecondStepFailures(user.id, "password");
+  await clearSecondStepFailures(user.id, "enrollment");
   const enrolled: { action: AuditAction } = { action: "session.mfa_enrolled" };
   const details = { stage: "enrollment", factorType: MFA_FACTOR_TYPE };
   await logAuditEvent({ ...enrolled, result: "success", actorUserId: user.id, details });

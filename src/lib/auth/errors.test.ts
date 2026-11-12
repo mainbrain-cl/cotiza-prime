@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUTH_MESSAGES, classifyAuthError } from "./errors";
+import { AUTH_MESSAGES, MFA_LOCKED_DAY_ENROLLMENT_MESSAGE, classifyAuthError } from "./errors";
 import { RESET_REQUEST_SENT_MESSAGE } from "./messages";
 import {
   fieldErrorsOf,
@@ -119,6 +119,12 @@ describe("verificación en dos pasos (H-004a): errores", () => {
       "rate_limited",
     );
     expect(classifyAuthError({ code: "over_request_rate_limit" })).toBe("rate_limited");
+  });
+
+  it("el bloqueo de 24 horas al activar manda a revisar la hora del teléfono y no habla de la contraseña", () => {
+    expect(MFA_LOCKED_DAY_ENROLLMENT_MESSAGE).toMatch(/Demasiados intentos hoy/);
+    expect(MFA_LOCKED_DAY_ENROLLMENT_MESSAGE).toMatch(/hora de tu teléfono/);
+    expect(MFA_LOCKED_DAY_ENROLLMENT_MESSAGE).not.toMatch(/contraseña|alguien/);
   });
 
   it("un error desconocido de la verificación no revela detalles", () => {

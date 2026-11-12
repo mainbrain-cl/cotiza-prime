@@ -45,7 +45,12 @@ esta base no usa (analítica, vector, tiempo real, Studio), levantarla sin ellos
   activación se revierte y la pantalla lo dice. La base solo deja activar un factor si el servidor dejó antes un «permiso» de
   2 minutos: activar hablando directo con Supabase (`/auth/v1/factors/.../verify`) responde 500 y no activa nada. Un script o
   una prueba que quiera activar un factor por la API tiene que pedir antes el permiso: `select public.mfa_alert_expect(<cuenta>,
-  <factor>)` con la llave maestra (ver `tests/support/mfa-gate.ts`). La anulación desde el enlace es la etapa B de H-118.
+  <factor>)` con la llave maestra (ver `tests/support/mfa-gate.ts`). 
+- **Probar la anulación (H-118b):** con una cuenta nueva, activa el segundo paso (el aviso llega a Mailpit con el botón «No fui yo:
+  anular la activación»). El enlace termina en `/cuenta/anular-dos-pasos#<código>`: el código va tras el «#», que el navegador no
+  manda al servidor. Abrirlo no hace nada; solo el botón rojo «Anular la activación» anula: quita el factor, deja la contraseña
+  sin uso, cierra todas las sesiones y manda dos correos (elegir la contraseña nueva, y «Anulamos la verificación en dos pasos de
+  tu cuenta»). El enlace vale 72 horas y una sola vez; un enlace que no sirve, por la causa que sea, da el mismo mensaje.
 - **Quitar el factor de una cuenta local** (aún no hay desactivar en la pantalla, es H-004b): en Studio, `auth.mfa_factors`,
   borrar la fila; o `delete from auth.mfa_factors where user_id = '…';` en `psql` (base local, puerto 56322).
 - **Desbloquear los intentos de una cuenta (soporte)**: los contadores del código viven en `auth_rate_limits` con las huellas

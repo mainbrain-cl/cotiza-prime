@@ -272,3 +272,52 @@ No se pudo comprobar en esta etapa: el 500 en un GoTrue distinto del local, y `a
 ## Qué falta para la etapa B
 
 `annulSecondStepAction` y la página `/cuenta/anular-dos-pasos` (con su componente que lee el «#»); `mfa_annul_claim/complete/release` (y `mfa_revoke_sessions` si el paso 0 de B lo exige); la pasarela de anulación (contraseña al azar con `updateUserById`, borrar todos los factores, cerrar sesiones comprobando que no quede ninguna); el correo de recuperación y el de «Anulamos la verificación»; tipos y reglas de `mfa_annul_ip` (10 cada 15 min) y `mfa_annul_token` (5 cada 15 min) en `login-rate-limit.ts`; el texto nuevo de `/ingresar/codigo`; cabeceras de la página; la guardia de que la página no importe la llave maestra; el e2e del ataque completo y los de enlace reusado, vencido, inventado y 375 px.
+
+---
+
+# Registro de construcción — etapa B (H-118b: anular), 2026-11-12
+
+**Misma rama** `feat/h-118-anular-activacion` (etapas A y B juntas; sin PR). Entorno 🟢 PRUEBAS. Con esto la historia completa está construida **y en revisión**; no está en producción ni se probó con un proveedor de correo real.
+
+## Qué se comprobó antes de construir
+
+- **Cambiar la contraseña con la API de administración (`updateUserById`) YA cierra todas las sesiones y todos los tokens de renovación de la cuenta** (comprobado en `tests/db/mfa-annul.test.ts`, K9: tras el cambio `auth.sessions` y `auth.refresh_tokens` quedan en 0 y un pase viejo responde 403 `session_not_found`). Por eso el paso «cerrar sesiones» no necesita una función propia para funcionar. Aun así se agregó `mfa_revoke_sessions(user)` (borra lo que quede y devuelve cuántas sesiones y tokens quedan) como **comprobación en la base**: el servicio exige que devuelva 0 antes de dar la anulación por hecha.
+- Un pase de acceso (JWT) ya emitido sigue sirviendo **hasta 15 minutos contra PostgREST** (la API de datos); contra Supabase Auth (`/user`) responde `session_not_found` al instante. Es el riesgo 4 del diseño, que cierra `app.session_alive()` de H-116 (aún no existe).
+
+## Qué se construyó (un commit por tema)
+
+- **B1 — `b2fa2f8`.** Migración `20261113110000_mfa_annul.sql` y su deshacer: `mfa_annul_claim`, `mfa_annul_complete`, `mfa_annul_release`, `mfa_revoke_sessions` (solo `service_role`). Pruebas: `tests/db/mfa-annul.test.ts` y `mfa-annul-rollback.test.ts`. El deshacer de la etapa A ahora exige deshacer antes éste (sus funciones nombran las tablas).
+- **B2 — `3acf3a1`.** `lockAccountAndRemoveFactors` en `src/lib/security/mfa-admin-gateway.ts` (contraseña de 48 bytes al azar, borra TODOS los factores); porteros `claimAnnulLink`, `completeAnnulLink`, `releaseAnnulLink`, `revokeRemainingSessions` en `mfa-alerts-gateway.ts`; `src/lib/security/mfa-annul.ts` con el orden del diseño; `consumeMfaAnnulQuota` y los alcances `mfa_annul_ip` (10 cada 15 min) y `mfa_annul_token` (5 cada 15 min) en `login-rate-limit.ts` (tipo, regla y almacenamiento); correo `src/lib/email/mfa-annulled-notice.ts`; auditoría `session.mfa_annulled` y `session.mfa_annul_failed` con su etiqueta.
+- **B3 — `984ffbb`.** Página `src/app/cuenta/anular-dos-pasos/` (`page.tsx` sin lectura alguna y `annul-form.tsx`, que copia el código del «#» a un campo oculto y lo borra de la dirección con `history.replaceState`), acción `annulSecondStepAction` (`src/lib/auth/mfa-annul-actions.ts`, mensajes en `mfa-annul-messages.ts`, excepción justificada en `guard-coverage.test.ts`), cabeceras en `next.config.ts` (`no-store`, `no-referrer`, `X-Robots-Tag: noindex, nofollow`, `Cross-Origin-Opener-Policy: same-origin`), ruta en el registro de aislamiento (`scope: "none"`), el texto nuevo de `/ingresar/codigo` y las guardias 14f (ampliada a los archivos nuevos) y 14h (la página no usa la llave maestra ni lee nada al abrirse; el servicio no abre sesiones).
+- **B4 — `5a52eda`.** `tests/isolation/mfa-annul.test.ts` (el enlace de A con la sesión de B abierta solo afecta a A) y `e2e/mfa-annul.spec.ts` (el ataque completo, enlace usado/vencido/inventado, abrir sin apretar y cabeceras, 375 px con teclado y movimiento reducido).
+
+## Desviaciones y decisiones
+
+1. **`mfa_annul_claim` devuelve también `user_id`** (el servicio lo necesita para el paso 3, antes de que exista el correo); no devuelve el correo, que entrega `mfa_annul_complete`. Solo lo llama el servidor con la llave maestra.
+2. **El correo de recuperación se pide desde la acción** (no desde el servicio) con `supabase.auth.resetPasswordForEmail`, el mismo flujo de «¿Olvidaste tu contraseña?» (`redirectTo` = `/auth/recuperar`), porque necesita las cookies de la petición para el flujo PKCE; el servicio recibe esa función y SOLO la llama con el correo que leyó la base. **No pasa por el tope `reset_email`/`reset_ip` de H-003** (ese tope vive en `requestPasswordResetAction`); lo único que puede frenarlo es el límite propio de Supabase (`over_email_send_rate_limit`, o su espera mínima entre correos de un mismo usuario): si lo rechaza, la página dice «Para entrar, usa «¿Olvidaste tu contraseña?»» y la anulación vale igual. No hizo falta tocar nada para el tope.
+3. **`mfa_annul_complete` audita con `actor_user_id` = la cuenta** (además de `actor_type 'public'`): así el registro de actividad de la organización muestra el nombre de la persona cuya activación se anuló; la IP y el navegador de la petición viajan como cabeceras `x-cp-client-ip`, `x-cp-request-id` y `user-agent` en la llamada a la base.
+4. **La página se abre con el mismo enlace una sola vez por carga:** al volver a abrir exactamente la misma dirección dentro del mismo documento (solo cambia el «#») el navegador no recarga y no se vuelve a copiar el código; en el uso real (abrir el correo) siempre es una carga nueva. Si la persona recarga la página después de que se borró el «#», aparece el mensaje de «ya no sirve» (tiene que volver a abrir el botón del correo).
+5. **Un código mal formado (no son 43 caracteres base64url) no consulta nada:** ni límites ni base. Cuenta como `invalid` sin tocar el contador (no hay nada que proteger).
+6. **`proxy.ts` sigue renovando la sesión en esta ruta** (`refreshSession` corre en todas las rutas salvo las excluidas): es una llamada a Supabase Auth con las cookies que traiga el navegador, sin leer el código ni la base de la aplicación; no cambia el estado de nadie.
+
+## Para la revisión adversarial (riesgos)
+
+- **Quien lee el correo de la dueña** durante las 72 horas posteriores a una activación legítima puede anular y dejar la cuenta sin acceso hasta que ella recupere con su correo (riesgo 1 del diseño). El enlace solo sirve a quien controla el buzón.
+- **Un reescritor de enlaces** (antivirus de correo, Gmail, Outlook) que pierda la parte «#» deja el botón sin código: la página mostrará «ya no sirve». No comprobado con buzones reales.
+- **El pase del atacante** (JWT) sigue valiendo hasta 15 minutos contra la API de datos aunque su sesión ya no exista (hasta `app.session_alive()`, H-116).
+- **Si el servidor muere entre «dejar la cuenta sin acceso» y «completar»:** la contraseña ya está inutilizada y los factores borrados, pero el enlace queda tomado hasta 2 minutos; pasado ese plazo se puede abrir de nuevo (todos los pasos son repetibles). El aviso queda `sent` hasta entonces.
+- **Si el correo de recuperación y la cuenta de correo fallan,** la persona recupera con «¿Olvidaste tu contraseña?» (la contraseña vieja ya no existe).
+- **Abuso del enlace por el propio dueño del buzón** = lo previsto (lo peor que le pasa a un dueño legítimo es elegir otra contraseña).
+- **Las tablas de avisos y enlaces siguen sin pasar por `email_messages`:** un rebote del aviso o de los correos de la anulación no se detecta.
+- `session.mfa_annul_failed` se escribe solo en la plataforma, con la cuenta como autora (no en cada organización).
+
+## Lo que NO se pudo comprobar
+
+El envío con el proveedor real (Resend, decisión 016) y su dominio (SPF, DKIM, DMARC); que Gmail y Outlook conserven el «#» del enlace; el comportamiento del disparador sobre `auth.mfa_factors` y del 500 de GoTrue en un proyecto alojado; Firefox, lector de pantalla e iPhone real; el correo de recuperación contra los límites de envío de Supabase alojado (en local salió siempre).
+
+## Antes del piloto (lista)
+
+1. En el Supabase de pruebas alojado: comprobar que se puede crear el disparador `mfa_factor_verify_gate` sobre `auth.mfa_factors` y que una activación directa por la API responde 500 sin activar nada.
+2. Configurar Resend (decisión 016: dominio, SPF/DKIM/DMARC, `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`, `APP_ORIGIN`) y probar con buzones reales de Gmail y Outlook que el enlace del correo de aviso conserve el «#».
+3. Apagar los factores por teléfono y WebAuthn, medir el cupo de verificaciones y dejar apagado el aviso propio de Supabase (`mfa_factor_enrolled`).
+4. Revisión adversarial y prueba en pantalla de Aarón; y `app.session_alive()` (H-116) para el tramo de 15 minutos.

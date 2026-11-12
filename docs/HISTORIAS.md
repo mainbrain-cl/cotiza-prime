@@ -2038,15 +2038,16 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 **quiero** poder anular, desde el correo que me avisa, una activación del segundo paso que yo no hice
 **para** que quien sepa mi contraseña no pueda activar el segundo paso con su teléfono y dejarme fuera de mi cuenta.
 
-**Criterios de aceptación** (el `planificador` los afina al diseñarla)
-- [ ] Al activar el segundo paso, a la cuenta le llega un correo con un enlace de un solo uso para **anular la activación**
-- [ ] El enlace solo funciona una vez, caduca, y su token se guarda solo como huella; abrirlo muestra una confirmación y la anulación se hace al confirmar, no al abrir (los escáneres de correo abren los enlaces)
-- [ ] Al anular: se quita el factor, se cierran todas las sesiones de la cuenta (también la de quien activó) y queda en el registro de actividad y en el de auditoría
-- [ ] Un token inválido, vencido o ya usado da el mismo mensaje (no revela cuál)
-- [ ] Quien tiene la contraseña no puede volver a activar de inmediato y dejar fuera otra vez al dueño: la anulación obliga a cambiar la contraseña, o a esperar, según el diseño
-- [ ] Si el correo no puede salir, la persona lo sabe y no queda con la cuenta protegida por un teléfono que nadie vigila sin saberlo
-- [ ] Una prueba reproduce el ataque completo: quien conoce la contraseña activa su teléfono, el dueño usa el enlace del correo y el atacante queda fuera
-- [ ] Se prueba en local con el correo de Mailpit
+**Criterios de aceptación** (marcados al 2026-11-12: lo cumplido está verificado en local con Mailpit; ver el registro de construcción en `docs/arquitectura/h-118-anular-activacion.md`)
+- [x] Al activar el segundo paso, a la cuenta le llega un correo con un enlace de un solo uso para **anular la activación**
+- [x] El enlace solo funciona una vez, caduca, y su token se guarda solo como huella; abrirlo muestra una confirmación y la anulación se hace al confirmar, no al abrir (los escáneres de correo abren los enlaces)
+- [x] Al anular: se quita el factor, se cierran todas las sesiones de la cuenta (también la de quien activó) y queda en el registro de actividad y en el de auditoría
+- [x] Un token inválido, vencido o ya usado da el mismo mensaje (no revela cuál)
+- [x] Quien tiene la contraseña no puede volver a activar de inmediato y dejar fuera otra vez al dueño: la anulación obliga a cambiar la contraseña, o a esperar, según el diseño
+- [x] Si el correo no puede salir, la persona lo sabe y no queda con la cuenta protegida por un teléfono que nadie vigila sin saberlo
+- [x] Una prueba reproduce el ataque completo: quien conoce la contraseña activa su teléfono, el dueño usa el enlace del correo y el atacante queda fuera
+- [x] Se prueba en local con el correo de Mailpit
+- [ ] **Falta, no verificado:** el envío con el proveedor real (Resend, decisión 016) y que Gmail y Outlook conserven el «#» del enlace; el disparador sobre `auth.mfa_factors` y el 500 de GoTrue en el proyecto alojado de pruebas; la revisión adversarial y la prueba en pantalla de Aarón
 
 **Prioridad:** núcleo
 **Tamaño:** grande (unos 5,25 días con la revisión adversarial): **se parte en H-118a** (aviso: permiso, disparador y correo) **y H-118b** (anular: enlace, página y pasarela), dentro de un mismo PR con etapas

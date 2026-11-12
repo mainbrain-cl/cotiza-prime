@@ -908,7 +908,8 @@ describe("guardias estáticas del aislamiento", () => {
     expect(
       only(
         /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/,
-        "src/lib/auth/second-step-actions.ts",
+        // También la pasarela de administración, que lista y borra factores con la llave maestra (`auth.admin.mfa`).
+        ["src/lib/auth/second-step-actions.ts", MFA_ADMIN_GATEWAY],
       ),
     ).toEqual([]);
     // La API de administración de cuentas (`auth.admin.*`, con la llave maestra): solo en las pasarelas. Hoy hay una (H-118);
@@ -1036,6 +1037,10 @@ describe("guardias estáticas del aislamiento", () => {
       "src/lib/security/mfa-annul-token.ts",
       "src/lib/security/mfa-enrollment-notice.ts",
       "src/lib/email/mfa-enrollment-notice.ts",
+      // H-118b
+      "src/lib/security/mfa-annul.ts",
+      "src/lib/auth/mfa-annul-actions.ts",
+      "src/lib/email/mfa-annulled-notice.ts",
     ];
     let found = 0;
     for (const file of files) {
@@ -1059,6 +1064,45 @@ describe("guardias estáticas del aislamiento", () => {
       const text = stripComments(read(path.join(ROOT, file)));
       expect(/console\./.test(text), `${file}: escribe en la consola`).toBe(false);
     }
+  });
+
+  it("14h. (H-118b) la página de anular no usa la llave maestra, no lee ni consulta nada al abrirse, y la acción solo habla con el servicio de anulación", () => {
+    const dir = path.join(SRC, "app/cuenta/anular-dos-pasos");
+    const pageFiles = readdirSync(dir).filter((name) => /\.(ts|tsx)$/.test(name));
+    expect(pageFiles).toEqual(expect.arrayContaining(["page.tsx", "annul-form.tsx"]));
+    for (const name of pageFiles) {
+      const text = stripComments(read(path.join(dir, name)));
+      expect(
+        /admin-client|createAdminClient|SERVICE_ROLE|auth\s*\.\s*admin/.test(text),
+        `${name}: llave maestra`,
+      ).toBe(false);
+      expect(
+        /@\/lib\/security\//.test(text),
+        `${name}: importa un módulo de seguridad del servidor`,
+      ).toBe(false);
+      expect(/@\/lib\/supabase\//.test(text), `${name}: habla con Supabase`).toBe(false);
+    }
+    // Al ABRIRLA (GET) no lee el código ni la sesión ni las cookies, ni consulta la base: no es async ni usa nada de la petición.
+    const page = stripComments(read(path.join(dir, "page.tsx")));
+    expect(
+      /searchParams|cookies\(|headers\(|await |getSessionState|requireUser|\.rpc\(|\.from\(/.test(
+        page,
+      ),
+    ).toBe(false);
+    // El código solo sale del cliente por el campo oculto del formulario: no va en la ruta ni en la consulta.
+    const form = stripComments(read(path.join(dir, "annul-form.tsx")));
+    expect(form).toMatch(/window\.location\.hash/);
+    expect(form).toMatch(/history\.replaceState/);
+    expect(/useSearchParams|fetch\(/.test(form)).toBe(false);
+    // La acción no usa la llave maestra ni nombra la API de cuentas: todo pasa por el servicio.
+    const action = stripComments(read(path.join(SRC, "lib/auth/mfa-annul-actions.ts")));
+    expect(/admin-client|createAdminClient|auth\s*\.\s*admin/.test(action)).toBe(false);
+    expect(action).toMatch(/annulSecondStep\(/);
+    // Y el servicio no abre una sesión de recuperación: no hay inicio de sesión ni cambio de contraseña con el pase de nadie.
+    const service = stripComments(read(path.join(SRC, "lib/security/mfa-annul.ts")));
+    expect(
+      /signIn|verifyOtp|exchangeCodeForSession|setSession|signInWithPassword/.test(service),
+    ).toBe(false);
   });
 
   it("14g. la guardia 14f detecta de verdad el código del enlace, su huella, la contraseña y el correo; deja pasar un código de error", () => {

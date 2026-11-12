@@ -5,7 +5,8 @@
 -- Cuatro funciones SOLO del servidor (llave maestra), sobre las tablas de la etapa A (20261113100000):
 --   1. `mfa_annul_claim(huella)`: TOMA el enlace por 2 minutos (`for update`). Devuelve el MISMO `{result: 'invalid'}` si la
 --      huella no tiene la forma, no existe, venció, ya se usó, está tomado por otra llamada o su aviso ya no está `sent`
---      (nunca dice cuál de esas cosas fue). Con éxito devuelve `{result: 'ok', link_id}`. No devuelve la cuenta ni el correo.
+--      (nunca dice cuál de esas cosas fue). Con éxito devuelve `{result: 'ok', link_id, user_id}` (la cuenta, que el servidor necesita para dejarla sin acceso; el correo
+--      NO: lo entrega `mfa_annul_complete`). Solo la llama el servidor con la llave maestra.
 --   2. `mfa_annul_complete(link_id)`: consume ESE enlace y TODOS los abiertos de la cuenta (nada hecho desde una sesión los
 --      invalida; solo esto), cierra los avisos (`sent`/`pending` → `annulled`; un permiso vivo → `closed`) y audita
 --      `session.mfa_annulled` en la plataforma y en cada organización donde la persona está ACTIVA (`actor_type 'public'`,
@@ -50,7 +51,7 @@ begin
     return jsonb_build_object('result', 'invalid');
   end if;
   update public.mfa_annul_links set claimed_until = now() + interval '2 minutes' where id = v_link.id;
-  return jsonb_build_object('result', 'ok', 'link_id', v_link.id);
+  return jsonb_build_object('result', 'ok', 'link_id', v_link.id, 'user_id', v_link.user_id);
 end $$;
 
 -- 2. Completar: consume los enlaces, cierra los avisos y audita ----------------------------------------------------------------

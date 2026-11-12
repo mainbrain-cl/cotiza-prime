@@ -23,7 +23,7 @@ declare
 begin
   -- (a) las cuatro funciones son las de esta migración
   if not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_annul_claim(text)')::oid
-                    and md5(p.prosrc) = 'ae9677f594deba6dc6bb25252230cb3c')
+                    and md5(p.prosrc) = 'de5c184e755792ee11cb1226b835d926')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_annul_complete(uuid)')::oid
                     and md5(p.prosrc) = 'f419bf38474772ee5c9dd3578a761ed7')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_annul_release(uuid)')::oid

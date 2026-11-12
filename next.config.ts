@@ -73,6 +73,19 @@ const nextConfig: NextConfig = {
         source: "/cuenta/:path*",
         headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
       },
+      // Anular la activación del segundo paso (H-118b): el código del enlace va tras el «#» (el navegador no lo manda al
+      // servidor). La página es pública y la abre quien recibe el correo: sin cachés ni buscadores, sin pasar la dirección a otros
+      // sitios (repite lo de la regla general de `/cuenta`, para que esta no dependa de aquella) y, con `Cross-Origin-Opener-Policy: same-origin`, si otro sitio la abre en una
+      // ventana nueva, ese sitio no puede controlarla ni verla.
+      {
+        source: "/cuenta/anular-dos-pasos",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+        ],
+      },
       // La invitación (H-009): `/invitacion/:código` lleva el código secreto de la invitación. Nada se guarda en
       // cachés ni en buscadores, y al salir no se manda la dirección a ningún sitio.
       // `Cross-Origin-Opener-Policy: same-origin` (corrección I1): si otro sitio abre esta pantalla en una ventana

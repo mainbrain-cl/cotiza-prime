@@ -885,6 +885,9 @@ export const APP_ROUTES: AppRoute[] = [
   // cuenta. Son de la persona, no de una organización.
   { path: "/ingresar/codigo", kind: "page", scope: "none" },
   { path: "/cuenta/seguridad", kind: "page", scope: "none" },
+  // H-118b: pública y sin sesión. Al abrirla no lee ningún código ni consulta nada; solo la acción de servidor (con el código
+  // del enlace, de un solo uso) hace algo. La acción pasa por el servicio de anulación, nunca por una organización.
+  { path: "/cuenta/anular-dos-pasos", kind: "page", scope: "none" },
   { path: "/registro", kind: "page", scope: "none" },
   { path: "/aceptar-terminos", kind: "page", scope: "none" },
   { path: "/recuperar-contrasena", kind: "page", scope: "none" },

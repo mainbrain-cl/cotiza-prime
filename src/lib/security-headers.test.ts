@@ -97,6 +97,23 @@ describe("cabeceras de la invitación (H-009, corrección I1)", () => {
     const withOpener = rules.filter((r) =>
       r.headers.some((h) => h.key === "Cross-Origin-Opener-Policy"),
     );
-    expect(withOpener.map((r) => r.source)).toEqual(["/invitacion/:path*"]);
+    // Las dos pantallas que se abren con un código en la dirección: la invitación y anular la activación del segundo paso.
+    expect(withOpener.map((r) => r.source).sort()).toEqual([
+      "/cuenta/anular-dos-pasos",
+      "/invitacion/:path*",
+    ]);
+  });
+});
+
+describe("cabeceras de anular la activación del segundo paso (H-118b)", () => {
+  it("/cuenta/anular-dos-pasos no se guarda, no se indexa, no pasa la dirección y no deja que otro sitio controle la ventana", async () => {
+    const rules = await nextConfig.headers!();
+    const rule = rules.find((r) => r.source === "/cuenta/anular-dos-pasos");
+    expect(rule, "falta la regla de /cuenta/anular-dos-pasos").toBeDefined();
+    const value = (key: string) => rule!.headers.find((h) => h.key === key)?.value ?? "";
+    expect(value("Cache-Control")).toBe("private, no-store, max-age=0");
+    expect(value("Referrer-Policy")).toBe("no-referrer");
+    expect(value("X-Robots-Tag")).toBe("noindex, nofollow");
+    expect(value("Cross-Origin-Opener-Policy")).toBe("same-origin");
   });
 });

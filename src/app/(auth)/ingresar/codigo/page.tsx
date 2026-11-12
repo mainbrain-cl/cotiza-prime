@@ -27,6 +27,10 @@ export default async function SecondStepPage() {
           <p>
             Si ya no tienes la aplicación, cierra sesión y pide ayuda al equipo de Cotiza Prime.
           </p>
+          <p>
+            ¿No activaste tú la verificación? Busca en tu correo el aviso «Se activó la verificación
+            en dos pasos» y usa su botón para anularla.
+          </p>
           <form action={signOutAction}>
             <Button type="submit" variant="ghost" size="sm">
               Cerrar sesión

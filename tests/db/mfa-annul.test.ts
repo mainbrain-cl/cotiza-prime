@@ -68,13 +68,12 @@ const complete = async (client: Client, linkId: string | null) =>
   ).rows[0].r;
 
 describe("mfa_annul_claim", () => {
-  it("K1 · un enlace válido se toma por 2 minutos; la respuesta no trae la cuenta ni el correo", () =>
+  it("K1 · un enlace válido se toma por 2 minutos; la respuesta trae la cuenta (la necesita el servidor) pero no el correo", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
       const { linkId, hash, user } = await seed(db);
       const got = await claim(db, hash);
-      expect(got).toEqual({ result: "ok", link_id: linkId });
-      expect(JSON.stringify(got)).not.toContain(user.id);
+      expect(got).toEqual({ result: "ok", link_id: linkId, user_id: user.id });
       expect(JSON.stringify(got)).not.toContain(user.email);
       const row = await db.query<{ secs: number }>(
         "select extract(epoch from (claimed_until - now()))::int as secs from public.mfa_annul_links where id = $1",
@@ -127,7 +126,7 @@ describe("mfa_annul_claim", () => {
         "update public.mfa_annul_links set claimed_until = now() - interval '1 second' where id = $1",
         [linkId],
       );
-      expect(await claim(db, hash)).toEqual({ result: "ok", link_id: linkId });
+      expect(await claim(db, hash)).toMatchObject({ result: "ok", link_id: linkId });
     }));
 
   it("K4 · dos tomas a la vez: gana UNA", async () => {
@@ -272,7 +271,7 @@ describe("mfa_annul_complete y mfa_annul_release", () => {
       expect(
         (await db.query("select public.mfa_annul_release($1) as ok", [linkId])).rows[0].ok,
       ).toBe(true);
-      expect(await claim(db, hash)).toEqual({ result: "ok", link_id: linkId });
+      expect(await claim(db, hash)).toMatchObject({ result: "ok", link_id: linkId });
       await complete(db, linkId);
       expect(
         (await db.query("select public.mfa_annul_release($1) as ok", [linkId])).rows[0].ok,

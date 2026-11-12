@@ -22,9 +22,10 @@
 --      `mfa_alert_revert`.
 --   5. Dos alcances nuevos del límite de intentos, para el enlace de anulación (etapa B): `mfa_annul_ip` y `mfa_annul_token`.
 --
--- Retención: las filas se borran a los 33 días de creadas (30 días después de que el enlace de 72 horas venció), con la
--- limpieza dentro de `mfa_alert_expect`; no hace falta tarea programada. El rastro queda en `audit_log` (24 meses).
--- Las dos tablas NO guardan el correo: se lee de `auth.users` al enviar. `error_code` guarda solo códigos.
+-- Retención: los enlaces se borran 30 días después de VENCER (`expires_at` + 30 días) y un aviso se borra cuando ya no le queda
+-- ningún enlace y tiene más de 30 días (así un enlace reservado tarde nunca se borra antes de cumplir sus 72 horas más 30 días).
+-- La limpieza va dentro de `mfa_alert_expect` y `mfa_annul_claim`; no hace falta tarea programada. El rastro queda en
+-- `audit_log` (24 meses). Las dos tablas NO guardan el correo: se lee de `auth.users` al enviar. `error_code` guarda solo códigos.
 --
 -- Guardia 15 (tests/db/schema-guards.test.ts): primera sentencia `set local lock_timeout = '3s'` y, justo después, la
 -- verificación de que el valor quedó puesto. El disparador toma un bloqueo corto sobre `auth.mfa_factors`.
@@ -121,8 +122,10 @@ grant select, insert, update, delete on public.mfa_annul_links to service_role;
 create function public.mfa_alert_expect(p_user_id uuid, p_factor_id uuid) returns boolean
 language plpgsql security definer set search_path = '' as $$
 begin
-  delete from public.mfa_enrollment_alerts where created_at < now() - interval '33 days';
   delete from public.mfa_annul_links where expires_at < now() - interval '30 days';
+  delete from public.mfa_enrollment_alerts a
+   where a.created_at < now() - interval '30 days'
+     and not exists (select 1 from public.mfa_annul_links l where l.tenant_id = a.tenant_id and l.alert_id = a.id);
   if p_user_id is null or p_factor_id is null then
     return false;
   end if;
@@ -144,7 +147,8 @@ language plpgsql security definer set search_path = '' as $$
 declare
   v_alert uuid;
 begin
-  if new.factor_type = 'totp' then
+  -- Solo un factor que ya era TOTP y sigue siendo TOTP puede pasar a verificado (cambiar el tipo en la misma sentencia no sirve).
+  if old.factor_type = 'totp' and new.factor_type = 'totp' then
     select a.id into v_alert
       from public.mfa_enrollment_alerts a
      where a.user_id = new.user_id and a.factor_id = new.id
@@ -175,6 +179,7 @@ language plpgsql security definer set search_path = '' as $$
 declare
   v_alert   public.mfa_enrollment_alerts;
   v_email   text;
+  v_link    uuid;
   v_expires timestamptz := now() + interval '72 hours';
 begin
   if p_user_id is null or p_token_sha256 is null or p_token_sha256 !~ '^[0-9a-f]{64}$' then
@@ -201,12 +206,14 @@ begin
    where id = v_alert.id;
   if v_email is null then
     -- Sin correo no hay a quién avisar: el servidor lo trata como un envío fallido.
-    return jsonb_build_object('reserved', true, 'alert_id', v_alert.id, 'factor_id', v_alert.factor_id,
+    return jsonb_build_object('reserved', true, 'alert_id', v_alert.id, 'link_id', null, 'factor_id', v_alert.factor_id,
                               'verified_at', v_alert.verified_at, 'email', null, 'expires_at', null);
   end if;
   insert into public.mfa_annul_links (alert_id, user_id, token_sha256, expires_at)
-  values (v_alert.id, p_user_id, p_token_sha256, v_expires);
-  return jsonb_build_object('reserved', true, 'alert_id', v_alert.id, 'factor_id', v_alert.factor_id,
+  values (v_alert.id, p_user_id, p_token_sha256, v_expires)
+  returning id into v_link;
+  -- `link_id` es el identificador del enlace (NO su huella ni su código): sirve de clave anti-duplicado del correo, una por enlace.
+  return jsonb_build_object('reserved', true, 'alert_id', v_alert.id, 'link_id', v_link, 'factor_id', v_alert.factor_id,
                             'verified_at', v_alert.verified_at, 'email', v_email, 'expires_at', v_expires);
 end $$;
 
@@ -233,9 +240,12 @@ begin
 end $$;
 
 -- 8. Revertir: el aviso no salió. Si el aviso espera la verificación (`expected`), solo se cierra el permiso. Si ya está
---    `pending`, queda `reverted` y sus enlaces se borran; el servidor borra entonces el factor. Un aviso ya enviado nunca se
---    revierte desde aquí. ----------------------------------------------------------------------------------------------------
-create function public.mfa_alert_revert(p_user_id uuid, p_factor_id uuid, p_error_code text) returns text
+--    `pending`, queda `reverted` y sus enlaces se borran; el servidor borra ANTES el factor y solo entonces llama aquí. Con
+--    `p_only_permit` (al fallar un código) un aviso `pending` NO se toca: devuelve `pending` y el servidor decide (borra el
+--    factor primero y recién después lo anota). Un aviso ya enviado nunca se revierte desde aquí. -------------------------------
+create function public.mfa_alert_revert(
+  p_user_id uuid, p_factor_id uuid, p_error_code text, p_only_permit boolean default false
+) returns text
 language plpgsql security definer set search_path = '' as $$
 declare
   v_code  text := case when p_error_code ~ '^[a-z0-9_:.-]{1,60}$' then p_error_code else 'unknown' end;
@@ -258,6 +268,9 @@ begin
      where id = v_alert.id;
     return 'closed';
   end if;
+  if coalesce(p_only_permit, false) then
+    return 'pending';
+  end if;
   update public.mfa_enrollment_alerts set state = 'reverted', error_code = v_code where id = v_alert.id;
   delete from public.mfa_annul_links where alert_id = v_alert.id;
   return 'reverted';
@@ -267,8 +280,8 @@ end $$;
 revoke all on function public.mfa_alert_expect(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.mfa_alerts_reserve(uuid, text) from public, anon, authenticated;
 revoke all on function public.mfa_alert_settle(uuid, text, text, text) from public, anon, authenticated;
-revoke all on function public.mfa_alert_revert(uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public.mfa_alert_revert(uuid, uuid, text, boolean) from public, anon, authenticated;
 grant execute on function public.mfa_alert_expect(uuid, uuid) to service_role;
 grant execute on function public.mfa_alerts_reserve(uuid, text) to service_role;
 grant execute on function public.mfa_alert_settle(uuid, text, text, text) to service_role;
-grant execute on function public.mfa_alert_revert(uuid, uuid, text) to service_role;
+grant execute on function public.mfa_alert_revert(uuid, uuid, text, boolean) to service_role;

@@ -398,13 +398,16 @@ async function permitEnrollment(userId: string, factorId: string): Promise<boole
 }
 
 /**
- * Cierra el permiso de un factor cuya verificación falló. Si en ese rato alguien lo verificó directo y el aviso no salió
- * (la base lo devuelve como `reverted`), también se borra el factor. Nunca lanza.
+ * Cierra el permiso de un factor cuya verificación falló. Si en ese rato alguien lo verificó directo y su aviso sigue
+ * pendiente (la base lo devuelve como `pending` sin tocarlo), se revierte con el orden de siempre: PRIMERO se borra el
+ * factor y solo después se anota; si el borrado falla, el aviso sigue `pending` y se reintenta. Nunca lanza.
  */
 async function closeEnrollmentPermit(userId: string, factorId: string): Promise<void> {
   try {
-    const outcome = await revertEnrollmentAlert(userId, factorId, "verify_failed");
-    if (outcome === "reverted") await revertEnrollment(userId, factorId, "verify_failed");
+    const outcome = await revertEnrollmentAlert(userId, factorId, "verify_failed", {
+      onlyPermit: true,
+    });
+    if (outcome === "pending") await revertEnrollment(userId, factorId, "verify_failed");
   } catch (error) {
     await serverLog("warn", "mfa_permit_close_failed", {
       code: error instanceof MfaAlertsGatewayError ? error.code : "unexpected",

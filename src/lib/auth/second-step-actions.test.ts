@@ -685,7 +685,9 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
     const state = await confirmTotpEnrollmentAction(IDLE, fields());
     expect(state.message).toMatch(/El código no coincide/);
     expect(deliverPendingEnrollmentNotices).toHaveBeenCalledWith(USER.id);
-    expect(revertEnrollmentAlert).toHaveBeenCalledWith(USER.id, FACTOR_ID, "verify_failed");
+    expect(revertEnrollmentAlert).toHaveBeenCalledWith(USER.id, FACTOR_ID, "verify_failed", {
+      onlyPermit: true,
+    });
     // Y no se borra el factor sin verificar: la persona reintenta con el mismo QR.
     expect(revertEnrollment).not.toHaveBeenCalled();
   });
@@ -708,7 +710,8 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
       sentTo: null,
       failures: [],
     });
-    revertEnrollmentAlert.mockResolvedValue("reverted");
+    // La base devuelve `pending` (sin tocarlo): el servidor borra el factor PRIMERO y recién después lo anota.
+    revertEnrollmentAlert.mockResolvedValue("pending");
     await confirmTotpEnrollmentAction(IDLE, fields());
     expect(revertEnrollment).toHaveBeenCalledWith(USER.id, FACTOR_ID, "verify_failed");
   });

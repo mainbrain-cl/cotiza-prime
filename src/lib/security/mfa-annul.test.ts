@@ -20,7 +20,7 @@ class FakeAdminError extends Error {
 }
 class FakeEmailConfigError extends Error {}
 
-const consumeMfaAnnulQuota = vi.fn();
+const recordMfaAnnulMiss = vi.fn();
 const claimAnnulLink = vi.fn();
 const completeAnnulLink = vi.fn();
 const releaseAnnulLink = vi.fn();
@@ -34,7 +34,7 @@ const serverLog = vi.fn();
 const sendRecovery = vi.fn();
 
 vi.mock("./login-rate-limit", () => ({
-  consumeMfaAnnulQuota: (...args: unknown[]) => consumeMfaAnnulQuota(...args),
+  recordMfaAnnulMiss: (...args: unknown[]) => recordMfaAnnulMiss(...args),
 }));
 vi.mock("./mfa-alerts-gateway", () => ({
   MfaAlertsGatewayError: FakeGatewayError,
@@ -63,7 +63,7 @@ const { hashMfaAnnulToken } = await import("./mfa-annul-token");
 
 beforeEach(() => {
   for (const mock of [
-    consumeMfaAnnulQuota,
+    recordMfaAnnulMiss,
     claimAnnulLink,
     completeAnnulLink,
     releaseAnnulLink,
@@ -78,7 +78,7 @@ beforeEach(() => {
   ]) {
     mock.mockReset();
   }
-  consumeMfaAnnulQuota.mockResolvedValue(true);
+  recordMfaAnnulMiss.mockResolvedValue(false);
   claimAnnulLink.mockResolvedValue({ linkId: LINK_ID, userId: USER_ID });
   lockAccountAndRemoveFactors.mockResolvedValue(undefined);
   revokeRemainingSessions.mockResolvedValue(0);
@@ -104,7 +104,7 @@ describe("annulSecondStep · antes de tocar la base", () => {
     ["con salto de línea", `${TOKEN.slice(0, 42)}\n`],
   ])("un código %s es «invalid» y NO consulta límites, base ni Supabase", async (_name, bad) => {
     expect(await annulSecondStep(bad, REQUEST, sendRecovery)).toEqual({ status: "invalid" });
-    expect(consumeMfaAnnulQuota).not.toHaveBeenCalled();
+    expect(recordMfaAnnulMiss).not.toHaveBeenCalled();
     expect(claimAnnulLink).not.toHaveBeenCalled();
     expect(lockAccountAndRemoveFactors).not.toHaveBeenCalled();
     expect(sendRecovery).not.toHaveBeenCalled();
@@ -114,40 +114,51 @@ describe("annulSecondStep · antes de tocar la base", () => {
     expect(await annulSecondStep(undefined as unknown as string, REQUEST, sendRecovery)).toEqual({
       status: "invalid",
     });
-    expect(consumeMfaAnnulQuota).not.toHaveBeenCalled();
-  });
-
-  it("los límites cuentan por IP y por la HUELLA del código (nunca el código); pasados, no toma el enlace", async () => {
-    consumeMfaAnnulQuota.mockResolvedValue(false);
-    expect(await run()).toEqual({ status: "rate_limited" });
-    expect(consumeMfaAnnulQuota).toHaveBeenCalledWith(REQUEST.clientIp, hashMfaAnnulToken(TOKEN));
-    expect(JSON.stringify(consumeMfaAnnulQuota.mock.calls)).not.toContain(TOKEN);
-    expect(claimAnnulLink).not.toHaveBeenCalled();
+    expect(recordMfaAnnulMiss).not.toHaveBeenCalled();
   });
 });
 
-describe("annulSecondStep · tomar el enlace", () => {
-  it("toma el enlace con la huella; si no existe, venció, se usó o está tomado, el resultado es el MISMO `invalid` y no se toca la cuenta", async () => {
+describe("annulSecondStep · tomar el enlace y los límites", () => {
+  it("toma el enlace con la huella; si no sirve (no existe, venció, se usó o está tomado), anota el fallo y responde el MISMO `invalid`, sin tocar la cuenta", async () => {
     claimAnnulLink.mockResolvedValue(null);
     expect(await run()).toEqual({ status: "invalid" });
     expect(claimAnnulLink).toHaveBeenCalledWith(hashMfaAnnulToken(TOKEN));
+    // Los límites se anotan DESPUÉS de tomar, con la IP y la HUELLA (nunca el código).
+    expect(recordMfaAnnulMiss).toHaveBeenCalledWith(REQUEST.clientIp, hashMfaAnnulToken(TOKEN));
+    expect(JSON.stringify(recordMfaAnnulMiss.mock.calls)).not.toContain(TOKEN);
+    expect(recordMfaAnnulMiss.mock.invocationCallOrder[0]).toBeGreaterThan(
+      claimAnnulLink.mock.invocationCallOrder[0],
+    );
     expect(lockAccountAndRemoveFactors).not.toHaveBeenCalled();
     expect(completeAnnulLink).not.toHaveBeenCalled();
     expect(logAuditEvent).not.toHaveBeenCalled();
   });
 
-  it("si la base falla al tomar el enlace, responde `failed` (no `invalid`) sin tocar la cuenta", async () => {
+  it("un enlace inválido que ya pasó el tope (de la IP o de la huella) responde el límite habitual", async () => {
+    claimAnnulLink.mockResolvedValue(null);
+    recordMfaAnnulMiss.mockResolvedValue(true);
+    expect(await run()).toEqual({ status: "rate_limited" });
+    expect(lockAccountAndRemoveFactors).not.toHaveBeenCalled();
+  });
+
+  it("un enlace VÁLIDO nunca se frena por la IP: no anota nada contra los límites y anula aunque la IP esté llena de intentos ajenos", async () => {
+    recordMfaAnnulMiss.mockResolvedValue(true);
+    expect(await run()).toEqual({ status: "annulled", recoveryEmailSent: true });
+    expect(recordMfaAnnulMiss).not.toHaveBeenCalled();
+  });
+
+  it("si la base falla al tomar el enlace, responde `failed` (no `invalid`), sin tocar la cuenta ni los límites", async () => {
     claimAnnulLink.mockRejectedValue(new FakeGatewayError("annul_claim", "57014"));
     expect(await run()).toEqual({ status: "failed" });
     expect(lockAccountAndRemoveFactors).not.toHaveBeenCalled();
+    expect(recordMfaAnnulMiss).not.toHaveBeenCalled();
   });
 });
 
 describe("annulSecondStep · el orden de los pasos", () => {
-  it("límites → tomar → dejar sin acceso → comprobar sesiones → completar → correo de recuperación → correo de aviso", async () => {
+  it("tomar → dejar sin acceso → comprobar sesiones → completar → correo de recuperación → correo de aviso", async () => {
     expect(await run()).toEqual({ status: "annulled", recoveryEmailSent: true });
     const order = [
-      consumeMfaAnnulQuota,
       claimAnnulLink,
       lockAccountAndRemoveFactors,
       revokeRemainingSessions,
@@ -234,6 +245,24 @@ describe("annulSecondStep · si algo falla a medio camino", () => {
       expect(sendWithRetry).not.toHaveBeenCalled();
     },
   );
+
+  it("si la base no deja tocar las sesiones por PERMISO (42501), la anulación sigue (cambiar la contraseña ya las cerró): deja un aviso sin datos personales y audita `session.mfa_annul_warning`", async () => {
+    revokeRemainingSessions.mockRejectedValue(new FakeGatewayError("revoke_sessions", "42501"));
+    expect(await run()).toEqual({ status: "annulled", recoveryEmailSent: true });
+    expect(releaseAnnulLink).not.toHaveBeenCalled();
+    expect(completeAnnulLink).toHaveBeenCalled();
+    expect(serverLog).toHaveBeenCalledWith("warn", "mfa_annul_warning", {
+      code: "revoke_sessions_no_permission",
+    });
+    expect(logAuditEvent).toHaveBeenCalledWith({
+      action: "session.mfa_annul_warning",
+      result: "failure",
+      actorUserId: USER_ID,
+      details: { reason: "revoke_sessions_no_permission", stage: "annul" },
+    });
+    expect(everythingLogged()).not.toContain(EMAIL);
+    // Cualquier OTRO error de esa función sigue soltando el enlace (ver arriba, 57014).
+  });
 
   it("si además falla soltar el enlace, igual responde `failed` y lo deja en el registro", async () => {
     revokeRemainingSessions.mockResolvedValue(1);

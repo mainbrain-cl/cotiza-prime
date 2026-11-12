@@ -86,7 +86,9 @@ export async function deliverPendingEnrollmentNotices(userId: string): Promise<N
           enrolledAt: reserved.verifiedAt,
           annulUrl: mfaAnnulUrl(getAppOrigin(), token),
           expiresAt: reserved.expiresAt,
-          idempotencyKey: reserved.alertId,
+          // Una clave por ENLACE (no por aviso): un reintento lleva un código nuevo y, con la misma clave, el proveedor lo rechazaría.
+          // Es el identificador del enlace; nunca su huella ni su código.
+          idempotencyKey: reserved.linkId ?? undefined,
         });
         if (!built.ok) {
           failureCode = built.code;

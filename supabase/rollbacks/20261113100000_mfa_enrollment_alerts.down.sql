@@ -11,6 +11,9 @@
 -- ADVERTENCIA. Este deshacer REABRE el camino de activar el segundo paso hablando directo con Supabase (sin que salga el aviso
 -- ni exista el enlace para anularlo): quien conozca la contraseña de una cuenta sin el segundo paso puede activar su propio
 -- teléfono y dejar fuera a la dueña. Mientras la aplicación de H-118 esté funcionando, no se deshace con tráfico abierto.
+-- EN PRODUCCIÓN, además: el aviso propio de Supabase (`mfa_factor_enrolled`) está APAGADO desde H-118. Al deshacer esto el correo
+-- de aviso de la aplicación deja de existir: hay que volver a ENCENDER `mfa_factor_enrolled` en el panel de Supabase (en español)
+-- antes de abrir el tráfico, o las activaciones quedan sin ningún aviso.
 set local lock_timeout = '3s';
 
 do $$ begin
@@ -23,20 +26,20 @@ do $$
 declare
   c_known constant regprocedure[] := array[
     to_regprocedure('public.mfa_alert_expect(uuid, uuid)'), to_regprocedure('public.mfa_alerts_reserve(uuid, text)'),
-    to_regprocedure('public.mfa_alert_settle(uuid, text, text, text)'), to_regprocedure('public.mfa_alert_revert(uuid, uuid, text)'),
+    to_regprocedure('public.mfa_alert_settle(uuid, text, text, text)'), to_regprocedure('public.mfa_alert_revert(uuid, uuid, text, boolean)'),
     to_regprocedure('app.mfa_factor_verify_gate()')];
 begin
   -- (a) las cinco funciones son las de esta migración
   if not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_alert_expect(uuid, uuid)')::oid
-                    and md5(p.prosrc) = '4f00ff3e81da5785a1f924feaa64a62d')
+                    and md5(p.prosrc) = '07e93fd2d3ae84ded32940a0bba337e6')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_alerts_reserve(uuid, text)')::oid
-                    and md5(p.prosrc) = '3aa245c93cedf988b0943b81ad89c172')
+                    and md5(p.prosrc) = 'bd789c281f939378794e84a81dd70c9f')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_alert_settle(uuid, text, text, text)')::oid
                     and md5(p.prosrc) = 'bc311bf90d6671dac6b2911577de8625')
-     or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_alert_revert(uuid, uuid, text)')::oid
-                    and md5(p.prosrc) = '07b9da3c3893b022b20cb0ecb74362de')
+     or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_alert_revert(uuid, uuid, text, boolean)')::oid
+                    and md5(p.prosrc) = 'c35952a6fe733b57e3d7aaa18f52e360')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('app.mfa_factor_verify_gate()')::oid
-                    and md5(p.prosrc) = '51107711d03dd152ab30080be1b29ff1') then
+                    and md5(p.prosrc) = '52e53dbacadd8748ffca7abd815f5cf1') then
     raise exception 'no se puede deshacer 20261113100000_mfa_enrollment_alerts: alguna de las funciones (public.mfa_alert_expect, public.mfa_alerts_reserve, public.mfa_alert_settle, public.mfa_alert_revert, app.mfa_factor_verify_gate) ya no es la de esta migracion: otra migracion la redefinio o ya se deshizo; revise el orden de los deshacer';
   end if;
   -- (b) nadie mas nombra las funciones ni las tablas nuevas: borrarlas romperia esa funcion
@@ -57,7 +60,7 @@ end $$;
 
 drop trigger mfa_factor_verify_gate on auth.mfa_factors;
 drop function app.mfa_factor_verify_gate();
-drop function public.mfa_alert_revert(uuid, uuid, text);
+drop function public.mfa_alert_revert(uuid, uuid, text, boolean);
 drop function public.mfa_alert_settle(uuid, text, text, text);
 drop function public.mfa_alerts_reserve(uuid, text);
 drop function public.mfa_alert_expect(uuid, uuid);

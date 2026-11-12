@@ -12,6 +12,13 @@ export const metadata: Metadata = {
 };
 
 /**
+ * Tiempo máximo (segundos) de las acciones de servidor de esta pantalla. Una de ellas puede enviar hasta 3 avisos de la
+ * activación del segundo paso de 15 segundos cada uno (H-118): 45 s más un margen. Next exige un LITERAL aquí (no una
+ * constante importada); una guardia estática (14i) vigila que valga al menos 60. El plazo del hosting debe respetarlo.
+ */
+export const maxDuration = 60;
+
+/**
  * Tras la contraseña, para cuentas con la verificación en dos pasos activa (H-004a). Es la ÚNICA pantalla que acepta una
  * sesión parcial: no redirige a ninguna otra (sin bucles). Sin sesión va a ingresar; con sesión completa, al inicio.
  */

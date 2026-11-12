@@ -27,7 +27,7 @@ import {
   INVITATION_LINK_MAX_PER_IP_PER_WINDOW,
   MFA_ANNUL_MAX_PER_IP_PER_WINDOW,
   MFA_ANNUL_MAX_PER_TOKEN_PER_WINDOW,
-  consumeMfaAnnulQuota,
+  recordMfaAnnulMiss,
   consumeInvitationLinkQuota,
   INTAKE_READ_MAX_PER_IP_PER_WINDOW,
   INTAKE_SUBMIT_MAX_PER_IP_PER_DAY,
@@ -362,8 +362,8 @@ describe("aperturas del enlace de una invitación (H-009)", () => {
 describe("anular la activación del segundo paso desde el correo (H-118b)", () => {
   const HASH = "a".repeat(64);
 
-  it("10 por IP y 5 por enlace cada 15 minutos: el intento siguiente es el que bloquea; las claves son huellas", async () => {
-    expect(await consumeMfaAnnulQuota("203.0.113.7", HASH)).toBe(true);
+  it("solo anota enlaces que NO sirvieron: 10 por IP y 5 por enlace cada 15 minutos; el siguiente es el que bloquea; las claves son huellas", async () => {
+    expect(await recordMfaAnnulMiss("203.0.113.7", HASH)).toBe(false);
     expect(rpc.mock.calls[0][1]).toMatchObject({
       p_scope: "mfa_annul_ip",
       p_key_hash: "mfa_annul_ip|203.0.113.7",
@@ -382,29 +382,26 @@ describe("anular la activación del segundo paso desde el correo (H-118b)", () =
     expect(MFA_ANNUL_MAX_PER_TOKEN_PER_WINDOW).toBe(5);
   });
 
-  it("si la IP ya está bloqueada, no gasta el cupo del enlace y responde que no", async () => {
+  it("si la IP pasó su tope, o el enlace pasó el suyo, responde que hay que frenar", async () => {
     rpc.mockResolvedValue({ data: "2026-10-01T00:00:00Z", error: null });
-    expect(await consumeMfaAnnulQuota("203.0.113.7", HASH)).toBe(false);
-    expect(rpc).toHaveBeenCalledTimes(1);
-  });
-
-  it("si el enlace ya pasó su tope, responde que no", async () => {
+    expect(await recordMfaAnnulMiss("203.0.113.7", HASH)).toBe(true);
+    rpc.mockReset();
     rpc
       .mockResolvedValueOnce({ data: null, error: null })
       .mockResolvedValueOnce({ data: "2026-10-01T00:00:00Z", error: null });
-    expect(await consumeMfaAnnulQuota("203.0.113.7", HASH)).toBe(false);
+    expect(await recordMfaAnnulMiss("203.0.113.7", HASH)).toBe(true);
   });
 
-  it("sin IP conocida, en producción cuenta en 'desconocida'; fuera de producción solo limita por enlace; si el contador falla, deja pasar", async () => {
+  it("sin IP conocida, en producción cuenta en 'desconocida'; fuera de producción solo cuenta por enlace; si el contador falla, no frena", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    await consumeMfaAnnulQuota(null, HASH);
+    await recordMfaAnnulMiss(null, HASH);
     expect(rpc.mock.calls[0][1].p_key_hash).toBe("mfa_annul_ip|desconocida");
     rpc.mockClear();
     vi.stubEnv("NODE_ENV", "test");
-    await consumeMfaAnnulQuota(null, HASH);
+    await recordMfaAnnulMiss(null, HASH);
     expect(rpc.mock.calls.map(([, args]) => args.p_scope)).toEqual(["mfa_annul_token"]);
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
-    expect(await consumeMfaAnnulQuota("203.0.113.7", HASH)).toBe(true);
+    expect(await recordMfaAnnulMiss("203.0.113.7", HASH)).toBe(false);
   });
 });
 

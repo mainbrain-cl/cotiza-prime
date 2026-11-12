@@ -205,6 +205,35 @@ describe("el disparador de auth.mfa_factors (app.mfa_factor_verify_gate)", () =>
       expect((await alertsOf(db, user.id)).map((a) => a.state)).toEqual(["pending"]);
     }));
 
+  it("T8 · cambiar el tipo en la misma sentencia no esquiva la regla: un factor que no era TOTP no pasa a verificado aunque se vuelva TOTP, ni uno TOTP si deja de serlo", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      const user = await createUser(db);
+      const phone = await addFactor(db, user.id, { type: "phone" });
+      await db.query(
+        `insert into public.mfa_enrollment_alerts (user_id, factor_id, state, expected_until)
+         values ($1, $2, 'expected', now() + interval '2 minutes')`,
+        [user.id, phone],
+      );
+      const becomesTotp = await expectSqlError(
+        db,
+        "update auth.mfa_factors set factor_type = 'totp', status = 'verified', phone = null where id = $1",
+        [phone],
+      );
+      expect(becomesTotp.code).toBe("42501");
+      const totp = await addFactor(db, user.id);
+      expect(await expectPermit(db, user.id, totp)).toBe(true);
+      const stopsBeingTotp = await expectSqlError(
+        db,
+        "update auth.mfa_factors set factor_type = 'phone', status = 'verified', phone = '+56922222222' where id = $1",
+        [totp],
+      );
+      expect(stopsBeingTotp.code).toBe("42501");
+      expect((await alertsOf(db, user.id)).find((a) => a.factor_id === totp)?.state).toBe(
+        "expected",
+      );
+    }));
+
   it("T7 · quien ya tenía un factor verificado antes de la migración no se ve afectado (no se toca una fila ya verificada)", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
@@ -259,7 +288,7 @@ describe("mfa_alert_expect", () => {
       expect(window[0].secs).toBeLessThanOrEqual(120);
     }));
 
-  it("E3 · retención: borra los avisos de más de 33 días y los enlaces vencidos hace más de 30; los recientes se quedan", () =>
+  it("E3 · retención: borra los enlaces vencidos hace más de 30 días y los avisos sin enlaces de más de 30 días; un aviso viejo con un enlace reservado tarde se queda; los recientes también", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
       const user = await createUser(db);
@@ -285,8 +314,15 @@ describe("mfa_alert_expect", () => {
         `insert into public.mfa_annul_links (alert_id, user_id, token_sha256, expires_at) values ($1, $2, $3, now() - interval '31 days')`,
         [recentAlert, user.id, sha()],
       );
+      // Un aviso de 40 días con un enlace reservado tarde, vencido hace solo 10 días: se queda con su enlace.
+      const lateAlert = await insertAlert(await addFactor(db, user.id), 40);
+      await db.query(
+        `insert into public.mfa_annul_links (alert_id, user_id, token_sha256, expires_at) values ($1, $2, $3, now() - interval '10 days')`,
+        [lateAlert, user.id, sha()],
+      );
       await expectPermit(db, user.id, await addFactor(db, user.id));
       const states = (await alertsOf(db, user.id)).map((a) => a.id);
+      expect(states).toContain(lateAlert);
       expect(states).toContain(recentAlert);
       expect(states).not.toContain(oldAlert);
       const links = await db.query(
@@ -294,7 +330,9 @@ describe("mfa_alert_expect", () => {
         [user.id],
       );
       // El enlace del aviso viejo se fue con su aviso (cascada) y el vencido hace 31 días también; queda el vigente.
-      expect(links.rows).toEqual([{ alert_id: recentAlert }]);
+      expect(links.rows.map((row: { alert_id: string }) => row.alert_id).sort()).toEqual(
+        [lateAlert, recentAlert].sort(),
+      );
     }));
 });
 
@@ -322,6 +360,13 @@ describe("mfa_alerts_reserve, mfa_alert_settle y mfa_alert_revert", () => {
       const token = sha();
       const got = await reserve(db, user.id, token);
       expect(got).toMatchObject({ reserved: true, factor_id: factor, email: user.email });
+      // Devuelve el id del enlace (clave anti-duplicado del correo), no su huella.
+      const linkRow = await db.query<{ id: string; token_sha256: string }>(
+        "select id, token_sha256 from public.mfa_annul_links where user_id = $1",
+        [user.id],
+      );
+      expect(got.link_id).toBe(linkRow.rows[0].id);
+      expect(JSON.stringify(got)).not.toContain(linkRow.rows[0].token_sha256);
       expect(typeof got.alert_id).toBe("string");
       const link = await db.query<{
         hours: number;
@@ -458,6 +503,23 @@ describe("mfa_alerts_reserve, mfa_alert_settle y mfa_alert_revert", () => {
           )
         ).code,
       ).toBe("42501");
+
+      // Con `p_only_permit` (al fallar un código) un aviso pendiente NO se toca: lo devuelve como `pending`.
+      const untouched = await pendingAlert(db);
+      await reserve(db, untouched.user.id);
+      const onlyPermit = await db.query<{ r: string }>(
+        "select public.mfa_alert_revert($1, $2, 'verify_failed', true) as r",
+        [untouched.user.id, untouched.factor],
+      );
+      expect(onlyPermit.rows[0].r).toBe("pending");
+      expect((await alertsOf(db, untouched.user.id))[0].state).toBe("pending");
+      expect(
+        (
+          await db.query("select 1 from public.mfa_annul_links where user_id = $1", [
+            untouched.user.id,
+          ])
+        ).rowCount,
+      ).toBe(1);
 
       const pending = await pendingAlert(db);
       await reserve(db, pending.user.id);
@@ -652,7 +714,7 @@ describe("quién puede usar las tablas y las funciones", () => {
       "public.mfa_alert_expect(uuid, uuid)",
       "public.mfa_alerts_reserve(uuid, text)",
       "public.mfa_alert_settle(uuid, text, text, text)",
-      "public.mfa_alert_revert(uuid, uuid, text)",
+      "public.mfa_alert_revert(uuid, uuid, text, boolean)",
       "app.mfa_factor_verify_gate()",
     ];
     for (const fn of fns) {

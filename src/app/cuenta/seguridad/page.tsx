@@ -13,6 +13,13 @@ export const metadata: Metadata = {
 };
 
 /**
+ * Tiempo máximo (segundos) de las acciones de servidor de esta pantalla. Una de ellas puede enviar hasta 3 avisos de la
+ * activación del segundo paso de 15 segundos cada uno (H-118): 45 s más un margen. Next exige un LITERAL aquí (no una
+ * constante importada); una guardia estática (14i) vigila que valga al menos 60. El plazo del hosting debe respetarlo.
+ */
+export const maxDuration = 60;
+
+/**
  * Seguridad de la cuenta (H-004a): activar la verificación en dos pasos. Es de la persona, no de una organización:
  * cualquiera de los cinco roles la ve y la activa en su propia cuenta; no consulta rol ni organización activa.
  */

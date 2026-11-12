@@ -44,6 +44,7 @@ import {
   recordResetRequest,
   recordSignupAttempt,
 } from "@/lib/security/login-rate-limit";
+import { deliverPendingEnrollmentNotices } from "@/lib/security/mfa-enrollment-notice";
 import { createClient } from "@/lib/supabase/server";
 import { INVITATION_ACCEPT_PATH } from "@/lib/team/accept-model";
 import { clearInvitationCode, hasPendingInvitation } from "@/lib/team/invitation-cookie";
@@ -172,7 +173,14 @@ export async function signInAction(_previous: FormState, formData: FormData): Pr
     actorUserId: data.user.id,
     ...(secondStepPending ? { details: { stage: "password", secondStepPending: true } } : {}),
   });
-  if (secondStepPending) redirect(SECOND_STEP_PATH);
+  if (secondStepPending) {
+    // Quien llega aquí con la contraseña de una cuenta con el segundo paso (p. ej. la dueña que quedó fuera tras una activación
+    // ajena) reintenta los avisos de activación que no salieron. El aviso va SIEMPRE al correo de la cuenta (de la base) y no
+    // dice nada a quien lo pide; el tope es de la base: 5 intentos por aviso y uno cada 20 segundos (`mfa_alerts_reserve`),
+    // además del límite de intentos de ingreso de arriba. Nunca lanza.
+    await deliverPendingEnrollmentNotices(data.user.id);
+    redirect(SECOND_STEP_PATH);
+  }
   // Además, un ingreso por cada organización de la persona: así cada Dueño ve cuándo entra su equipo.
   await logTenantLogins(supabase, data.user.id);
   // Si la persona venía de abrir el enlace de una invitación, vuelve a ella para unirse (H-009).

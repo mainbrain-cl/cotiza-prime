@@ -83,7 +83,7 @@ describe("mfa_annul_claim", () => {
       expect(row.rows[0].secs).toBeLessThanOrEqual(120);
     }));
 
-  it("K2 · inexistente, basura, usado, vencido, tomado o con el aviso en otro estado: TODOS dan exactamente lo mismo", () =>
+  it("K2 · inexistente, basura, usado, vencido, tomado o con el aviso revertido, anulado, cerrado o esperando el código: TODOS dan exactamente lo mismo", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
       const results: unknown[] = [];
@@ -109,12 +109,32 @@ describe("mfa_annul_claim", () => {
       const taken = await seed(db);
       expect((await claim(db, taken.hash)).result).toBe("ok");
       results.push(await claim(db, taken.hash));
-      for (const state of ["pending", "reverted", "annulled", "closed", "expected"]) {
+      for (const state of ["reverted", "annulled", "closed", "expected"]) {
         const other = await seed(db, { state });
         results.push(await claim(db, other.hash));
       }
       expect(results.length).toBeGreaterThan(14);
       for (const result of results) expect(result).toEqual({ result: "invalid" });
+    }));
+
+  it("K2b · el aviso `pending` (el correo salió pero no se alcanzó a anotar) SÍ sirve: el enlace existe porque se reservó y se intentó mandar", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      const pending = await seed(db, { state: "pending" });
+      expect(await claim(db, pending.hash)).toEqual({
+        result: "ok",
+        link_id: pending.linkId,
+        user_id: pending.user.id,
+      });
+      const done = await complete(db, pending.linkId);
+      expect(done).toMatchObject({ result: "ok", user_id: pending.user.id });
+      expect(
+        (
+          await db.query("select state from public.mfa_enrollment_alerts where id = $1", [
+            pending.alertId,
+          ])
+        ).rows[0].state,
+      ).toBe("annulled");
     }));
 
   it("K3 · un enlace cuyo plazo de 2 minutos ya pasó se puede tomar de nuevo", () =>
@@ -145,7 +165,7 @@ describe("mfa_annul_claim", () => {
     }
   });
 
-  it("K5 · limpia lo viejo (más de 33 días los avisos, más de 30 días de vencidos los enlaces)", () =>
+  it("K5 · retención: los enlaces se borran 30 días después de VENCER y un aviso cuando ya no le queda ningún enlace y tiene más de 30 días; un enlace reservado tarde no se borra antes", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
       const old = await seed(db);
@@ -153,15 +173,31 @@ describe("mfa_annul_claim", () => {
         "update public.mfa_enrollment_alerts set created_at = now() - interval '40 days' where id = $1",
         [old.alertId],
       );
+      await db.query(
+        "update public.mfa_annul_links set expires_at = now() - interval '31 days' where id = $1",
+        [old.linkId],
+      );
+      // Aviso de 40 días pero con un enlace reservado tarde, que venció hace solo 10 días: se conserva con su enlace.
+      const late = await seed(db);
+      await db.query(
+        "update public.mfa_enrollment_alerts set created_at = now() - interval '40 days' where id = $1",
+        [late.alertId],
+      );
+      await db.query(
+        "update public.mfa_annul_links set expires_at = now() - interval '10 days' where id = $1",
+        [late.linkId],
+      );
+      // Aviso reciente sin enlace: se conserva (aún no tiene 30 días).
+      const young = await seed(db);
+      await db.query("delete from public.mfa_annul_links where id = $1", [young.linkId]);
       await claim(db, sha());
-      expect(
-        (await db.query("select 1 from public.mfa_annul_links where id = $1", [old.linkId]))
-          .rowCount,
-      ).toBe(0);
-      expect(
-        (await db.query("select 1 from public.mfa_enrollment_alerts where id = $1", [old.alertId]))
-          .rowCount,
-      ).toBe(0);
+      const exists = async (table: string, id: string) =>
+        (await db.query(`select 1 from public.${table} where id = $1`, [id])).rowCount === 1;
+      expect(await exists("mfa_annul_links", old.linkId)).toBe(false);
+      expect(await exists("mfa_enrollment_alerts", old.alertId)).toBe(false);
+      expect(await exists("mfa_annul_links", late.linkId)).toBe(true);
+      expect(await exists("mfa_enrollment_alerts", late.alertId)).toBe(true);
+      expect(await exists("mfa_enrollment_alerts", young.alertId)).toBe(true);
     }));
 });
 

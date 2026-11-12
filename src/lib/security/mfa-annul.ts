@@ -20,13 +20,14 @@ import {
   hashMfaAnnulToken,
   isWellFormedMfaAnnulToken,
 } from "./mfa-annul-token";
-import { consumeMfaAnnulQuota } from "./login-rate-limit";
+import { recordMfaAnnulMiss } from "./login-rate-limit";
 
 /**
  * Anular la activación del segundo paso desde el enlace del correo de aviso (H-118b). El ORDEN es el del diseño (§4):
- *  1. forma del código (43 caracteres) ANTES de tocar la base; después los límites por IP y por enlace;
+ *  1. forma del código (43 caracteres) ANTES de tocar la base;
  *  2. tomar el enlace en la base (`mfa_annul_claim`: lo toma 2 minutos; el mismo `invalid` si no existe, venció, ya se usó
- *     o está tomado);
+ *     o está tomado). Los límites por IP (10) y por enlace (5) cada 15 minutos cuentan SOLO los enlaces inválidos y se
+ *     anotan después de tomar: un enlace válido nunca se frena por la IP (quien comparte red con un atacante no queda sin salida);
  *  3. dejar la cuenta sin acceso: contraseña al azar → borrar TODOS los factores → comprobar que no quede ninguna sesión.
  *     Repetir estos pasos no hace daño;
  *  4. completar en la base (`mfa_annul_complete`): consume TODOS los enlaces abiertos de la cuenta, cierra los avisos y audita;
@@ -99,6 +100,32 @@ async function failAnnulment(linkId: string, userId: string, reason: string): Pr
   });
 }
 
+/** Código de Postgres «sin permiso»: en un Supabase alojado la función que borra sesiones puede no poder tocar `auth.sessions`. */
+const INSUFFICIENT_PRIVILEGE_CODE = "42501";
+
+/**
+ * Comprueba (y borra) lo que quede de sesiones. Cambiar la contraseña con la API de administración YA cierra todas las sesiones
+ * y los tokens de renovación (comprobado en `tests/db/mfa-annul.test.ts`, K9), así que si la base no deja tocar `auth.sessions`
+ * por PERMISO (42501) la anulación sigue: se deja un aviso sin datos personales en el registro y en la auditoría. Cualquier otro
+ * error se propaga y suelta el enlace.
+ */
+async function revokeSessionsLeft(userId: string): Promise<number> {
+  try {
+    return await revokeRemainingSessions(userId);
+  } catch (cause) {
+    if (!(cause instanceof MfaAlertsGatewayError) || cause.code !== INSUFFICIENT_PRIVILEGE_CODE)
+      throw cause;
+    await serverLog("warn", "mfa_annul_warning", { code: "revoke_sessions_no_permission" });
+    await logAuditEvent({
+      action: "session.mfa_annul_warning",
+      result: "failure",
+      actorUserId: userId,
+      details: { reason: "revoke_sessions_no_permission", stage: "annul" },
+    });
+    return 0;
+  }
+}
+
 async function sendAnnulledNotice(email: string, alertKey: string): Promise<void> {
   try {
     const config = loadEmailConfig();
@@ -136,10 +163,9 @@ export async function annulSecondStep(
     return { status: "invalid" };
   }
   const tokenSha256 = hashMfaAnnulToken(rawToken);
-  if (!(await consumeMfaAnnulQuota(request.clientIp, tokenSha256)))
-    return { status: "rate_limited" };
 
-  // 2. Tomar el enlace.
+  // 2. Tomar el enlace (búsqueda por índice). Un enlace que no sirve se anota contra los límites y, si ya se pasó, responde el
+  // límite habitual; uno válido sigue siempre.
   let claimed: Awaited<ReturnType<typeof claimAnnulLink>>;
   try {
     claimed = await claimAnnulLink(tokenSha256);
@@ -147,13 +173,17 @@ export async function annulSecondStep(
     await serverLog("error", "mfa_annul_claim_failed", { code: codeOf(cause) });
     return { status: "failed" };
   }
-  if (!claimed) return { status: "invalid" };
+  if (!claimed) {
+    return (await recordMfaAnnulMiss(request.clientIp, tokenSha256))
+      ? { status: "rate_limited" }
+      : { status: "invalid" };
+  }
 
   // 3 y 4. Dejar la cuenta sin acceso y completar en la base.
   let completed: Awaited<ReturnType<typeof completeAnnulLink>>;
   try {
     await lockAccountAndRemoveFactors(claimed.userId);
-    if ((await revokeRemainingSessions(claimed.userId)) !== 0) {
+    if ((await revokeSessionsLeft(claimed.userId)) !== 0) {
       throw new MfaAlertsGatewayError("revoke_sessions", "sessions_left");
     }
     completed = await completeAnnulLink(claimed.linkId, auditHeaders(request));

@@ -1,5 +1,6 @@
 import "server-only";
 import { z } from "zod";
+import { retryTransientDb } from "@/lib/quotes/send/dispatch";
 import { createAdminClient } from "@/lib/supabase/admin-client";
 
 /**
@@ -36,6 +37,7 @@ const reservedSchema = z.discriminatedUnion("reserved", [
   z.object({
     reserved: z.literal(true),
     alert_id: z.uuid(),
+    link_id: z.uuid().nullable(),
     factor_id: z.uuid(),
     verified_at: z.string().nullable(),
     email: z.string().min(3).max(254).nullable(),
@@ -48,6 +50,8 @@ export type ReservedAlert =
   | {
       reserved: true;
       alertId: string;
+      /** El identificador del enlace creado (NO su huella ni su código): sirve de clave anti-duplicado del correo. `null` sin correo. */
+      linkId: string | null;
       factorId: string;
       verifiedAt: string | null;
       /** El correo de la cuenta (de `auth.users`), o `null` si la cuenta no tiene. */
@@ -75,6 +79,7 @@ export async function reserveEnrollmentAlert(
   return {
     reserved: true,
     alertId: parsed.data.alert_id,
+    linkId: parsed.data.link_id,
     factorId: parsed.data.factor_id,
     verifiedAt: parsed.data.verified_at,
     email: parsed.data.email,
@@ -88,33 +93,40 @@ export async function settleEnrollmentAlert(input: {
   sent?: { provider: string; providerMessageId: string };
   errorCode?: string;
 }): Promise<"sent" | "failed" | "unchanged"> {
-  const { data, error } = await createAdminClient().rpc("mfa_alert_settle", {
-    p_alert_id: input.alertId,
-    p_provider: input.sent?.provider ?? null,
-    p_provider_message_id: input.sent?.providerMessageId ?? null,
-    p_error_code: input.sent ? null : (input.errorCode ?? "unknown"),
-  });
+  // Un fallo pasajero de la base (red, servidor) se repite; las respuestas definitivas (permiso, argumentos) no.
+  const { data, error } = await retryTransientDb(() =>
+    createAdminClient().rpc("mfa_alert_settle", {
+      p_alert_id: input.alertId,
+      p_provider: input.sent?.provider ?? null,
+      p_provider_message_id: input.sent?.providerMessageId ?? null,
+      p_error_code: input.sent ? null : (input.errorCode ?? "unknown"),
+    }),
+  );
   if (error) throw new MfaAlertsGatewayError("settle", error.code);
   if (data === "sent" || data === "failed" || data === "unchanged") return data;
   throw new MfaAlertsGatewayError("settle", "shape");
 }
 
 /**
- * Revierte: un permiso vivo se cierra (`closed`); un aviso pendiente queda `reverted` y sus enlaces se borran (`reverted`:
- * el llamador debe borrar entonces el factor); uno ya enviado no se toca (`none`).
+ * Revierte: un permiso vivo se cierra (`closed`); un aviso pendiente queda `reverted` y sus enlaces se borran (`reverted`: el
+ * llamador debe haber borrado ANTES el factor); uno ya enviado no se toca (`none`). Con `onlyPermit` (al fallar un código) un
+ * aviso pendiente NO se toca: devuelve `pending` y el llamador borra el factor primero y lo anota después.
  */
 export async function revertEnrollmentAlert(
   userId: string,
   factorId: string,
   errorCode: string,
-): Promise<"closed" | "reverted" | "none"> {
+  options: { onlyPermit?: boolean } = {},
+): Promise<"closed" | "reverted" | "pending" | "none"> {
   const { data, error } = await createAdminClient().rpc("mfa_alert_revert", {
     p_user_id: userId,
     p_factor_id: factorId,
     p_error_code: errorCode,
+    p_only_permit: options.onlyPermit === true,
   });
   if (error) throw new MfaAlertsGatewayError("revert", error.code);
-  if (data === "closed" || data === "reverted" || data === "none") return data;
+  if (data === "closed" || data === "reverted" || data === "pending" || data === "none")
+    return data;
   throw new MfaAlertsGatewayError("revert", "shape");
 }
 

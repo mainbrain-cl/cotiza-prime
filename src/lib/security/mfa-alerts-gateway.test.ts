@@ -14,6 +14,7 @@ const {
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const FACTOR_ID = "22222222-2222-4222-8222-222222222222";
 const ALERT_ID = "33333333-3333-4333-8333-333333333333";
+const LINK_ID = "55555555-5555-4555-8555-555555555555";
 const HASH = "a".repeat(64);
 
 beforeEach(() => rpc.mockReset());
@@ -39,6 +40,7 @@ describe("portero de los avisos de activación", () => {
       data: {
         reserved: true,
         alert_id: ALERT_ID,
+        link_id: LINK_ID,
         factor_id: FACTOR_ID,
         verified_at: "2026-11-12T20:05:00Z",
         email: "duena@ejemplo.test",
@@ -49,6 +51,7 @@ describe("portero de los avisos de activación", () => {
     expect(await reserveEnrollmentAlert(USER_ID, HASH)).toEqual({
       reserved: true,
       alertId: ALERT_ID,
+      linkId: LINK_ID,
       factorId: FACTOR_ID,
       verifiedAt: "2026-11-12T20:05:00Z",
       email: "duena@ejemplo.test",
@@ -96,8 +99,27 @@ describe("portero de los avisos de activación", () => {
     await expect(settleEnrollmentAlert({ alertId: ALERT_ID })).rejects.toThrow("settle:shape");
   });
 
-  it("revertir devuelve closed, reverted o none; otra cosa es un error de forma", async () => {
-    for (const outcome of ["closed", "reverted", "none"] as const) {
+  it("cerrar un intento repite si la base falla por algo pasajero, pero no si la respuesta es definitiva (permiso)", async () => {
+    rpc
+      .mockResolvedValueOnce({ data: null, error: { message: "fetch failed" } })
+      .mockResolvedValueOnce({ data: "sent", error: null });
+    expect(
+      await settleEnrollmentAlert({
+        alertId: ALERT_ID,
+        sent: { provider: "resend", providerMessageId: "m1" },
+      }),
+    ).toBe("sent");
+    expect(rpc).toHaveBeenCalledTimes(2);
+    rpc.mockReset();
+    rpc.mockResolvedValue({ data: null, error: { code: "42501" } });
+    await expect(settleEnrollmentAlert({ alertId: ALERT_ID, errorCode: "x" })).rejects.toThrow(
+      "settle:42501",
+    );
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("revertir devuelve closed, reverted, pending o none; otra cosa es un error de forma", async () => {
+    for (const outcome of ["closed", "reverted", "pending", "none"] as const) {
       rpc.mockResolvedValue({ data: outcome, error: null });
       expect(await revertEnrollmentAlert(USER_ID, FACTOR_ID, "x")).toBe(outcome);
     }
@@ -105,6 +127,15 @@ describe("portero de los avisos de activación", () => {
       p_user_id: USER_ID,
       p_factor_id: FACTOR_ID,
       p_error_code: "x",
+      p_only_permit: false,
+    });
+    // Con `onlyPermit` (al fallar un código) la base no toca un aviso pendiente.
+    await revertEnrollmentAlert(USER_ID, FACTOR_ID, "x", { onlyPermit: true });
+    expect(rpc).toHaveBeenLastCalledWith("mfa_alert_revert", {
+      p_user_id: USER_ID,
+      p_factor_id: FACTOR_ID,
+      p_error_code: "x",
+      p_only_permit: true,
     });
     rpc.mockResolvedValue({ data: 3, error: null });
     await expect(revertEnrollmentAlert(USER_ID, FACTOR_ID, "x")).rejects.toThrow("revert:shape");

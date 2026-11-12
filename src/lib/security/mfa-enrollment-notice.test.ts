@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const ALERT_ID = "33333333-3333-4333-8333-333333333333";
+const LINK_ID = "55555555-5555-4555-8555-555555555555";
 const FACTOR_ID = "22222222-2222-4222-8222-222222222222";
 const EMAIL = "duena@ejemplo.test";
 const ORIGIN = "https://app.ejemplo.test";
@@ -53,6 +54,7 @@ const { hashMfaAnnulToken } = await import("./mfa-annul-token");
 const RESERVED = {
   reserved: true as const,
   alertId: ALERT_ID,
+  linkId: LINK_ID,
   factorId: FACTOR_ID,
   verifiedAt: "2026-11-12T20:05:00Z",
   email: EMAIL,
@@ -105,7 +107,10 @@ describe("deliverPendingEnrollmentNotices", () => {
 
     const message = sendWithRetry.mock.calls[0][1];
     expect(message.to).toBe(EMAIL);
-    expect(message.idempotencyKey).toBe(ALERT_ID);
+    // La clave anti-duplicado es el id del ENLACE (uno por correo): ni el aviso, ni la huella, ni el código.
+    expect(message.idempotencyKey).toBe(LINK_ID);
+    expect(message.idempotencyKey).not.toBe(ALERT_ID);
+    expect(message.idempotencyKey).not.toBe(tokenSha256);
     const token = new RegExp(`${ORIGIN}/cuenta/anular-dos-pasos#([A-Za-z0-9_-]{43})`).exec(
       message.text,
     )?.[1];
@@ -215,7 +220,7 @@ describe("deliverPendingEnrollmentNotices", () => {
     expect(reserveEnrollmentAlert).toHaveBeenCalledTimes(1);
   });
 
-  it("si el correo salió pero no se pudo anotar, el aviso cuenta como enviado (la persona fue avisada)", async () => {
+  it("si el correo salió pero no se pudo anotar, la persona fue avisada (cuenta como enviado) pero el aviso QUEDA `pending` en la base; el enlace ya sirve (la toma acepta `pending`) y se reintentará en el próximo ingreso", async () => {
     settleEnrollmentAlert.mockRejectedValue(new FakeGatewayError("57014"));
     const delivery = await deliverPendingEnrollmentNotices(USER_ID);
     expect(delivery.sentFactorIds).toEqual([FACTOR_ID]);
@@ -223,6 +228,21 @@ describe("deliverPendingEnrollmentNotices", () => {
     expect(serverLog).toHaveBeenCalledWith("warn", "mfa_notice_settle_failed", {
       code: "gateway_57014",
     });
+    // Nada la revierte: no hay reversión ni se borra el factor, y el correo salió una sola vez.
+    expect(revertEnrollmentAlert).not.toHaveBeenCalled();
+    expect(deleteMfaFactor).not.toHaveBeenCalled();
+    expect(sendWithRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("dos reintentos del mismo aviso llevan códigos nuevos y claves anti-duplicado DISTINTAS (una por enlace)", async () => {
+    reserveEnrollmentAlert.mockReset();
+    reserveEnrollmentAlert
+      .mockResolvedValueOnce(RESERVED)
+      .mockResolvedValueOnce({ ...RESERVED, linkId: "66666666-6666-4666-8666-666666666666" })
+      .mockResolvedValue({ reserved: false });
+    await deliverPendingEnrollmentNotices(USER_ID);
+    const keys = sendWithRetry.mock.calls.map(([, message]) => message.idempotencyKey);
+    expect(keys).toEqual([LINK_ID, "66666666-6666-4666-8666-666666666666"]);
   });
 
   it("atiende hasta 3 avisos de la cuenta por llamada, con un código nuevo cada uno", async () => {

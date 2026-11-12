@@ -4,7 +4,7 @@
 --
 -- Cuatro funciones SOLO del servidor (llave maestra), sobre las tablas de la etapa A (20261113100000):
 --   1. `mfa_annul_claim(huella)`: TOMA el enlace por 2 minutos (`for update`). Devuelve el MISMO `{result: 'invalid'}` si la
---      huella no tiene la forma, no existe, venció, ya se usó, está tomado por otra llamada o su aviso ya no está `sent`
+--      huella no tiene la forma, no existe, venció, ya se usó, está tomado por otra llamada o su aviso no está `sent` ni `pending`
 --      (nunca dice cuál de esas cosas fue). Con éxito devuelve `{result: 'ok', link_id, user_id}` (la cuenta, que el servidor necesita para dejarla sin acceso; el correo
 --      NO: lo entrega `mfa_annul_complete`). Solo la llama el servidor con la llave maestra.
 --   2. `mfa_annul_complete(link_id)`: consume ESE enlace y TODOS los abiertos de la cuenta (nada hecho desde una sesión los
@@ -32,8 +32,11 @@ declare
   v_link  public.mfa_annul_links;
   v_state text;
 begin
-  delete from public.mfa_enrollment_alerts where created_at < now() - interval '33 days';
+  -- Retención: ver `mfa_alert_expect` (enlaces: 30 días después de vencer; avisos: sin enlaces y de más de 30 días).
   delete from public.mfa_annul_links where expires_at < now() - interval '30 days';
+  delete from public.mfa_enrollment_alerts a
+   where a.created_at < now() - interval '30 days'
+     and not exists (select 1 from public.mfa_annul_links l where l.tenant_id = a.tenant_id and l.alert_id = a.id);
   if p_token_sha256 is null or p_token_sha256 !~ '^[0-9a-f]{64}$' then
     return jsonb_build_object('result', 'invalid');
   end if;
@@ -47,7 +50,9 @@ begin
   end if;
   select a.state into v_state from public.mfa_enrollment_alerts a
    where a.tenant_id = v_link.tenant_id and a.id = v_link.alert_id;
-  if v_state is distinct from 'sent' then
+  -- El enlace solo existe si se reservó y se intentó mandar al correo de la cuenta; los avisos revertidos se borran con sus
+  -- enlaces. Sirve con el aviso `sent` o `pending` (el correo salió pero no se alcanzó a anotar).
+  if v_state is null or v_state not in ('sent', 'pending') then
     return jsonb_build_object('result', 'invalid');
   end if;
   update public.mfa_annul_links set claimed_until = now() + interval '2 minutes' where id = v_link.id;

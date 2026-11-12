@@ -10,6 +10,13 @@ export const metadata: Metadata = {
 };
 
 /**
+ * Tiempo máximo (segundos) de las acciones de servidor de esta pantalla. Una de ellas puede enviar hasta 3 avisos de la
+ * activación del segundo paso de 15 segundos cada uno (H-118): 45 s más un margen. Next exige un LITERAL aquí (no una
+ * constante importada); una guardia estática (14i) vigila que valga al menos 60. El plazo del hosting debe respetarlo.
+ */
+export const maxDuration = 60;
+
+/**
  * Anular la activación del segundo paso desde el enlace del correo de aviso (H-118b). Es una pantalla pública, sin sesión.
  * Al ABRIRLA no pasa nada: no lee ningún código, no consulta la base ni pide sesión. Solo explica qué va a pasar. Lo único que
  * ejecuta algo es apretar el botón (una acción de servidor), así un escáner de enlaces o una vista previa del correo no

@@ -30,7 +30,10 @@ const FUNCTIONS = [
   { name: "public.mfa_alert_expect", signature: "public.mfa_alert_expect(uuid, uuid)" },
   { name: "public.mfa_alerts_reserve", signature: "public.mfa_alerts_reserve(uuid, text)" },
   { name: "public.mfa_alert_settle", signature: "public.mfa_alert_settle(uuid, text, text, text)" },
-  { name: "public.mfa_alert_revert", signature: "public.mfa_alert_revert(uuid, uuid, text)" },
+  {
+    name: "public.mfa_alert_revert",
+    signature: "public.mfa_alert_revert(uuid, uuid, text, boolean)",
+  },
   { name: "app.mfa_factor_verify_gate", signature: "app.mfa_factor_verify_gate()" },
 ] as const;
 
@@ -157,7 +160,7 @@ describe("la migración mfa_enrollment_alerts y su deshacer", () => {
       await db.query(downB);
       // Sin restos de otras corridas (los e2e dejan enlaces abiertos): la transacción se deshace al terminar.
       await db.query("delete from public.mfa_annul_links");
-      await db.query(`create or replace function public.mfa_alert_revert(p_user_id uuid, p_factor_id uuid, p_error_code text) returns text
+      await db.query(`create or replace function public.mfa_alert_revert(p_user_id uuid, p_factor_id uuid, p_error_code text, p_only_permit boolean default false) returns text
         language plpgsql security definer set search_path = '' as $f$ begin return 'none'; end $f$`);
       const error = await expectSqlError(db, down);
       expect(error.message).toMatch(/ya no es la de esta migracion/);

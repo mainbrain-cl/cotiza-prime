@@ -95,6 +95,15 @@ function secondStepLogViolation(call: string): string | null {
   return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
 }
 
+/** La API de administración de cuentas de Supabase Auth (con la llave maestra): `auth.admin`, también con espacios o saltos. */
+const AUTH_ADMIN_PATTERN = /\bauth\s*\.\s*admin\b/;
+/** Y, dentro de ella, la de los factores del segundo paso. */
+const AUTH_ADMIN_MFA_PATTERN = /\bauth\s*\.\s*admin\s*\.\s*mfa\b/;
+/** La pasarela de los factores (H-118). */
+const MFA_ADMIN_GATEWAY = "src/lib/security/mfa-admin-gateway.ts";
+/** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
+const AUTH_ADMIN_GATEWAYS: readonly string[] = [MFA_ADMIN_GATEWAY];
+
 /** Carpetas del formulario público y de las solicitudes donde `serverLog` no puede recibir datos de una persona. */
 const INTAKE_LOG_SCOPE =
   /^src\/(lib\/intake\/|app\/f\/|app\/api\/v1\/public\/forms\/|components\/intake\/|app\/o\/\[tenantId\]\/(formularios|solicitudes)\/)/;
@@ -870,11 +879,11 @@ describe("guardias estáticas del aislamiento", () => {
   });
 
   it("14. (H-004a) la sesión y su nivel de seguridad solo se miran en session.ts; el alta, la verificación y el borrado de factores, solo en second-step-actions.ts", () => {
-    const only = (pattern: RegExp, allowed: string) =>
+    const only = (pattern: RegExp, allowed: string | readonly string[]) =>
       sourceFiles
         .filter((f) => pattern.test(stripComments(read(f))))
         .map(rel)
-        .filter((f) => f !== allowed);
+        .filter((f) => !(Array.isArray(allowed) ? allowed : [allowed]).includes(f));
     // Quién es la persona y a qué nivel llegó: un solo archivo (recordatorio permanente del proyecto).
     expect(
       only(
@@ -889,6 +898,10 @@ describe("guardias estáticas del aislamiento", () => {
         "src/lib/auth/second-step-actions.ts",
       ),
     ).toEqual([]);
+    // La API de administración de cuentas (`auth.admin.*`, con la llave maestra): solo en las pasarelas. Hoy hay una (H-118);
+    // la de H-116 se suma a esta lista cuando exista. `auth.admin.mfa` solo vive en la de los factores.
+    expect(only(AUTH_ADMIN_PATTERN, AUTH_ADMIN_GATEWAYS)).toEqual([]);
+    expect(only(AUTH_ADMIN_MFA_PATTERN, MFA_ADMIN_GATEWAY)).toEqual([]);
     // Y esas acciones no usan la llave maestra ni nombran los métodos de sesión.
     const actions = stripComments(read(path.join(SRC, "lib/auth/second-step-actions.ts")));
     expect(/admin-client|createAdminClient/.test(actions)).toBe(false);
@@ -958,6 +971,33 @@ describe("guardias estáticas del aislamiento", () => {
         "supabase.auth.mfa.getAuthenticatorAssuranceLevel()",
       ),
     ).toBe(false);
+    // La API de administración: la detecta aunque venga encadenada, con espacios o saltos de línea; no confunde otras `auth`.
+    for (const violation of [
+      "await createAdminClient().auth.admin.mfa.deleteFactor({ id, userId })",
+      "admin.auth\n  .admin\n  .listUsers()",
+      "const { auth } = client; auth.admin.updateUserById(id, {})",
+    ]) {
+      expect(AUTH_ADMIN_PATTERN.test(violation), violation).toBe(true);
+    }
+    expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth.admin.mfa.deleteFactor({})")).toBe(true);
+    expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth.admin.listUsers()")).toBe(false);
+    for (const harmless of [
+      "supabase.auth.getUser()",
+      "const isAdmin = true",
+      "auth.administrador()",
+    ]) {
+      expect(AUTH_ADMIN_PATTERN.test(harmless), harmless).toBe(false);
+    }
+    // Y de verdad muerde: un archivo cualquiera con `auth.admin` aparece como infractor; la pasarela, no.
+    const flagged = (text: string, file: string) =>
+      AUTH_ADMIN_PATTERN.test(stripComments(text)) && !AUTH_ADMIN_GATEWAYS.includes(file);
+    expect(flagged("admin.auth.admin.deleteUser(id)", "src/lib/auth/second-step-actions.ts")).toBe(
+      true,
+    );
+    expect(flagged("// auth.admin.deleteUser(id)", "src/lib/auth/second-step-actions.ts")).toBe(
+      false,
+    );
+    expect(flagged("admin.auth.admin.mfa.deleteFactor({})", MFA_ADMIN_GATEWAY)).toBe(false);
   });
 
   it("14e. (menor 6 del PR #44) cancelTotpEnrollmentAction exige sesión y solo quita un factor TOTP SIN verificar de la persona, visto en su propia lista, antes de llamar a unenroll", () => {

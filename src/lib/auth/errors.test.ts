@@ -136,7 +136,9 @@ describe("verificación en dos pasos (H-004a): errores", () => {
       "El código no coincide. Escribe el que muestra ahora tu aplicación (cambia cada 30 segundos) y revisa que la hora de tu teléfono esté al día.",
     );
     expect(AUTH_MESSAGES.mfa_code_reused).toBe("Ese código ya se usó. Espera el siguiente.");
-    expect(AUTH_MESSAGES.mfa_expired).toBe("La activación caducó. Vuelve a empezar.");
+    expect(AUTH_MESSAGES.mfa_expired).toBe(
+      "La activación caducó. Recarga la página y vuelve a empezar.",
+    );
     expect(AUTH_MESSAGES.mfa_unavailable).toMatch(/No pudimos verificar el código/);
     for (const kind of [
       "mfa_invalid_code",

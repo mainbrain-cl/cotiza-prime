@@ -313,6 +313,15 @@ export async function confirmTotpEnrollmentAction(
       );
   if (!factor) {
     await releaseTotpCode(user.id, checked.code);
+    // Activar desde dos pestañas a la vez (menor 7 de la revisión de Aarón al PR #44): la otra pudo dejar la cuenta ACTIVA
+    // mientras esta mostraba un intento ya reemplazado. Si hay un factor verificado, se lleva a la pantalla de seguridad,
+    // que muestra la verdad («está activa»); si no, «caducó» (con la sugerencia de recargar).
+    const alreadyActive =
+      !listed.error &&
+      listed.data.all.some(
+        (entry) => entry.factor_type === MFA_FACTOR_TYPE && entry.status === "verified",
+      );
+    if (alreadyActive) redirect(ACCOUNT_SECURITY_PATH);
     return { status: "error", message: AUTH_MESSAGES.mfa_expired };
   }
 
@@ -336,4 +345,34 @@ export async function confirmTotpEnrollmentAction(
     });
   }
   redirect(`${ACCOUNT_SECURITY_PATH}?aviso=${ACCOUNT_SECURITY_NOTICES.enabled}`);
+}
+
+/**
+ * «Cancelar» durante la activación (menor 6 de la revisión de Aarón al PR #44): quita de Supabase el intento a medias, para
+ * que no quede un factor sin verificar (que ocupa un cupo de la cuenta) ni una entrada muerta en la aplicación del teléfono.
+ * Igual que al confirmar, el factor tiene que ser un TOTP SIN verificar de ESTA persona, visto con los factores al día: un
+ * factor verificado (el que protege la cuenta) nunca se quita desde aquí. Sin llave maestra: con el pase de la persona.
+ * Si no se puede quitar no pasa nada grave (la pantalla ya salió y `startTotpEnrollmentAction` limpia los restos al empezar
+ * de nuevo): se registra solo el código del error y no se avisa de nada.
+ */
+export async function cancelTotpEnrollmentAction(factorId: string): Promise<void> {
+  await requireUser();
+  if (typeof factorId !== "string" || factorId === "") return;
+  const supabase = await createClient();
+  const listed = await supabase.auth.mfa.listFactors();
+  if (listed.error) {
+    await serverLog("error", "mfa_list_failed", { code: errorCodeOf(listed.error) });
+    return;
+  }
+  const factor = listed.data.all.find(
+    (entry) =>
+      entry.id === factorId &&
+      entry.factor_type === MFA_FACTOR_TYPE &&
+      entry.status === "unverified",
+  );
+  if (!factor) return;
+  const removed = await supabase.auth.mfa.unenroll({ factorId: factor.id });
+  if (removed.error) {
+    await serverLog("error", "mfa_unenroll_failed", { code: errorCodeOf(removed.error) });
+  }
 }

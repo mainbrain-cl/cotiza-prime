@@ -50,7 +50,7 @@ export const AUTH_MESSAGES: Record<AuthFailureKind, string> = {
     "Todavía no verificas tu correo. Abre el enlace que te enviamos al registrarte y luego ingresa.",
   mfa_invalid_code:
     "El código no coincide. Escribe el que muestra ahora tu aplicación (cambia cada 30 segundos) y revisa que la hora de tu teléfono esté al día.",
-  mfa_expired: "La activación caducó. Vuelve a empezar.",
+  mfa_expired: "La activación caducó. Recarga la página y vuelve a empezar.",
   mfa_code_reused: "Ese código ya se usó. Espera el siguiente.",
   mfa_unavailable: "No pudimos verificar el código. Intenta de nuevo en unos minutos.",
   unknown: "No pudimos completar la acción. Intenta de nuevo en unos minutos.",

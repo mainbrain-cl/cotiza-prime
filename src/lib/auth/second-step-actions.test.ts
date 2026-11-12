@@ -80,8 +80,12 @@ vi.mock("@/lib/team/invitation-cookie", () => ({
   hasPendingInvitation: () => hasPendingInvitation(),
 }));
 
-const { confirmTotpEnrollmentAction, startTotpEnrollmentAction, verifySecondStepAction } =
-  await import("./second-step-actions");
+const {
+  cancelTotpEnrollmentAction,
+  confirmTotpEnrollmentAction,
+  startTotpEnrollmentAction,
+  verifySecondStepAction,
+} = await import("./second-step-actions");
 
 const form = (fields: Record<string, string>) => {
   const data = new FormData();
@@ -523,25 +527,42 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
       { all: [{ id: "otro", status: "unverified", factor_type: "totp" }] },
     ],
     [
-      "un factor ya verificado",
-      { all: [{ id: FACTOR_ID, status: "verified", factor_type: "totp" }] },
-    ],
-    [
       "un factor que no es de aplicación",
       { all: [{ id: FACTOR_ID, status: "unverified", factor_type: "phone" }] },
     ],
   ])("%s => «La activación caducó» y no se verifica", async (_name, data) => {
     listFactors.mockResolvedValue({ data, error: null });
     const state = await confirmTotpEnrollmentAction(IDLE, fields());
-    expect(state.message).toBe("La activación caducó. Vuelve a empezar.");
+    expect(state.message).toBe("La activación caducó. Recarga la página y vuelve a empezar.");
     expect(challengeAndVerify).not.toHaveBeenCalled();
   });
 
   it("si no se puede leer la lista de factores, también «caducó» (lado seguro)", async () => {
     listFactors.mockResolvedValue({ data: null, error: { code: "x" } });
     expect((await confirmTotpEnrollmentAction(IDLE, fields())).message).toBe(
-      "La activación caducó. Vuelve a empezar.",
+      "La activación caducó. Recarga la página y vuelve a empezar.",
     );
+  });
+
+  it("activar desde dos pestañas (menor 7): si la cuenta YA tiene el factor verificado, lleva a la pantalla de seguridad (está activa) en vez de decir «caducó», y libera el código", async () => {
+    listFactors.mockResolvedValue({
+      data: { all: [{ id: "otra-pestana", status: "verified", factor_type: "totp" }] },
+      error: null,
+    });
+    const target = await redirectOf(() => confirmTotpEnrollmentAction(IDLE, fields()));
+    expect(target).toBe("/cuenta/seguridad");
+    expect(challengeAndVerify).not.toHaveBeenCalled();
+    expect(releaseTotpCode).toHaveBeenCalledWith(USER.id, "123456");
+    expect(recordSecondStepFailure).not.toHaveBeenCalled();
+  });
+
+  it("con otro factor que no es de aplicación verificado (o sin ninguno), sigue siendo «caducó» y sugiere recargar la página", async () => {
+    listFactors.mockResolvedValue({
+      data: { all: [{ id: "tel", status: "verified", factor_type: "phone" }] },
+      error: null,
+    });
+    const state = await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(state.message).toMatch(/caducó\. Recarga la página/);
   });
 
   it("código incorrecto: suma un fallo (a los contadores PROPIOS de la activación) y deja auditoría", async () => {
@@ -572,7 +593,7 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
   it("si Supabase falla por otra cosa, el código se libera y el mensaje es el de activar de nuevo (no el de ingresar)", async () => {
     challengeAndVerify.mockResolvedValue({ error: { code: "mfa_challenge_expired", status: 422 } });
     const state = await confirmTotpEnrollmentAction(IDLE, fields());
-    expect(state.message).toBe("La activación caducó. Vuelve a empezar.");
+    expect(state.message).toBe("La activación caducó. Recarga la página y vuelve a empezar.");
     expect(releaseTotpCode).toHaveBeenCalledWith(USER.id, "123456");
     expect(recordSecondStepFailure).not.toHaveBeenCalled();
   });
@@ -598,5 +619,71 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
     expect(requirePermission).not.toHaveBeenCalled();
     expect(tableReads).not.toHaveBeenCalled();
     expect(rpcCalls).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelTotpEnrollmentAction (cancelar la activación, menor 6)", () => {
+  beforeEach(() => {
+    unenroll.mockResolvedValue({ data: {}, error: null });
+  });
+  const list = (all: Array<{ id: string; status: string; factor_type: string }>) =>
+    listFactors.mockResolvedValue({ data: { all }, error: null });
+
+  it("quita el factor SIN verificar de esa persona, con su propio pase, y nada más", async () => {
+    list([
+      { id: FACTOR_ID, status: "unverified", factor_type: "totp" },
+      { id: "otro-sin-verificar", status: "unverified", factor_type: "totp" },
+    ]);
+    await cancelTotpEnrollmentAction(FACTOR_ID);
+    expect(requireUser).toHaveBeenCalledTimes(1);
+    expect(unenroll).toHaveBeenCalledTimes(1);
+    expect(unenroll).toHaveBeenCalledWith({ factorId: FACTOR_ID });
+  });
+
+  it.each([
+    [
+      "un factor verificado (el que protege la cuenta)",
+      [{ id: FACTOR_ID, status: "verified", factor_type: "totp" }],
+    ],
+    [
+      "un factor que no es de aplicación",
+      [{ id: FACTOR_ID, status: "unverified", factor_type: "phone" }],
+    ],
+    ["un factor ajeno o inexistente", [{ id: "otro", status: "unverified", factor_type: "totp" }]],
+    ["ningún factor", []],
+  ])("no quita %s", async (_name, all) => {
+    list(all);
+    await cancelTotpEnrollmentAction(FACTOR_ID);
+    expect(unenroll).not.toHaveBeenCalled();
+  });
+
+  it("un identificador vacío no consulta nada", async () => {
+    await cancelTotpEnrollmentAction("");
+    expect(listFactors).not.toHaveBeenCalled();
+    expect(unenroll).not.toHaveBeenCalled();
+  });
+
+  it("si no se puede leer la lista o quitar el factor, no se lanza ningún error (no bloquea la salida) y solo se registra el código", async () => {
+    listFactors.mockResolvedValue({ data: null, error: { code: "boom" } });
+    await expect(cancelTotpEnrollmentAction(FACTOR_ID)).resolves.toBeUndefined();
+    expect(unenroll).not.toHaveBeenCalled();
+    list([{ id: FACTOR_ID, status: "unverified", factor_type: "totp" }]);
+    unenroll.mockResolvedValue({ data: null, error: { code: "unexpected_failure" } });
+    await expect(cancelTotpEnrollmentAction(FACTOR_ID)).resolves.toBeUndefined();
+    expect(unenroll).toHaveBeenCalledTimes(1);
+    expect(serverLog).toHaveBeenCalledWith("error", "mfa_unenroll_failed", {
+      code: "unexpected_failure",
+    });
+    for (const [, , fields] of serverLog.mock.calls) expect(Object.keys(fields)).toEqual(["code"]);
+  });
+
+  it("no mira rol ni organización, no lee tablas ni usa la llave maestra", async () => {
+    list([{ id: FACTOR_ID, status: "unverified", factor_type: "totp" }]);
+    await cancelTotpEnrollmentAction(FACTOR_ID);
+    expect(requireActiveTenant).not.toHaveBeenCalled();
+    expect(requirePermission).not.toHaveBeenCalled();
+    expect(tableReads).not.toHaveBeenCalled();
+    expect(rpcCalls).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
   });
 });

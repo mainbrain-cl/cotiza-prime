@@ -960,6 +960,22 @@ describe("guardias estáticas del aislamiento", () => {
     ).toBe(false);
   });
 
+  it("14e. (menor 6 del PR #44) cancelTotpEnrollmentAction exige sesión y solo quita un factor TOTP SIN verificar de la persona, visto en su propia lista, antes de llamar a unenroll", () => {
+    const text = stripComments(read(path.join(ROOT, "src/lib/auth/second-step-actions.ts")));
+    const start = text.indexOf("export async function cancelTotpEnrollmentAction");
+    expect(start, "falta cancelTotpEnrollmentAction").toBeGreaterThan(-1);
+    const body = text.slice(start);
+    const unenrollAt = body.indexOf(".unenroll(");
+    expect(unenrollAt, "debe llamar a unenroll").toBeGreaterThan(-1);
+    const before = body.slice(0, unenrollAt);
+    expect(before).toMatch(/await requireUser\(\)/);
+    expect(before).toMatch(/\.mfa\.listFactors\(\)/);
+    expect(before).toMatch(/factor_type === MFA_FACTOR_TYPE/);
+    expect(before).toMatch(/status === "unverified"/);
+    // Quita el factor que salió de la lista, no el texto que llegó del navegador.
+    expect(body.slice(unenrollAt, unenrollAt + 60)).toMatch(/factorId:\s*factor\.id/);
+  });
+
   it("7. la guardia detecta de verdad: el texto de una violación sí coincide con las reglas", () => {
     // Evita que una regla quede inútil por un error en su expresión regular.
     expect(/x-cp-tenant-id/i.test('headers["X-CP-Tenant-Id"]')).toBe(true);

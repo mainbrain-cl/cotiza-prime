@@ -12,6 +12,13 @@ const ANON_POLICY_TABLES = new Set(["legal_documents"]); // los términos vigent
 const ANON_EXECUTABLE_PUBLIC_FUNCTIONS = new Set<string>(); // ninguna RPC es pública
 const REALTIME_ALLOWED_TABLES = new Set<string>(); // Realtime apagado para todas las tablas
 
+// H-004a (ronda 1 y 2): toda política que la API expone y que nombra `auth.uid()` tiene que nombrar `app.second_step_pending()`
+// (aunque también nombre la organización activa: una rama `auth.uid() OR tenant_id = ...` deja pasar). Las FUNCIONES expuestas
+// que nombran `auth.uid()` SIN pasar por la organización activa (`app.current_tenant_id()` / `app.my_tenant_ids()`) también:
+// si no, una sesión parcial (contraseña sin el código del segundo paso) las atravesaría. Excepciones, cada una justificada.
+// Hoy no hay ninguna.
+const UNGATED_AUTH_UID_ALLOWED: Record<string, string> = {};
+
 // H-011a: las funciones que TODAVÍA llaman a `app.has_role(...)` con su lista de roles escrita a mano
 // (heredan el rol efectivo, así que funcionan, pero la matriz vive en `app.role_can`). La lista está
 // congelada: SOLO PUEDE ACHICARSE. Una función nueva decide con `app.can('acción')`; si una de estas pasa a
@@ -480,6 +487,79 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
   // 20261109130000, el bloque que lo verifica. NO mide que el valor quede puesto al aplicar: eso lo hace el propio bloque
   // `do $$ ... current_setting('lock_timeout') ...` cuando la migración corre de verdad (y las pruebas MC6 de cada archivo, con
   // dos conexiones). Menor 6 del PR #38.
+  /** Políticas y funciones expuestas que nombran `auth.uid()` sin organización activa ni el segundo paso. */
+  async function ungatedAuthUid(): Promise<string[]> {
+    // En una POLÍTICA solo vale `second_step_pending`: mencionar la organización activa no basta, porque una rama
+    // `user_id = auth.uid() OR tenant_id = current_tenant_id()` deja pasar a la persona con la contraseña sola por la
+    // primera. En una FUNCIÓN, nombrar la organización activa sí exime (la función falla sola sin ella).
+    const gated = (column: string) => `${column} not like '%second_step_pending%'`;
+    const withoutTenant = (column: string) =>
+      `${column} not like '%current_tenant_id%' and ${column} not like '%my_tenant_ids%' and ${gated(column)}`;
+    const policies = await db.query<{ id: string }>(
+      `select 'policy ' || schemaname || '.' || tablename || '.' || policyname as id
+         from pg_policies
+        where schemaname in ('public', 'storage')
+          and (coalesce(qual, '') || ' ' || coalesce(with_check, '')) like '%auth.uid()%'
+          and ${gated("(coalesce(qual, '') || ' ' || coalesce(with_check, ''))")}`,
+    );
+    const functions = await db.query<{ id: string }>(
+      `select 'function public.' || p.proname as id
+         from pg_proc p
+        where p.pronamespace = 'public'::regnamespace
+          and has_function_privilege('authenticated', p.oid, 'execute')
+          and p.prosrc like '%auth.uid()%'
+          and ${withoutTenant("p.prosrc")}`,
+    );
+    return [...policies.rows, ...functions.rows].map((row) => row.id).sort();
+  }
+
+  it("16. (H-004a) toda política o función expuesta que nombra auth.uid() sin organización activa (en una política, siempre) nombra también app.second_step_pending(), o está en la lista justificada", async () => {
+    const found = (await ungatedAuthUid()).filter((id) => !(id in UNGATED_AUTH_UID_ALLOWED));
+    expect(found).toEqual([]);
+    // Y la lista de excepciones no guarda entradas que ya no existen.
+    const all = new Set(await ungatedAuthUid());
+    for (const id of Object.keys(UNGATED_AUTH_UID_ALLOWED)) {
+      expect(all.has(id), `${id} ya no existe: quítala de la lista`).toBe(true);
+    }
+  });
+
+  it("16b. la guardia 16 MUERDE: una política y una función nuevas que solo miran auth.uid() se detectan; con el segundo paso o con la organización activa, no", async () => {
+    await db.query("begin");
+    try {
+      await db.query("create table public.tmp_guard16 (user_id uuid)");
+      await db.query("alter table public.tmp_guard16 enable row level security");
+      await db.query(
+        "create policy tmp_guard16_own on public.tmp_guard16 for select to authenticated using (user_id = (select auth.uid()))",
+      );
+      await db.query(
+        `create function public.tmp_guard16_fn() returns uuid language sql stable security definer set search_path = '' as $$ select auth.uid() $$`,
+      );
+      await db.query("grant execute on function public.tmp_guard16_fn() to authenticated");
+      expect(await ungatedAuthUid()).toEqual([
+        "function public.tmp_guard16_fn",
+        "policy public.tmp_guard16.tmp_guard16_own",
+      ]);
+      // Una política con la organización activa en otra rama (`or`) sigue marcada: la rama de `auth.uid()` deja pasar.
+      await db.query(
+        "alter policy tmp_guard16_own on public.tmp_guard16 using (user_id = (select auth.uid()) or user_id = (select app.current_tenant_id()))",
+      );
+      expect(await ungatedAuthUid()).toEqual([
+        "function public.tmp_guard16_fn",
+        "policy public.tmp_guard16.tmp_guard16_own",
+      ]);
+      // Con el segundo paso (y, en la función, con la organización activa) ya no se marcan.
+      await db.query(
+        "alter policy tmp_guard16_own on public.tmp_guard16 using ((user_id = (select auth.uid()) or user_id = (select app.current_tenant_id())) and not (select app.second_step_pending()))",
+      );
+      await db.query(
+        `create or replace function public.tmp_guard16_fn() returns uuid language sql stable security definer set search_path = '' as $$ select auth.uid() where app.current_tenant_id() is not null $$`,
+      );
+      expect(await ungatedAuthUid()).toEqual([]);
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
   it("15. (estática: lee los archivos, no los aplica) menores 4 del PR #35 y 5 y 6 del PR #37: el texto de toda migración y todo deshacer con fecha desde 20261109120000 empieza con `set local lock_timeout = '3s'`, lo menciona una sola vez y no trae begin/commit/reset; desde 20261109130000, además, trae el bloque que lo verifica al aplicarse", () => {
     const covered: string[] = [];
     for (const dir of ["migrations", "rollbacks"] as const) {

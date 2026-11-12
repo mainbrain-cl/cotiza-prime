@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { AuthCard } from "@/components/auth/auth-card";
 import {
   AcceptInvitationForm,
@@ -8,8 +9,8 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
 import { signOutKeepingInvitationAction } from "@/lib/auth/actions";
-import { HOME_PATH, LOGIN_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
-import { getOptionalUser, requireUser } from "@/lib/auth/session";
+import { HOME_PATH, LOGIN_PATH, SECOND_STEP_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
+import { getSessionState, requireUser } from "@/lib/auth/session";
 import {
   FALLBACK_INVITER_NAME,
   FALLBACK_ORGANIZATION_NAME,
@@ -53,7 +54,11 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
   const { aviso } = await searchParams;
   const notice = noticeMessage(aviso);
   const code = await readInvitationCode();
-  const sessionUser = await getOptionalUser();
+  const session = await getSessionState();
+  // Contraseña correcta pero falta el código de la verificación en dos pasos: primero el código; la invitación sigue
+  // guardada en este navegador y se retoma al terminar.
+  if (session.status === "second_step_pending") redirect(SECOND_STEP_PATH);
+  const sessionUser = session.status === "complete" ? session.user : null;
 
   if (!code) {
     return (

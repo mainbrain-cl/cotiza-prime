@@ -4,16 +4,19 @@ import { BrandMark } from "@/components/brand-mark";
 import { buttonVariants } from "@/components/ui/button";
 import { LegalFooter } from "@/components/legal/legal-footer";
 import { AuroraBackground } from "@/components/ui/aurora-background";
-import { LOGIN_PATH, NEW_TENANT_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
-import { getOptionalUser, requireUser } from "@/lib/auth/session";
+import { LOGIN_PATH, NEW_TENANT_PATH, SECOND_STEP_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
+import { getSessionState, requireUser } from "@/lib/auth/session";
 import { INVITATION_ACCEPT_PATH } from "@/lib/team/accept-model";
 import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
 import { resolveLandingTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 
 export default async function Home() {
-  // Quien ya tiene sesión va directo a su organización (o a crear la primera).
-  if (await getOptionalUser()) {
+  // Quien ya tiene sesión va directo a su organización (o a crear la primera). Si falta el código de la verificación
+  // en dos pasos, va a escribirlo.
+  const session = await getSessionState();
+  if (session.status === "second_step_pending") redirect(SECOND_STEP_PATH);
+  if (session.status === "complete") {
     const user = await requireUser();
     const tenantId = await resolveLandingTenant(user);
     if (tenantId) redirect(tenantPath(tenantId));

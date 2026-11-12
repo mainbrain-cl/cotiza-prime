@@ -27,7 +27,31 @@ Requisitos: Node 24, npm 11 y Docker Desktop abierto.
    crea ana, beto, mixta, carla (Comercial de Negocio Demo 1), dario (Aprobador), dante (Observador) y ex `@ejemplo.test`, con la contraseña que imprime al terminar)
 6. Levantar la aplicación: `npm run dev` y abrir http://localhost:3000
 
-Para apagar la base local: `npx supabase stop`.
+Para apagar la base local: `npx supabase stop`. Si `npx supabase start` se queda esperando a que estén sanos servicios que
+esta base no usa (analítica, vector, tiempo real, Studio), levantarla sin ellos:
+`npx supabase start -x studio,vector,logflare,realtime,imgproxy,edge-runtime,postgres-meta,supavisor`. Reiniciar sin
+`--no-backup` conserva los datos. (Studio, cuando está levantado: http://127.0.0.1:56323.)
+
+### Probar la verificación en dos pasos (H-004a)
+
+- Entra con una cuenta **nueva** (no actives la verificación en `ana`, `beto`, `carla`, `mixta` ni `ex`: activarla cierra
+  las demás sesiones de esa cuenta y rompe las sesiones guardadas de las pruebas). Menú → «Seguridad de tu cuenta» →
+  «Activar la verificación en dos pasos».
+- Con el teléfono: escanea el código QR con Google Authenticator, Microsoft Authenticator o 1Password. Sin teléfono: copia
+  la clave que aparece bajo el QR en cualquier generador TOTP (por ejemplo, `oathtool --totp -b CLAVE`).
+- El correo de aviso («Activaste la verificación en dos pasos…») sale por Mailpit (http://127.0.0.1:56324). Lo envía
+  Supabase Auth según `[auth.email.notification.mfa_factor_enrolled]` de `supabase/config.toml`; si la base local se
+  levantó antes de ese cambio, reiniciarla. Las pruebas lo exigen solo con `E2E_EXPECT_MFA_ENROLLED_MAIL=1`.
+- **Quitar el factor de una cuenta local** (aún no hay desactivar en la pantalla, es H-004b): en Studio, `auth.mfa_factors`,
+  borrar la fila; o `delete from auth.mfa_factors where user_id = '…';` en `psql` (base local, puerto 56322).
+- **Desbloquear los intentos de una cuenta (soporte)**: los contadores del código viven en `auth_rate_limits` con las huellas
+  `mfa_verify_user` (ventana de 15 min) y `mfa_verify_user_day` (día) del ingreso con contraseña, y las mismas con el sufijo
+  `|recovery` del camino de recuperación por correo. No se leen a mano (son huellas): en `psql` local,
+  `delete from public.auth_rate_limits where scope in ('mfa_verify_user', 'mfa_verify_user_day', 'mfa_code_used');` los limpia
+  todos; en producción, **antes de desbloquear verificar la identidad de la persona** (decisión pendiente 8).
+- **Si todos los códigos fallan**, mira el reloj de la máquina virtual de Docker: tras suspender el equipo en macOS se
+  atrasa. Compara `docker exec supabase_auth_cotiza-prime date -u` con `date -u`; si difieren, reinicia Docker.
+- Las pruebas de punta a punta de este flujo: `E2E_PROD=1 npx playwright test --project=chromium e2e/mfa.spec.ts --workers=1`.
 
 ## Scripts
 

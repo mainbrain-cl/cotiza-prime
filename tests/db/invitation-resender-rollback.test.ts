@@ -15,14 +15,8 @@ import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { invitationEmailBinding } from "../../src/lib/team/invitation-code";
-import {
-  actAsPostgres,
-  connect,
-  createUser,
-  expectSqlError,
-  withTx,
-  type TestUser,
-} from "./helpers";
+import { actAsPostgres, connect, createUser, expectSqlError, type TestUser } from "./helpers";
+import { withTxBeforeMfaGate as withTx } from "./before-mfa-gate";
 import { asUser, buildWorld, newToken, sha256Hex, type World } from "./send-helpers";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "supabase");

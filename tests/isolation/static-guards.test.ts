@@ -53,6 +53,48 @@ function serverLogCalls(text: string): string[] {
   return calls;
 }
 
+/** Cada llamada `name( … )` completa (con paréntesis anidados y sin contar los de dentro de textos). */
+function namedCalls(text: string, name: string): string[] {
+  const calls: string[] = [];
+  const start = new RegExp(`\\b${name}\\(`, "g");
+  for (let match = start.exec(text); match; match = start.exec(text)) {
+    let depth = 0;
+    let quote: string | null = null;
+    let index = match.index + name.length;
+    for (; index < text.length; index += 1) {
+      const char = text[index];
+      if (quote) {
+        if (char === "\\") index += 1;
+        else if (char === quote) quote = null;
+      } else if (char === '"' || char === "'" || char === "`") quote = char;
+      else if (char === "(") depth += 1;
+      else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    calls.push(text.slice(match.index, index + 1));
+  }
+  return calls;
+}
+
+/**
+ * H-004a: ¿esta llamada a `serverLog` o `logAuditEvent` lleva el código de 6 números, la clave, el uri, el QR o el correo?
+ * Sin los textos entre comillas, solo se permite `code:` si su valor viene de un error (`errorCodeOf(error)`, `error.code`) y
+ * no puede quedar ningún `code` suelto ni `x.code` que no sea de un error. Devuelve el motivo o `null`.
+ */
+function secondStepLogViolation(call: string): string | null {
+  const noStrings = call.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
+  const withoutErrorCodes = noStrings
+    .replace(/\bcode:\s*[^,}]*(?:errorCodeOf\(|\berror\b)[^,}]*/g, "")
+    .replace(/\b[A-Za-z_]*error[A-Za-z_]*\??\.code\b/gi, "");
+  const forbidden =
+    /\.code\b|\bcode\b|\b(otp|totp|secret|uri|qrCode|qr_code|email|checked|parsed)\b/i.exec(
+      withoutErrorCodes,
+    );
+  return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
+}
+
 /** Carpetas del formulario público y de las solicitudes donde `serverLog` no puede recibir datos de una persona. */
 const INTAKE_LOG_SCOPE =
   /^src\/(lib\/intake\/|app\/f\/|app\/api\/v1\/public\/forms\/|components\/intake\/|app\/o\/\[tenantId\]\/(formularios|solicitudes)\/)/;
@@ -825,6 +867,97 @@ describe("guardias estáticas del aislamiento", () => {
     expect(calls).toBeGreaterThan(3);
     expect(sorted(rpcNames)).toEqual(["set_approval_rule"]);
     expect(offenders).toEqual([]);
+  });
+
+  it("14. (H-004a) la sesión y su nivel de seguridad solo se miran en session.ts; el alta, la verificación y el borrado de factores, solo en second-step-actions.ts", () => {
+    const only = (pattern: RegExp, allowed: string) =>
+      sourceFiles
+        .filter((f) => pattern.test(stripComments(read(f))))
+        .map(rel)
+        .filter((f) => f !== allowed);
+    // Quién es la persona y a qué nivel llegó: un solo archivo (recordatorio permanente del proyecto).
+    expect(
+      only(
+        /\.(getUser|getClaims|getSession|getAuthenticatorAssuranceLevel)\s*\(/,
+        "src/lib/auth/session.ts",
+      ),
+    ).toEqual([]);
+    // Los factores: solo las acciones de la verificación en dos pasos.
+    expect(
+      only(
+        /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/,
+        "src/lib/auth/second-step-actions.ts",
+      ),
+    ).toEqual([]);
+    // Y esas acciones no usan la llave maestra ni nombran los métodos de sesión.
+    const actions = stripComments(read(path.join(SRC, "lib/auth/second-step-actions.ts")));
+    expect(/admin-client|createAdminClient/.test(actions)).toBe(false);
+    expect(/\.(getUser|getClaims|getSession)\s*\(/.test(actions)).toBe(false);
+  });
+
+  it("14b. (H-004a) serverLog y logAuditEvent en la verificación en dos pasos nunca reciben el código de 6 números, la clave, el uri, el QR ni el correo", () => {
+    const files = [
+      "src/lib/auth/second-step-actions.ts",
+      "src/lib/auth/session.ts",
+      "src/lib/security/login-rate-limit.ts",
+    ];
+    let found = 0;
+    for (const file of files) {
+      const text = stripComments(read(path.join(ROOT, file)));
+      for (const name of ["serverLog", "logAuditEvent"]) {
+        for (const call of namedCalls(text, name)) {
+          found += 1;
+          expect(secondStepLogViolation(call), `${file}: ${call}`).toBeNull();
+        }
+      }
+    }
+    // La guardia no puede pasar en vacío: las acciones llaman a las dos funciones muchas veces.
+    expect(found).toBeGreaterThanOrEqual(8);
+    const actions = stripComments(read(path.join(ROOT, "src/lib/auth/second-step-actions.ts")));
+    expect(namedCalls(actions, "serverLog").length).toBeGreaterThan(2);
+    expect(namedCalls(actions, "logAuditEvent").length).toBeGreaterThan(4);
+  });
+
+  it("14d. la guardia 14b detecta de verdad el código (checked.code, parsed.data.code, `code` suelto o abreviado), la clave y el correo; deja pasar el código de un error", () => {
+    const bad = [
+      "logAuditEvent({ action: 'session.mfa_failed', details: { code: checked.code } })",
+      "logAuditEvent({ details: { reason: parsed.data.code } })",
+      "serverLog('warn', 'mfa', { stage, code })",
+      "serverLog('warn', 'mfa', { stage, c: otp })",
+      "serverLog('warn', 'mfa', { secret: enrollment.secret })",
+      "logAuditEvent({ details: { email: user.email } })",
+      "serverLog('error', 'x', { code: userCode })",
+    ];
+    for (const call of bad) expect(secondStepLogViolation(call), call).not.toBeNull();
+    const good = [
+      "serverLog('warn', 'mfa_verify_failed', { stage, code: errorCodeOf(error) })",
+      "serverLog('error', 'x', { code: error.code ?? String(error.status) })",
+      "logAuditEvent({ action: 'session.mfa_verified', result: 'success', actorUserId: user.id, details: { stage: 'sign_in', factorType: MFA_FACTOR_TYPE } })",
+    ];
+    for (const call of good) expect(secondStepLogViolation(call), call).toBeNull();
+    // Y encuentra las llamadas (con paréntesis anidados) de las dos funciones.
+    expect(
+      namedCalls("serverLog('a', { b: f(1) }); logAuditEvent({ c: g(h(2)) });", "serverLog"),
+    ).toHaveLength(1);
+    expect(namedCalls("serverLog('a'); logAuditEvent({ c: 1 });", "logAuditEvent")).toHaveLength(1);
+  });
+
+  it("14c. (H-004a) la guardia 14 detecta de verdad una violación", () => {
+    expect(
+      /\.(getUser|getClaims|getSession|getAuthenticatorAssuranceLevel)\s*\(/.test(
+        "await supabase.auth.getClaims()",
+      ),
+    ).toBe(true);
+    expect(
+      /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/.test(
+        "supabase.auth.mfa.unenroll({ factorId })",
+      ),
+    ).toBe(true);
+    expect(
+      /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/.test(
+        "supabase.auth.mfa.getAuthenticatorAssuranceLevel()",
+      ),
+    ).toBe(false);
   });
 
   it("7. la guardia detecta de verdad: el texto de una violación sí coincide con las reglas", () => {

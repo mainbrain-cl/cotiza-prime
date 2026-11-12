@@ -7,7 +7,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { actAsPostgres, connect, withTx } from "./helpers";
+import { withTxBeforeMfaGate as withTx } from "./before-mfa-gate";
+import { actAsPostgres, connect } from "./helpers";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "supabase");
 const NAME = "20261105100000_invitation_preview_read_only";

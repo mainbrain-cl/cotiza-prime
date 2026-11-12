@@ -268,6 +268,25 @@ vista previa hay un selector «Formulario / Al enviar» (la confirmación que ve
 
 ---
 
+## Componente: campo de código de 6 números (H-004a)
+
+`src/components/auth/code-field.tsx`. Lo usan la pantalla del código tras la contraseña (`/ingresar/codigo`) y la de activar
+la verificación (`/cuenta/seguridad`). Es un campo de texto normal del sistema (altura de 44 px en teléfono, 16 px de letra),
+con:
+
+- `inputmode="numeric"`, `autocomplete="one-time-code"` (el teléfono ofrece el código), `enterkeyhint="done"`,
+  `spellcheck="false"` y `autocapitalize="off"`. **Sin `maxlength` corto:** pegar «123 456» tiene que funcionar (el servidor
+  quita espacios y guiones y exige 6 números).
+- Geist Mono con espaciado de letras amplio. Etiqueta «Código de 6 números» y ayuda «Son 6 números; cambian cada 30
+  segundos.».
+- Tras un error el campo queda vacío y el foco vuelve a él. Sin envío automático al escribir el sexto número: Enter o el
+  botón.
+
+Las pantallas de cuenta son «de trabajo»: tarjeta de superficie sólida sobre el fondo de ingreso, el vidrio queda para el
+menú flotante. El código QR va en una `<img>` sobre fondo **blanco fijo con relleno** (se lee también en modo oscuro), con
+texto alternativo, y la clave para escribir a mano en Geist Mono en grupos de 4. Con «reducir movimiento» no cambia nada
+funcional (las animaciones de entrada y los fondos se apagan como en el resto de la aplicación).
+
 ## Por qué este documento existe
 
 `/auditar` revisa cada pantalla contra este archivo antes de darla por terminada. Si está vacío,
@@ -285,7 +304,7 @@ la auditoría no tiene contra qué comparar y cada pantalla termina con valores 
 | **Espaciado** | La escala, y que nada se escriba fuera de ella | ✅ Aprobado |
 | **Radios y sombras** | Los valores permitidos | ✅ Aprobado |
 | **Íconos** | **Una sola familia.** Nunca emojis como íconos | ✅ Lucide |
-| **Componentes** | Botón, campo, tabla, tarjeta, aviso, modal, con sus estados | 🟡 Botón, campo e insignia aprobados; el resto al construir |
+| **Componentes** | Botón, campo, tabla, tarjeta, aviso, modal, con sus estados | 🟡 Botón, campo e insignia aprobados; «campo de código de 6 números» construido (H-004a, abajo); el resto al construir |
 | **Los cuatro estados** | Cargando, vacío, error y sin conexión, diseñados para cada pantalla | ⬜ Se diseñan con cada pantalla |
 | **Accesibilidad** | WCAG 2.1 nivel AA: contraste 4.5:1 en texto y 3:1 en interfaz | ✅ Colores calculados para cumplir; se verifica en cada pantalla |
 | **Móvil** | Probado a 375px, área táctil de 44×44px, sin desplazamiento horizontal | ✅ Reglas definidas; se verifica en cada pantalla |

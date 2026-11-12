@@ -19,6 +19,11 @@ describe("nombres del registro de actividad", () => {
     for (const label of Object.values(AUDIT_ACTION_LABELS)) expect(label.length).toBeGreaterThan(0);
   });
 
+  it("nombra la activación de la verificación en dos pasos (H-004a)", () => {
+    expect(actionLabel("session.mfa_enrolled")).toBe("Activó la verificación en dos pasos");
+    expect(isKnownAuditAction("session.mfa_enrolled")).toBe(true);
+  });
+
   it("nombra los textos guardados y no muestra nunca su contenido (H-048a)", () => {
     expect(actionLabel("text_snippet.created")).toBe("Se creó un texto guardado");
     expect(actionLabel("text_snippet.updated")).toBe("Se cambió un texto guardado");

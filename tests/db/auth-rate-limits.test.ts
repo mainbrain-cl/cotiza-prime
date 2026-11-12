@@ -197,4 +197,25 @@ describe("auth_rate_limits", () => {
       expect(err.code).toBe(INSUFFICIENT_PRIVILEGE);
       await actAsPostgres(db);
     }));
+
+  it("H-004a · 12 registros EN PARALELO desde conexiones distintas: con regla de 6, solo 5 pasan (el sexto y los siguientes bloquean)", async () => {
+    const key = hash();
+    const clients = await Promise.all(Array.from({ length: 12 }, () => connect()));
+    try {
+      const results = await Promise.all(
+        clients.map((client) =>
+          client.query<{ r: Date | null }>(
+            "select public.auth_limit_record_failure('mfa_verify_user', $1, 6, 900, 900) as r",
+            [key],
+          ),
+        ),
+      );
+      const passed = results.filter((result) => result.rows[0].r === null).length;
+      expect(passed).toBe(5);
+      expect(results.filter((result) => result.rows[0].r !== null)).toHaveLength(7);
+    } finally {
+      await Promise.all(clients.map((client) => client.end()));
+      await db.query("delete from public.auth_rate_limits where key_hash = $1", [key]);
+    }
+  });
 });

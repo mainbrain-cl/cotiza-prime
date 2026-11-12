@@ -100,9 +100,14 @@ precio). Diseño y riesgos: `docs/arquitectura/sprint-5-h-040-aprobaciones.md` (
 - **Mejora de uso anotada (sin historia aún):** el editor de cotizaciones no avisa que bajar el precio de una línea bajo el de catálogo cuenta como
   descuento, ni por qué el campo «Monto del descuento» está deshabilitado con «Sin descuento» (hay que elegir el tipo primero).
 
-**H-004a (verificación en dos pasos): desbloqueada.** Aarón decidió **D1 = B** (la base también exige el segundo paso, aal2) y **D2 = sola**
-(no junto con H-004b). **Fecha de migración: posterior a `20261111100000`** (la última de `main`), con `lock_timeout` y su verificación. Es delicada:
-empieza con el diseño del `planificador` (Opus) y necesita a Aarón (o una decisión explícita de José).
+**H-004a (verificación en dos pasos): construida, en revisión (PR #44, rama `feat/h-004a-dos-pasos`).** Con la base también exigiendo el segundo
+paso (D1 = B de Aarón) y sin H-004b (D2). Delicada: revisión adversarial y no se mezcla sin Aarón. Migración `20261112100000_mfa_session_gate` (**51 archivos
+en `supabase/migrations/` con ésta**; las cuentas de «42 migraciones» de los traspasos de abajo estaban desactualizadas). Como todavía no está en `main`, las
+correcciones de la ronda 1 se editaron EN la misma migración (no hay otra). Cómo probarla: `README.md`, «Probar la verificación en dos pasos». Detalle, lo comprobado de
+Supabase Auth y los riesgos: `docs/arquitectura/sprint-5-equipo-y-permisos.md`, «Registro de construcción — H-004a». Cerrado en la ronda 1: con la contraseña sola
+tampoco se puede crear una organización, ni ver o aceptar invitaciones, ni aceptar términos, ni leer o cambiar el perfil (funciones y políticas con
+`app.second_step_pending()`; una guardia vigila que no aparezca otra), y los contadores de intentos del camino de recuperación por correo son aparte de los del ingreso.
+- **Antes del piloto, nuevo por H-004a:** en el proyecto de Supabase de producción, el segundo paso por aplicación de códigos (TOTP) debe estar ACTIVO, el aviso «MFA agregado» (`mfa_factor_enrolled`) configurado y en español, y hay que **medir el cupo de verificaciones de Supabase Auth** (todas salen de la IP del servidor). **Apagar en el panel de Supabase de producción los factores por teléfono y WebAuthn**: la base cuenta CUALQUIER factor verificado, pero la aplicación solo maneja TOTP (una cuenta con otro tipo de factor quedaría sin forma de pasar). **Definir, con la decisión pendiente 8 (quién responde un incidente), el procedimiento para verificar la identidad de la persona ANTES de que soporte le quite un factor** (si no, quitar el segundo paso es la puerta de atrás). **Riesgo conocido, que se resuelve con la decisión 021:** la aplicación no puede frenar la fuerza bruta directa contra `/auth/v1/factors/…/verify` con un pase `aal1` (Supabase local no limita los códigos incorrectos repetidos); la base ya impide leer datos con la contraseña sola, pero hay que cerrar este camino con el hook `mfa_verification_attempt` antes de contar con el segundo paso como protección del piloto.
 
 **Pendientes:**
 - **Antes del lanzamiento (decisión 021, 2026-11-11):** frenar la fuerza bruta contra el código del segundo paso con el hook

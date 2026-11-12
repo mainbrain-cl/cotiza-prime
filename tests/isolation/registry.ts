@@ -834,6 +834,10 @@ export interface AppRoute {
 export const APP_ROUTES: AppRoute[] = [
   { path: "/", kind: "page", scope: "none" },
   { path: "/ingresar", kind: "page", scope: "none" },
+  // H-004a: el código de la verificación en dos pasos (única pantalla que acepta una sesión parcial) y la seguridad de la
+  // cuenta. Son de la persona, no de una organización.
+  { path: "/ingresar/codigo", kind: "page", scope: "none" },
+  { path: "/cuenta/seguridad", kind: "page", scope: "none" },
   { path: "/registro", kind: "page", scope: "none" },
   { path: "/aceptar-terminos", kind: "page", scope: "none" },
   { path: "/recuperar-contrasena", kind: "page", scope: "none" },

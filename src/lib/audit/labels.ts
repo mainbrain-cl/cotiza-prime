@@ -10,6 +10,7 @@ import { roleLabel } from "@/lib/permissions/matrix";
 /** Acciones que el registro de la organización sabe nombrar, en el orden del selector. */
 export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "session.login": "Ingresó a la plataforma",
+  "session.mfa_enrolled": "Activó la verificación en dos pasos",
   "member.created": "Se sumó un miembro",
   "member.updated": "Cambió un miembro",
   "member.role_changed": "Se cambió el rol de un miembro",

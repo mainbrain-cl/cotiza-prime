@@ -10,7 +10,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { actAsPostgres, connect, createUser, withTx } from "./helpers";
+import { withTxBeforeMfaGate as withTx } from "./before-mfa-gate";
+import { actAsPostgres, connect, createUser } from "./helpers";
 import { asUser, buildWorld, newToken, sha256Hex, type World } from "./send-helpers";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "supabase");

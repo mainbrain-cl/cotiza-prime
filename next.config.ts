@@ -57,10 +57,22 @@ const nextConfig: NextConfig = {
       { source: EMBED_ROUTE_EXCLUSION, headers: securityHeaders },
       // Todo lo que depende de quien lo mira es privado: nunca se guarda en cachés compartidas
       // (STACK.md §6b). Las pantallas de una organización y las de cuenta lo exigen.
-      ...["/o/:path*", "/organizaciones/:path*", "/aceptar-terminos"].map((source) => ({
+      ...[
+        "/o/:path*",
+        "/organizaciones/:path*",
+        "/aceptar-terminos",
+        "/ingresar/codigo",
+        "/cuenta/:path*",
+      ].map((source) => ({
         source,
         headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }],
       })),
+      // Seguridad de la cuenta (H-004a): la pantalla de activar muestra la clave del segundo paso. Al salir no se manda la
+      // dirección a ningún sitio.
+      {
+        source: "/cuenta/:path*",
+        headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
+      },
       // La invitación (H-009): `/invitacion/:código` lleva el código secreto de la invitación. Nada se guarda en
       // cachés ni en buscadores, y al salir no se manda la dirección a ningún sitio.
       // `Cross-Origin-Opener-Policy: same-origin` (corrección I1): si otro sitio abre esta pantalla en una ventana

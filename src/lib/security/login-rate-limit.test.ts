@@ -9,6 +9,21 @@ vi.mock("@/lib/crypto/search-hash", () => ({
 }));
 
 import {
+  MFA_CODE_REGISTRATIONS_TO_BLOCK,
+  MFA_CODE_REUSE_SECONDS,
+  MFA_DAY_SECONDS,
+  MFA_LOCK_SECONDS,
+  MFA_MAX_ATTEMPTS_PER_ACCOUNT,
+  MFA_MAX_FAILURES_PER_ACCOUNT_PER_DAY,
+  MFA_WINDOW_SECONDS,
+  beginSecondStepAttempt,
+  clearPasswordPathSecondStepCounters,
+  clearSecondStepFailures,
+  consumeTotpCode,
+  isSecondStepIpLocked,
+  recordSecondStepFailure,
+  releaseTotpCode,
+  recordLoginFailure,
   INVITATION_LINK_MAX_PER_IP_PER_WINDOW,
   consumeInvitationLinkQuota,
   INTAKE_READ_MAX_PER_IP_PER_WINDOW,
@@ -338,5 +353,193 @@ describe("aperturas del enlace de una invitación (H-009)", () => {
   it("si el contador falla se deja pasar (la base cuenta aparte las aceptaciones fallidas)", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
     expect(await consumeInvitationLinkQuota("203.0.113.7")).toBe(true);
+  });
+});
+
+describe("código de la verificación en dos pasos (H-004a)", () => {
+  const USER = "11111111-1111-4111-8111-111111111111";
+  const IP = "203.0.113.7";
+  const calls = () => rpc.mock.calls.map(([name, args]) => [name, args?.p_scope, args?.p_key_hash]);
+
+  it("empezar un intento revisa el tope del día (solo lee) y REGISTRA el intento de la ventana, con las reglas del plan", async () => {
+    expect(await beginSecondStepAttempt(USER, "password")).toBe("none");
+    expect(calls()).toEqual([
+      ["auth_limit_locked_until", "mfa_verify_user_day", `mfa_verify_user_day|${USER}`],
+      ["auth_limit_record_failure", "mfa_verify_user", `mfa_verify_user|${USER}`],
+    ]);
+    // El intento número 6 es el que bloquea: la regla pide 6 y los primeros 5 pasan.
+    expect(rpc.mock.calls[1][1]).toMatchObject({
+      p_max_failures: MFA_MAX_ATTEMPTS_PER_ACCOUNT + 1,
+      p_window_seconds: MFA_WINDOW_SECONDS,
+      p_lock_seconds: MFA_LOCK_SECONDS,
+    });
+    expect([MFA_MAX_ATTEMPTS_PER_ACCOUNT, MFA_WINDOW_SECONDS, MFA_DAY_SECONDS]).toEqual([
+      5, 900, 86_400,
+    ]);
+  });
+
+  it("el camino de recuperación usa OTRAS huellas (mismo alcance de la tabla): los fallos de uno no bloquean al otro", async () => {
+    await beginSecondStepAttempt(USER, "password");
+    await beginSecondStepAttempt(USER, "recovery");
+    await recordSecondStepFailure(USER, "password", null);
+    await recordSecondStepFailure(USER, "recovery", null);
+    await clearSecondStepFailures(USER, "recovery");
+    const keys = calls().map(([, scope, key]) => `${scope}:${key}`);
+    expect(keys).toContain(`mfa_verify_user:mfa_verify_user|${USER}`);
+    expect(keys).toContain(`mfa_verify_user:mfa_verify_user|${USER}|recovery`);
+    expect(keys).toContain(`mfa_verify_user_day:mfa_verify_user_day|${USER}|recovery`);
+    // Ninguna huella de recuperación es igual a una de contraseña.
+    const withRecovery = keys.filter((key) => key.includes("|recovery"));
+    const withoutRecovery = keys.filter((key) => !key.includes("|recovery"));
+    expect(withRecovery.length).toBeGreaterThan(0);
+    expect(new Set(withoutRecovery).size).toBeGreaterThan(0);
+    for (const key of withRecovery) expect(withoutRecovery).not.toContain(key);
+    // El alcance de la tabla es el mismo: no hace falta migración.
+    expect(new Set(calls().map(([, scope]) => scope))).toEqual(
+      new Set(["mfa_verify_user_day", "mfa_verify_user"]),
+    );
+  });
+
+  it("las claves del código no se mezclan con las de la contraseña (login_email) ni con las del restablecer", async () => {
+    await beginSecondStepAttempt(USER, "password");
+    await recordLoginFailure("ana@ejemplo.test", null);
+    const byScope = calls().map(([, scope, key]) => `${scope}:${key}`);
+    expect(new Set(byScope).size).toBe(byScope.length);
+    expect(
+      byScope
+        .filter((entry) => entry.includes(USER))
+        .every((entry) => !entry.startsWith("login_email")),
+    ).toBe(true);
+  });
+
+  it("distingue el bloqueo del día (24 h) del de la ventana (15 min)", async () => {
+    rpc.mockImplementation(async (name: string, args?: { p_scope: string }) => ({
+      data:
+        name === "auth_limit_locked_until" && args?.p_scope === "mfa_verify_user_day"
+          ? "2026-11-12T00:00:00Z"
+          : null,
+      error: null,
+    }));
+    expect(await beginSecondStepAttempt(USER, "password")).toBe("day");
+    // Con el día bloqueado ni siquiera se registra un intento en la ventana.
+    expect(calls().map(([name]) => name)).toEqual(["auth_limit_locked_until"]);
+    rpc.mockReset().mockResolvedValue({ data: null, error: null });
+    rpc.mockImplementation(async (name: string) => ({
+      data: name === "auth_limit_record_failure" ? "2026-11-11T20:00:00Z" : null,
+      error: null,
+    }));
+    expect(await beginSecondStepAttempt(USER, "password")).toBe("short");
+  });
+
+  it("los intentos en paralelo no pasan de 5: cada uno se registra en la base, que los cuenta de a uno", async () => {
+    // La base responde como `auth_limit_record_failure`: bloquea el intento número 6 y los que siguen.
+    let seen = 0;
+    rpc.mockImplementation(async (name: string) => {
+      if (name !== "auth_limit_record_failure") return { data: null, error: null };
+      seen += 1;
+      return {
+        data: seen > MFA_MAX_ATTEMPTS_PER_ACCOUNT ? "2026-11-11T20:00:00Z" : null,
+        error: null,
+      };
+    });
+    const results = await Promise.all(
+      Array.from({ length: 12 }, () => beginSecondStepAttempt(USER, "password")),
+    );
+    expect(results.filter((result) => result === "none")).toHaveLength(
+      MFA_MAX_ATTEMPTS_PER_ACCOUNT,
+    );
+    expect(results.filter((result) => result === "short")).toHaveLength(
+      12 - MFA_MAX_ATTEMPTS_PER_ACCOUNT,
+    );
+  });
+
+  it("un código incorrecto suma al tope del día de ese camino y al de la IP (el intento ya se contó al empezar)", async () => {
+    await recordSecondStepFailure(USER, "password", IP);
+    expect(calls()).toEqual([
+      ["auth_limit_record_failure", "mfa_verify_user_day", `mfa_verify_user_day|${USER}`],
+      ["auth_limit_record_failure", "login_ip", `login_ip|${IP}`],
+    ]);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_max_failures: MFA_MAX_FAILURES_PER_ACCOUNT_PER_DAY,
+      p_window_seconds: MFA_DAY_SECONDS,
+      p_lock_seconds: MFA_DAY_SECONDS,
+    });
+  });
+
+  it("sin IP conocida no se limita por IP", async () => {
+    await recordSecondStepFailure(USER, "password", null);
+    expect(calls().map(([, scope]) => scope)).toEqual(["mfa_verify_user_day"]);
+    rpc.mockClear();
+    expect(await isSecondStepIpLocked(null)).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("isSecondStepIpLocked solo lee el contador de la IP", async () => {
+    expect(await isSecondStepIpLocked(IP)).toBe(false);
+    expect(calls()).toEqual([["auth_limit_locked_until", "login_ip", `login_ip|${IP}`]]);
+    rpc.mockResolvedValue({ data: "2026-11-11T20:00:00Z", error: null });
+    expect(await isSecondStepIpLocked(IP)).toBe(true);
+  });
+
+  it("si el contador falla, se deja pasar y se avisa (Supabase verifica igual)", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    expect(await beginSecondStepAttempt(USER, "password")).toBe("none");
+    expect(await isSecondStepIpLocked(IP)).toBe(false);
+    expect(await consumeTotpCode(USER, "123456")).toBe(true);
+    await expect(recordSecondStepFailure(USER, "password", IP)).resolves.toBeUndefined();
+    await expect(clearSecondStepFailures(USER, "password")).resolves.toBeUndefined();
+    await expect(releaseTotpCode(USER, "123456")).resolves.toBeUndefined();
+  });
+
+  it("un código correcto limpia los intentos de la ventana de ese camino, no los del día", async () => {
+    await clearSecondStepFailures(USER, "password");
+    await clearSecondStepFailures(USER, "recovery");
+    expect(calls()).toEqual([
+      ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}`],
+      ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}|recovery`],
+    ]);
+  });
+
+  it("tras cambiar la contraseña se limpian los contadores del camino «password» (ventana y día), y NADA del de recuperación ni de la IP", async () => {
+    await clearPasswordPathSecondStepCounters(USER);
+    expect(calls()).toEqual([
+      ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}`],
+      ["auth_limit_clear", "mfa_verify_user_day", `mfa_verify_user_day|${USER}`],
+    ]);
+    expect(JSON.stringify(rpc.mock.calls)).not.toMatch(/recovery|login_ip/);
+  });
+
+  it("si limpiar falla, se avisa y no se corta el cambio de contraseña", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    await expect(clearPasswordPathSecondStepCounters(USER)).resolves.toBeUndefined();
+  });
+
+  it("consumeTotpCode: el primero pasa; el mismo código otra vez queda bloqueado; la clave es una huella", async () => {
+    expect(await consumeTotpCode(USER, "123456")).toBe(true);
+    expect(rpc.mock.calls[0][1]).toMatchObject({
+      p_scope: "mfa_code_used",
+      p_key_hash: `mfa_code_used|${USER}|123456`,
+      p_max_failures: MFA_CODE_REGISTRATIONS_TO_BLOCK,
+      p_window_seconds: MFA_CODE_REUSE_SECONDS,
+      p_lock_seconds: MFA_CODE_REUSE_SECONDS,
+    });
+    rpc.mockResolvedValue({ data: "2026-11-11T20:00:00Z", error: null });
+    expect(await consumeTotpCode(USER, "123456")).toBe(false);
+    expect(MFA_CODE_REUSE_SECONDS).toBe(120);
+  });
+
+  it("releaseTotpCode libera EXACTAMENTE la clave de ese código para esa cuenta", async () => {
+    await releaseTotpCode(USER, "123456");
+    expect(calls()).toEqual([
+      ["auth_limit_clear", "mfa_code_used", `mfa_code_used|${USER}|123456`],
+    ]);
+  });
+
+  it("un código distinto de la misma cuenta, o el mismo de otra cuenta, tienen otra clave", async () => {
+    await consumeTotpCode(USER, "123456");
+    await consumeTotpCode(USER, "654321");
+    await consumeTotpCode("22222222-2222-4222-8222-222222222222", "123456");
+    const keys = rpc.mock.calls.map(([, args]) => args.p_key_hash);
+    expect(new Set(keys).size).toBe(3);
   });
 });

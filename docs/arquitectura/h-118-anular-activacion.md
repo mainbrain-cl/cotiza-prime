@@ -104,8 +104,9 @@ primero `set local lock_timeout = '3s'` y su verificación (guardia 15); deshace
 - **Vigencia (D1): 72 horas** desde que sale el correo. Un enlace por correo enviado: si hay reintento salen dos y los dos sirven;
   usar cualquiera consume todos los de la cuenta. **Nada hecho desde una sesión invalida los enlaces abiertos** (ni reactivar, ni
   desactivar —H-004b—, ni un botón «fui yo»): si no, el atacante borraría el enlace del dueño.
-- **Retención:** las filas se borran 30 días después de vencer, usarse o revertirse, con la limpieza dentro de `mfa_alert_expect` y
-  `mfa_annul_claim` (no hace falta tarea programada). El rastro queda en `audit_log` 24 meses. Anotar el plazo en `PROYECTO.md` §11.2.
+- **Retención** *(cambiada en la ronda 1)*: los enlaces se borran a los 30 días de `expires_at`; un aviso, cuando ya no tiene enlaces y
+  tiene más de 30 días; la limpieza va dentro de `mfa_alert_expect` y `mfa_annul_claim` (no hace falta tarea programada; **solo corre cuando
+  alguien activa o abre un enlace**: sin actividad, las filas pueden quedar más allá del plazo de `PROYECTO.md` §11.2 hasta la próxima). El rastro queda en `audit_log` 24 meses. Anotar el plazo en `PROYECTO.md` §11.2.
 
 ## 4. Qué hace anular (D4: segundo correo de recuperación)
 
@@ -114,7 +115,10 @@ primero `set local lock_timeout = '3s'` y su verificación (guardia 15); deshace
 no quede ninguna.
 
 **Orden** en `src/lib/security/mfa-annul.ts`:
-1. Revisar la forma del token (43 caracteres) antes de tocar la base, y los límites por IP y por huella.
+1. Revisar la forma del token (43 caracteres) antes de tocar la base. *(Cambiado en la ronda 1: los límites por IP y por huella ya no
+   frenan antes de tomar el enlace; se anotan DESPUÉS y solo para enlaces inválidos, para que quien comparte la IP de la dueña no pueda
+   bloquearle el botón. **El límite solo cambia el mensaje; la protección real es el largo del código (256 bits): no acortarlo creyendo que
+   el límite protege.**)*
 2. Tomar el enlace con `mfa_annul_claim`.
 3. Contraseña al azar → borrar factores → cerrar sesiones (repetir estos pasos no hace daño).
 4. `mfa_annul_complete`.
@@ -317,7 +321,7 @@ El envío con el proveedor real (Resend, decisión 016) y su dominio (SPF, DKIM,
 
 ## Antes del piloto (lista; ampliada en la ronda 1)
 
-1. En el Supabase de pruebas alojado: comprobar que se puede crear el disparador `mfa_factor_verify_gate` sobre `auth.mfa_factors`, que una activación directa por la API responde 500 sin activar nada, y que `select public.mfa_revoke_sessions(<cuenta de prueba>)` funciona (si responde permiso denegado, la anulación sigue y deja `session.mfa_annul_warning`, pero hay que saberlo).
+1. En el Supabase de pruebas alojado: comprobar que se puede crear el disparador `mfa_factor_verify_gate` sobre `auth.mfa_factors`, que una activación directa por la API responde 500 sin activar nada, y que `select public.mfa_revoke_sessions(<cuenta de prueba>)` funciona (si responde permiso denegado, la anulación sigue y deja `session.mfa_annul_warning`, pero hay que saberlo). Y comprobar que cambiar la contraseña con la API de administración deja 0 sesiones y 0 tokens de renovación (como K9 en local): si el permiso de `mfa_revoke_sessions` falta, esa es la única garantía de que no quede ninguna sesión del atacante. Opcional: una alerta (Sentry) para `session.mfa_annul_warning`.
 2. **Secure email change** ACTIVO (también está en la lista de H-009) y **Double confirm email**.
 3. Apagados: **passkeys** (`[auth.passkey]` existe en GoTrue v2.197), el enlace manual de identidades, los proveedores externos, Web3, el ingreso anónimo, y los factores por teléfono y WebAuthn.
 4. Configurar Resend (decisión 016: dominio, SPF/DKIM/DMARC, `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`, `APP_ORIGIN`) con el **seguimiento de clics (click tracking) APAGADO**: si no, el código del enlace pasa por su redirector. Probar con buzones reales de Gmail y Outlook que el enlace del correo de aviso conserve el «#».
@@ -356,3 +360,27 @@ El envío con el proveedor real (Resend, decisión 016) y su dominio (SPF, DKIM,
 ## Seguimientos (no se hicieron, por decisión)
 
 Tope diario de avisos por cuenta (Adv M6), leer `auth.sessions.aal`, canal de soporte definitivo, `profiles_update`, y el disparador `before insert` de `supabase_auth_admin` (M2).
+
+# Ronda 2 de revisión (Opus, sobre los cambios de la ronda 1, 2026-11-12)
+
+**Resultado:** 0 bloqueantes; las 13 correcciones de la ronda 1 hacen lo que dicen y no abren hueco nuevo (comprobado: una sola versión de
+`mfa_alert_revert`, md5 de las 9 funciones iguales en el archivo, la base viva y el deshacer, guardia 15 cumplida). Un importante, de registro
+(la descripción del PR mostraba resultados de antes de la ronda 1: corregida).
+
+**Hecho tras la ronda 2:** este documento dice ahora lo que hace el código (retención, orden y límites del enlace); la lista «Antes del piloto»
+pide repetir K9 en el Supabase alojado; la guardia 14 detecta también `const { auth: { admin } } = …` y `auth["admin"].mfa`.
+
+**Seguimientos (no hechos; decisión de dejarlos fuera de este PR):**
+1. **Los reintentos solo reenvían el aviso; nunca revierten la activación** (m4). Tras 5 intentos fallidos el aviso queda `pending` y, en el caso
+   improbable de doble falla (el correo no sale y además falla borrar el factor, o el proceso se corta justo tras verificar) con el proveedor
+   caído varios días, la dueña quedaría fuera sin aviso. Salida propuesta: en los reintentos, revertir (`revertEnrollment`) los factores cuyo
+   aviso agotó sus intentos. `src/app/auth/recuperar/route.ts` tampoco reintenta.
+2. **`mfa_annul_claim` hace limpieza en cada pedido** (m1): un robot que mande miles de códigos inventados provoca dos borrados por pedido (sin
+   impacto de seguridad: el código es de 256 bits). Salida opcional: dejar la limpieza solo en `mfa_alert_expect`.
+3. **Carrera teórica** (m6): `mfa_alert_revert` podría borrar el enlace mientras la dueña anula con él; salida opcional: no borrar enlaces
+   tomados (`claimed_until > now()`).
+4. **La limpieza de filas solo corre con actividad** (m7): sin activaciones ni enlaces abiertos, las filas pueden quedar más allá del plazo
+   hasta la próxima; programar la limpieza (decisión 17) o aceptarlo.
+5. Con la tolerancia al 42501 de `mfa_revoke_sessions`, el mismo error llega también si falta el permiso de ejecutar la función (un despliegue
+   mal hecho): queda solo `session.mfa_annul_warning`.
+

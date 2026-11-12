@@ -97,9 +97,10 @@ function secondStepLogViolation(call: string): string | null {
 
 /** La API de administración de cuentas de Supabase Auth (con la llave maestra): `auth.admin`, también con espacios o saltos. */
 const AUTH_ADMIN_PATTERN =
-  /\bauth\s*(?:\?\.|\.)\s*admin\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]|\{[^{}]*\badmin\b[^{}]*\}\s*=\s*[^;\n]*\bauth\b/;
+  /\bauth\s*(?:\?\.|\.)\s*admin\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]|\{[^{}]*\badmin\b[^{}]*\}\s*=\s*[^;\n]*\bauth\b|\bauth\s*:\s*\{[^{}]*\badmin\b[^{}]*\}/;
 /** Y, dentro de ella, la de los factores del segundo paso. */
-const AUTH_ADMIN_MFA_PATTERN = /\bauth\s*(?:\?\.|\.)\s*admin\s*(?:\?\.|\.)\s*mfa\b/;
+const AUTH_ADMIN_MFA_PATTERN =
+  /\bauth\s*(?:\?\.|\.)\s*admin\s*(?:\?\.|\.)\s*mfa\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]\s*(?:\?\.|\.)\s*mfa\b/;
 /** La pasarela de los factores (H-118). */
 const MFA_ADMIN_GATEWAY = "src/lib/security/mfa-admin-gateway.ts";
 /** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
@@ -998,12 +999,15 @@ describe("guardias estáticas del aislamiento", () => {
       'await client.auth["admin"]?.mfa.deleteFactor({})',
       "const { admin } = client.auth; await admin.listUsers()",
       "const { admin: cuentas, other } = createAdminClient().auth;",
+      // Desestructurar anidado (revisión Opus, ronda 2 de H-118)
+      "const { auth: { admin } } = createAdminClient(); await admin.listUsers()",
     ]) {
       expect(AUTH_ADMIN_PATTERN.test(violation), violation).toBe(true);
     }
     expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth.admin.mfa.deleteFactor({})")).toBe(true);
     expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth.admin.listUsers()")).toBe(false);
     expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth?.admin?.mfa.deleteFactor({})")).toBe(true);
+    expect(AUTH_ADMIN_MFA_PATTERN.test('x.auth["admin"].mfa.deleteFactor({})')).toBe(true);
     for (const harmless of [
       "supabase.auth.getUser()",
       "const isAdmin = true",

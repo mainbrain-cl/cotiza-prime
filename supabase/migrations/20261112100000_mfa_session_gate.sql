@@ -9,9 +9,10 @@
 --
 -- Qué cambia:
 --   1. `app.second_step_pending()` (nueva): verdadero si la cuenta tiene un factor VERIFICADO en `auth.mfa_factors` y el pase
---      NO es aal2. Primero mira el nivel del pase (barato) y solo si no es aal2 busca el factor, así quien ya pasó el segundo
---      paso, o no tiene factor, casi no paga nada. Una cuenta sin factor, o con un factor sin verificar, se comporta
---      exactamente igual que antes.
+--      NO es aal2. Primero mira el nivel del pase (barato) y solo si no es aal2 busca el factor: quien ya pasó el segundo
+--      paso casi no paga nada. Quien NO tiene factor tiene un pase aal1, así que en cada consulta se busca en
+--      `auth.mfa_factors` (con índice por `user_id`; el costo es bajo, pero se paga). Una cuenta sin factor, o con un
+--      factor sin verificar, se comporta exactamente igual que antes.
 --   2. `app.current_tenant_id()`: al inicio, si el segundo paso está pendiente devuelve null. Todo lo que cuelga de ella (las
 --      políticas de cada tabla, `current_member_role`, `has_role`, `can`, las funciones públicas) deja de ver y de escribir.
 --      El resto del cuerpo es la copia LITERAL de 20261001120200_tenants_profiles_members.sql (la vigente).
@@ -40,8 +41,10 @@
 -- `legal_documents` se lee con y sin sesión (es público). Una cuenta sin factor, o con un factor sin verificar, se comporta
 -- exactamente igual que antes en todo lo anterior.
 --
--- Rendimiento: las políticas llaman a `current_tenant_id()` una vez por consulta (`(select app.current_tenant_id())`) y la
--- función nueva hace como mucho una búsqueda por el índice de `auth.mfa_factors (user_id, created_at)`.
+-- Rendimiento: las políticas llaman a `current_tenant_id()` una vez por consulta (`(select app.current_tenant_id())`) y esa
+-- llama a la función nueva; además otras ayudas (`my_tenant_ids()`, las funciones públicas) la llaman, así que una petición
+-- puede hacerlo varias veces. Cada llamada hace como mucho una búsqueda por el índice de `auth.mfa_factors` (`user_id`), y
+-- solo si el pase no es aal2: quien no tiene factor (pase aal1) la paga siempre, quien ya pasó el segundo paso casi nunca.
 --
 -- Guardia 15 (tests/db/schema-guards.test.ts): primera sentencia `set local lock_timeout = '3s'` y, justo después, la
 -- verificación de que el valor quedó puesto.

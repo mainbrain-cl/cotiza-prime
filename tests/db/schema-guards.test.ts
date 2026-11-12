@@ -15,9 +15,47 @@ const REALTIME_ALLOWED_TABLES = new Set<string>(); // Realtime apagado para toda
 // H-004a (ronda 1 y 2): toda política que la API expone y que nombra `auth.uid()` tiene que nombrar `app.second_step_pending()`
 // (aunque también nombre la organización activa: una rama `auth.uid() OR tenant_id = ...` deja pasar). Las FUNCIONES expuestas
 // que nombran `auth.uid()` SIN pasar por la organización activa (`app.current_tenant_id()` / `app.my_tenant_ids()`) también:
-// si no, una sesión parcial (contraseña sin el código del segundo paso) las atravesaría. Excepciones, cada una justificada.
-// Hoy no hay ninguna.
+// si no, una sesión parcial (contraseña sin el código del segundo paso) las atravesaría. Menor 2 de la revisión de Aarón al
+// PR #44: la regla mira también `auth.email()`, `auth.jwt()` (salvo `aal`) y `request.jwt.claim`, las ayudas de `app` (menos
+// las de trigger) y exige una LLAMADA de verdad, no la palabra. Excepciones, cada una justificada. Hoy no hay ninguna.
 const UNGATED_AUTH_UID_ALLOWED: Record<string, string> = {};
+
+// Guardia 16 (menor 2 de la revisión de Aarón al PR #44): el texto de una política o de una función se analiza aquí, en
+// TypeScript, para que la regla se lea y se pruebe sola (16c) y no dependa de escapes dentro de SQL.
+//
+// Un recorrido de izquierda a derecha saca los comentarios (`--` y `/* */`) y, si se pide, vacía los textos entre comillas;
+// así un `--` dentro de un texto no se confunde con un comentario, ni un comentario con comillas rompe el recorrido.
+const SQL_TOKENS = /'(?:[^']|'')*'|\/\*[\s\S]*?\*\/|--[^\n]*/g;
+function sqlCode(sql: string, keepLiterals: boolean): string {
+  return sql.replace(SQL_TOKENS, (token) =>
+    token.startsWith("'") ? (keepLiterals ? token : "''") : " ",
+  );
+}
+
+/**
+ * ¿El texto identifica a la persona de la sesión? `auth.uid()`, `auth.email()`, CUALQUIER uso de `auth.jwt()` salvo leer
+ * `aal` (así también `auth.jwt() ->> 'sub'`, `-> 'email'` o `#>> '{sub}'`) y los ajustes `request.jwt.claim(s)`.
+ */
+function identifiesSessionPerson(sql: string): boolean {
+  const code = sqlCode(sql, true).replace(
+    /auth\s*\.\s*jwt\s*\(\s*\)\s*->>\s*'aal'(::text)?/gi,
+    " ",
+  );
+  return (
+    /auth\s*\.\s*(uid|email|jwt)\s*\(/i.test(sqlCode(code, false)) ||
+    /request\s*\.\s*jwt\s*\.\s*claim/i.test(code)
+  );
+}
+
+/**
+ * ¿El texto LLAMA a alguna de estas ayudas de `app`? Una llamada de verdad, con `app.` y paréntesis, en el código: no cuenta
+ * la palabra en un comentario o en un texto entre comillas, ni un nombre parecido (`mi_current_tenant_id()`).
+ */
+function callsAppFunction(sql: string, names: string[]): boolean {
+  return new RegExp(`(^|[^\\w.])app\\s*\\.\\s*(${names.join("|")})\\s*\\(\\s*\\)`, "i").test(
+    sqlCode(sql, false),
+  );
+}
 
 // H-011a: las funciones que TODAVÍA llaman a `app.has_role(...)` con su lista de roles escrita a mano
 // (heredan el rol efectivo, así que funcionan, pero la matriz vive en `app.role_can`). La lista está
@@ -483,37 +521,45 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
     );
     expect(rows.map((r) => r.name)).toEqual([...FROZEN_ROLE_LITERAL_FUNCTIONS].sort());
   });
-  // Esta guardia es ESTÁTICA: lee los archivos y comprueba que el texto traiga `set local lock_timeout = '3s'` y, desde
-  // 20261109130000, el bloque que lo verifica. NO mide que el valor quede puesto al aplicar: eso lo hace el propio bloque
-  // `do $$ ... current_setting('lock_timeout') ...` cuando la migración corre de verdad (y las pruebas MC6 de cada archivo, con
-  // dos conexiones). Menor 6 del PR #38.
-  /** Políticas y funciones expuestas que nombran `auth.uid()` sin organización activa ni el segundo paso. */
+  /**
+   * Políticas y funciones que identifican a la persona de la sesión sin pasar por el segundo paso (menor 2 de la revisión de
+   * Aarón al PR #44). Qué es «identificar» y qué es «llamar a la puerta», en `identifiesSessionPerson` y `callsAppFunction`.
+   * - POLÍTICAS (de `public` y `storage`): solo vale `app.second_step_pending()`. Mencionar la organización activa no basta:
+   *   una rama `user_id = auth.uid() OR tenant_id = current_tenant_id()` deja pasar a la persona con la contraseña sola por la
+   *   primera.
+   * - FUNCIONES de `public` que `authenticated` puede ejecutar, y TODAS las ayudas de `app` (las usan las políticas y las
+   *   funciones públicas): también exime llamar a `app.current_tenant_id()` o `app.my_tenant_ids()` (la función falla sola
+   *   sin ella). Quedan fuera las funciones de trigger (no se llaman a mano ni desde una política: corren después de que la
+   *   política o la función ya dejó pasar) y `app.second_step_pending`, que es la puerta misma.
+   */
   async function ungatedAuthUid(): Promise<string[]> {
-    // En una POLÍTICA solo vale `second_step_pending`: mencionar la organización activa no basta, porque una rama
-    // `user_id = auth.uid() OR tenant_id = current_tenant_id()` deja pasar a la persona con la contraseña sola por la
-    // primera. En una FUNCIÓN, nombrar la organización activa sí exime (la función falla sola sin ella).
-    const gated = (column: string) => `${column} not like '%second_step_pending%'`;
-    const withoutTenant = (column: string) =>
-      `${column} not like '%current_tenant_id%' and ${column} not like '%my_tenant_ids%' and ${gated(column)}`;
-    const policies = await db.query<{ id: string }>(
-      `select 'policy ' || schemaname || '.' || tablename || '.' || policyname as id
+    const policies = await db.query<{ id: string; text: string }>(
+      `select 'policy ' || schemaname || '.' || tablename || '.' || policyname as id,
+              coalesce(qual, '') || ' ' || coalesce(with_check, '') as text
          from pg_policies
-        where schemaname in ('public', 'storage')
-          and (coalesce(qual, '') || ' ' || coalesce(with_check, '')) like '%auth.uid()%'
-          and ${gated("(coalesce(qual, '') || ' ' || coalesce(with_check, ''))")}`,
+        where schemaname in ('public', 'storage')`,
     );
-    const functions = await db.query<{ id: string }>(
-      `select 'function public.' || p.proname as id
-         from pg_proc p
-        where p.pronamespace = 'public'::regnamespace
-          and has_function_privilege('authenticated', p.oid, 'execute')
-          and p.prosrc like '%auth.uid()%'
-          and ${withoutTenant("p.prosrc")}`,
+    const functions = await db.query<{ id: string; text: string }>(
+      `select 'function ' || n.nspname || '.' || p.proname as id, p.prosrc as text
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where p.prokind = 'f'
+          and p.prorettype <> 'pg_catalog.trigger'::regtype
+          and ((n.nspname = 'app' and p.proname <> 'second_step_pending')
+               or (n.nspname = 'public' and has_function_privilege('authenticated', p.oid, 'execute')))`,
     );
-    return [...policies.rows, ...functions.rows].map((row) => row.id).sort();
+    const ungatedPolicies = policies.rows.filter(
+      (row) =>
+        identifiesSessionPerson(row.text) && !callsAppFunction(row.text, ["second_step_pending"]),
+    );
+    const ungatedFunctions = functions.rows.filter(
+      (row) =>
+        identifiesSessionPerson(row.text) &&
+        !callsAppFunction(row.text, ["second_step_pending", "current_tenant_id", "my_tenant_ids"]),
+    );
+    return [...ungatedPolicies, ...ungatedFunctions].map((row) => row.id).sort();
   }
 
-  it("16. (H-004a) toda política o función expuesta que nombra auth.uid() sin organización activa (en una política, siempre) nombra también app.second_step_pending(), o está en la lista justificada", async () => {
+  it("16. (H-004a) toda política, función expuesta o ayuda de app que identifica a la persona (auth.uid(), auth.email(), auth.jwt() fuera de `aal`, request.jwt.claim) sin pasar por la organización activa (en una política, siempre) llama también a app.second_step_pending(), o está en la lista justificada", async () => {
     const found = (await ungatedAuthUid()).filter((id) => !(id in UNGATED_AUTH_UID_ALLOWED));
     expect(found).toEqual([]);
     // Y la lista de excepciones no guarda entradas que ya no existen.
@@ -560,6 +606,157 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
     }
   });
 
+  it("16c. (menor 2 del PR #44) la guardia 16 también muerde con los otros modos de identificar a la persona, con las ayudas de `app`, y no se deja engañar por una palabra suelta", async () => {
+    const policyOn = (name: string, using: string) =>
+      db.query(
+        `create policy ${name} on public.tmp_guard16 for select to authenticated using (${using})`,
+      );
+    const fn = (schema: string, name: string, body: string, returns = "text") =>
+      db.query(
+        `create function ${schema}.${name}() returns ${returns} language plpgsql stable security definer set search_path = '' as $$ begin ${body} end $$`,
+      );
+    await db.query("begin");
+    try {
+      await db.query("create table public.tmp_guard16 (user_id uuid, email text)");
+      await db.query("alter table public.tmp_guard16 enable row level security");
+
+      // (a) Otros modos de identificar a la persona: la política y la función se marcan igual que con auth.uid().
+      await policyOn("tmp_g16_sub", "user_id::text = (select auth.jwt() ->> 'sub')");
+      await policyOn("tmp_g16_email_fn", "email = (select auth.email())");
+      await policyOn(
+        "tmp_g16_email_jwt",
+        "email = (select auth.jwt() -> 'user_metadata' ->> 'email')",
+      );
+      await policyOn("tmp_g16_claim", "email = current_setting('request.jwt.claim.email', true)");
+      await fn("public", "tmp_g16_f_sub", "return auth.jwt() ->> 'sub'; ");
+      await fn("public", "tmp_g16_f_email", "return auth.email(); ");
+      await fn(
+        "public",
+        "tmp_g16_f_claims",
+        "return current_setting('request.jwt.claims', true); ",
+      );
+      await fn("public", "tmp_g16_f_path", "return auth.jwt() #>> '{sub}'; ");
+      for (const name of ["sub", "email", "claims", "path"]) {
+        await db.query(`grant execute on function public.tmp_g16_f_${name}() to authenticated`);
+      }
+      const bites = [
+        "function public.tmp_g16_f_claims",
+        "function public.tmp_g16_f_email",
+        "function public.tmp_g16_f_path",
+        "function public.tmp_g16_f_sub",
+        "policy public.tmp_guard16.tmp_g16_claim",
+        "policy public.tmp_guard16.tmp_g16_email_fn",
+        "policy public.tmp_guard16.tmp_g16_email_jwt",
+        "policy public.tmp_guard16.tmp_g16_sub",
+      ];
+      expect(await ungatedAuthUid()).toEqual(bites);
+
+      // Leer solo `aal` no identifica a nadie (es lo que hace la puerta): no se marca.
+      await fn("public", "tmp_g16_f_aal", "return auth.jwt() ->> 'aal'; ");
+      await db.query("grant execute on function public.tmp_g16_f_aal() to authenticated");
+      expect(await ungatedAuthUid()).toEqual(bites);
+
+      // (b) Las ayudas de `app` (las usan las políticas): una nueva que mira a la persona sin puerta se marca; una de
+      // trigger no (no se llama a mano); con la puerta o con la organización activa, tampoco.
+      await fn("app", "tmp_g16_helper", "return auth.uid()::text; ");
+      await fn("app", "tmp_g16_trigger", "new.user_id := auth.uid(); return new; ", "trigger");
+      await fn(
+        "app",
+        "tmp_g16_gated",
+        "if not app.second_step_pending() then return auth.uid()::text; end if; return null; ",
+      );
+      await fn(
+        "app",
+        "tmp_g16_tenant",
+        "if app.current_tenant_id() is not null then return auth.uid()::text; end if; return null; ",
+      );
+      expect(await ungatedAuthUid()).toEqual([...bites, "function app.tmp_g16_helper"].sort());
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
+  it("16d. (menor 2 del PR #44) la puerta cuenta si se LLAMA a la ayuda, no si aparece la palabra: un comentario, un texto entre comillas o un nombre parecido no eximen", async () => {
+    const gated = (extra: string) =>
+      db.query(
+        `create function public.tmp_g16d() returns text language plpgsql stable security definer set search_path = '' as $$ begin ${extra} return auth.uid()::text; end $$`,
+      );
+    await db.query("begin");
+    try {
+      const cases: Array<[string, string]> = [
+        ["comentario de línea", "-- app.current_tenant_id() lo comprueba otro\n"],
+        ["comentario de bloque", "/* app.second_step_pending() */"],
+        ["texto entre comillas", "raise notice 'app.current_tenant_id()';"],
+        ["nombre parecido sin app.", "perform my_current_tenant_id();"],
+        ["nombre parecido con app.", "perform app.current_tenant_id_old();"],
+        ["la palabra sin llamar", "perform 1 as current_tenant_id;"],
+      ];
+      for (const [label, extra] of cases) {
+        await db.query("drop function if exists public.tmp_g16d()");
+        await gated(extra);
+        await db.query("grant execute on function public.tmp_g16d() to authenticated");
+        expect(await ungatedAuthUid(), label).toEqual(["function public.tmp_g16d"]);
+      }
+      // Una llamada de verdad, en cambio, sí exime.
+      await db.query("drop function if exists public.tmp_g16d()");
+      await gated("perform app.current_tenant_id();");
+      await db.query("grant execute on function public.tmp_g16d() to authenticated");
+      expect(await ungatedAuthUid()).toEqual([]);
+    } finally {
+      await db.query("rollback");
+    }
+  });
+
+  it("16e. (menor 2 del PR #44) el análisis de texto de la guardia 16: lo que identifica a la persona y lo que cuenta como llamar a la puerta", () => {
+    for (const text of [
+      "user_id = (select auth.uid())",
+      "(user_id)::text = (auth.jwt() ->> 'sub'::text)",
+      "email = auth.email()",
+      "auth.jwt() #>> '{sub}'",
+      "auth.jwt() -> 'user_metadata'",
+      "current_setting('request.jwt.claim.sub', true)",
+      "select auth . uid ( )",
+      "select 'x--y', auth.uid()",
+    ]) {
+      expect(identifiesSessionPerson(text), text).toBe(true);
+    }
+    for (const text of [
+      "(auth.jwt() ->> 'aal'::text) <> 'aal2'",
+      "coalesce(auth.jwt() ->> 'aal', 'aal1') <> 'aal2'",
+      "-- auth.uid() aquí no\nselect 1",
+      "/* auth.email() */ select 1",
+      "raise notice 'auth.uid()'",
+      "select 1",
+    ]) {
+      expect(identifiesSessionPerson(text), text).toBe(false);
+    }
+    const names = ["second_step_pending", "current_tenant_id"];
+    for (const text of [
+      "( SELECT app.second_step_pending() AS second_step_pending)",
+      "where app.current_tenant_id() is not null",
+      "perform app.current_tenant_id ( )",
+      "select 'x--y', app.current_tenant_id()",
+    ]) {
+      expect(callsAppFunction(text, names), text).toBe(true);
+    }
+    for (const text of [
+      "-- app.current_tenant_id()\nselect 1",
+      "/* app.second_step_pending() */",
+      "raise notice 'app.current_tenant_id()'",
+      "my_app.current_tenant_id()",
+      "xapp.current_tenant_id()",
+      "app.current_tenant_id_old()",
+      "current_tenant_id()",
+      "app.current_tenant_id",
+    ]) {
+      expect(callsAppFunction(text, names), text).toBe(false);
+    }
+  });
+
+  // Esta guardia es ESTÁTICA: lee los archivos y comprueba que el texto traiga `set local lock_timeout = '3s'` y, desde
+  // 20261109130000, el bloque que lo verifica. NO mide que el valor quede puesto al aplicar: eso lo hace el propio bloque
+  // `do $$ ... current_setting('lock_timeout') ...` cuando la migración corre de verdad (y las pruebas MC6 de cada archivo, con
+  // dos conexiones). Menor 6 del PR #38.
   it("15. (estática: lee los archivos, no los aplica) menores 4 del PR #35 y 5 y 6 del PR #37: el texto de toda migración y todo deshacer con fecha desde 20261109120000 empieza con `set local lock_timeout = '3s'`, lo menciona una sola vez y no trae begin/commit/reset; desde 20261109130000, además, trae el bloque que lo verifica al aplicarse", () => {
     const covered: string[] = [];
     for (const dir of ["migrations", "rollbacks"] as const) {

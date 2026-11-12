@@ -626,7 +626,7 @@ y la base de datos.
 **De Aarón** (producto, proveedores y lo que ve la persona; además, por ser delicada, no se mezcla sin él, decisión 020 §5)
 
 Todas las de esta tabla quedan como **«decisión por defecto aplicada por Aarón el 2026-11-05»** (reemplaza al supuesto de la
-propuesta).
+propuesta). **Ratificadas por Aarón el 2026-11-12 (issue #11):** A1 sí; A2 sí (si el correo ya tiene cuenta no se envía nada); A3 **Resend** como proveedor de correo y SMTP de Supabase, con su plan gratuito para el piloto; A4 sí, con Cloudflare Turnstile (gratuito); A5 no hace falta lista de correos; A6 los textos los propone José y Aarón los ve en pantalla antes de mezclar.
 
 | # | Pregunta | Opciones y costo | Decisión |
 |---|---|---|---|

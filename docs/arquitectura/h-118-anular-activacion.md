@@ -224,3 +224,51 @@ token no se puede adivinar).
 Todo lo del paso 0 (comportamiento de Supabase Auth con el disparador y la administración), si Supabase alojado permite el
 disparador y el acceso a `auth.sessions`, la cuota y el adaptador `resend` contra la API de verdad, y que Gmail y Outlook conserven
 el «#» del enlace.
+
+---
+
+# Registro de construcción — etapa A (H-118a: el aviso), 2026-11-12
+
+**Rama** `feat/h-118-anular-activacion`, sin PR ni mezcla. Entorno 🟢 PRUEBAS (Supabase local). La etapa B (H-118b: la página, `annulSecondStepAction`, la pasarela de anulación, el correo de recuperación y la lógica de `mfa_annul_claim/complete/release`) **no** está construida. Con solo la etapa A el botón del correo apunta a `/cuenta/anular-dos-pasos`, una ruta que todavía no existe: **la etapa A no se mezcla sola**.
+
+## Paso 0: lo que fijó Supabase Auth local (`tests/db/mfa-annul-gotrue.test.ts`)
+
+1. **Sin permiso, GoTrue responde 500 `unexpected_failure`** (sin detalle), el factor queda sin verificar y **no se cierra ninguna sesión** (ni la que verificó ni las demás). Con el permiso, el mismo factor se verifica y ahí sí se cierran las otras sesiones. La aplicación ve el 500 como un error desconocido (`mfa_unavailable`).
+2. **El rol que aplica las migraciones (`postgres`) puede crear y borrar el disparador sobre `auth.mfa_factors`**: no es dueño de la tabla (lo es `supabase_auth_admin`) pero tiene el permiso `TRIGGER`. También funcionó con `supabase db reset` (la CLI). **En un proyecto alojado no se pudo comprobar**: hay que probarlo con una cuenta de pruebas antes de producción (mismo punto 9 de la §8 de H-116).
+3. **El disparador actúa solo en la transición a «verificado»** (`when (new.status = 'verified' and old.status is distinct from 'verified')`): los ingresos posteriores con el factor ya verificado (GoTrue actualiza la fila en cada desafío) siguen igual, una y otra vez.
+4. **`DELETE /auth/v1/admin/users/{id}/factors/{factorId}` con la llave maestra borra un factor verificado** (200) y no toca las sesiones. Es lo que usa la pasarela para revertir. `auth.admin.mfa.deleteFactor` de supabase-js es la misma llamada.
+5. **Forma del evento:** status 500, `{"code":500,"error_code":"unexpected_failure","msg":"Unexpected failure, please check server logs for more information"}`. El mensaje de la base (`mfa_enrollment_not_allowed`, 42501) no llega al cliente. Un factor `phone` queda fuera: el permiso no se concede a quien no es TOTP.
+
+No se pudo comprobar en esta etapa: el 500 en un GoTrue distinto del local, y `auth.sessions` en un proyecto alojado (no hace falta en la etapa A; lo usará B si decide cerrar sesiones por SQL).
+
+## Qué se construyó (un commit por tema)
+
+- **A0 + A1 — `143ecd9`.** Migración `20261113100000_mfa_enrollment_alerts.sql` y su deshacer (`supabase/rollbacks/…down.sql`, con guardas de md5 de las cinco funciones, nombres de otras funciones y enlaces abiertos): tablas `mfa_enrollment_alerts` y `mfa_annul_links`; funciones `mfa_alert_expect`, `mfa_alerts_reserve`, `mfa_alert_settle`, `mfa_alert_revert` (solo `service_role`); `app.mfa_factor_verify_gate()` y su disparador; alcances `mfa_annul_ip` y `mfa_annul_token`. Pruebas: `mfa-annul-gotrue`, `mfa-enrollment-alerts`, `mfa-enrollment-alerts-rollback`. Las pruebas existentes que verifican factores por la API (`mfa-session-gate`) piden antes el permiso con `tests/support/mfa-gate.ts`.
+- **A2 — `1c3f398`.** `src/lib/security/mfa-admin-gateway.ts` (el ÚNICO archivo con `auth.admin`; hoy solo borra un factor) y `src/lib/security/mfa-alerts-gateway.ts` (el portero de las cuatro funciones). Guardia 14 ampliada: `auth.admin` solo en la lista de pasarelas (`AUTH_ADMIN_GATEWAYS`; la de H-116 se suma ahí) y `auth.admin.mfa` solo en la de factores, con su caso que muerde (14c).
+- **A3 — `8ce279d`.** `mfa-annul-token.ts` (43 caracteres base64url, huella sha256, dirección con el código tras el «#»), el correo `src/lib/email/mfa-enrollment-notice.ts`, el envío con reversión `src/lib/security/mfa-enrollment-notice.ts` (usa `sendWithRetry`, plazo de 15 s, tope de 3 avisos por llamada), acciones de auditoría `session.mfa_notice_sent` y `session.mfa_enroll_reverted` con su etiqueta, y las guardias 14f/14g (el código del enlace, su huella, la contraseña y el correo nunca van a `serverLog` ni a `logAuditEvent`).
+- **A4 — `049ca9c`.** `confirmTotpEnrollmentAction`: deja el permiso antes de `challengeAndVerify`; después SIEMPRE atiende los avisos pendientes; si el aviso de ese factor no salió, lo revierte (pasarela borra el factor y luego se anota) y dice «No pudimos enviarte el correo de aviso, así que no dejamos activa la verificación. Inténtalo de nuevo en unos minutos.»; si ni así se pudo borrar, lo dice distinto. Si la verificación falla, el permiso se cierra (un código incorrecto no deja la puerta abierta los 2 minutos) y se revierte cualquier otro factor cuyo aviso tampoco salió. `verifySecondStepAction` reintenta los pendientes tras un ingreso con código, sin revertir nada. La pantalla de seguridad dice «Te enviamos un aviso a <correo>». Se quita `[auth.email.notification.mfa_factor_enrolled]` de `supabase/config.toml` y la plantilla.
+- **A5 — commits de pruebas y documentos.** Aislamiento: las dos tablas (`server-only`) y las cuatro funciones en `tests/isolation/registry.ts`, filas de la fixture, `rpc.test.ts` y `tables-read.test.ts`; `second-step.test.ts` pide el permiso. e2e: `e2e/mfa-enrollment-notice.spec.ts` (aviso con el «#» en Mailpit, correo que no sale revierte, activar directo por la API se rechaza) y `e2e/mfa.spec.ts` exige ahora nuestro aviso en lugar de `E2E_EXPECT_MFA_ENROLLED_MAIL` (esa variable ya no existe).
+
+## Desviaciones del documento
+
+1. **Disparador solo `before update`**, no `before insert or update`: una activación por la API siempre nace sin verificar, y varias pruebas existentes insertan a propósito factores ya verificados con SQL.
+2. **`mfa_alert_revert(user, factor, código)` hace dos cosas** (cerrar un permiso vivo, o revertir un aviso pendiente) y devuelve cuál; así un código incorrecto cierra el permiso sin borrar el factor sin verificar (la persona reintenta con el mismo QR).
+3. **El enlace se crea al reservar** (`mfa_alerts_reserve` recibe la huella del código nuevo), no al cerrar el envío: el correo nunca sale con un enlace que la base no conoce.
+4. **El orden de la reversión:** primero se borra el factor y después se anota `reverted`; si no se pudo borrar, el aviso sigue pendiente y se reintenta.
+5. **No se crearon `mfa_annul_claim/complete/release`** ni `mfa_revoke_sessions`: la etapa A no las usa.
+6. Retención en 33 días desde la creación (equivale a 30 días después de que vence el enlace de 72 horas); la limpieza va en `mfa_alert_expect`.
+7. Los alcances `mfa_annul_ip` y `mfa_annul_token` solo se agregaron a la restricción de la base; el tipo `RateLimitScope` de TypeScript los recibe en la etapa B.
+
+## Para la revisión (riesgos)
+
+- **El correo no pasa por `email_messages`**: los rebotes de este aviso no se detectan (riesgo 6 de la §9). Un correo aceptado por el proveedor que nunca llega no revierte nada.
+- **Recién activado y el servidor se cae entre verificar y enviar:** el aviso queda `pending` y sale en el próximo ingreso con código (el primer reintento); hasta entonces no hay aviso (riesgo 5).
+- **Si el proveedor falla de forma intermitente**, nadie puede activar (decisión D3, preferible a activar sin aviso). Con la cuota gratuita de Resend agotada ocurre lo mismo.
+- **Si no se pudo borrar el factor al revertir**, queda activo sin aviso; la pantalla lo dice y el aviso sigue pendiente. Es el único camino donde la persona queda activa sin correo.
+- **El permiso dura 2 minutos** y se cierra al fallar un código. Quien verifica directo dentro de esos 2 minutos con su propio permiso es el caso cubierto por «atender siempre los pendientes»; si el servidor muere justo ahí, aplica el riesgo 5.
+- **Entorno alojado:** el disparador sobre `auth.mfa_factors` y el 500 de GoTrue están comprobados solo en Supabase local.
+- El estado `annulled` y las columnas `claimed_until`/`used_at` existen pero nada las escribe todavía (etapa B).
+
+## Qué falta para la etapa B
+
+`annulSecondStepAction` y la página `/cuenta/anular-dos-pasos` (con su componente que lee el «#»); `mfa_annul_claim/complete/release` (y `mfa_revoke_sessions` si el paso 0 de B lo exige); la pasarela de anulación (contraseña al azar con `updateUserById`, borrar todos los factores, cerrar sesiones comprobando que no quede ninguna); el correo de recuperación y el de «Anulamos la verificación»; tipos y reglas de `mfa_annul_ip` (10 cada 15 min) y `mfa_annul_token` (5 cada 15 min) en `login-rate-limit.ts`; el texto nuevo de `/ingresar/codigo`; cabeceras de la página; la guardia de que la página no importe la llave maestra; el e2e del ataque completo y los de enlace reusado, vencido, inventado y 375 px.

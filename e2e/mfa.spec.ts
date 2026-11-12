@@ -181,11 +181,8 @@ test("activar: desde el menú, con el QR y la clave; un código incorrecto no ac
   await expect(otherPage).toHaveURL(/\/ingresar/);
   await otherContext.close();
 
-  // Aviso por correo de Supabase Auth (supabase/config.toml): solo se exige si la Supabase local ya se reinició con esa
-  // configuración.
-  if (process.env.E2E_EXPECT_MFA_ENROLLED_MAIL === "1") {
-    await expect.poll(() => countMails(email, "Activaste"), { timeout: 30_000 }).toBeGreaterThan(0);
-  }
+  // El aviso lo envía NUESTRO servidor (H-118a), no Supabase: llega a Mailpit con el botón para anular la activación.
+  await expect.poll(() => countMails(email, "activó"), { timeout: 30_000 }).toBeGreaterThan(0);
   main = { email, tenantId, secret, usedStep: step };
 });
 

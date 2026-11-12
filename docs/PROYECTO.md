@@ -1110,7 +1110,7 @@ Cada una indica **antes de qué fase** tiene que estar resuelta.
 | 5 | **Canal de los avisos internos**: dentro de la app, por correo, o ambos | Ambos | Fase 3 |
 | 6 | **¿Más de una cuenta bancaria** por organización, a elegir por cotización? | Una sola | Fase 4 |
 | 7 | **Plazos de conservación** de §11.2 | Los propuestos | Piloto privado |
-| 8 | **Quién responde un incidente de seguridad**, y en qué horario (`SEGURIDAD.md` §10) | — | Piloto privado |
+| 8 | ✅ **Quién responde un incidente de seguridad**, y en qué horario (`SEGURIDAD.md` §10) | **Resuelta por Aarón el 2026-11-12:** Aarón (Main Brain), en días hábiles de 9 a 19 h; fuera de ese horario, al siguiente día hábil. También verifica la identidad antes de quitar un segundo factor (`docs/decisiones/021-limite-de-intentos-del-segundo-paso.md`) | Piloto privado |
 | 9 | **Revisión de abogado**: términos, privacidad y acuerdo de tratamiento | — | Piloto privado, y de nuevo antes del lanzamiento |
 | 10 | **¿El comercial ve los costos** o solo el semáforo de margen? | Solo el semáforo; el administrador puede cambiarlo | Fase 6 |
 | 11 | **Categorías de ejemplo por rubro** en el onboarding | Se ofrecen y se pueden borrar | Fase 7 |
@@ -1119,7 +1119,7 @@ Cada una indica **antes de qué fase** tiene que estar resuelta.
 | 14 | **Proveedor de mapas** para la distancia automática | — | M20 |
 | 15 | **Quién puede enviar directo**: ¿se define por rol, por persona o por regla de la organización? (§5.3 es por organización). Enviar siempre es desde la plataforma, en un clic: nunca descargar el PDF ni armar el correo a mano | Por organización, con excepción por persona | Fase 3 |
 | 16 | **Orden de construcción:** el formulario público (paso 1 del recorrido) hoy va en la fase 6 | Sin cambio hasta que Aarón decida adelantarlo | Antes de armar el sprint 4 |
-| 17 | **Cómo se programa en producción la tarea de avisos al Dueño por invitaciones** (H-008, `docs/arquitectura/sprint-5-equipo-y-permisos.md`). Probablemente exige una ruta HTTP protegida con secreto que hoy no existe a propósito; no depende de la decisión 016 (proveedor de correo) | Sin programarla: en producción el aviso al Dueño es de mejor esfuerzo (solo el intento inmediato) | Piloto privado |
+| 17 | **Cómo se programa en producción la tarea de avisos al Dueño por invitaciones** (H-008, `docs/arquitectura/sprint-5-equipo-y-permisos.md`). Probablemente exige una ruta HTTP protegida con secreto que hoy no existe a propósito; no depende de la decisión 016 (proveedor de correo) | ✅ **Decidida por Aarón el 2026-11-12:** una ruta HTTP protegida con un secreto, llamada por el programador de tareas del hosting de producción. Falta construirla; mientras tanto el aviso al Dueño es de mejor esfuerzo (solo el intento inmediato) | Piloto privado |
 
 ---
 

@@ -1,8 +1,9 @@
 # 021 · Cómo frenar la fuerza bruta contra el código del segundo paso
 
-**Estado:** **opción A elegida por José el 2026-11-11, de forma provisional.** Falta que **Aarón la ratifique** (cuesta dinero y
-toca a un proveedor: decisión 020) y que se cumplan las condiciones de más abajo **antes del lanzamiento** ·
-**Fecha:** 2026-11-11 · **Relacionada con:** H-004a (PR #44), H-004c, decisión 020, `docs/00-base/SEGURIDAD.md` §1
+**Estado:** **decidida por Aarón el 2026-11-12: opción C para el piloto privado y opción B antes del lanzamiento público.** No se
+paga el plan Team de Supabase (opción A). La opción A fue elegida por José el 2026-11-11 de forma provisional y **Aarón la
+reemplazó** al ratificar · **Fecha:** 2026-11-11 (propuesta), 2026-11-12 (decisión) · **Relacionada con:** H-004a (PR #44), H-117,
+H-118, H-004c, decisión 020, `docs/00-base/SEGURIDAD.md` §1 y §10
 
 ## Contexto
 
@@ -13,7 +14,8 @@ nuestra pantalla; quien conoce la contraseña puede hablar directo con Supabase 
 medirlo) que, sin ningún tope, un código de 6 números se adivina en unas 2 horas.
 
 El diseño de Opus (2026-11-11) evaluó cinco caminos. El único que cuenta por cuenta dentro de Supabase es el **hook**
-`mfa_verification_attempt`: una función nuestra en la base de datos que Supabase llama en cada intento y que puede negarlo.
+`mfa_verification_attempt`: una función nuestra en la base de datos que Supabase llama en cada intento y que puede negarlo. Se cree
+que solo viene en los planes Team o Enterprise de Supabase (del orden de US$599 al mes; **no confirmado**).
 
 ## Opciones consideradas
 
@@ -23,32 +25,46 @@ El diseño de Opus (2026-11-11) evaluó cinco caminos. El único que cuenta por 
 | **B** | Verificación en dos pasos propia, sin el factor de Supabase | 2,5 a 3,5 días y una revisión adversarial |
 | **C** | Aceptar el riesgo hasta el lanzamiento | 0 días |
 
-## Decisión
+## Decisión (Aarón, 2026-11-12)
 
-**Se sigue por la opción A**, es decir, el hook. Es una decisión de trabajo de José, tomada el 2026-11-11 mientras se espera a
-Aarón. No es todavía una decisión de dinero cerrada: el hook podría exigir un plan de pago de Supabase (se cree que Team o
-Enterprise, del orden de US$599 al mes; **no confirmado**).
+1. **No se paga el plan Team** (opción A descartada).
+2. **Piloto privado: opción C, con el riesgo aceptado por escrito por Aarón el 2026-11-12.** Con la contraseña de una cuenta,
+   alguien puede probar códigos directo contra Supabase y saltarse nuestro límite. Se acepta porque el atacante necesita la
+   contraseña de un usuario y, además, muchísimos intentos. Queda anotado como riesgo aceptado en H-117, con esta fecha.
+3. **Antes del lanzamiento público: opción B** (verificación propia, 2,5 a 3,5 días), junto con la espera creciente en lugar del
+   bloqueo de 24 horas. Historia **H-117**. La opción B también cierra el reuso de un código ya visto mandado directo a Supabase
+   (menor 1 de la revisión de Aarón al #44): con el hook habría quedado abierto igual.
+4. **Sin lanzamiento público sin B.** No se lanza con la opción C, y H-004c no puede prometer «aunque conozcan tu contraseña»
+   mientras B no esté.
 
-## Condiciones: lo que se exige **antes del lanzamiento**
+## Condiciones para el lanzamiento público
 
-Nada de esto se da por hecho; cada punto se confirma por escrito y queda anotado aquí o en `CLAUDE.md`:
+1. Construir la opción B según el diseño que haga el `planificador` (historia H-117, delicada, con revisión adversarial).
+2. **Producción:** al crear el proyecto de Supabase de producción, en la misma lista que Confirm email y Secure email change de
+   H-009: **apagar los factores por teléfono y WebAuthn** (la base cuenta cualquier factor verificado y la aplicación solo maneja
+   TOTP), **medir el cupo de verificaciones** de Supabase Auth (todas salen de la IP del servidor) y **encender el aviso por
+   correo del segundo paso** (hoy solo está en `supabase/config.toml` local).
+3. Probar el bloqueo en producción con una cuenta de prueba.
 
-1. **Confirmar el plan.** Ver en el panel del proyecto de Supabase de producción (Authentication → Hooks) que «MFA Verification
-   Attempt» está disponible en el plan que se va a usar, y **Aarón ratifica el gasto** (o elige B).
-2. **Construir el hook** según el diseño de Opus (migración con la guardia 15, función con candado por cuenta, deshacer con
-   guardas, configuración `[auth.hook.mfa_verification_attempt]`, pruebas de base y con Supabase Auth real, e2e del límite).
-   Historia nueva, por abrir; depende de H-004a.
-3. **Activarlo y probarlo en producción** con una cuenta de prueba: seis códigos incorrectos seguidos tienen que dar el bloqueo,
-   y el código correcto, ya bloqueada la cuenta, también se rechaza.
-4. **Dejar escrito quién desbloquea** una cuenta y cómo (depende de la decisión pendiente 8 de `PROYECTO.md`, quién responde un
-   incidente) y cómo se apaga el hook en una emergencia.
-5. **Si la respuesta al punto 1 es «no se paga»**, esta decisión se revisa y se elige B antes de lanzar. **No se lanza con la
-   opción C sin una decisión de Aarón registrada**, y en ese caso H-004c no puede prometer «aunque conozcan tu contraseña».
+## Procedimiento de soporte para quitar un segundo factor (Aarón, 2026-11-12)
 
-## Lo que sigue abierto
+Quitar el segundo paso sin cuidado es la puerta de atrás de todo lo demás, por eso:
+1. La solicitud tiene que **llegar desde el correo registrado de la cuenta**.
+2. La tiene que **confirmar el Dueño de la organización**. Si quien pide es el Dueño, basta su correo.
+3. **24 horas de espera, con aviso al correo de la cuenta,** antes de quitar el factor.
+4. **Durante el piloto lo hace solo Aarón.**
 
-- **El piloto privado con empresas reales** no está cubierto por esta decisión. Sin el hook el riesgo sigue; si el piloto parte
-  antes que el hook, Aarón tiene que aceptar por escrito ese riesgo.
-- Las funciones públicas que solo miran `auth.uid()` (`create_tenant`, `accept_invitation`, `invitation_preview`,
-  `accept_current_legal_documents` y la política `profiles_update`) se cierran en H-004c, junto con una prueba que avise si
-  aparece otra del mismo tipo.
+**Quién responde un incidente** (decisión pendiente 8 de `PROYECTO.md` §16.2, resuelta el mismo día): Aarón (Main Brain), en días
+hábiles de 9 a 19 h; fuera de ese horario, al siguiente día hábil.
+
+## Seguimientos, en este orden (Aarón, 2026-11-12)
+
+0. **Prioritario antes del piloto:** enlace de un solo uso en el correo de aviso al activar, para **anular la activación**
+   (historia **H-118**). Cierra el caso de quien tiene la contraseña de una cuenta sin segundo paso, activa el suyo y deja fuera al
+   dueño. Mientras no exista, vale el procedimiento de soporte de arriba.
+1. Pedir la contraseña de nuevo antes de activar (H-004b). No cierra el caso anterior (el atacante ya la sabe), pero se mantiene
+   por otras razones.
+2. «Cambiar contraseña» dentro de una sesión completa.
+3. Leer `auth.sessions.aal` para decidir el nivel de la sesión.
+4. Espera creciente en lugar del bloqueo de 24 horas (junto con la opción B).
+5. Correo de aviso cuando la contraseña es correcta y el código falla (decisión 016), cuando exista el proveedor de correo.

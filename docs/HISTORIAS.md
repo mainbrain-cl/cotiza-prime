@@ -2003,33 +2003,62 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 
 ---
 
-### H-117 · Frenar los códigos incorrectos del segundo paso dentro de Supabase · M01, M18
+### H-117 · Verificar el segundo paso con nuestro propio control de intentos · M01, M18
 
 **Como** Dueño de una organización
-**quiero** que nadie pueda probar códigos del segundo paso a gran velocidad aunque conozca mi contraseña
+**quiero** que nadie pueda probar códigos del segundo paso a gran velocidad ni reusar un código ya visto, aunque conozca mi contraseña
 **para** que el segundo paso proteja de verdad la cuenta, y no solo la pantalla de la aplicación.
 
-**Criterios de aceptación**
-- [ ] Con 5 intentos de una cuenta en 15 minutos, el sexto se rechaza en Supabase aunque llegue directo a su API, sin pasar por la pantalla de Cotiza Prime (igual que la regla de H-004a)
-- [ ] Al llegar a 15 fallos en el día, la cuenta queda bloqueada 24 horas
+**Riesgo aceptado para el piloto privado (Aarón, 2026-11-12, decisión 021):** mientras esta historia no exista, con la contraseña de una cuenta se pueden probar códigos directo contra Supabase Auth (que no limita los códigos incorrectos) y saltarse el límite de la aplicación. Se acepta porque el atacante necesita la contraseña de un usuario y muchísimos intentos. **No se acepta para el lanzamiento público.**
+
+**Criterios de aceptación** (el `planificador` los afina al diseñarla; parten de los de la opción A que se descartó)
+- [ ] Los intentos de código se verifican en nuestro servidor y no se puede probar un código por la API de Supabase Auth directamente con un pase de solo contraseña; una prueba con Supabase real reproduce ese ataque y confirma que falla
+- [ ] Con 5 intentos de una cuenta en 15 minutos, el sexto se rechaza, y el límite sube con espera creciente en lugar del bloqueo de 24 horas
 - [ ] Ya bloqueada la cuenta, el código correcto también se rechaza
+- [ ] Un código ya usado no sirve otra vez, tampoco mandado directo (menor 1 de la revisión de Aarón al #44: con el hook de la opción A habría quedado abierto)
 - [ ] El camino de recuperación por correo tiene contadores APARTE de los del ingreso con contraseña (misma regla que H-004a): quien solo tiene la contraseña no puede bloquear al dueño que llega con el enlace del correo, ni al revés
-- [ ] Hay una forma documentada de desbloquear una cuenta y de apagar el límite en una emergencia, con el procedimiento para verificar la identidad de la persona antes de desbloquear o de quitarle un factor
-- [ ] Un intento que el hook rechaza (`mfa_verification_rejected`) cuenta como FALLO en la aplicación: hoy `classifyAuthError` (`src/lib/auth/errors.ts`) lo trata como «unknown» (libera el código y no suma al tope del día ni al de la IP), y con el hook activo eso dejaría reintentar sin costo desde la pantalla; hay que clasificarlo como un fallo (suma al tope del día y al de la IP, con el mensaje de bloqueo y sin liberar el código) y probarlo
-- [ ] Un 429 de Supabase sigue sin sumar al tope del día ni al de la IP (corregido en la ronda 2 de H-004a): el hook no cambia eso
-- [ ] La función del hook tiene su deshacer con guardas, y una prueba con Supabase Auth real reproduce el ataque (probar códigos directo a `/auth/v1/factors/…/verify` con un pase de solo contraseña) y confirma el bloqueo
+- [ ] Al activar se usan contadores propios, distintos de los del ingreso, y un mensaje que sugiere revisar la hora del teléfono (menor 4 de la revisión)
+- [ ] El mismo código usado en dos dispositivos en menos de 2 minutos no suma un fallo al tope del día (menor 5)
+- [ ] Si fallan los contadores, la decisión de dejar pasar o cerrar está revisada con esta historia (menor 9: hoy el límite propio deja pasar)
+- [ ] La sesión completa se reconoce por la sesión de Supabase (`auth.sessions.aal`) y no solo por lo que dice el pase (seguimiento 3 de Aarón)
+- [ ] Hay una forma documentada de desbloquear una cuenta y de apagar el límite en una emergencia, con el procedimiento de soporte de la decisión 021 (correo registrado, confirmación del Dueño, 24 horas de espera con aviso; lo hace solo Aarón durante el piloto)
+- [ ] La verificación tiene su deshacer con guardas, y las pruebas de H-004a siguen en verde
+
+**Prioridad:** núcleo
+**Tamaño:** grande (2,5 a 3,5 días, más revisión adversarial)
+**Depende de:** H-004a (mezclada), H-118
+**Datos personales:** no (el secreto del segundo paso va cifrado)
+**Notas técnicas:** 🔒 antes del lanzamiento público (decisión 021, `docs/decisiones/021-limite-de-intentos-del-segundo-paso.md`; **opción B**: verificación propia sin el factor de Supabase). La opción A (hook `mfa_verification_attempt`, plan Team) se descartó porque no se paga. Se pierde lo que Supabase da gratis con aal2 (impedir cambiar la contraseña o borrar el factor con un pase aal1, cerrar las otras sesiones al activar): el diseño debe devolverlo. Rehace partes de H-004a (`session.ts`, la migración `20261112100000_mfa_session_gate`, activar e ingresar). Diseño pendiente del `planificador`.
+
+---
+
+### H-118 · Anular la activación del segundo paso desde el correo de aviso · M01, M18
+
+**Como** Dueño de una organización
+**quiero** poder anular, desde el correo que me avisa, una activación del segundo paso que yo no hice
+**para** que quien sepa mi contraseña no pueda activar el segundo paso con su teléfono y dejarme fuera de mi cuenta.
+
+**Criterios de aceptación** (el `planificador` los afina al diseñarla)
+- [ ] Al activar el segundo paso, a la cuenta le llega un correo con un enlace de un solo uso para **anular la activación**
+- [ ] El enlace solo funciona una vez, caduca, y su token se guarda solo como huella; abrirlo muestra una confirmación y la anulación se hace al confirmar, no al abrir (los escáneres de correo abren los enlaces)
+- [ ] Al anular: se quita el factor, se cierran todas las sesiones de la cuenta (también la de quien activó) y queda en el registro de actividad y en el de auditoría
+- [ ] Un token inválido, vencido o ya usado da el mismo mensaje (no revela cuál)
+- [ ] Quien tiene la contraseña no puede volver a activar de inmediato y dejar fuera otra vez al dueño: la anulación obliga a cambiar la contraseña, o a esperar, según el diseño
+- [ ] Si el correo no puede salir, la persona lo sabe y no queda con la cuenta protegida por un teléfono que nadie vigila sin saberlo
+- [ ] Una prueba reproduce el ataque completo: quien conoce la contraseña activa su teléfono, el dueño usa el enlace del correo y el atacante queda fuera
+- [ ] Se prueba en local con el correo de Mailpit
 
 **Prioridad:** núcleo
 **Tamaño:** mediano
-**Depende de:** H-004a
-**Datos personales:** no
-**Notas técnicas:** 🔒 sprint 6 o antes del lanzamiento (decisión 021, `docs/decisiones/021-limite-de-intentos-del-segundo-paso.md`; opción A, provisional hasta que Aarón la ratifique). Hook de Supabase Auth `mfa_verification_attempt` (`[auth.hook.mfa_verification_attempt]`): una función de base de datos con candado por cuenta que cuenta los intentos y rechaza; reutiliza los alcances de `auth_rate_limits` de H-004a (`mfa_verify_user` y `mfa_verify_user_day`), con la misma separación de contadores para el camino de recuperación (huella `<cuenta>|recovery`). Exige confirmar antes que el plan de Supabase de producción incluye el hook (posible costo) y que Aarón lo apruebe. Migración con la guardia 15 (`lock_timeout`). Hay que coordinarla con los contadores propios de la aplicación (`src/lib/security/login-rate-limit.ts`) para que no se cuenten dos veces el mismo intento.
+**Depende de:** H-004a (mezclada); el proveedor de correo (decisión 016, Resend aprobado el 2026-11-12) para producción
+**Datos personales:** sí (correo de la persona)
+**Notas técnicas:** 🔒 **prioritaria antes del piloto** (hallazgo I1 de la revisión de Aarón al #44, 2026-11-12; seguimiento 0 de la decisión 021). Pedir la contraseña de nuevo antes de activar (H-004b) NO lo cierra: el atacante ya la sabe. El aviso de hoy es el de Supabase Auth (`[auth.email.notification.mfa_factor_enrolled]` en `supabase/config.toml`), una plantilla fija que no admite un enlace propio con token: el diseño decide quién envía el correo. Mientras no exista, vale el procedimiento de soporte de la decisión 021 (solicitud desde el correo registrado, confirmación del Dueño, 24 horas de espera con aviso; lo hace solo Aarón durante el piloto). Tabla nueva con `tenant_id` (organización «plataforma», como `auth_rate_limits`), migración con la guardia 15. Diseño pendiente del `planificador`.
 
 ---
 
 # Índice por prioridad
 
-> H-004 y H-048 se partieron el 2026-11-02 (H-004a, H-004b y H-004c; H-048a y H-048b). Los conteos de abajo y las «92 historias» se mantienen con la numeración original.
+> H-004 y H-048 se partieron el 2026-11-02 (H-004a, H-004b y H-004c; H-048a y H-048b). Los conteos de abajo y las «92 historias» se mantienen con la numeración original. **H-117 y H-118 (2026-11-12, del segundo paso) son núcleo y no están contadas.**
 
 **Núcleo — sin esto el producto no tiene sentido (44)**
 H-001 · H-002 · H-003 · H-004 · H-005 · H-006 · H-007 · H-008 · H-009 · H-010 · H-011 · H-012 ·

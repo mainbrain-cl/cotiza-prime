@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 export default async function AccountSecurityPage({
   searchParams,
 }: PageProps<"/cuenta/seguridad">) {
-  await requireUser();
+  const user = await requireUser();
   const state = await getSessionState();
   const { aviso } = await searchParams;
   const secondStep =
@@ -41,6 +41,7 @@ export default async function AccountSecurityPage({
         active={secondStep.active}
         sinceLabel={secondStep.since ? formatDate(secondStep.since) : null}
         justEnabled={aviso === ACCOUNT_SECURITY_NOTICES.enabled}
+        noticeEmail={user.email || null}
       />
     </AuthCard>
   );

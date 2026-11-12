@@ -7,6 +7,8 @@ import {
   MFA_LOCKED_DAY_ENROLLMENT_MESSAGE,
   MFA_LOCKED_DAY_MESSAGE,
   MFA_LOCKED_DAY_PASSWORD_MESSAGE,
+  MFA_NOTICE_REVERTED_MESSAGE,
+  MFA_NOTICE_REVERT_FAILED_MESSAGE,
   MFA_SIGN_IN_FAILED_MESSAGE,
   classifyAuthError,
 } from "@/lib/auth/errors";
@@ -33,6 +35,17 @@ import {
   releaseTotpCode,
   type SecondStepContext,
 } from "@/lib/security/login-rate-limit";
+import {
+  MfaAlertsGatewayError,
+  grantEnrollmentPermit,
+  revertEnrollmentAlert,
+} from "@/lib/security/mfa-alerts-gateway";
+import {
+  deliverPendingEnrollmentNotices,
+  failureCodeFor,
+  revertEnrollment,
+  type NoticeDelivery,
+} from "@/lib/security/mfa-enrollment-notice";
 import { createClient } from "@/lib/supabase/server";
 import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
 
@@ -205,6 +218,9 @@ export async function verifySecondStepAction(
   });
   // El ingreso de cada organización se escribe ahora, con la sesión ya completa (con la parcial la base no entrega ninguna).
   await logTenantLogins(supabase, user.id);
+  // Reintenta los avisos de activación que no salieron (el servidor se cayó entre verificar y enviar, o el correo falló).
+  // No revierte nada: quien ingresa con su código ya tiene el segundo paso activo desde antes. Nunca lanza.
+  await deliverPendingEnrollmentNotices(user.id);
   redirect(afterSecondStepPath(context));
 }
 
@@ -325,9 +341,31 @@ export async function confirmTotpEnrollmentAction(
     return { status: "error", message: AUTH_MESSAGES.mfa_expired };
   }
 
+  // El «permiso»: la base rechaza pasar un factor a verificado si nuestro servidor no lo dejó anotado justo antes (así tampoco
+  // se puede activar hablando directo con Supabase, sin que salga el aviso). Vive 2 minutos.
+  if (!(await permitEnrollment(user.id, factorId))) {
+    await releaseTotpCode(user.id, checked.code);
+    return { status: "error", message: AUTH_MESSAGES.mfa_unavailable };
+  }
+
   const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: checked.code });
+  // SIEMPRE, haya salido bien o mal la verificación, se atienden los avisos pendientes de la cuenta: cierra la carrera de
+  // quien verifica el factor directo con el permiso vivo mientras aquí el código era incorrecto.
+  const delivery = await deliverPendingEnrollmentNotices(user.id);
+  await revertUnannounced(user.id, delivery, error ? null : factorId);
   if (error) {
+    // El permiso ya no hace falta: un código incorrecto no deja la puerta abierta los 2 minutos.
+    await closeEnrollmentPermit(user.id, factorId);
     return failedVerification(error, user.id, checked.code, clientIp, "enrollment", "enrollment");
+  }
+
+  // El factor quedó verificado. Si el aviso de ESTE factor no salió, se revierte la activación.
+  if (!delivery.sentFactorIds.includes(factorId)) {
+    const reverted = await revertEnrollment(user.id, factorId, failureCodeFor(delivery, factorId));
+    return {
+      status: "error",
+      message: reverted ? MFA_NOTICE_REVERTED_MESSAGE : MFA_NOTICE_REVERT_FAILED_MESSAGE,
+    };
   }
 
   await clearSecondStepFailures(user.id, "enrollment");
@@ -345,6 +383,48 @@ export async function confirmTotpEnrollmentAction(
     });
   }
   redirect(`${ACCOUNT_SECURITY_PATH}?aviso=${ACCOUNT_SECURITY_NOTICES.enabled}`);
+}
+
+/** Deja el permiso de activación. `false` si la base no lo concede (el factor ya no es un TOTP sin verificar) o falla. */
+async function permitEnrollment(userId: string, factorId: string): Promise<boolean> {
+  try {
+    return await grantEnrollmentPermit(userId, factorId);
+  } catch (error) {
+    await serverLog("error", "mfa_permit_failed", {
+      code: error instanceof MfaAlertsGatewayError ? error.code : "unexpected",
+    });
+    return false;
+  }
+}
+
+/**
+ * Cierra el permiso de un factor cuya verificación falló. Si en ese rato alguien lo verificó directo y el aviso no salió
+ * (la base lo devuelve como `reverted`), también se borra el factor. Nunca lanza.
+ */
+async function closeEnrollmentPermit(userId: string, factorId: string): Promise<void> {
+  try {
+    const outcome = await revertEnrollmentAlert(userId, factorId, "verify_failed");
+    if (outcome === "reverted") await revertEnrollment(userId, factorId, "verify_failed");
+  } catch (error) {
+    await serverLog("warn", "mfa_permit_close_failed", {
+      code: error instanceof MfaAlertsGatewayError ? error.code : "unexpected",
+    });
+  }
+}
+
+/**
+ * Los avisos de OTROS factores de la cuenta que tampoco salieron (p. ej. uno verificado directo por la API con el permiso
+ * vivo) también se revierten. `exceptFactorId` es el factor de esta activación, que se resuelve aparte.
+ */
+async function revertUnannounced(
+  userId: string,
+  delivery: NoticeDelivery,
+  exceptFactorId: string | null,
+): Promise<void> {
+  for (const failure of delivery.failures) {
+    if (!failure.factorId || failure.factorId === exceptFactorId) continue;
+    await revertEnrollment(userId, failure.factorId, failure.code);
+  }
 }
 
 /**

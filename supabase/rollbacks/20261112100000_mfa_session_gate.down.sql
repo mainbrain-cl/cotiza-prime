@@ -13,6 +13,16 @@
 -- (precedente: 20261109120000). Deshacer 20261105110000 (member_management) FUERA DE ORDEN, antes que éste, deja `members_select` y
 -- `profiles_select` en su texto anterior y esta migración pisaría el cambio al reaplicarse; el orden inverso de
 -- `npm run test:db:rollbacks` lo evita.
+--
+-- ADVERTENCIA (menor 3 de la revisión de Aarón al PR #44). Este deshacer quita la protección que la base de datos pone al
+-- segundo paso; no toca los factores de nadie. Dos casos que hay que tener claros ANTES de aplicarlo:
+--   1. Si se aplica con la aplicación nueva (la de H-004a) funcionando, la verificación en dos pasos queda protegiendo SOLO
+--      la pantalla del código: quien tenga la contraseña de una cuenta con la verificación activa puede pedir un pase parcial
+--      directo a Supabase y leer y escribir por la API sin escribir el código.
+--   2. Si además se vuelve atrás la aplicación (a una versión sin H-004a), las cuentas que ya la activaron entran SOLO con la
+--      contraseña, sin que nadie se lo diga: el factor sigue verificado en Supabase, pero nada lo exige.
+-- Mientras exista una cuenta con la verificación activa no se deshace con tráfico abierto: se deja la aplicación en
+-- mantenimiento, se avisa a esas personas y no se abre de nuevo hasta reaplicar la migración o decidir el camino.
 set local lock_timeout = '3s';
 
 do $$ begin

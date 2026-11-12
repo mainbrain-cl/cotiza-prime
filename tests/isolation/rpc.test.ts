@@ -253,6 +253,11 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
         p_factor_id: randomUUID(),
         p_error_code: "x",
       },
+      // Sprint 5 · H-118b · anular la activación
+      mfa_annul_claim: { p_token_sha256: "0".repeat(64) },
+      mfa_annul_complete: { p_link_id: randomUUID() },
+      mfa_annul_release: { p_link_id: randomUUID() },
+      mfa_revoke_sessions: { p_user_id: randomUUID() },
     };
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {

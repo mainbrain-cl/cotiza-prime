@@ -17,6 +17,8 @@ const read = (dir: string, file: string) => readFileSync(path.join(ROOT, dir, fi
 const NAME = "20261113100000_mfa_enrollment_alerts";
 const up = read("migrations", `${NAME}.sql`);
 const down = read("rollbacks", `${NAME}.down.sql`);
+/** La etapa B (20261113110000) nombra estas tablas: su deshacer va ANTES (orden inverso). */
+const downB = read("rollbacks", "20261113110000_mfa_annul.down.sql");
 const md5 = (text: string) => createHash("md5").update(text).digest("hex");
 const code = (sql: string) =>
   sql
@@ -98,6 +100,9 @@ describe("la migración mfa_enrollment_alerts y su deshacer", () => {
   it("MA3 · el deshacer quita el disparador, las cinco funciones y las dos tablas, y devuelve la lista de alcances; volver a aplicar lo deja igual", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(downB);
+      // Sin restos de otras corridas (los e2e dejan enlaces abiertos): la transacción se deshace al terminar.
+      await db.query("delete from public.mfa_annul_links");
       const scopesAfterUp = await scopeCheck();
       expect(scopesAfterUp).toContain("mfa_annul_token");
       expect(await triggerCount()).toBe(1);
@@ -138,6 +143,9 @@ describe("la migración mfa_enrollment_alerts y su deshacer", () => {
   it("MA4 · el deshacer se NIEGA a correr dos veces y no cambia nada", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(downB);
+      // Sin restos de otras corridas (los e2e dejan enlaces abiertos): la transacción se deshace al terminar.
+      await db.query("delete from public.mfa_annul_links");
       await db.query(down);
       const error = await expectSqlError(db, down);
       expect(error.message).toMatch(/ya no es la de esta migracion/);
@@ -146,6 +154,9 @@ describe("la migración mfa_enrollment_alerts y su deshacer", () => {
   it("MA5 · si otra migración redefinió una de las funciones, el deshacer se NIEGA y no cambia nada", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(downB);
+      // Sin restos de otras corridas (los e2e dejan enlaces abiertos): la transacción se deshace al terminar.
+      await db.query("delete from public.mfa_annul_links");
       await db.query(`create or replace function public.mfa_alert_revert(p_user_id uuid, p_factor_id uuid, p_error_code text) returns text
         language plpgsql security definer set search_path = '' as $f$ begin return 'none'; end $f$`);
       const error = await expectSqlError(db, down);
@@ -157,6 +168,9 @@ describe("la migración mfa_enrollment_alerts y su deshacer", () => {
   it("MA6 · si OTRA función nombra las funciones o las tablas, el deshacer se NIEGA (borrarlas la rompería)", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(downB);
+      // Sin restos de otras corridas (los e2e dejan enlaces abiertos): la transacción se deshace al terminar.
+      await db.query("delete from public.mfa_annul_links");
       await db.query(`create function app.otra_usa_los_enlaces() returns bigint
         language sql stable security definer set search_path = '' as $f$ select count(*) from public.mfa_annul_links $f$`);
       const error = await expectSqlError(db, down);
@@ -167,6 +181,9 @@ describe("la migración mfa_enrollment_alerts y su deshacer", () => {
   it("MA7 · con enlaces de anulación abiertos el deshacer se NIEGA; usados o vencidos no lo detienen", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(downB);
+      // Sin restos de otras corridas (los e2e dejan enlaces abiertos): la transacción se deshace al terminar.
+      await db.query("delete from public.mfa_annul_links");
       const user = await createUser(db);
       const { rows } = await db.query<{ id: string }>(
         `insert into public.mfa_enrollment_alerts (user_id, factor_id, state, expected_until)
@@ -184,6 +201,18 @@ describe("la migración mfa_enrollment_alerts y su deshacer", () => {
       expect(refused.message).toMatch(/enlaces de anulacion abiertos/);
       expect(await tableExists("mfa_annul_links")).toBe(true);
       await db.query("update public.mfa_annul_links set used_at = now() where id = $1", [link]);
+      await db.query(down);
+      expect(await tableExists("mfa_annul_links")).toBe(false);
+    }));
+
+  it("MA8 · con las funciones de la etapa B todavía puestas, el deshacer de la etapa A se NIEGA (las nombran): hay que deshacer primero la B", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      const error = await expectSqlError(db, down);
+      expect(error.message).toMatch(/otra funcion nombra/);
+      await db.query(downB);
+      // Sin restos de otras corridas (los e2e dejan enlaces abiertos): la transacción se deshace al terminar.
+      await db.query("delete from public.mfa_annul_links");
       await db.query(down);
       expect(await tableExists("mfa_annul_links")).toBe(false);
     }));

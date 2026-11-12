@@ -813,6 +813,11 @@ export const SERVER_ONLY_FUNCTIONS = [
   "mfa_alerts_reserve",
   "mfa_alert_settle",
   "mfa_alert_revert",
+  // Sprint 5 · H-118b: tomar, completar y soltar el enlace de anulación, y cerrar lo que quede de las sesiones (el servidor)
+  "mfa_annul_claim",
+  "mfa_annul_complete",
+  "mfa_annul_release",
+  "mfa_revoke_sessions",
 ];
 
 /**

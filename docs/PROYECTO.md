@@ -797,7 +797,7 @@ emitir la cotización formal, no en el formulario.
 | Cotizaciones, pagos y clientes de una organización activa | Mientras la organización esté activa |
 | Datos de una organización cancelada | 90 días archivados; después se borran o anonimizan |
 | Invitaciones no aceptadas (correo del invitado) | 30 días después de vencer o cancelarse; el correo se vacía al aceptar *(supuesto 7 del sprint 5, por confirmar)* |
-| Avisos de activación del segundo paso y sus enlaces de anulación (`mfa_enrollment_alerts`, `mfa_annul_links`; H-118: no guardan el correo, solo códigos y la huella del enlace) | 30 días después de vencer el enlace de 72 horas (a los 33 días de creados); el borrado va dentro de la función que los crea |
+| Avisos de activación del segundo paso y sus enlaces de anulación (`mfa_enrollment_alerts`, `mfa_annul_links`; H-118: no guardan el correo, solo códigos y la huella del enlace) | 30 días después de vencer el enlace de 72 horas (`expires_at` + 30 días; el aviso se borra cuando ya no le queda ningún enlace y tiene más de 30 días); el borrado va dentro de las funciones que los crean y los toman |
 | Registro de auditoría | 24 meses |
 
 **Nunca datos reales en el entorno de pruebas.**

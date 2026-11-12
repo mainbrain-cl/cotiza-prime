@@ -7,6 +7,7 @@ import { FormAlert, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 import { annulSecondStepAction } from "@/lib/auth/mfa-annul-actions";
+import { MFA_ANNUL_MISSING_CODE_MESSAGE } from "@/lib/auth/mfa-annul-messages";
 import { HOME_PATH, LOGIN_PATH } from "@/lib/auth/paths";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,7 @@ const DANGER_SOLID = "bg-danger text-on-accent hover:bg-danger/90";
 export function AnnulForm() {
   const [state, formAction] = useActionState(annulSecondStepAction, INITIAL_FORM_STATE);
   const [token, setToken] = useState("");
+  const [missingCode, setMissingCode] = useState(false);
 
   useEffect(() => {
     const fromHash = window.location.hash.replace(/^#/, "");
@@ -46,8 +48,22 @@ export function AnnulForm() {
   }
 
   return (
-    <form action={formAction} className="flex flex-col gap-4" noValidate>
+    <form
+      action={(formData) => {
+        // Sin el código (se recargó la página o se abrió la dirección sin el «#») no se envía NADA al servidor y no se dice nada
+        // del enlace: solo se pide abrir otra vez el botón del correo.
+        if (!token) {
+          setMissingCode(true);
+          return;
+        }
+        setMissingCode(false);
+        formAction(formData);
+      }}
+      className="flex flex-col gap-4"
+      noValidate
+    >
       <OfflineNotice />
+      {missingCode ? <FormAlert tone="warning">{MFA_ANNUL_MISSING_CODE_MESSAGE}</FormAlert> : null}
       {state.message ? <FormAlert>{state.message}</FormAlert> : null}
       <div className="flex flex-col gap-3 text-fg-muted">
         <p>

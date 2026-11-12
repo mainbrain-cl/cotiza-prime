@@ -5,18 +5,28 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { lockAccountAndRemoveFactors } from "@/lib/security/mfa-admin-gateway";
-import {
-  claimAnnulLink,
-  completeAnnulLink,
-  releaseAnnulLink,
-  revokeRemainingSessions,
-} from "@/lib/security/mfa-alerts-gateway";
+import { claimAnnulLink, releaseAnnulLink } from "@/lib/security/mfa-alerts-gateway";
+import { annulSecondStep } from "@/lib/security/mfa-annul";
 import { adminCreateUser, rest, signIn } from "../support/local-supabase";
 import { enrollAndVerifyWithPermit, gotrue } from "../support/mfa-gate";
 import { openDb } from "./context";
 
 vi.setConfig({ testTimeout: 90_000 });
+
+// Fuera de Next no hay petición ni proveedor de correo: el registro, la auditoría y el envío del aviso se reemplazan; todo lo demás
+// (porteros, pasarela de administración, base y Supabase Auth) es el código real.
+vi.mock("@/lib/log/server-log", () => ({ serverLog: async () => undefined }));
+vi.mock("@/lib/audit/log", () => ({ logAuditEvent: async () => undefined }));
+vi.mock("@/lib/email/config", () => ({
+  loadEmailConfig: () => ({ fromAddress: "cotizaciones@ejemplo.test" }),
+}));
+vi.mock("@/lib/email/transport", () => ({
+  EmailConfigError: class extends Error {},
+  getEmailTransport: () => ({
+    provider: "memory",
+    send: async () => ({ ok: true, providerMessageId: "prueba" }),
+  }),
+}));
 
 let db: Client;
 const created: string[] = [];
@@ -64,13 +74,14 @@ describe("H-118b · el enlace de A usado con la sesión de B abierta solo afecta
     const bLink = await sentAlert(b.id);
     expect((await gotrue(bFull.aal2, "GET", "user")).status).toBe(200);
 
-    // La persona de B abre y aprieta el enlace de A (con su sesión abierta): lo que se toma es la fila del enlace de A.
-    const claimed = await claimAnnulLink(aLink.hash);
-    expect(claimed).toEqual({ linkId: aLink.linkId, userId: a.id });
-    await lockAccountAndRemoveFactors(claimed!.userId);
-    expect(await revokeRemainingSessions(claimed!.userId)).toBe(0);
-    const done = await completeAnnulLink(claimed!.linkId);
-    expect(done).toEqual({ userId: a.id, email: a.email });
+    // La persona de B abre y aprieta el enlace de A (con su sesión abierta): lo que se toma es la fila del enlace de A. Se llama
+    // al servicio real de anulación, el mismo que usa la acción.
+    const outcome = await annulSecondStep(
+      aLink.token,
+      { clientIp: "203.0.113.9", requestId: null, userAgent: null },
+      async (email) => email === a.email,
+    );
+    expect(outcome).toEqual({ status: "annulled", recoveryEmailSent: true });
 
     // A: sin sesiones, contraseña inutilizada.
     for (const session of [aSession, aOther]) {

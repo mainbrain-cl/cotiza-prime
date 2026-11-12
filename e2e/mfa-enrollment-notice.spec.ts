@@ -41,6 +41,18 @@ async function waitForNotice(address: string): Promise<MailpitMessage> {
   return found!;
 }
 
+/** Los asuntos de TODOS los correos que hay en el buzón para esa dirección. */
+async function subjectsTo(address: string): Promise<string[]> {
+  const search = await fetch(
+    `${MAILBOX_URL}/api/v1/search?query=${encodeURIComponent(`to:${address}`)}`,
+  );
+  const { messages } = (await search.json()) as { messages?: { Subject: string }[] };
+  return (messages ?? []).map((message) => message.Subject);
+}
+
+/** Los correos del aviso propio de Supabase (apagado desde H-118): «MFA agregado» / «A new verification method…». */
+const SUPABASE_OWN_NOTICE = /verification method|MFA|factor|Activaste la verificación/i;
+
 async function openEnrollment(page: Page): Promise<string> {
   await page.goto("/cuenta/seguridad");
   await page.getByRole("button", { name: "Activar la verificación en dos pasos" }).click();
@@ -68,6 +80,11 @@ test("activar manda el aviso por correo, con el botón «No fui yo» y el códig
 
   const mail = await waitForNotice(email);
   expect(mail.Subject).toBe(NOTICE_SUBJECT);
+  // Llega EXACTAMENTE un correo de la activación (el nuestro) y ninguno del aviso propio de Supabase (apagado).
+  await page.waitForTimeout(2_000);
+  const subjects = await subjectsTo(email);
+  expect(subjects.filter((subject) => subject === NOTICE_SUBJECT)).toHaveLength(1);
+  expect(subjects.filter((subject) => SUPABASE_OWN_NOTICE.test(subject))).toEqual([]);
   expect(mail.Text).toContain("Si fuiste tú, no hagas nada.");
   expect(mail.Text).toContain("No lo reenvíes.");
   expect(mail.Text).toContain("No fui yo: anular la activación");
@@ -108,6 +125,11 @@ test("un correo que no sale (destinatario fuera de la lista permitida) revierte 
   await submitCode(page, secret);
   await expect(page.getByText(REVERTED_MESSAGE)).toBeVisible();
   await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
+  // Con la activación revertida no llega ningún correo de la activación: ni el nuestro ni el de Supabase.
+  await page.waitForTimeout(2_000);
+  const subjectsAfterRevert = await subjectsTo(email);
+  expect(subjectsAfterRevert.filter((subject) => subject === NOTICE_SUBJECT)).toEqual([]);
+  expect(subjectsAfterRevert.filter((subject) => SUPABASE_OWN_NOTICE.test(subject))).toEqual([]);
 
   // La activación se revirtió de verdad: el factor ya no existe y el aviso quedó `reverted` con su código.
   const db = await connect();

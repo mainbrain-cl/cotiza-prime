@@ -130,7 +130,6 @@ test("EL ATAQUE COMPLETO: quien sabe la contraseña activa su teléfono y deja f
   baseURL,
 }) => {
   test.setTimeout(420_000);
-  const origin = new URL(baseURL!).origin;
   const email = uniqueEmail("duena");
   // La dueña: cuenta SIN el segundo paso, con su organización.
   await signUpAndVerify(page, email, "Dueña Ficticia");
@@ -232,7 +231,6 @@ test("EL ATAQUE COMPLETO: quien sabe la contraseña activa su teléfono y deja f
   await page.goto(link);
   await page.getByRole("button", { name: ANNUL_BUTTON }).click();
   await expect(page.getByText(INVALID_MESSAGE)).toBeVisible();
-  expect(origin).toContain("localhost");
 });
 
 test("un enlace usado, vencido o inventado da exactamente el mismo mensaje y no cambia nada", async ({
@@ -258,9 +256,8 @@ test("un enlace usado, vencido o inventado da exactamente el mismo mensaje y no 
 
   const invented = `${origin}/cuenta/anular-dos-pasos#${randomBytes(32).toString("base64url")}`;
   const garbage = `${origin}/cuenta/anular-dos-pasos#basura`;
-  const withoutCode = `${origin}/cuenta/anular-dos-pasos`;
   const messages: string[] = [];
-  for (const url of [used.url, expired.url, invented, garbage, withoutCode]) {
+  for (const url of [used.url, expired.url, invented, garbage]) {
     await page.goto(url);
     await page.getByRole("button", { name: ANNUL_BUTTON }).click();
     const alert = page.getByRole("alert").filter({ hasText: "Este enlace ya no sirve" });
@@ -270,6 +267,27 @@ test("un enlace usado, vencido o inventado da exactamente el mismo mensaje y no 
     await expect(page.getByText(used.email)).toHaveCount(0);
   }
   expect(new Set(messages)).toEqual(new Set([INVALID_MESSAGE]));
+
+  // Sin el código (la dirección sin el «#», o la página recargada después de que el «#» se borró) NO se envía nada al
+  // servidor y solo se pide abrir otra vez el botón del correo: no se dice nada del enlace.
+  const posts: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST") posts.push(request.url());
+  });
+  const missing = page
+    .getByRole("status")
+    .filter({ hasText: "Abre otra vez el botón del correo." });
+  await page.goto(`${origin}/cuenta/anular-dos-pasos`);
+  await page.getByRole("button", { name: ANNUL_BUTTON }).click();
+  await expect(missing).toBeVisible();
+  await page.goto("about:blank");
+  await page.goto(fresh.url);
+  await expect(page).toHaveURL(/\/cuenta\/anular-dos-pasos$/);
+  await page.reload();
+  await page.getByRole("button", { name: ANNUL_BUTTON }).click();
+  await expect(missing).toBeVisible();
+  await expect(page.getByText("Este enlace ya no sirve")).toHaveCount(0);
+  expect(posts).toEqual([]);
   // Ninguna cuenta cambió: la que tenía sesión la conserva y su enlace sigue abierto.
   expect((await gotrue(bystander.accessToken, "GET", "user")).status).toBe(200);
   const remaining = await withDb((db) =>
@@ -317,6 +335,47 @@ test("abrir el enlace varias veces sin apretar no cambia nada; la página manda 
   expect((await gotrue(session.accessToken, "GET", "user")).status).toBe(200);
 });
 
+test("once pedidos inválidos desde la misma IP no frenan a la dueña: su enlace válido igual anula; todos los inválidos dan el mismo mensaje y el 11.º, el límite habitual", async ({
+  page,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const origin = new URL(baseURL!).origin;
+  const owner = await seededLink(origin);
+  const invalidMessages: string[] = [];
+  // Un compañero de la misma red (misma IP) prueba enlaces inventados: los primeros 10 dan el mismo mensaje y el 11.º, el límite.
+  for (let attempt = 1; attempt <= 11; attempt += 1) {
+    await page.goto("about:blank");
+    await page.goto(`${origin}/cuenta/anular-dos-pasos#${randomBytes(32).toString("base64url")}`);
+    await page.getByRole("button", { name: ANNUL_BUTTON }).click();
+    if (attempt <= 10) {
+      const alert = page.getByRole("alert").filter({ hasText: "Este enlace ya no sirve" });
+      await expect(alert).toBeVisible();
+      invalidMessages.push((await alert.innerText()).trim());
+    } else {
+      await expect(
+        page.getByRole("alert").filter({ hasText: "Demasiados intentos" }),
+      ).toBeVisible();
+    }
+  }
+  expect(new Set(invalidMessages)).toEqual(new Set([INVALID_MESSAGE]));
+  // Con la IP ya bloqueada para enlaces inválidos, el enlace VÁLIDO de la dueña igual anula.
+  await page.goto("about:blank");
+  await page.goto(owner.url);
+  await page.getByRole("button", { name: ANNUL_BUTTON }).click();
+  await expect(page.getByTestId("annul-done")).toContainText(
+    "Anulamos la activación y cerramos todas las sesiones.",
+  );
+  const state = await withDb((db) =>
+    db.query<{ state: string; used: boolean }>(
+      `select a.state, l.used_at is not null as used from public.mfa_annul_links l
+         join public.mfa_enrollment_alerts a on a.id = l.alert_id where l.user_id = $1`,
+      [owner.userId],
+    ),
+  );
+  expect(state.rows).toEqual([{ state: "annulled", used: true }]);
+});
+
 test("en el teléfono (375 px, con movimiento reducido): sin desborde, áreas de 44 px, foco visible y se maneja con el teclado", async ({
   page,
   baseURL,
@@ -328,6 +387,12 @@ test("en el teléfono (375 px, con movimiento reducido): sin desborde, áreas de
   await page.goto(`${origin}/cuenta/anular-dos-pasos#${randomBytes(32).toString("base64url")}`);
   const button = page.getByRole("button", { name: ANNUL_BUTTON });
   await expect(button).toBeVisible();
+  // Con «reducir movimiento», la animación de entrada de la tarjeta queda sin duración (no se mueve).
+  const entryAnimation = await page.evaluate(() => {
+    const el = document.querySelector("main .animate-enter");
+    return el ? getComputedStyle(el).animationDuration : "sin-tarjeta";
+  });
+  expect(entryAnimation).toBe("0s");
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - window.innerWidth,
   );

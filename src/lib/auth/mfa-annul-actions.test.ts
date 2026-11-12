@@ -90,7 +90,7 @@ describe("annulSecondStepAction", () => {
       "Este enlace ya no sirve. Si alguien activó la verificación en tu cuenta sin tu permiso, escríbenos.",
     );
     expect(MFA_ANNUL_DONE_MESSAGE).toBe(
-      "Anulamos la activación y cerramos todas las sesiones. Te enviamos un correo para elegir tu contraseña nueva.",
+      "Anulamos la activación y cerramos todas las sesiones. Te enviamos un correo para elegir tu contraseña nueva. Ábrelo en este mismo navegador.",
     );
     expect(MFA_ANNUL_DONE_NO_EMAIL_MESSAGE).toBe(
       "Anulamos la activación y cerramos todas las sesiones. Para entrar, usa «¿Olvidaste tu contraseña?».",

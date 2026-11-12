@@ -229,7 +229,7 @@ el «#» del enlace.
 
 # Registro de construcción — etapa A (H-118a: el aviso), 2026-11-12
 
-**Rama** `feat/h-118-anular-activacion`, sin PR ni mezcla. Entorno 🟢 PRUEBAS (Supabase local). La etapa B (H-118b: la página, `annulSecondStepAction`, la pasarela de anulación, el correo de recuperación y la lógica de `mfa_annul_claim/complete/release`) **no** está construida. Con solo la etapa A el botón del correo apunta a `/cuenta/anular-dos-pasos`, una ruta que todavía no existe: **la etapa A no se mezcla sola**.
+**Rama** `feat/h-118-anular-activacion` (PR #50), sin mezclar. Entorno 🟢 PRUEBAS (Supabase local). La etapa B (H-118b: la página, `annulSecondStepAction`, la pasarela de anulación, el correo de recuperación y la lógica de `mfa_annul_claim/complete/release`) **no** está construida. Con solo la etapa A el botón del correo apunta a `/cuenta/anular-dos-pasos`, una ruta que todavía no existe: **la etapa A no se mezcla sola**.
 
 ## Paso 0: lo que fijó Supabase Auth local (`tests/db/mfa-annul-gotrue.test.ts`)
 
@@ -256,7 +256,7 @@ No se pudo comprobar en esta etapa: el 500 en un GoTrue distinto del local, y `a
 3. **El enlace se crea al reservar** (`mfa_alerts_reserve` recibe la huella del código nuevo), no al cerrar el envío: el correo nunca sale con un enlace que la base no conoce.
 4. **El orden de la reversión:** primero se borra el factor y después se anota `reverted`; si no se pudo borrar, el aviso sigue pendiente y se reintenta.
 5. **No se crearon `mfa_annul_claim/complete/release`** ni `mfa_revoke_sessions`: la etapa A no las usa.
-6. Retención en 33 días desde la creación (equivale a 30 días después de que vence el enlace de 72 horas); la limpieza va en `mfa_alert_expect`.
+6. Retención: ver la ronda 1 (los enlaces se borran 30 días después de vencer y un aviso cuando ya no le queda ningún enlace y tiene más de 30 días); la limpieza va en `mfa_alert_expect` y `mfa_annul_claim`.
 7. Los alcances `mfa_annul_ip` y `mfa_annul_token` solo se agregaron a la restricción de la base; el tipo `RateLimitScope` de TypeScript los recibe en la etapa B.
 
 ## Para la revisión (riesgos)
@@ -277,7 +277,7 @@ No se pudo comprobar en esta etapa: el 500 en un GoTrue distinto del local, y `a
 
 # Registro de construcción — etapa B (H-118b: anular), 2026-11-12
 
-**Misma rama** `feat/h-118-anular-activacion` (etapas A y B juntas; sin PR). Entorno 🟢 PRUEBAS. Con esto la historia completa está construida **y en revisión**; no está en producción ni se probó con un proveedor de correo real.
+**Misma rama** `feat/h-118-anular-activacion` (etapas A y B juntas; PR #50). Entorno 🟢 PRUEBAS. Con esto la historia completa está construida **y en revisión**; no está en producción ni se probó con un proveedor de correo real.
 
 ## Qué se comprobó antes de construir
 
@@ -315,9 +315,44 @@ No se pudo comprobar en esta etapa: el 500 en un GoTrue distinto del local, y `a
 
 El envío con el proveedor real (Resend, decisión 016) y su dominio (SPF, DKIM, DMARC); que Gmail y Outlook conserven el «#» del enlace; el comportamiento del disparador sobre `auth.mfa_factors` y del 500 de GoTrue en un proyecto alojado; Firefox, lector de pantalla e iPhone real; el correo de recuperación contra los límites de envío de Supabase alojado (en local salió siempre).
 
-## Antes del piloto (lista)
+## Antes del piloto (lista; ampliada en la ronda 1)
 
-1. En el Supabase de pruebas alojado: comprobar que se puede crear el disparador `mfa_factor_verify_gate` sobre `auth.mfa_factors` y que una activación directa por la API responde 500 sin activar nada.
-2. Configurar Resend (decisión 016: dominio, SPF/DKIM/DMARC, `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`, `APP_ORIGIN`) y probar con buzones reales de Gmail y Outlook que el enlace del correo de aviso conserve el «#».
-3. Apagar los factores por teléfono y WebAuthn, medir el cupo de verificaciones y dejar apagado el aviso propio de Supabase (`mfa_factor_enrolled`).
-4. Revisión adversarial y prueba en pantalla de Aarón; y `app.session_alive()` (H-116) para el tramo de 15 minutos.
+1. En el Supabase de pruebas alojado: comprobar que se puede crear el disparador `mfa_factor_verify_gate` sobre `auth.mfa_factors`, que una activación directa por la API responde 500 sin activar nada, y que `select public.mfa_revoke_sessions(<cuenta de prueba>)` funciona (si responde permiso denegado, la anulación sigue y deja `session.mfa_annul_warning`, pero hay que saberlo).
+2. **Secure email change** ACTIVO (también está en la lista de H-009) y **Double confirm email**.
+3. Apagados: **passkeys** (`[auth.passkey]` existe en GoTrue v2.197), el enlace manual de identidades, los proveedores externos, Web3, el ingreso anónimo, y los factores por teléfono y WebAuthn.
+4. Configurar Resend (decisión 016: dominio, SPF/DKIM/DMARC, `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`, `APP_ORIGIN`) con el **seguimiento de clics (click tracking) APAGADO**: si no, el código del enlace pasa por su redirector. Probar con buzones reales de Gmail y Outlook que el enlace del correo de aviso conserve el «#».
+5. Cuando se agregue Sentry al navegador, quitar el «#» de `/cuenta/anular-dos-pasos` del historial que guarda (breadcrumbs, URL de las sesiones).
+6. Definir el canal de soporte: la página dice «escríbenos» sin decir dónde. Va con la decisión 8 (quién responde un incidente): responde Aarón, días hábiles de 9 a 19 h.
+7. Revisar el disparador `mfa_factor_verify_gate` tras CADA actualización de Supabase: si cambia el tipo de `status` o el disparador se pierde, la protección se apaga sin aviso. Dejar una comprobación de salud (una prueba o un script que lo verifique en el proyecto alojado; hoy lo cubren `tests/db/mfa-annul-gotrue.test.ts` y `tests/db/mfa-enrollment-alerts.test.ts` solo en local).
+8. En producción, al hacer el deshacer de H-118a hay que volver a ENCENDER `mfa_factor_enrolled` en el panel de Supabase (también lo advierte `supabase/rollbacks/20261113100000_mfa_enrollment_alerts.down.sql`).
+9. Apagar el aviso propio de Supabase (`mfa_factor_enrolled`), apagar los factores por teléfono y WebAuthn y medir el cupo de verificaciones (de la lista general de H-004a).
+10. **El plazo del hosting debe respetar el `maxDuration` de 60 s** de las pantallas que envían los avisos (`/ingresar`, `/ingresar/codigo`, `/cuenta/seguridad`, `/cuenta/anular-dos-pasos`): 3 envíos de hasta 15 s cada uno. Con un plazo menor, una activación podría cortarse a medio enviar.
+11. Revisión adversarial final y prueba en pantalla de Aarón; y `app.session_alive()` (H-116) para el tramo de 15 minutos del pase del atacante.
+
+# Ronda 1 de correcciones (revisiones Opus normal y adversarial del PR #50, 2026-11-12)
+
+0 bloqueantes en ambas revisiones. Las migraciones aún no están en `main`: se editaron EN LUGAR (con su deshacer y md5 al día).
+
+- **A1.** `mfa_annul_claim` acepta avisos `sent` O `pending` (el enlace solo existe si se reservó y se intentó mandar al correo; los revertidos se borran con sus enlaces). `mfa_alerts_reserve` devuelve además el id del enlace, que es la clave anti-duplicado del correo (una por enlace; antes era el id del aviso y un reintento con otro código la repetía, que Resend rechaza con 409). `settleEnrollmentAlert` usa `retryTransientDb`; si aun así no se alcanza a anotar, el aviso queda `pending` pero el enlace ya sirve y el correo se reintenta en el próximo ingreso.
+- **A2.** `signInAction` reintenta los avisos pendientes cuando la contraseña es correcta y la cuenta tiene el segundo paso (lo que hace la dueña bloqueada). El aviso siempre va al correo de la cuenta; el tope es de la base: 5 intentos por aviso y uno cada 20 s (`mfa_alerts_reserve`, prueba R2), además del límite de ingreso. `export const maxDuration = 60` en las cuatro pantallas (Next exige un literal; la guardia 14i vigila el mínimo). Si `revertEnrollment` no logra borrar el factor, el aviso queda `pending` y se reintenta por la misma vía.
+- **A3.** El límite por IP y por huella cuenta SOLO enlaces inválidos y se anota DESPUÉS de tomar el enlace: un enlace válido nunca se frena por la IP (un compañero de red ya no puede dejar bloqueada a la dueña con 11 pedidos). Todos los inválidos dan el mismo mensaje; el 11.º de la misma IP, el límite habitual. Prueba e2e que reproduce los 11 pedidos.
+- **A4.** Si `mfa_revoke_sessions` falla por PERMISO (42501), la anulación sigue (cambiar la contraseña ya cerró las sesiones, K9) y deja `session.mfa_annul_warning` sin datos personales; cualquier otro error suelta el enlace. La lista «Antes del piloto» se amplió (arriba).
+- **A5.** El contenedor de Auth de la Supabase local conservaba `GOTRUE_MAILER_NOTIFICATIONS_MFA_FACTOR_ENROLLED_ENABLED=true`; tras `supabase stop` y `start` esa variable ya no existe (verificado con `docker inspect`). El e2e comprueba que llega EXACTAMENTE un correo de la activación y ninguno del aviso de Supabase (tampoco cuando el correo no sale). README con la advertencia de reiniciar de verdad.
+- **M1.** `closeEnrollmentPermit` ya no marca `reverted` ni borra enlaces antes de borrar el factor: `mfa_alert_revert` recibe `p_only_permit` y devuelve `pending` sin tocar el aviso; el servidor borra el factor primero y anota después (si falla el borrado, el aviso sigue `pending`).
+- **M2.** El disparador exige `old.factor_type = 'totp'` y `new.factor_type = 'totp'` (cambiar el tipo en la misma sentencia no sirve; prueba T8). **Seguimiento (no hecho):** un disparador `before insert` que rechace `status = 'verified'` cuando inserta `supabase_auth_admin` (`session_user`). No se pudo probar aquí: `postgres` no puede suplantar a `supabase_auth_admin`, así que solo lo ejercitaría GoTrue; se deja anotado.
+- **M3.** La guardia 14 detecta también `auth?.admin`, `auth["admin"]` y `const { admin } = client.auth` (con sus casos que muerden y los que no).
+- **M4.** Si el «#» no llegó (página recargada o dirección sin código) NO se envía nada y la página dice «Abre otra vez el botón del correo.».
+- **M5.** El éxito dice «Ábrelo en este mismo navegador» (el flujo PKCE guarda el código en una cookie de este navegador).
+- **M6.** Retención desde el último vencimiento: enlaces a `expires_at` + 30 días; un aviso se borra cuando ya no tiene enlaces y tiene más de 30 días (migración, deshacer, pruebas y PROYECTO.md §11.2).
+- **M7.** La prueba de aislamiento llama a `annulSecondStep` real; se quitó el `expect(origin).toContain("localhost")`; la e2e de 375 px comprueba que «reducir movimiento» deja la animación en 0 s; se corrigió el comentario de `tests/support/mfa-gate.ts`.
+- **M8.** Documentos: PR #50; la nota técnica de H-118; el tramo de 15 minutos en el criterio 3; y lo del paso 0 que faltaba (abajo).
+
+## Lo que faltaba registrar del paso 0
+
+- ¿`updateUserById` con contraseña manda el correo «Tu contraseña cambió» de Supabase? **No**, según Mailpit (en la anulación llegan solo los dos correos nuestros).
+- ¿La acción de servidor sigue si el navegador se desconecta? **Sí**: según `node_modules/next/dist/server/app-render/action-handler.js` (~674-716) la cancelación solo corta la lectura del cuerpo de la petición, no la ejecución de la acción.
+- Riesgo nuevo, **costo aceptado del diseño:** un escáner de correo que ejecute la página Y apriete botones anularía una activación legítima. (La página no ejecuta nada al abrirse justamente para que un escáner que solo abre no pueda anular.)
+
+## Seguimientos (no se hicieron, por decisión)
+
+Tope diario de avisos por cuenta (Adv M6), leer `auth.sessions.aal`, canal de soporte definitivo, `profiles_update`, y el disparador `before insert` de `supabase_auth_admin` (M2).

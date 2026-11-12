@@ -45,7 +45,12 @@ esta base no usa (analítica, vector, tiempo real, Studio), levantarla sin ellos
   activación se revierte y la pantalla lo dice. La base solo deja activar un factor si el servidor dejó antes un «permiso» de
   2 minutos: activar hablando directo con Supabase (`/auth/v1/factors/.../verify`) responde 500 y no activa nada. Un script o
   una prueba que quiera activar un factor por la API tiene que pedir antes el permiso: `select public.mfa_alert_expect(<cuenta>,
-  <factor>)` con la llave maestra (ver `tests/support/mfa-gate.ts`). 
+  <factor>)` (ver `tests/support/mfa-gate.ts`).
+- **Si tu Supabase local se levantó antes de que se apagara el aviso propio de Supabase** (`[auth.email.notification.mfa_factor_enrolled]`
+  ya no está en `config.toml`): `npx supabase stop` y de nuevo `npx supabase start` (sin `--no-backup`, los datos se conservan).
+  Reiniciar Docker NO basta: el contenedor de Auth conserva la configuración con que se creó. Para comprobarlo:
+  `docker inspect supabase_auth_cotiza-prime --format '{{range .Config.Env}}{{println .}}{{end}}' | grep MFA_FACTOR_ENROLLED` no debe
+  mostrar nada.
 - **Probar la anulación (H-118b):** con una cuenta nueva, activa el segundo paso (el aviso llega a Mailpit con el botón «No fui yo:
   anular la activación»). El enlace termina en `/cuenta/anular-dos-pasos#<código>`: el código va tras el «#», que el navegador no
   manda al servidor. Abrirlo no hace nada; solo el botón rojo «Anular la activación» anula: quita el factor, deja la contraseña

@@ -2,7 +2,7 @@
 //
 // Desde H-118a la base rechaza que un factor pase a «verificado» si NUESTRO servidor no dejó antes el «permiso»
 // (`public.mfa_alert_expect`, vive 2 minutos). Una prueba que verifica un factor por la API debe pedir el permiso primero con
-// `grantEnrollmentPermit`, que lo crea con la llave maestra (la que usa la aplicación). Solo pruebas, solo base local.
+// `grantEnrollmentPermit`, que lo crea llamando a la función de la base por una conexión SQL directa (la aplicación la llama con la llave maestra). Solo pruebas, solo base local.
 import { randomUUID } from "node:crypto";
 import { Client } from "pg";
 import { freshTotp } from "../../src/test/totp";

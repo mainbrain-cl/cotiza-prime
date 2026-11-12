@@ -96,9 +96,10 @@ function secondStepLogViolation(call: string): string | null {
 }
 
 /** La API de administración de cuentas de Supabase Auth (con la llave maestra): `auth.admin`, también con espacios o saltos. */
-const AUTH_ADMIN_PATTERN = /\bauth\s*\.\s*admin\b/;
+const AUTH_ADMIN_PATTERN =
+  /\bauth\s*(?:\?\.|\.)\s*admin\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]|\{[^{}]*\badmin\b[^{}]*\}\s*=\s*[^;\n]*\bauth\b/;
 /** Y, dentro de ella, la de los factores del segundo paso. */
-const AUTH_ADMIN_MFA_PATTERN = /\bauth\s*\.\s*admin\s*\.\s*mfa\b/;
+const AUTH_ADMIN_MFA_PATTERN = /\bauth\s*(?:\?\.|\.)\s*admin\s*(?:\?\.|\.)\s*mfa\b/;
 /** La pasarela de los factores (H-118). */
 const MFA_ADMIN_GATEWAY = "src/lib/security/mfa-admin-gateway.ts";
 /** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
@@ -990,15 +991,25 @@ describe("guardias estáticas del aislamiento", () => {
       "await createAdminClient().auth.admin.mfa.deleteFactor({ id, userId })",
       "admin.auth\n  .admin\n  .listUsers()",
       "const { auth } = client; auth.admin.updateUserById(id, {})",
+      // Las formas con que se podría esquivar la regla simple
+      "await client.auth?.admin.listUsers()",
+      "await client.auth ?. admin.listUsers()",
+      "await client.auth['admin'].listUsers()",
+      'await client.auth["admin"]?.mfa.deleteFactor({})',
+      "const { admin } = client.auth; await admin.listUsers()",
+      "const { admin: cuentas, other } = createAdminClient().auth;",
     ]) {
       expect(AUTH_ADMIN_PATTERN.test(violation), violation).toBe(true);
     }
     expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth.admin.mfa.deleteFactor({})")).toBe(true);
     expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth.admin.listUsers()")).toBe(false);
+    expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth?.admin?.mfa.deleteFactor({})")).toBe(true);
     for (const harmless of [
       "supabase.auth.getUser()",
       "const isAdmin = true",
       "auth.administrador()",
+      "const { admin } = props;",
+      "const { data, auth } = await load();",
     ]) {
       expect(AUTH_ADMIN_PATTERN.test(harmless), harmless).toBe(false);
     }
@@ -1103,6 +1114,28 @@ describe("guardias estáticas del aislamiento", () => {
     expect(
       /signIn|verifyOtp|exchangeCodeForSession|setSession|signInWithPassword/.test(service),
     ).toBe(false);
+  });
+
+  it("14i. (H-118) las pantallas cuyas acciones envían avisos de la activación del segundo paso declaran un `maxDuration` de al menos 60 s (3 envíos de 15 s más margen)", () => {
+    // Un literal: Next lo lee sin ejecutar la pantalla. El plazo del hosting debe respetarlo (lista «Antes del piloto»).
+    const MIN_SECONDS = 60;
+    const screens = [
+      "src/app/(auth)/ingresar/page.tsx", // signInAction reintenta los avisos pendientes
+      "src/app/(auth)/ingresar/codigo/page.tsx", // verifySecondStepAction los reintenta
+      "src/app/cuenta/seguridad/page.tsx", // confirmTotpEnrollmentAction los envía
+      "src/app/cuenta/anular-dos-pasos/page.tsx", // annulSecondStepAction manda dos correos
+    ];
+    for (const screen of screens) {
+      const text = stripComments(read(path.join(ROOT, screen)));
+      const match = /export const maxDuration = (\d+);/.exec(text);
+      expect(match, `${screen}: falta export const maxDuration = <segundos>`).not.toBeNull();
+      expect(Number(match![1]), screen).toBeGreaterThanOrEqual(MIN_SECONDS);
+    }
+    // Y la guardia muerde: sin la declaración, o con un plazo corto, se detecta.
+    expect(/export const maxDuration = (\d+);/.exec("export const metadata = {};")).toBeNull();
+    expect(
+      Number(/export const maxDuration = (\d+);/.exec("export const maxDuration = 30;")![1]),
+    ).toBeLessThan(MIN_SECONDS);
   });
 
   it("14g. la guardia 14f detecta de verdad el código del enlace, su huella, la contraseña y el correo; deja pasar un código de error", () => {

@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin-client";
 
 /**
  * El PORTERO de los avisos de activación del segundo paso (H-118a): cuatro funciones de la base, todas solo del servidor
- * (migración 20261113100000), llamadas con la llave maestra. No usa la API de cuentas (`auth.admin`): eso vive solo en
+ * (migración 20261113100000), más las cuatro de la anulación (H-118b, migración 20261113110000), llamadas con la llave maestra. No usa la API de cuentas (`auth.admin`): eso vive solo en
  * `mfa-admin-gateway.ts`. Ninguna función devuelve ni recibe el código ni la clave del segundo paso. El correo de la cuenta
  * lo entrega la base leído de `auth.users` al reservar: nunca viene de una petición.
  */
@@ -116,4 +116,72 @@ export async function revertEnrollmentAlert(
   if (error) throw new MfaAlertsGatewayError("revert", error.code);
   if (data === "closed" || data === "reverted" || data === "none") return data;
   throw new MfaAlertsGatewayError("revert", "shape");
+}
+
+const claimedSchema = z.discriminatedUnion("result", [
+  z.object({ result: z.literal("invalid") }),
+  z.object({ result: z.literal("ok"), link_id: z.uuid(), user_id: z.uuid() }),
+]);
+
+/**
+ * TOMA el enlace de anulación por 2 minutos (por la huella del código). `null` si el enlace no existe, venció, ya se usó, está
+ * tomado o su aviso ya no sirve: la base no distingue entre esos casos y esta función tampoco.
+ */
+export async function claimAnnulLink(
+  tokenSha256: string,
+): Promise<{ linkId: string; userId: string } | null> {
+  const { data, error } = await createAdminClient().rpc("mfa_annul_claim", {
+    p_token_sha256: tokenSha256,
+  });
+  if (error) throw new MfaAlertsGatewayError("annul_claim", error.code);
+  const parsed = claimedSchema.safeParse(data);
+  if (!parsed.success) throw new MfaAlertsGatewayError("annul_claim", "shape");
+  return parsed.data.result === "ok"
+    ? { linkId: parsed.data.link_id, userId: parsed.data.user_id }
+    : null;
+}
+
+const completedSchema = z.discriminatedUnion("result", [
+  z.object({ result: z.literal("invalid") }),
+  z.object({
+    result: z.literal("ok"),
+    user_id: z.uuid(),
+    email: z.string().min(3).max(254).nullable(),
+  }),
+]);
+
+/**
+ * Completa la anulación: la base consume ESE enlace y todos los abiertos de la cuenta, cierra los avisos y audita. Devuelve la
+ * cuenta y su correo (de `auth.users`), o `null` si el enlace ya no estaba tomado/abierto. `headers` (IP y correlación de la
+ * petición) viajan a la base solo para que la auditoría quede con su origen.
+ */
+export async function completeAnnulLink(
+  linkId: string,
+  headers?: Record<string, string>,
+): Promise<{ userId: string; email: string | null } | null> {
+  const { data, error } = await createAdminClient(headers).rpc("mfa_annul_complete", {
+    p_link_id: linkId,
+  });
+  if (error) throw new MfaAlertsGatewayError("annul_complete", error.code);
+  const parsed = completedSchema.safeParse(data);
+  if (!parsed.success) throw new MfaAlertsGatewayError("annul_complete", "shape");
+  return parsed.data.result === "ok"
+    ? { userId: parsed.data.user_id, email: parsed.data.email }
+    : null;
+}
+
+/** Suelta el enlace tomado (algo falló): se puede abrir de nuevo sin esperar los 2 minutos. */
+export async function releaseAnnulLink(linkId: string): Promise<void> {
+  const { error } = await createAdminClient().rpc("mfa_annul_release", { p_link_id: linkId });
+  if (error) throw new MfaAlertsGatewayError("annul_release", error.code);
+}
+
+/** Borra lo que quede de sesiones de la cuenta y devuelve cuántas sesiones y tokens de renovación quedan (0 si todo salió bien). */
+export async function revokeRemainingSessions(userId: string): Promise<number> {
+  const { data, error } = await createAdminClient().rpc("mfa_revoke_sessions", {
+    p_user_id: userId,
+  });
+  if (error) throw new MfaAlertsGatewayError("revoke_sessions", error.code);
+  if (typeof data !== "number") throw new MfaAlertsGatewayError("revoke_sessions", "shape");
+  return data;
 }

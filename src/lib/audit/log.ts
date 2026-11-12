@@ -15,6 +15,8 @@ export type AuditAction =
   | "session.mfa_enrolled"
   | "session.mfa_enroll_reverted"
   | "session.mfa_notice_sent"
+  | "session.mfa_annulled"
+  | "session.mfa_annul_failed"
   | "session.mfa_verified"
   | "session.mfa_failed"
   | "session.mfa_locked"

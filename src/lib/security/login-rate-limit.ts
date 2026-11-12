@@ -128,6 +128,16 @@ export const MFA_CODE_REUSE_SECONDS = 2 * SECONDS_PER_MINUTE;
 /** Cuántas veces se REGISTRA el mismo código antes de bloquearlo: el primer registro pasa, el segundo bloquea. */
 export const MFA_CODE_REGISTRATIONS_TO_BLOCK = 2;
 
+/**
+ * Anular la activación del segundo paso desde el enlace del correo (H-118b). Cada intento de anular cuenta, sea el enlace
+ * válido o no (la acción no sabe si sirve hasta tomarlo en la base): 10 por IP y 5 por enlace (por su huella) cada 15 minutos.
+ * El intento número N+1 es el que bloquea. Siempre con huellas: nunca la IP ni el código del enlace.
+ */
+export const MFA_ANNUL_MAX_PER_IP_PER_WINDOW = 10;
+export const MFA_ANNUL_MAX_PER_TOKEN_PER_WINDOW = 5;
+export const MFA_ANNUL_WINDOW_SECONDS = 15 * SECONDS_PER_MINUTE;
+export const MFA_ANNUL_LOCK_SECONDS = 15 * SECONDS_PER_MINUTE;
+
 export type RateLimitScope =
   | "login_email"
   | "login_ip"
@@ -147,7 +157,9 @@ export type RateLimitScope =
   | "invite_link_ip"
   | "mfa_verify_user"
   | "mfa_verify_user_day"
-  | "mfa_code_used";
+  | "mfa_code_used"
+  | "mfa_annul_ip"
+  | "mfa_annul_token";
 
 /**
  * La tabla `auth_rate_limits` solo admite ciertos valores en su columna `scope`. Los pedidos de
@@ -175,6 +187,8 @@ const STORAGE_SCOPE: Record<RateLimitScope, string> = {
   mfa_verify_user: "mfa_verify_user",
   mfa_verify_user_day: "mfa_verify_user_day",
   mfa_code_used: "mfa_code_used",
+  mfa_annul_ip: "mfa_annul_ip",
+  mfa_annul_token: "mfa_annul_token",
 };
 
 type Rule = { maxFailures: number; windowSeconds: number; lockSeconds: number };
@@ -279,6 +293,17 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: MFA_CODE_REGISTRATIONS_TO_BLOCK,
     windowSeconds: MFA_CODE_REUSE_SECONDS,
     lockSeconds: MFA_CODE_REUSE_SECONDS,
+  },
+  // El intento número N+1 es el que bloquea: los primeros N pasan.
+  mfa_annul_ip: {
+    maxFailures: MFA_ANNUL_MAX_PER_IP_PER_WINDOW + 1,
+    windowSeconds: MFA_ANNUL_WINDOW_SECONDS,
+    lockSeconds: MFA_ANNUL_LOCK_SECONDS,
+  },
+  mfa_annul_token: {
+    maxFailures: MFA_ANNUL_MAX_PER_TOKEN_PER_WINDOW + 1,
+    windowSeconds: MFA_ANNUL_WINDOW_SECONDS,
+    lockSeconds: MFA_ANNUL_LOCK_SECONDS,
   },
 };
 
@@ -600,6 +625,32 @@ export async function consumeInvitationLinkQuota(ip: string | null): Promise<boo
     keyHash: searchHash("invite_link_ip", PLATFORM_TENANT_ID, ipKey),
   };
   return !(await failOpen("invite_link_quota_ip", false, () => recordAll([target])));
+}
+
+/**
+ * ¿Puede este intento de anular la activación del segundo paso seguir (H-118b)? Cuenta el intento contra dos límites: la IP
+ * (si se conoce) y el enlace (por la huella sha256 de su código), y responde `false` si alguno ya está bloqueado. Las claves
+ * son huellas: de la IP agrupada y de la huella del enlace, nunca la IP ni el código. Sin IP conocida, en producción cuenta
+ * en el grupo "desconocida"; en desarrollo y pruebas no se limita por IP. Si el contador falla, se deja pasar y se avisa
+ * en el log (el enlace tiene además su propia protección: no se puede adivinar y se toma una sola vez).
+ */
+export async function consumeMfaAnnulQuota(
+  ip: string | null,
+  tokenSha256: string,
+): Promise<boolean> {
+  const ipKey = shareIpKey(ip);
+  if (ipKey) {
+    const byIp: Target = {
+      scope: "mfa_annul_ip",
+      keyHash: searchHash("mfa_annul_ip", PLATFORM_TENANT_ID, ipKey),
+    };
+    if (await failOpen("mfa_annul_quota_ip", false, () => recordAll([byIp]))) return false;
+  }
+  const byLink: Target = {
+    scope: "mfa_annul_token",
+    keyHash: searchHash("mfa_annul_token", PLATFORM_TENANT_ID, tokenSha256),
+  };
+  return !(await failOpen("mfa_annul_quota_token", false, () => recordAll([byLink])));
 }
 
 /**

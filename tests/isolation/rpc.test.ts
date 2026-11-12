@@ -239,6 +239,20 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
         p_to_email_enc: "x",
         p_to_email_hash: "0".repeat(64),
       },
+      // Sprint 5 · H-118a · avisos de activación del segundo paso
+      mfa_alert_expect: { p_user_id: randomUUID(), p_factor_id: randomUUID() },
+      mfa_alerts_reserve: { p_user_id: randomUUID(), p_token_sha256: "0".repeat(64) },
+      mfa_alert_settle: {
+        p_alert_id: randomUUID(),
+        p_provider: "memory",
+        p_provider_message_id: "x",
+        p_error_code: null,
+      },
+      mfa_alert_revert: {
+        p_user_id: randomUUID(),
+        p_factor_id: randomUUID(),
+        p_error_code: "x",
+      },
     };
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {

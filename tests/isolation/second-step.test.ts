@@ -68,6 +68,8 @@ beforeAll(async () => {
   });
   expect(enrolled.status).toBe(200);
   const factorId = enrolled.json!.id as string;
+  // Desde H-118a la base rechaza verificar un factor sin el «permiso» que deja el servidor (migración 20261113100000).
+  await db.query("select public.mfa_alert_expect($1, $2)", [userId, factorId]);
   const challenge = await auth(first.accessToken, "POST", `factors/${factorId}/challenge`, {});
   const { code } = await freshTotp(enrolled.json!.totp.secret);
   const verified = await auth(first.accessToken, "POST", `factors/${factorId}/verify`, {

@@ -528,6 +528,41 @@ export const ISOLATION_TABLES: TableSpec[] = [
     hasFixtureRowsInB: false,
     ownWriteAccepted: false,
   },
+  // Sprint 5 · H-118a: los avisos de activación del segundo paso y sus enlaces de anulación. Tablas de la plataforma (como
+  // `auth_rate_limits`): solo el servidor las lee y las escribe, y siempre por funciones de la base.
+  {
+    name: "mfa_enrollment_alerts",
+    visibility: "server-only",
+    idColumn: "id",
+    ownedByB: () => "true",
+    readColumns: "id,tenant_id,user_id,factor_id,state",
+    insertAttack: (fx, _tenant, marker) => ({
+      user_id: fx.personas.ana.userId,
+      factor_id: randomUUID(),
+      state: "pending",
+      expected_until: new Date().toISOString(),
+      error_code: `ataque-${marker.length}`,
+    }),
+    updateAttack: () => ({ state: "closed" }),
+    hasFixtureRowsInB: false,
+    ownWriteAccepted: false,
+  },
+  {
+    name: "mfa_annul_links",
+    visibility: "server-only",
+    idColumn: "id",
+    ownedByB: () => "true",
+    readColumns: "id,tenant_id,user_id,alert_id,token_sha256",
+    insertAttack: (fx, _tenant, marker) => ({
+      user_id: fx.personas.ana.userId,
+      alert_id: randomUUID(),
+      token_sha256: "f".repeat(63) + (marker.length % 10),
+      expires_at: new Date().toISOString(),
+    }),
+    updateAttack: () => ({ used_at: new Date().toISOString() }),
+    hasFixtureRowsInB: false,
+    ownWriteAccepted: false,
+  },
 ];
 
 /** Cómo se llama a una función expuesta por la API (RPC) y qué se espera de ella. */
@@ -773,6 +808,11 @@ export const SERVER_ONLY_FUNCTIONS = [
   "invitation_notices_pending",
   "invitation_notice_recipients",
   "invitation_notice_register",
+  // Sprint 5 · H-118a: el permiso de activación del segundo paso, la reserva y el cierre del aviso, y la reversión (el servidor)
+  "mfa_alert_expect",
+  "mfa_alerts_reserve",
+  "mfa_alert_settle",
+  "mfa_alert_revert",
 ];
 
 /**
@@ -788,6 +828,8 @@ export const NON_BUSINESS_VISIBILITY: Readonly<Record<string, Visibility>> = {
   profiles: "profiles",
   legal_acceptances: "own-user",
   auth_rate_limits: "server-only",
+  mfa_enrollment_alerts: "server-only",
+  mfa_annul_links: "server-only",
 };
 
 /** Errores de declaración de visibilidad del registro (vacío si todo calza con la lista cerrada). */

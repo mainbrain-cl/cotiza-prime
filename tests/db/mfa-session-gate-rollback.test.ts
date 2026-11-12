@@ -130,7 +130,7 @@ const scopeCheck = async (): Promise<string> =>
   ).rows[0].def;
 
 describe("la migración mfa_session_gate y su deshacer", () => {
-  it("MR1 · los dos archivos empiezan con `lock_timeout` de 3 s y su verificador; el deshacer solo redefine las dos funciones y borra la nueva", () => {
+  it("MR1 · los dos archivos empiezan con `lock_timeout` de 3 s y su verificador; la migración define las siete funciones (la nueva y seis ya existentes) y el deshacer repone solo las seis y borra la nueva", () => {
     for (const sql of [up, down]) {
       const [first, ...rest] = code(sql).split(";");
       expect(first.replace(/\s+/g, " ").trim()).toBe("set local lock_timeout = '3s'");
@@ -157,7 +157,7 @@ describe("la migración mfa_session_gate y su deshacer", () => {
     }
   });
 
-  it("MR2 · las funciones vigentes son las del archivo; el cuerpo de las dos viejas se copió LITERAL y solo suma la línea nueva", () =>
+  it("MR2 · las funciones vigentes son las del archivo; el cuerpo de las seis ya existentes se copió LITERAL y solo suma la línea nueva", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
       expect((await definition(TENANT_ID))!.src).toBe(functionBodyIn(up, "app.current_tenant_id"));

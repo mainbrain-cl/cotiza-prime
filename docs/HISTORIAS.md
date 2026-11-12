@@ -172,7 +172,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-004a, H-004b, H-011
 **Datos personales:** no
-**Notas técnicas:** **Ya cerrado en H-004a (ronda 1, no se duplica aquí):** con el segundo paso pendiente (contraseña sola), la base rechaza `create_tenant`, `accept_invitation`, `invitation_preview` y `accept_current_legal_documents`, y las políticas `profiles_select`, `profiles_update`, `legal_acceptances_select` y `members_select` no entregan filas propias; la guardia 16 de `tests/db/schema-guards.test.ts` avisa si aparece otra política o función expuesta con `auth.uid()` sin organización y sin `app.second_step_pending()`. H-004c suma lo que falta: `app.effective_role()`. **Notas técnicas:** 🔒 cambia el pase de sesión de las cuentas de prueba en todas las pruebas, por eso va sola y al final del sprint 5. Requisito heredado de H-092 m11: `active.role` debe ser el rol efectivo, o la aplicación y la base discrepan (el editor del formulario ya tolera el `42501` del tope). Los supuestos 1 a 3 del diseño (queda como Observador; también obligatoria en pruebas; puede desactivarla) están en `sprint-5-equipo-y-permisos.md` §8.
+**Notas técnicas:** **Ya cerrado en H-004a (ronda 1, no se duplica aquí):** con el segundo paso pendiente (contraseña sola), la base rechaza `create_tenant`, `accept_invitation`, `invitation_preview` y `accept_current_legal_documents`, y las políticas `profiles_select`, `profiles_update`, `legal_acceptances_select` y `members_select` no entregan filas propias; la guardia 16 de `tests/db/schema-guards.test.ts` avisa si aparece otra política o función expuesta con `auth.uid()` sin organización y sin `app.second_step_pending()`. H-004c suma lo que falta: `app.effective_role()`. 🔒 cambia el pase de sesión de las cuentas de prueba en todas las pruebas, por eso va sola y al final del sprint 5. Requisito heredado de H-092 m11: `active.role` debe ser el rol efectivo, o la aplicación y la base discrepan (el editor del formulario ya tolera el `42501` del tope). Los supuestos 1 a 3 del diseño (queda como Observador; también obligatoria en pruebas; puede desactivarla) están en `sprint-5-equipo-y-permisos.md` §8.
 
 ---
 
@@ -2010,11 +2010,13 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 **para** que el segundo paso proteja de verdad la cuenta, y no solo la pantalla de la aplicación.
 
 **Criterios de aceptación**
-- [ ] Al sexto código incorrecto seguido de una cuenta (5 fallos cada 15 minutos), Supabase rechaza el siguiente intento aunque llegue directo a su API, sin pasar por la pantalla de Cotiza Prime
+- [ ] Con 5 intentos de una cuenta en 15 minutos, el sexto se rechaza en Supabase aunque llegue directo a su API, sin pasar por la pantalla de Cotiza Prime (igual que la regla de H-004a)
 - [ ] Al llegar a 15 fallos en el día, la cuenta queda bloqueada 24 horas
 - [ ] Ya bloqueada la cuenta, el código correcto también se rechaza
 - [ ] El camino de recuperación por correo tiene contadores APARTE de los del ingreso con contraseña (misma regla que H-004a): quien solo tiene la contraseña no puede bloquear al dueño que llega con el enlace del correo, ni al revés
 - [ ] Hay una forma documentada de desbloquear una cuenta y de apagar el límite en una emergencia, con el procedimiento para verificar la identidad de la persona antes de desbloquear o de quitarle un factor
+- [ ] Un intento que el hook rechaza (`mfa_verification_rejected`) cuenta como FALLO en la aplicación: hoy `classifyAuthError` (`src/lib/auth/errors.ts`) lo trata como «unknown» (libera el código y no suma al tope del día ni al de la IP), y con el hook activo eso dejaría reintentar sin costo desde la pantalla; hay que clasificarlo como un fallo (suma al tope del día y al de la IP, con el mensaje de bloqueo y sin liberar el código) y probarlo
+- [ ] Un 429 de Supabase sigue sin sumar al tope del día ni al de la IP (corregido en la ronda 2 de H-004a): el hook no cambia eso
 - [ ] La función del hook tiene su deshacer con guardas, y una prueba con Supabase Auth real reproduce el ataque (probar códigos directo a `/auth/v1/factors/…/verify` con un pase de solo contraseña) y confirma el bloqueo
 
 **Prioridad:** núcleo

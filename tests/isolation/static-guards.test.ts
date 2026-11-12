@@ -104,6 +104,19 @@ const MFA_ADMIN_GATEWAY = "src/lib/security/mfa-admin-gateway.ts";
 /** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
 const AUTH_ADMIN_GATEWAYS: readonly string[] = [MFA_ADMIN_GATEWAY];
 
+/**
+ * Lo que NUNCA puede llegar a `serverLog` ni a `logAuditEvent` en los avisos de activación y su enlace (H-118): el código
+ * secreto del enlace, su huella, la contraseña ni el correo (ni el nombre de un destinatario o una dirección).
+ */
+function annulLogViolation(call: string): string | null {
+  const noStrings = call.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
+  const forbidden =
+    /\b(token\w*|\w*sha256\w*|\w*hash\w*|fingerprint\w*|password\w*|contrasena\w*|email\w*|recipient\w*|address\w*|secret\w*|url|link)\b/i.exec(
+      noStrings,
+    );
+  return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
+}
+
 /** Carpetas del formulario público y de las solicitudes donde `serverLog` no puede recibir datos de una persona. */
 const INTAKE_LOG_SCOPE =
   /^src\/(lib\/intake\/|app\/f\/|app\/api\/v1\/public\/forms\/|components\/intake\/|app\/o\/\[tenantId\]\/(formularios|solicitudes)\/)/;
@@ -1014,6 +1027,57 @@ describe("guardias estáticas del aislamiento", () => {
     expect(before).toMatch(/status === "unverified"/);
     // Quita el factor que salió de la lista, no el texto que llegó del navegador.
     expect(body.slice(unenrollAt, unenrollAt + 60)).toMatch(/factorId:\s*factor\.id/);
+  });
+
+  it("14f. (H-118) serverLog y logAuditEvent en el aviso de activación del segundo paso y su enlace nunca reciben el código del enlace, su huella, la contraseña ni el correo", () => {
+    const files = [
+      "src/lib/security/mfa-admin-gateway.ts",
+      "src/lib/security/mfa-alerts-gateway.ts",
+      "src/lib/security/mfa-annul-token.ts",
+      "src/lib/security/mfa-enrollment-notice.ts",
+      "src/lib/email/mfa-enrollment-notice.ts",
+    ];
+    let found = 0;
+    for (const file of files) {
+      const text = stripComments(read(path.join(ROOT, file)));
+      for (const name of ["serverLog", "logAuditEvent"]) {
+        for (const call of namedCalls(text, name)) {
+          found += 1;
+          expect(annulLogViolation(call), `${file}: ${call}`).toBeNull();
+        }
+      }
+    }
+    // La guardia no puede pasar en vacío: el envío del aviso registra sus fallos.
+    expect(found).toBeGreaterThanOrEqual(3);
+    const notice = stripComments(
+      read(path.join(ROOT, "src/lib/security/mfa-enrollment-notice.ts")),
+    );
+    expect(namedCalls(notice, "serverLog").length).toBeGreaterThan(1);
+    expect(namedCalls(notice, "logAuditEvent").length).toBeGreaterThan(0);
+    // Ninguno de esos archivos manda el correo ni el código a una auditoría o un registro por otro camino.
+    for (const file of files) {
+      const text = stripComments(read(path.join(ROOT, file)));
+      expect(/console\./.test(text), `${file}: escribe en la consola`).toBe(false);
+    }
+  });
+
+  it("14g. la guardia 14f detecta de verdad el código del enlace, su huella, la contraseña y el correo; deja pasar un código de error", () => {
+    const bad = [
+      "serverLog('warn', 'x', { token })",
+      "serverLog('warn', 'x', { tokenSha256 })",
+      "serverLog('warn', 'x', { fp: hashMfaAnnulToken(raw) })",
+      "logAuditEvent({ details: { email: user.email } })",
+      "logAuditEvent({ details: { to: reserved.email } })",
+      "serverLog('warn', 'x', { password })",
+      "serverLog('warn', 'x', { url: annulUrl })",
+    ];
+    for (const call of bad) expect(annulLogViolation(call), call).not.toBeNull();
+    const good = [
+      "serverLog('warn', 'mfa_notice_failed', { code: failureCode })",
+      "serverLog('error', 'mfa_notice_settle_failed', { code: codeOf(cause) })",
+      "logAuditEvent({ action: 'session.mfa_enroll_reverted', result: 'failure', actorUserId: user.id, details: { reason: 'provider_rejected', stage: 'enrollment' } })",
+    ];
+    for (const call of good) expect(annulLogViolation(call), call).toBeNull();
   });
 
   it("7. la guardia detecta de verdad: el texto de una violación sí coincide con las reglas", () => {

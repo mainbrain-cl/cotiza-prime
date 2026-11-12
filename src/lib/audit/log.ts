@@ -13,6 +13,8 @@ export type AuditAction =
   | "session.password_reset_requested"
   | "session.password_changed"
   | "session.mfa_enrolled"
+  | "session.mfa_enroll_reverted"
+  | "session.mfa_notice_sent"
   | "session.mfa_verified"
   | "session.mfa_failed"
   | "session.mfa_locked"

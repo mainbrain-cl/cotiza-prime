@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 import jsQR from "jsqr";
 import sharp from "sharp";
+import { connect } from "../tests/db/helpers";
 import { APP_ROUTES } from "../tests/isolation/registry";
 import { freshTotp, totpAt } from "../src/test/totp";
 import type { Browser } from "@playwright/test";
@@ -537,4 +538,89 @@ test("un Comercial activa la verificación en su propia cuenta (cualquier rol pu
   await page.goto(`/o/${owner.tenantId}`);
   await expect(page).toHaveURL(new RegExp(`/o/${owner.tenantId}$`));
   await owner.context.close();
+});
+
+/** Los factores de aplicación que Supabase guarda para esa cuenta (solo lectura, en la base local de pruebas). */
+async function factorStatuses(email: string): Promise<string[]> {
+  const db = await connect();
+  try {
+    const { rows } = await db.query<{ status: string }>(
+      `select f.status::text as status from auth.mfa_factors f
+         join auth.users u on u.id = f.user_id
+        where u.email = $1 order by f.created_at`,
+      [email],
+    );
+    return rows.map((row) => row.status);
+  } finally {
+    await db.end();
+  }
+}
+
+const ENABLE_BUTTON = "Activar la verificación en dos pasos";
+
+test("cancelar la activación quita de Supabase el intento a medias, desde el paso de la clave y desde el del código (menor 6)", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const email = uniqueEmail("cancela");
+  await signUpAndVerify(page, email, "Persona Ficticia");
+  await createTenant(page, "Empresa Cancela", "76086428-5");
+  await page.goto("/cuenta/seguridad");
+
+  // Paso de la clave: queda un factor sin verificar mientras se muestra, y se quita al cancelar.
+  await page.getByRole("button", { name: ENABLE_BUTTON }).click();
+  await expect(page.getByTestId("totp-secret")).toBeVisible();
+  expect(await factorStatuses(email)).toEqual(["unverified"]);
+  await page.getByRole("button", { name: "Cancelar" }).click();
+  await expect(page.getByRole("button", { name: ENABLE_BUTTON })).toBeFocused();
+  await expect.poll(() => factorStatuses(email)).toEqual([]);
+
+  // Paso del código: lo mismo.
+  await page.getByRole("button", { name: ENABLE_BUTTON }).click();
+  await page.getByRole("button", { name: "Ya la escaneé" }).click();
+  await expect(page.getByLabel(CODE_LABEL)).toBeVisible();
+  expect(await factorStatuses(email)).toEqual(["unverified"]);
+  await page.getByRole("button", { name: "Cancelar" }).click();
+  await expect.poll(() => factorStatuses(email)).toEqual([]);
+
+  // Y se puede empezar de nuevo y activar, con un solo factor.
+  await page.getByRole("button", { name: ENABLE_BUTTON }).click();
+  const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
+  await page.getByRole("button", { name: "Ya la escaneé" }).click();
+  await submitCode(page, (await freshTotp(secret)).code);
+  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  expect(await factorStatuses(email)).toEqual(["verified"]);
+});
+
+test("activar desde dos pestañas a la vez: la que se quedó con el intento reemplazado ve «está activa», no «caducó» (menor 7)", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(180_000);
+  const email = uniqueEmail("dospestanas");
+  await signUpAndVerify(page, email, "Persona Ficticia");
+  await createTenant(page, "Empresa Dos Pestanas", "76086428-5");
+  const tabB = await context.newPage();
+
+  async function startAndScan(tab: Page): Promise<string> {
+    await tab.goto("/cuenta/seguridad");
+    await tab.getByRole("button", { name: ENABLE_BUTTON }).click();
+    const secret = (await tab.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
+    await tab.getByRole("button", { name: "Ya la escaneé" }).click();
+    await expect(tab.getByLabel(CODE_LABEL)).toBeVisible();
+    return secret;
+  }
+  const secretA = await startAndScan(page);
+  const secretB = await startAndScan(tabB);
+
+  // La segunda pestaña activa la cuenta.
+  await submitCode(tabB, (await freshTotp(secretB)).code);
+  await expect(tabB).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+
+  // La primera todavía muestra su intento (ya reemplazado): al confirmar, ve que la cuenta está activa.
+  await submitCode(page, (await freshTotp(secretA)).code);
+  await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
+  await expect(page.getByTestId("two-step-active")).toBeVisible();
+  await expect(page.getByText(/La activación caducó/)).toHaveCount(0);
+  expect(await factorStatuses(email)).toEqual(["verified"]);
 });

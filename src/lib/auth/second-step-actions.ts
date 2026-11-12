@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { logAuditEvent, type AuditAction } from "@/lib/audit/log";
 import {
   AUTH_MESSAGES,
+  MFA_LOCKED_DAY_ENROLLMENT_MESSAGE,
   MFA_LOCKED_DAY_MESSAGE,
   MFA_LOCKED_DAY_PASSWORD_MESSAGE,
   MFA_SIGN_IN_FAILED_MESSAGE,
@@ -103,16 +104,21 @@ async function checkCodeBeforeVerifying(
   }
 
   if (!(await consumeTotpCode(userId, code))) {
-    // Presentar de nuevo un código ya usado cuenta como un fallo (el intento ya se registró al empezar).
-    await recordSecondStepFailure(userId, context, clientIp);
+    // Un código ya usado NO es un código incorrecto (menor 5 de la revisión de Aarón al PR #44): quien lo escribe en dos
+    // dispositivos dentro de 2 minutos no suma al tope del día ni al de la IP. El intento sí contó en la ventana de 15
+    // minutos al registrarse arriba, y por eso repetirlo igual tiene freno.
     await auditFailure(userId, stage, "code_reused");
     return { ok: false, state: { status: "error", message: AUTH_MESSAGES.mfa_code_reused } };
   }
   return { ok: true, code };
 }
 
-/** El bloqueo de 24 h con la contraseña orienta a recuperarla; el del enlace del correo no tiene esa salida. */
+/**
+ * El bloqueo de 24 h con la contraseña orienta a recuperarla; el del enlace del correo no tiene esa salida; el de la
+ * activación orienta a revisar la hora del teléfono.
+ */
 function lockedDayMessageFor(context: SecondStepContext): string {
+  if (context === "enrollment") return MFA_LOCKED_DAY_ENROLLMENT_MESSAGE;
   return context === "password" ? MFA_LOCKED_DAY_PASSWORD_MESSAGE : MFA_LOCKED_DAY_MESSAGE;
 }
 
@@ -284,12 +290,13 @@ export async function confirmTotpEnrollmentAction(
   const { clientIp } = await getRequestContext();
   const factorId = readText(formData, FACTOR_FIELD) ?? "";
 
+  // Contadores PROPIOS de la activación (menor 4): no comparten tope con el ingreso con contraseña.
   const checked = await checkCodeBeforeVerifying(
     formData,
     user.id,
     clientIp,
     "enrollment",
-    "password",
+    "enrollment",
   );
   if (!checked.ok) return checked.state;
 
@@ -306,15 +313,24 @@ export async function confirmTotpEnrollmentAction(
       );
   if (!factor) {
     await releaseTotpCode(user.id, checked.code);
+    // Activar desde dos pestañas a la vez (menor 7 de la revisión de Aarón al PR #44): la otra pudo dejar la cuenta ACTIVA
+    // mientras esta mostraba un intento ya reemplazado. Si hay un factor verificado, se lleva a la pantalla de seguridad,
+    // que muestra la verdad («está activa»); si no, «caducó» (con la sugerencia de recargar).
+    const alreadyActive =
+      !listed.error &&
+      listed.data.all.some(
+        (entry) => entry.factor_type === MFA_FACTOR_TYPE && entry.status === "verified",
+      );
+    if (alreadyActive) redirect(ACCOUNT_SECURITY_PATH);
     return { status: "error", message: AUTH_MESSAGES.mfa_expired };
   }
 
   const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: checked.code });
   if (error) {
-    return failedVerification(error, user.id, checked.code, clientIp, "enrollment", "password");
+    return failedVerification(error, user.id, checked.code, clientIp, "enrollment", "enrollment");
   }
 
-  await clearSecondStepFailures(user.id, "password");
+  await clearSecondStepFailures(user.id, "enrollment");
   const enrolled: { action: AuditAction } = { action: "session.mfa_enrolled" };
   const details = { stage: "enrollment", factorType: MFA_FACTOR_TYPE };
   await logAuditEvent({ ...enrolled, result: "success", actorUserId: user.id, details });
@@ -329,4 +345,34 @@ export async function confirmTotpEnrollmentAction(
     });
   }
   redirect(`${ACCOUNT_SECURITY_PATH}?aviso=${ACCOUNT_SECURITY_NOTICES.enabled}`);
+}
+
+/**
+ * «Cancelar» durante la activación (menor 6 de la revisión de Aarón al PR #44): quita de Supabase el intento a medias, para
+ * que no quede un factor sin verificar (que ocupa un cupo de la cuenta). La aplicación del teléfono no se puede limpiar desde el servidor: si la persona ya agregó «Cotiza Prime» ahí, esa entrada queda y debe borrarla ella.
+ * Igual que al confirmar, el factor tiene que ser un TOTP SIN verificar de ESTA persona, visto con los factores al día: un
+ * factor verificado (el que protege la cuenta) nunca se quita desde aquí. Sin llave maestra: con el pase de la persona.
+ * Si no se puede quitar no pasa nada grave (la pantalla ya salió y `startTotpEnrollmentAction` limpia los restos al empezar
+ * de nuevo): se registra solo el código del error y no se avisa de nada.
+ */
+export async function cancelTotpEnrollmentAction(factorId: string): Promise<void> {
+  await requireUser();
+  if (typeof factorId !== "string" || factorId === "") return;
+  const supabase = await createClient();
+  const listed = await supabase.auth.mfa.listFactors();
+  if (listed.error) {
+    await serverLog("error", "mfa_list_failed", { code: errorCodeOf(listed.error) });
+    return;
+  }
+  const factor = listed.data.all.find(
+    (entry) =>
+      entry.id === factorId &&
+      entry.factor_type === MFA_FACTOR_TYPE &&
+      entry.status === "unverified",
+  );
+  if (!factor) return;
+  const removed = await supabase.auth.mfa.unenroll({ factorId: factor.id });
+  if (removed.error) {
+    await serverLog("error", "mfa_unenroll_failed", { code: errorCodeOf(removed.error) });
+  }
 }

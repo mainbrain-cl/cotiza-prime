@@ -30,6 +30,8 @@ const ACTIONS_WITHOUT_ACTIVE_TENANT: Record<string, string> = {
     "es de la cuenta, no de una organización: prepara la verificación en dos pasos de la propia persona",
   "lib/auth/second-step-actions.ts#confirmTotpEnrollmentAction":
     "es de la cuenta, no de una organización: activa la verificación en dos pasos de la propia persona",
+  "lib/auth/second-step-actions.ts#cancelTotpEnrollmentAction":
+    "es de la cuenta, no de una organización: quita el intento a medias de la verificación en dos pasos de la propia persona",
   "lib/tenant/actions.ts#createTenantAction": "crea la organización: aún no existe una activa",
   "lib/team/accept-actions.ts#acceptInvitationAction":
     "la persona aún no es miembro: la organización la define la invitación, que decide la base de datos",

@@ -10,6 +10,7 @@ import { OfflineNotice } from "@/components/ui/offline-notice";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 import { formatManualKey } from "@/lib/auth/second-step";
 import {
+  cancelTotpEnrollmentAction,
   confirmTotpEnrollmentAction,
   startTotpEnrollmentAction,
   type TotpEnrollment,
@@ -92,6 +93,11 @@ function EnablePanel() {
   }, [phase.name]);
 
   function cancel() {
+    // Se quita de Supabase el intento a medias (sin esperar la respuesta: la persona sale de inmediato y, si no se puede
+    // quitar, el próximo «Activar» limpia los restos).
+    if (phase.name !== "idle") {
+      cancelTotpEnrollmentAction(phase.enrollment.factorId).catch(() => {});
+    }
     cancelledRef.current = true;
     setPhase({ name: "idle" });
   }

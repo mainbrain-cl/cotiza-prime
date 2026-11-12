@@ -948,6 +948,12 @@ Las migraciones posteriores al sprint 1 se listan en el sprint que las crea.
 3. **La guarda nunca se fuerza ni se edita para que pase** (no se cambia el `md5` del archivo, no se comenta el bloque ni se corre el resto a mano) sin una decisión de quien tenga el permiso de deshacer fuera de orden (hoy, Aarón; decisión 020). Esa persona decide entre: (a) reaplicar primero la migración para dejar la función exactamente como la deja el archivo y después deshacer; (b) deshacer lo que vino después; o (c) aceptar el deshacer fuera de orden, y entonces queda **registrado en `docs/decisiones/`** con el motivo y con lo que se pierde (por ejemplo, volver a guardar el id de personas de fuera en la auditoría de una organización). En PRUEBAS, `supabase db reset` rehace todo sin necesidad de forzar nada.
 4. **Esta guarda se agregó a `20261109110000` después de integrada** (menor 3 del PR #38, precedente: punto 7 del #38, guardas más estrictas en deshacer ya integrados). Otros deshacer ya integrados no se editan para esto sin una decisión igual.
 
+**Antes de deshacer `20261112100000_mfa_session_gate` (H-004a, menor 3 de la revisión de Aarón al PR #44).** *En simple: ese deshacer quita el candado que la base de datos le pone al segundo paso; no borra los factores de nadie.* Dos casos que hay que tener claros antes de aplicarlo:
+- **Con la aplicación nueva funcionando:** la verificación en dos pasos queda protegiendo **solo la pantalla** del código. Quien tenga la contraseña de una cuenta con la verificación activa puede pedir un pase parcial directo a Supabase y leer y escribir por la API sin escribir el código.
+- **Si además se vuelve atrás la aplicación** (a una versión sin H-004a): las cuentas que ya la activaron entran **solo con la contraseña**, sin que nadie se lo diga, porque el factor sigue verificado en Supabase pero nada lo exige.
+
+Por eso no se deshace con tráfico abierto mientras haya cuentas con la verificación activa: se pone la aplicación en mantenimiento, se avisa a esas personas y no se abre de nuevo hasta reaplicar la migración o decidir el camino (decisión registrada en `docs/decisiones/`). La misma advertencia está escrita en el encabezado del propio archivo de deshacer.
+
 ---
 
 ## 10. Dónde puede fallar y cómo se evita

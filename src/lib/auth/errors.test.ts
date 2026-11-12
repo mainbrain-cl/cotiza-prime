@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUTH_MESSAGES, classifyAuthError } from "./errors";
+import { AUTH_MESSAGES, MFA_LOCKED_DAY_ENROLLMENT_MESSAGE, classifyAuthError } from "./errors";
 import { RESET_REQUEST_SENT_MESSAGE } from "./messages";
 import {
   fieldErrorsOf,
@@ -121,6 +121,12 @@ describe("verificación en dos pasos (H-004a): errores", () => {
     expect(classifyAuthError({ code: "over_request_rate_limit" })).toBe("rate_limited");
   });
 
+  it("el bloqueo de 24 horas al activar manda a revisar la hora del teléfono y no habla de la contraseña", () => {
+    expect(MFA_LOCKED_DAY_ENROLLMENT_MESSAGE).toMatch(/Demasiados intentos hoy/);
+    expect(MFA_LOCKED_DAY_ENROLLMENT_MESSAGE).toMatch(/hora de tu teléfono/);
+    expect(MFA_LOCKED_DAY_ENROLLMENT_MESSAGE).not.toMatch(/contraseña|alguien/);
+  });
+
   it("un error desconocido de la verificación no revela detalles", () => {
     expect(classifyAuthError({ code: "mfa_algo_nuevo" })).toBe("unknown");
   });
@@ -130,7 +136,9 @@ describe("verificación en dos pasos (H-004a): errores", () => {
       "El código no coincide. Escribe el que muestra ahora tu aplicación (cambia cada 30 segundos) y revisa que la hora de tu teléfono esté al día.",
     );
     expect(AUTH_MESSAGES.mfa_code_reused).toBe("Ese código ya se usó. Espera el siguiente.");
-    expect(AUTH_MESSAGES.mfa_expired).toBe("La activación caducó. Vuelve a empezar.");
+    expect(AUTH_MESSAGES.mfa_expired).toBe(
+      "La activación caducó. Recarga la página y vuelve a empezar.",
+    );
     expect(AUTH_MESSAGES.mfa_unavailable).toMatch(/No pudimos verificar el código/);
     for (const kind of [
       "mfa_invalid_code",

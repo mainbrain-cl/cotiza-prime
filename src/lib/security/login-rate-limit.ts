@@ -115,8 +115,9 @@ export const INVITATION_LINK_LOCK_SECONDS = SECONDS_PER_MINUTE;
  * (el mismo tope de 20 cada 15 minutos que la contraseña). Un mismo código no sirve dos veces para la misma cuenta durante
  * 120 segundos: Supabase acepta el mismo código con un desafío nuevo dentro de su período, así que el bloqueo es propio.
  *
- * Los contadores de la cuenta son DOS familias separadas: el camino del ingreso con contraseña y el del enlace de
- * recuperación del correo. Quien solo tiene la contraseña no puede así bloquear la recuperación por correo (ni al revés).
+ * Los contadores de la cuenta son TRES familias separadas: el camino del ingreso con contraseña, el del enlace de
+ * recuperación del correo y el de la activación. Quien solo tiene la contraseña no puede así bloquear la recuperación por
+ * correo (ni al revés), y quien se equivoca al activar (hora del teléfono atrasada) no se bloquea para ingresar.
  */
 export const MFA_MAX_ATTEMPTS_PER_ACCOUNT = 5;
 export const MFA_WINDOW_SECONDS = 15 * SECONDS_PER_MINUTE;
@@ -601,26 +602,34 @@ export async function consumeInvitationLinkQuota(ip: string | null): Promise<boo
   return !(await failOpen("invite_link_quota_ip", false, () => recordAll([target])));
 }
 
-/** Qué camino trae a la persona al código: el ingreso con contraseña, o el enlace de recuperación del correo. */
-export type SecondStepContext = "password" | "recovery";
+/**
+ * Qué camino trae a la persona al código: el ingreso con contraseña, el enlace de recuperación del correo, o la ACTIVACIÓN de
+ * la verificación (menor 4 de la revisión de Aarón al PR #44: quien tiene la hora del teléfono atrasada y falla al activar no
+ * debe quedar bloqueada 24 h para ingresar, ni el aviso hablarle de que alguien tiene su contraseña).
+ */
+export type SecondStepContext = "password" | "recovery" | "enrollment";
 
 /** Resultado de empezar un intento: pasa, o está bloqueada un rato (`short`) o hasta mañana (`day`). */
 export type SecondStepBlock = "none" | "short" | "day";
 
+/** Sufijo de la huella de cada camino que no es el del ingreso con contraseña (ese usa la cuenta sola). */
+const SECOND_STEP_KEY_SUFFIX: Record<SecondStepContext, string> = {
+  password: "",
+  recovery: "|recovery",
+  enrollment: "|enroll",
+};
+
 /**
- * Huella de la cuenta para un contador del código. El camino de recuperación usa OTRA huella (`<cuenta>|recovery`) con el
- * mismo alcance de la tabla: así los fallos de uno no bloquean al otro. Nunca el correo, la IP ni el código.
+ * Huella de la cuenta para un contador del código. El camino de recuperación (`<cuenta>|recovery`) y el de la activación
+ * (`<cuenta>|enroll`) usan OTRA huella cada uno con el mismo alcance de la tabla: así los fallos de uno no bloquean a los
+ * otros. Nunca el correo, la IP ni el código.
  */
 function secondStepAccountKey(
   scope: "mfa_verify_user" | "mfa_verify_user_day",
   userId: string,
   context: SecondStepContext,
 ) {
-  return searchHash(
-    scope,
-    PLATFORM_TENANT_ID,
-    context === "recovery" ? `${userId}|recovery` : userId,
-  );
+  return searchHash(scope, PLATFORM_TENANT_ID, `${userId}${SECOND_STEP_KEY_SUFFIX[context]}`);
 }
 
 function secondStepAttemptTarget(userId: string, context: SecondStepContext): Target {

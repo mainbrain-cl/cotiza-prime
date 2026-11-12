@@ -400,6 +400,27 @@ describe("código de la verificación en dos pasos (H-004a)", () => {
     );
   });
 
+  it("la activación usa OTRAS huellas (`|enroll`, mismo alcance de la tabla): los fallos al activar no bloquean el ingreso con contraseña ni la recuperación, y al revés", async () => {
+    await beginSecondStepAttempt(USER, "enrollment");
+    await recordSecondStepFailure(USER, "enrollment", null);
+    await clearSecondStepFailures(USER, "enrollment");
+    await beginSecondStepAttempt(USER, "password");
+    await beginSecondStepAttempt(USER, "recovery");
+    const keys = calls().map(([, scope, key]) => `${scope}:${key}`);
+    expect(keys).toContain(`mfa_verify_user:mfa_verify_user|${USER}|enroll`);
+    expect(keys).toContain(`mfa_verify_user_day:mfa_verify_user_day|${USER}|enroll`);
+    const enrollment = keys.filter((key) => key.includes("|enroll"));
+    const others = keys.filter((key) => !key.includes("|enroll"));
+    expect(enrollment.length).toBeGreaterThan(0);
+    expect(others.length).toBeGreaterThan(0);
+    for (const key of enrollment) expect(others).not.toContain(key);
+    // Las tres familias se distinguen entre sí.
+    expect(new Set(keys.filter((key) => key.startsWith("mfa_verify_user:"))).size).toBe(3);
+    expect(new Set(calls().map(([, scope]) => scope))).toEqual(
+      new Set(["mfa_verify_user_day", "mfa_verify_user"]),
+    );
+  });
+
   it("las claves del código no se mezclan con las de la contraseña (login_email) ni con las del restablecer", async () => {
     await beginSecondStepAttempt(USER, "password");
     await recordLoginFailure("ana@ejemplo.test", null);
@@ -494,9 +515,11 @@ describe("código de la verificación en dos pasos (H-004a)", () => {
   it("un código correcto limpia los intentos de la ventana de ese camino, no los del día", async () => {
     await clearSecondStepFailures(USER, "password");
     await clearSecondStepFailures(USER, "recovery");
+    await clearSecondStepFailures(USER, "enrollment");
     expect(calls()).toEqual([
       ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}`],
       ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}|recovery`],
+      ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}|enroll`],
     ]);
   });
 
@@ -506,7 +529,7 @@ describe("código de la verificación en dos pasos (H-004a)", () => {
       ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}`],
       ["auth_limit_clear", "mfa_verify_user_day", `mfa_verify_user_day|${USER}`],
     ]);
-    expect(JSON.stringify(rpc.mock.calls)).not.toMatch(/recovery|login_ip/);
+    expect(JSON.stringify(rpc.mock.calls)).not.toMatch(/recovery|enroll|login_ip/);
   });
 
   it("si limpiar falla, se avisa y no se corta el cambio de contraseña", async () => {

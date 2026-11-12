@@ -2018,7 +2018,7 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 - [ ] Un código ya usado no sirve otra vez, tampoco mandado directo (menor 1 de la revisión de Aarón al #44: con el hook de la opción A habría quedado abierto)
 - [ ] El camino de recuperación por correo tiene contadores APARTE de los del ingreso con contraseña (misma regla que H-004a): quien solo tiene la contraseña no puede bloquear al dueño que llega con el enlace del correo, ni al revés
 - [ ] Al activar se usan contadores propios, distintos de los del ingreso, y un mensaje que sugiere revisar la hora del teléfono (menor 4 de la revisión)
-- [ ] El mismo código usado en dos dispositivos en menos de 2 minutos no suma un fallo al tope del día (menor 5)
+- [ ] El mismo código usado en dos dispositivos en menos de 2 minutos no suma un fallo al tope del día (menor 5; ya hecho en la aplicación en el PR #49, se mantiene en la opción B)
 - [ ] Si fallan los contadores, la decisión de dejar pasar o cerrar está revisada con esta historia (menor 9: hoy el límite propio deja pasar)
 - [ ] La sesión completa se reconoce por la sesión de Supabase (`auth.sessions.aal`) y no solo por lo que dice el pase (seguimiento 3 de Aarón)
 - [ ] Hay una forma documentada de desbloquear una cuenta y de apagar el límite en una emergencia, con el procedimiento de soporte de la decisión 021 (correo registrado, confirmación del Dueño, 24 horas de espera con aviso; lo hace solo Aarón durante el piloto)

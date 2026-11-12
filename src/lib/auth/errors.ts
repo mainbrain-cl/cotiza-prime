@@ -50,7 +50,7 @@ export const AUTH_MESSAGES: Record<AuthFailureKind, string> = {
     "Todavía no verificas tu correo. Abre el enlace que te enviamos al registrarte y luego ingresa.",
   mfa_invalid_code:
     "El código no coincide. Escribe el que muestra ahora tu aplicación (cambia cada 30 segundos) y revisa que la hora de tu teléfono esté al día.",
-  mfa_expired: "La activación caducó. Vuelve a empezar.",
+  mfa_expired: "La activación caducó. Recarga la página y vuelve a empezar.",
   mfa_code_reused: "Ese código ya se usó. Espera el siguiente.",
   mfa_unavailable: "No pudimos verificar el código. Intenta de nuevo en unos minutos.",
   unknown: "No pudimos completar la acción. Intenta de nuevo en unos minutos.",
@@ -69,6 +69,13 @@ export const MFA_LOCKED_DAY_MESSAGE =
  */
 export const MFA_LOCKED_DAY_PASSWORD_MESSAGE =
   "Demasiados intentos. Si no fuiste tú, alguien puede tener tu contraseña: usa «¿Olvidaste tu contraseña?» para entrar con un enlace a tu correo y cámbiala.";
+
+/**
+ * El mismo bloqueo de 24 horas pero al ACTIVAR la verificación (menor 4 de la revisión de Aarón al PR #44): ahí lo más probable
+ * es la hora del teléfono, no que alguien tenga la contraseña, así que el texto orienta a revisarla.
+ */
+export const MFA_LOCKED_DAY_ENROLLMENT_MESSAGE =
+  "Demasiados intentos hoy. Revisa que la fecha y la hora de tu teléfono estén en automático e inténtalo de nuevo mañana. Si sigue fallando, pide ayuda al equipo de Cotiza Prime.";
 
 /** Al ingresar, la verificación no se pudo completar por algo que no es el código (la sesión o el factor cambiaron). */
 export const MFA_SIGN_IN_FAILED_MESSAGE =

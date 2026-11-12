@@ -181,12 +181,22 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
     expect(auditActions()).toEqual(["session.mfa_locked"]);
   });
 
-  it("bloqueo del día (24 h): el mensaje dice «hoy» y «mañana», no «espera unos minutos»", async () => {
+  it("bloqueo del día (24 h) con la contraseña: orienta a recuperarla («¿Olvidaste tu contraseña?»), no a esperar unos minutos", async () => {
+    beginSecondStepAttempt.mockResolvedValue("day");
+    const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
+    expect(state.message).toBe(
+      "Demasiados intentos. Si no fuiste tú, alguien puede tener tu contraseña: usa «¿Olvidaste tu contraseña?» para entrar con un enlace a tu correo y cámbiala.",
+    );
+    expect(state.message).not.toMatch(/unos minutos/);
+    expect(challengeAndVerify).not.toHaveBeenCalled();
+  });
+
+  it("bloqueo del día (24 h) por el enlace del correo: sin la sugerencia de la contraseña, dice «hoy» y «mañana»", async () => {
+    hasRecoverySession.mockResolvedValue(true);
     beginSecondStepAttempt.mockResolvedValue("day");
     const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
     expect(state.message).toMatch(/Demasiados intentos hoy\. Vuelve a intentarlo mañana/);
-    expect(state.message).not.toMatch(/unos minutos/);
-    expect(challengeAndVerify).not.toHaveBeenCalled();
+    expect(state.message).not.toMatch(/contraseña|unos minutos/);
   });
 
   it("IP bloqueada: mismo rechazo y no se registra un intento de la cuenta", async () => {

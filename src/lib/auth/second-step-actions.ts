@@ -5,6 +5,7 @@ import { logAuditEvent, type AuditAction } from "@/lib/audit/log";
 import {
   AUTH_MESSAGES,
   MFA_LOCKED_DAY_MESSAGE,
+  MFA_LOCKED_DAY_PASSWORD_MESSAGE,
   MFA_SIGN_IN_FAILED_MESSAGE,
   classifyAuthError,
 } from "@/lib/auth/errors";
@@ -96,7 +97,7 @@ async function checkCodeBeforeVerifying(
       ok: false,
       state: {
         status: "error",
-        message: blocked === "day" ? MFA_LOCKED_DAY_MESSAGE : RATE_LIMITED_MESSAGE,
+        message: blocked === "day" ? lockedDayMessageFor(context) : RATE_LIMITED_MESSAGE,
       },
     };
   }
@@ -108,6 +109,11 @@ async function checkCodeBeforeVerifying(
     return { ok: false, state: { status: "error", message: AUTH_MESSAGES.mfa_code_reused } };
   }
   return { ok: true, code };
+}
+
+/** El bloqueo de 24 h con la contraseña orienta a recuperarla; el del enlace del correo no tiene esa salida. */
+function lockedDayMessageFor(context: SecondStepContext): string {
+  return context === "password" ? MFA_LOCKED_DAY_PASSWORD_MESSAGE : MFA_LOCKED_DAY_MESSAGE;
 }
 
 async function auditFailure(userId: string, stage: Stage, reason: string): Promise<void> {

@@ -56,9 +56,19 @@ export const AUTH_MESSAGES: Record<AuthFailureKind, string> = {
   unknown: "No pudimos completar la acción. Intenta de nuevo en unos minutos.",
 };
 
-/** Bloqueo de 24 horas por demasiados códigos incorrectos en el día (H-004a): no es cuestión de esperar unos minutos. */
+/**
+ * Bloqueo de 24 horas por demasiados códigos incorrectos en el día (H-004a): no es cuestión de esperar unos minutos. Es el
+ * mensaje del camino de recuperación por correo, donde ya se entró con un enlace del correo y no hay contraseña que cambiar.
+ */
 export const MFA_LOCKED_DAY_MESSAGE =
   "Demasiados intentos hoy. Vuelve a intentarlo mañana o pide ayuda al equipo de Cotiza Prime.";
+
+/**
+ * El mismo bloqueo en el camino CON CONTRASEÑA: quien llegó al código con la contraseña sola puede no ser la dueña de la
+ * cuenta, así que el texto orienta a entrar con un enlace al correo y cambiarla (eso limpia estos contadores).
+ */
+export const MFA_LOCKED_DAY_PASSWORD_MESSAGE =
+  "Demasiados intentos. Si no fuiste tú, alguien puede tener tu contraseña: usa «¿Olvidaste tu contraseña?» para entrar con un enlace a tu correo y cámbiala.";
 
 /** Al ingresar, la verificación no se pudo completar por algo que no es el código (la sesión o el factor cambiaron). */
 export const MFA_SIGN_IN_FAILED_MESSAGE =

@@ -35,6 +35,7 @@ import { serverLog } from "@/lib/log/server-log";
 import {
   RATE_LIMITED_MESSAGE,
   clearLoginFailures,
+  clearPasswordPathSecondStepCounters,
   emailFingerprint,
   isLoginLocked,
   isResetLocked,
@@ -325,6 +326,9 @@ export async function resetPasswordAction(
     actorUserId: user.id,
     details: { otherSessionsClosed: !othersError },
   });
+  // La contraseña vieja ya no sirve: los fallos de código acumulados con ella (y el bloqueo de 24 h) dejan de valer. No toca el
+  // camino de recuperación por correo ni la IP. Si falla, no se corta el cambio (el limpiador avisa en el registro).
+  await clearPasswordPathSecondStepCounters(user.id);
   await clearRecoverySession();
   redirect(HOME_PATH);
 }

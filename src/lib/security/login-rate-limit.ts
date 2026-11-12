@@ -690,6 +690,28 @@ export function clearSecondStepFailures(userId: string, context: SecondStepConte
   });
 }
 
+/**
+ * Tras un cambio de contraseña exitoso: limpia los contadores del camino «password» de la cuenta (intentos de la ventana de
+ * 15 minutos Y fallos del día). Es seguro porque la contraseña vieja, con la que alguien pudo acumular esos fallos, ya no
+ * sirve; y el bloqueo de 24 h con la contraseña deja de dejar fuera a la persona después de que ella la cambió. NO toca el
+ * camino de recuperación por correo ni la IP (`login_ip`).
+ */
+export function clearPasswordPathSecondStepCounters(userId: string): Promise<void> {
+  return failOpen("mfa_clear_password_path", undefined, async () => {
+    const admin = createAdminClient();
+    for (const target of [
+      secondStepAttemptTarget(userId, "password"),
+      secondStepDayTarget(userId, "password"),
+    ]) {
+      const { error } = await admin.rpc("auth_limit_clear", {
+        p_scope: STORAGE_SCOPE[target.scope],
+        p_key_hash: target.keyHash,
+      });
+      if (error) throw new Error(error.code ?? "rate_limit_clear_failed");
+    }
+  });
+}
+
 function totpCodeTarget(userId: string, code: string): Target {
   return {
     scope: "mfa_code_used",

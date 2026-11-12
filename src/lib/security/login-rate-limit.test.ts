@@ -17,6 +17,7 @@ import {
   MFA_MAX_FAILURES_PER_ACCOUNT_PER_DAY,
   MFA_WINDOW_SECONDS,
   beginSecondStepAttempt,
+  clearPasswordPathSecondStepCounters,
   clearSecondStepFailures,
   consumeTotpCode,
   isSecondStepIpLocked,
@@ -497,6 +498,20 @@ describe("código de la verificación en dos pasos (H-004a)", () => {
       ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}`],
       ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}|recovery`],
     ]);
+  });
+
+  it("tras cambiar la contraseña se limpian los contadores del camino «password» (ventana y día), y NADA del de recuperación ni de la IP", async () => {
+    await clearPasswordPathSecondStepCounters(USER);
+    expect(calls()).toEqual([
+      ["auth_limit_clear", "mfa_verify_user", `mfa_verify_user|${USER}`],
+      ["auth_limit_clear", "mfa_verify_user_day", `mfa_verify_user_day|${USER}`],
+    ]);
+    expect(JSON.stringify(rpc.mock.calls)).not.toMatch(/recovery|login_ip/);
+  });
+
+  it("si limpiar falla, se avisa y no se corta el cambio de contraseña", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    await expect(clearPasswordPathSecondStepCounters(USER)).resolves.toBeUndefined();
   });
 
   it("consumeTotpCode: el primero pasa; el mismo código otra vez queda bloqueado; la clave es una huella", async () => {

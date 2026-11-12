@@ -349,7 +349,7 @@ export async function confirmTotpEnrollmentAction(
 
 /**
  * «Cancelar» durante la activación (menor 6 de la revisión de Aarón al PR #44): quita de Supabase el intento a medias, para
- * que no quede un factor sin verificar (que ocupa un cupo de la cuenta) ni una entrada muerta en la aplicación del teléfono.
+ * que no quede un factor sin verificar (que ocupa un cupo de la cuenta). La aplicación del teléfono no se puede limpiar desde el servidor: si la persona ya agregó «Cotiza Prime» ahí, esa entrada queda y debe borrarla ella.
  * Igual que al confirmar, el factor tiene que ser un TOTP SIN verificar de ESTA persona, visto con los factores al día: un
  * factor verificado (el que protege la cuenta) nunca se quita desde aquí. Sin llave maestra: con el pase de la persona.
  * Si no se puede quitar no pasa nada grave (la pantalla ya salió y `startTotpEnrollmentAction` limpia los restos al empezar

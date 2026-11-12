@@ -18,6 +18,11 @@ const REALTIME_ALLOWED_TABLES = new Set<string>(); // Realtime apagado para toda
 // si no, una sesión parcial (contraseña sin el código del segundo paso) las atravesaría. Menor 2 de la revisión de Aarón al
 // PR #44: la regla mira también `auth.email()`, `auth.jwt()` (salvo `aal`) y `request.jwt.claim`, las ayudas de `app` (menos
 // las de trigger) y exige una LLAMADA de verdad, no la palabra. Excepciones, cada una justificada. Hoy no hay ninguna.
+//
+// LÍMITE (revisión Opus del PR #49): la guardia comprueba que el texto LLAME a la puerta; NO prueba que el resultado se use, ni
+// entiende todo SQL escrito a mano en una función (comillas de dólar, comentarios anidados, identificadores entre comillas
+// dobles). Las políticas no tienen este problema: PostgreSQL las entrega ya normalizadas. La revisión humana de una función
+// nueva con `auth.uid()` sigue siendo necesaria.
 const UNGATED_AUTH_UID_ALLOWED: Record<string, string> = {};
 
 // Guardia 16 (menor 2 de la revisión de Aarón al PR #44): el texto de una política o de una función se analiza aquí, en
@@ -545,7 +550,7 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
         where p.prokind = 'f'
           and p.prorettype <> 'pg_catalog.trigger'::regtype
           and ((n.nspname = 'app' and p.proname <> 'second_step_pending')
-               or (n.nspname = 'public' and has_function_privilege('authenticated', p.oid, 'execute')))`,
+               or n.nspname = 'public')`,
     );
     const ungatedPolicies = policies.rows.filter(
       (row) =>
@@ -697,9 +702,9 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
         await db.query("grant execute on function public.tmp_g16d() to authenticated");
         expect(await ungatedAuthUid(), label).toEqual(["function public.tmp_g16d"]);
       }
-      // Una llamada de verdad, en cambio, sí exime.
+      // Una llamada de verdad que USA su resultado, en cambio, sí exime.
       await db.query("drop function if exists public.tmp_g16d()");
-      await gated("perform app.current_tenant_id();");
+      await gated("if app.current_tenant_id() is null then return null; end if;");
       await db.query("grant execute on function public.tmp_g16d() to authenticated");
       expect(await ungatedAuthUid()).toEqual([]);
     } finally {

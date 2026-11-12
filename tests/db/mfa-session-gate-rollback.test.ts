@@ -243,7 +243,11 @@ describe("la migración mfa_session_gate y su deshacer", () => {
       for (const [index, fn] of PUBLIC_FUNCTIONS.entries()) {
         expect((await definition(fn.signature))!.src, fn.name).toBe(before.publics[index]!.src);
       }
-      expect(await scopeCheck()).toBe(before.scopes);
+      // Volver a aplicar ESTA migración deja la lista que ella escribe; los dos alcances que agregó después 20261113100000
+      // (mfa_annul_ip y mfa_annul_token) no son de ella.
+      expect(await scopeCheck()).toBe(
+        before.scopes.replace(", 'mfa_annul_ip'::text, 'mfa_annul_token'::text", ""),
+      );
     }));
 
   it("MR4 · el deshacer se NIEGA a correr dos veces y no cambia nada", () =>

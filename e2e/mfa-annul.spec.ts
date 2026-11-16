@@ -1,5 +1,4 @@
 import { createHash, randomBytes } from "node:crypto";
-import { freshTotp } from "../src/test/totp";
 import { generateRut } from "../src/lib/chile/rut";
 import { connect } from "../tests/db/helpers";
 import { adminCreateUser, signIn } from "../tests/support/local-supabase";
@@ -7,6 +6,7 @@ import { gotrue } from "../tests/support/mfa-gate";
 import { expect, randomTestIp, test, type Page } from "./fixtures";
 import {
   TEST_PASSWORD,
+  activateTwoStep,
   createTenant,
   openVerificationLink,
   signUpAndVerify,
@@ -76,15 +76,9 @@ async function logIn(page: Page, email: string, password: string) {
   await page.getByRole("button", { name: "Ingresar" }).click();
 }
 
-/** Desde una sesión con solo la contraseña: activa el segundo paso con un teléfono propio. */
+/** Desde una sesión con solo la contraseña: activa el segundo paso con un teléfono propio (y la contraseña, que ahora se vuelve a pedir). */
 async function activateSecondStep(page: Page): Promise<void> {
-  await page.goto("/cuenta/seguridad");
-  await page.getByRole("button", { name: "Activar la verificación en dos pasos" }).click();
-  const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
-  await page.getByRole("button", { name: "Ya la escaneé" }).click();
-  await page.getByLabel("Código de 6 números").fill((await freshTotp(secret)).code);
-  await page.getByRole("button", { name: "Confirmar y activar" }).click();
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await activateTwoStep(page, TEST_PASSWORD);
 }
 
 /** El pase de acceso que el navegador guardó en sus cookies (para pedirle cosas a Supabase directo, como un atacante). */

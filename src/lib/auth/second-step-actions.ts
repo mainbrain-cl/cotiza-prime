@@ -15,8 +15,14 @@ import {
 import type { FormState } from "@/lib/auth/form-state";
 import { activeTenantIdsOf, logTenantLogins } from "@/lib/auth/login-audit";
 import { ACCOUNT_SECURITY_NOTICES, ACCOUNT_SECURITY_PATH } from "@/lib/auth/paths";
-import { fieldErrorsOf, totpCodeSchema } from "@/lib/auth/schemas";
-import { MFA_FACTOR_TYPE, MFA_ISSUER, afterSecondStepPath } from "@/lib/auth/second-step";
+import { confirmPassword } from "@/lib/auth/reauth";
+import { fieldErrorsOf, reauthPasswordSchema, totpCodeSchema } from "@/lib/auth/schemas";
+import {
+  MFA_FACTOR_FRIENDLY_NAME,
+  MFA_FACTOR_TYPE,
+  MFA_ISSUER,
+  afterSecondStepPath,
+} from "@/lib/auth/second-step";
 import {
   getSessionState,
   hasRecoverySession,
@@ -64,6 +70,7 @@ import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
 
 const CODE_FIELD = "code";
 const FACTOR_FIELD = "factorId";
+const PASSWORD_FIELD = "password";
 const SVG_DATA_URL_PREFIX = "data:image/svg+xml;utf-8,";
 
 function readText(formData: FormData, name: string): string | undefined {
@@ -277,6 +284,7 @@ export async function startTotpEnrollmentAction(): Promise<StartEnrollmentResult
   const { data, error } = await supabase.auth.mfa.enroll({
     factorType: MFA_FACTOR_TYPE,
     issuer: MFA_ISSUER,
+    friendlyName: MFA_FACTOR_FRIENDLY_NAME,
   });
   if (error || !data) {
     await serverLog("error", "mfa_enroll_failed", { code: error ? errorCodeOf(error) : "no_data" });
@@ -294,9 +302,14 @@ export async function startTotpEnrollmentAction(): Promise<StartEnrollmentResult
 }
 
 /**
- * «Activar la verificación en dos pasos», paso 2: la persona escribe el primer código de su aplicación. Con el mismo
- * límite y bloqueo de códigos usados que al ingresar. Al verificarse, Supabase cierra las demás sesiones de la cuenta y
- * esta pasa a completa.
+ * «Activar la verificación en dos pasos», paso 2: la persona escribe el primer código de su aplicación Y su contraseña
+ * (H-004b). Con el mismo límite y bloqueo de códigos usados que al ingresar. Al verificarse, Supabase cierra las demás
+ * sesiones de la cuenta y esta pasa a completa.
+ *
+ * Orden (no se puede cambiar): 1) forma de los campos, 2) la CONTRASEÑA, 3) todo lo demás. Una contraseña incorrecta no
+ * toca los contadores del código ni su bloqueo de «ya usado» ni da el permiso de H-118: así, quien tiene la sesión pero no
+ * la contraseña no puede gastar los intentos de la dueña ni activar su propio teléfono. La contraseña nunca vuelve en el
+ * estado que se le devuelve a la pantalla.
  */
 export async function confirmTotpEnrollmentAction(
   _previous: FormState,
@@ -305,6 +318,29 @@ export async function confirmTotpEnrollmentAction(
   const user = await requireUser();
   const { clientIp } = await getRequestContext();
   const factorId = readText(formData, FACTOR_FIELD) ?? "";
+
+  // 1) La forma de los dos campos, sin consultar nada.
+  const codeFormat = totpCodeSchema.safeParse({ code: readText(formData, CODE_FIELD) });
+  const passwordFormat = reauthPasswordSchema.safeParse({
+    password: readText(formData, PASSWORD_FIELD),
+  });
+  if (!codeFormat.success || !passwordFormat.success) {
+    return {
+      status: "error",
+      fieldErrors: {
+        ...(codeFormat.success ? {} : fieldErrorsOf(codeFormat.error)),
+        ...(passwordFormat.success ? {} : fieldErrorsOf(passwordFormat.error)),
+      },
+    };
+  }
+
+  // 2) La contraseña, ANTES de los contadores del código y del permiso de activación.
+  const reauth = await confirmPassword(user, passwordFormat.data.password, "enroll");
+  if (!reauth.ok) {
+    return reauth.reason === "wrong_password"
+      ? { status: "error", fieldErrors: { password: reauth.message } }
+      : { status: "error", message: reauth.message };
+  }
 
   // Contadores PROPIOS de la activación (menor 4): no comparten tope con el ingreso con contraseña.
   const checked = await checkCodeBeforeVerifying(

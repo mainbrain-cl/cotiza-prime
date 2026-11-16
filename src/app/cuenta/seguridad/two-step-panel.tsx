@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { CodeField } from "@/components/auth/code-field";
 import { Button } from "@/components/ui/button";
-import { FormAlert, SubmitButton } from "@/components/ui/form-controls";
+import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
 import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
 import { formatManualKey } from "@/lib/auth/second-step";
@@ -31,19 +31,22 @@ export function TwoStepPanel({
   sinceLabel,
   justEnabled,
   noticeEmail,
+  accountEmail,
 }: {
   active: boolean;
   sinceLabel: string | null;
   justEnabled: boolean;
   /** El correo al que se mandó el aviso de la activación (solo se muestra recién activada). */
   noticeEmail: string | null;
+  /** El correo de la cuenta: solo para que el gestor de contraseñas complete la contraseña (campo oculto «username»). */
+  accountEmail: string | null;
 }) {
   if (active) {
     return (
       <ActivePanel sinceLabel={sinceLabel} justEnabled={justEnabled} noticeEmail={noticeEmail} />
     );
   }
-  return <EnablePanel />;
+  return <EnablePanel accountEmail={accountEmail} />;
 }
 
 function ActivePanel({
@@ -84,7 +87,7 @@ function ActivePanel({
   );
 }
 
-function EnablePanel() {
+function EnablePanel({ accountEmail }: { accountEmail: string | null }) {
   const [phase, setPhase] = useState<Phase>({ name: "idle" });
   const [startError, setStartError] = useState<string | null>(null);
   const [alreadyActive, setAlreadyActive] = useState(false);
@@ -176,6 +179,7 @@ function EnablePanel() {
       ) : (
         <ConfirmStep
           enrollment={phase.enrollment}
+          accountEmail={accountEmail}
           headingRef={headingRef}
           onBack={() => setPhase({ name: "scan", enrollment: phase.enrollment })}
           onCancel={cancel}
@@ -271,29 +275,69 @@ function ScanStep({
 
 function ConfirmStep({
   enrollment,
+  accountEmail,
   headingRef,
   onBack,
   onCancel,
 }: {
   enrollment: TotpEnrollment;
+  accountEmail: string | null;
   headingRef: React.RefObject<HTMLHeadingElement | null>;
   onBack: () => void;
   onCancel: () => void;
 }) {
   const [state, formAction] = useActionState(confirmTotpEnrollmentAction, INITIAL_FORM_STATE);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const passwordError = state.fieldErrors?.password;
+  const codeError = state.fieldErrors?.code;
+  // Si lo único que falló es la contraseña, el foco vuelve a ese campo; si falló el código (o ambos), vuelve al del código.
+  const onlyPasswordFailed = Boolean(passwordError) && !codeError;
+
+  useEffect(() => {
+    if (onlyPasswordFailed) passwordRef.current?.focus();
+  }, [state, onlyPasswordFailed]);
 
   return (
     <form action={formAction} className="flex flex-col gap-4" noValidate>
       <h2 ref={headingRef} tabIndex={-1} className="text-md outline-none">
-        2. Escribe el código que muestra tu aplicación
+        2. Escribe el código de tu aplicación y tu contraseña
       </h2>
       {state.message ? <FormAlert>{state.message}</FormAlert> : null}
       <input type="hidden" name="factorId" value={enrollment.factorId} />
       <CodeField
-        error={state.fieldErrors?.code}
-        focusSignal={state.status === "error" ? state : undefined}
+        error={codeError}
+        focusSignal={state.status === "error" && !onlyPasswordFailed ? state : undefined}
         autoFocus
       />
+      {/* El correo va en un campo de texto SIN nombre (no se envía): solo para que el gestor de contraseñas sepa de qué cuenta es. */}
+      {accountEmail ? (
+        <input
+          type="text"
+          autoComplete="username"
+          value={accountEmail}
+          readOnly
+          tabIndex={-1}
+          aria-hidden
+          className="sr-only"
+        />
+      ) : null}
+      <Field
+        label="Tu contraseña"
+        hint="La pedimos de nuevo para confirmar que eres tú."
+        error={passwordError}
+        required
+      >
+        {(control) => (
+          <Input
+            {...control}
+            ref={passwordRef}
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            required
+          />
+        )}
+      </Field>
       <SubmitButton pendingLabel="Activando…">Confirmar y activar</SubmitButton>
       <div className="flex flex-wrap justify-center gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onBack}>

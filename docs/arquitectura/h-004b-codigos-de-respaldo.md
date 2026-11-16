@@ -616,3 +616,28 @@ El archivo lleva una advertencia: con la aplicación de H-004b funcionando, entr
 - `/Users/josegutisilva/Developer/mainbrain/cotiza-prime/tests/db/mfa-session-gate.test.ts`
 - `/Users/josegutisilva/Developer/mainbrain/cotiza-prime/node_modules/@supabase/auth-js/dist/main/lib/types.d.ts` (`AuthMFARecoveryCodesApi`)
 - `/Users/josegutisilva/Developer/mainbrain/cotiza-prime/node_modules/@supabase/auth-js/dist/main/GoTrueClient.js`
+---
+
+## Registro de construcción
+
+### Pasos 0 y 1 (etapa A) — 2026-11-16, Sonnet
+
+**Paso 0** (`tests/db/mfa-recovery-gotrue.test.ts`, Supabase local, CLI 2.119; todo coincide con el diseño, nada cambia la arquitectura):
+
+| Prueba | Resultado observado |
+|---|---|
+| P0-1 | Las rutas `/auth/v1/factors/recovery-codes` **existen pero están apagadas**: GET responde 404 `mfa_factor_not_found` y POST 422 `mfa_recovery_codes_enroll_not_enabled`. Con D1 = A no se usan. |
+| P0-2 | `signInWithPassword` con un cliente sin cookies crea **una** fila en `auth.sessions` (pase aal1, con o sin factor verificado); `signOut({ scope: "local" })` borra exactamente esa fila y su refresh token y no toca las otras sesiones. **No sale ningún correo** (Mailpit en cero). El **429 no se pudo provocar en local** (ni con 80 ingresos seguidos con una IP propia en `x-forwarded-for`; el tope `sign_in_sign_ups` no se activó): se simuló la respuesta de GoTrue con un `fetch` falso y `classifyAuthError` la lee como `rate_limited`. |
+| P0-3 | `signOut({ scope: "others" })` **funciona desde un pase aal1**, con y sin factor verificado: cierra todas las otras sesiones (403 `session_not_found`) y deja la propia. |
+| P0-4 | Quitar el factor con la llave maestra: la sesión a medias que estaba abierta pasa a **completa** (`app.second_step_pending()` de verdadero a falso) y **no se cierra ninguna sesión**. |
+| P0-5 | `DELETE /auth/v1/factors/{id}` con un pase aal2 responde **200** y borra el factor. Confirma la base de D7: quien tenga una sesión completa robada puede desactivar el segundo paso hablando directo con Supabase. |
+| P0-6 | Tras ese `unenroll`, el pase aal2 ya entregado **sigue sirviendo** (GET /user 200) y la renovación siguiente da un pase **aal1**, con la cuenta sin factor. |
+| P0-7 | Borrar la cuenta (API de administración) borra en cascada una tabla que cuelga de `auth.users` con `on delete cascade`. (La tabla real llega en la etapa B; aquí se probó con una temporal que se elimina.) |
+
+**Paso 1 (etapa A)**: `src/lib/auth/reauth.ts` (`confirmPassword`), contraseña en `confirmTotpEnrollmentAction` (antes de los contadores y del permiso de H-118) y campo «Tu contraseña» en la pantalla de activar, `friendly_name` «Aplicación de códigos» al iniciar la activación, acción `session.reauth_failed` en la auditoría, guardias 14 / 14b ampliadas y nueva 14j. Activar sigue redirigiendo a `/cuenta/seguridad?aviso=activada` (la pantalla de códigos es el paso 4).
+
+**Detalles de construcción (no estaban en el diseño):**
+- Se valida primero la forma del código y de la contraseña; un código mal escrito o una contraseña vacía no consultan nada (ni siquiera a Supabase).
+- Una contraseña incorrecta se muestra en el campo «Tu contraseña»; el bloqueo, el 429 y las caídas, como mensaje general.
+- El plazo de la llamada a Supabase al comprobar la contraseña es de 10 s (un fallo por plazo no suma al contador).
+- El campo oculto `autocomplete="username"` va **sin `name`**: no viaja en el envío; solo orienta al gestor de contraseñas.

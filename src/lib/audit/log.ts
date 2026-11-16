@@ -21,6 +21,7 @@ export type AuditAction =
   | "session.mfa_verified"
   | "session.mfa_failed"
   | "session.mfa_locked"
+  | "session.reauth_failed"
   | "tenant.access_denied";
 
 export type AuditResult = "success" | "failure" | "denied";

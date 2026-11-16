@@ -12,6 +12,7 @@ import {
   createTenant,
   openVerificationLink,
   signUpAndVerify,
+  submitEnrollmentConfirmation,
   uniqueEmail,
   waitForVerificationLink,
 } from "./helpers";
@@ -54,10 +55,16 @@ async function logIn(page: Page, email: string, password = TEST_PASSWORD) {
   await page.getByRole("button", { name: "Ingresar" }).click();
 }
 
+/** La pantalla del código tras la contraseña (ingresar): solo el código. */
 async function submitCode(page: Page, code: string) {
   const field = page.getByLabel(CODE_LABEL);
   await field.fill(code);
-  await page.getByRole("button", { name: /^Verificar$|^Confirmar y activar$/ }).click();
+  await page.getByRole("button", { name: "Verificar", exact: true }).click();
+}
+
+/** El último paso de ACTIVAR: el código y, desde H-004b, también la contraseña. */
+async function submitEnrollment(page: Page, code: string, password = TEST_PASSWORD) {
+  await submitEnrollmentConfirmation(page, code, password);
 }
 
 /** Cuenta nueva con su organización y la verificación en dos pasos ya activa. La sesión queda completa (aal2). */
@@ -76,7 +83,7 @@ async function createAccountWithSecondStep(page: Page, label: string): Promise<A
   const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
   const { code, step } = await freshTotp(secret);
-  await submitCode(page, code);
+  await submitEnrollment(page, code);
   await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
   return { email, tenantId, secret, usedStep: step };
 }
@@ -161,15 +168,27 @@ test("activar: desde el menú, con el QR y la clave; un código incorrecto no ac
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
   await expect(page.getByLabel(CODE_LABEL)).toBeFocused();
   // Un código incorrecto no activa nada.
-  await submitCode(page, wrongCode(secret));
+  await submitEnrollment(page, wrongCode(secret));
   await expect(page.getByText(/El código no coincide/)).toBeVisible();
   await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
   await expect(page.getByLabel(CODE_LABEL)).toBeFocused();
   await expect(page.getByLabel(CODE_LABEL)).toHaveValue("");
 
-  // Con el código de verdad, se activa.
+  // Una contraseña incorrecta (H-004b) no activa nada ni gasta el código: el MISMO código sirve después con la contraseña buena.
   const { code, step } = await freshTotp(secret);
-  await submitCode(page, code);
+  await submitEnrollment(page, code, "contrasena-equivocada-999");
+  await expect(page.getByText("La contraseña no es correcta.")).toBeVisible();
+  await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
+  const passwordField = page.getByLabel("Tu contraseña");
+  await expect(passwordField).toBeFocused();
+  await expect(passwordField).toHaveValue("");
+  await expect(passwordField).toHaveAttribute("autocomplete", "current-password");
+  // El correo va en un campo oculto para el gestor de contraseñas, sin nombre (no viaja en el envío).
+  await expect(page.locator('input[autocomplete="username"]')).toHaveValue(email);
+  await expect(page.locator('input[autocomplete="username"]')).not.toHaveAttribute("name", /.+/);
+
+  // Con el código de verdad y la contraseña buena, se activa.
+  await submitEnrollment(page, code);
   await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
   await expect(page.getByTestId("two-step-active")).toBeVisible();
   await expect(page.getByText(/Está activa desde el \d{2}-\d{2}-\d{4}/)).toBeVisible();
@@ -361,7 +380,12 @@ test("en el teléfono (375 px, con movimiento reducido): el código y la activac
   const tooSmall = async (where: string) => {
     const small = await page.evaluate(() =>
       [...document.querySelectorAll<HTMLElement>("main button, main a[href], main input")]
-        .filter((el) => el.offsetParent !== null && el.getAttribute("type") !== "hidden")
+        .filter(
+          (el) =>
+            el.offsetParent !== null &&
+            el.getAttribute("type") !== "hidden" &&
+            el.getAttribute("aria-hidden") !== "true",
+        )
         .filter((el) => el.getBoundingClientRect().height < 44)
         .map((el) => el.textContent?.trim() || el.getAttribute("name") || el.tagName),
     );
@@ -388,10 +412,14 @@ test("en el teléfono (375 px, con movimiento reducido): el código y la activac
   expect(
     await field.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
   ).toBeGreaterThanOrEqual(16);
+  const passwordField = page.getByLabel("Tu contraseña");
+  expect(
+    await passwordField.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
+  ).toBeGreaterThanOrEqual(16);
   await noOverflow("seguridad, confirmar");
   await tooSmall("seguridad, confirmar");
   const { code } = await freshTotp(secret);
-  await submitCode(page, code);
+  await submitEnrollment(page, code);
   await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
   await noOverflow("seguridad, activada");
 
@@ -528,7 +556,7 @@ test("un Comercial activa la verificación en su propia cuenta (cualquier rol pu
   await page.getByRole("button", { name: "Activar la verificación en dos pasos" }).click();
   const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
-  await submitCode(page, (await freshTotp(secret)).code);
+  await submitEnrollment(page, (await freshTotp(secret)).code);
   await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
   await expect(page.getByTestId("two-step-active")).toBeVisible();
   // Y la organización del Dueño sigue abierta con sus permisos de Comercial.
@@ -584,7 +612,7 @@ test("cancelar la activación quita de Supabase el intento a medias, desde el pa
   await page.getByRole("button", { name: ENABLE_BUTTON }).click();
   const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
-  await submitCode(page, (await freshTotp(secret)).code);
+  await submitEnrollment(page, (await freshTotp(secret)).code);
   await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
   expect(await factorStatuses(email)).toEqual(["verified"]);
 });
@@ -611,11 +639,11 @@ test("activar desde dos pestañas a la vez: la que se quedó con el intento reem
   const secretB = await startAndScan(tabB);
 
   // La segunda pestaña activa la cuenta.
-  await submitCode(tabB, (await freshTotp(secretB)).code);
+  await submitEnrollment(tabB, (await freshTotp(secretB)).code);
   await expect(tabB).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
 
   // La primera todavía muestra su intento (ya reemplazado): al confirmar, ve que la cuenta está activa.
-  await submitCode(page, (await freshTotp(secretA)).code);
+  await submitEnrollment(page, (await freshTotp(secretA)).code);
   await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
   await expect(page.getByTestId("two-step-active")).toBeVisible();
   await expect(page.getByText(/La activación caducó/)).toHaveCount(0);

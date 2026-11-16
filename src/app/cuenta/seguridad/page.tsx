@@ -49,6 +49,7 @@ export default async function AccountSecurityPage({
         sinceLabel={secondStep.since ? formatDate(secondStep.since) : null}
         justEnabled={aviso === ACCOUNT_SECURITY_NOTICES.enabled}
         noticeEmail={user.email || null}
+        accountEmail={user.email || null}
       />
     </AuthCard>
   );

@@ -4,7 +4,12 @@ import { connect } from "../tests/db/helpers";
 import { adminCreateUser, signIn } from "../tests/support/local-supabase";
 import { challengeAndVerifyRaw, startEnrollment } from "../tests/support/mfa-gate";
 import { expect, test, type Page } from "./fixtures";
-import { createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
+import {
+  createTenant,
+  signUpAndVerify,
+  submitEnrollmentConfirmation,
+  uniqueEmail,
+} from "./helpers";
 
 // H-118a · El aviso de que se activó la verificación en dos pasos, de punta a punta (Mailpit en http://127.0.0.1:56324):
 // (1) activar manda el correo con el enlace «#» para anular; (2) un correo que no sale (destinatario fuera de la lista
@@ -62,8 +67,7 @@ async function openEnrollment(page: Page): Promise<string> {
 }
 
 async function submitCode(page: Page, secret: string) {
-  await page.getByLabel("Código de 6 números").fill((await freshTotp(secret)).code);
-  await page.getByRole("button", { name: "Confirmar y activar" }).click();
+  await submitEnrollmentConfirmation(page, (await freshTotp(secret)).code);
 }
 
 test("activar manda el aviso por correo, con el botón «No fui yo» y el código tras el «#»; la pantalla dice a qué correo", async ({

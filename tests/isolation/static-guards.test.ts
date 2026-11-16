@@ -116,6 +116,7 @@ function namedCalls(text: string, name: string): string[] {
 
 /**
  * H-004a: ¿esta llamada a `serverLog` o `logAuditEvent` lleva el código de 6 números, la clave, el uri, el QR o el correo?
+ * H-004b: tampoco la contraseña (ningún identificador que contenga «password» o «contrasena»).
  * Sin los textos entre comillas, solo se permite `code:` si su valor viene de un error (`errorCodeOf(error)`, `error.code`) y
  * no puede quedar ningún `code` suelto ni `x.code` que no sea de un error. Devuelve el motivo o `null`.
  */
@@ -123,9 +124,11 @@ function secondStepLogViolation(call: string): string | null {
   const noStrings = call.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
   const withoutErrorCodes = noStrings
     .replace(/\bcode:\s*[^,}]*(?:errorCodeOf\(|\berror\b)[^,}]*/g, "")
+    // Un texto fijo (ya vaciado arriba) no puede llevar el código de nadie: `{ code: "unexpected" }` es inofensivo.
+    .replace(/\bcode:\s*''/g, "")
     .replace(/\b[A-Za-z_]*error[A-Za-z_]*\??\.code\b/gi, "");
   const forbidden =
-    /\.code\b|\bcode\b|\b(otp|totp|secret|uri|qrCode|qr_code|email|checked|parsed)\b/i.exec(
+    /\.code\b|\bcode\b|\b(otp|totp|secret|uri|qrCode|qr_code|email|checked|parsed)\b|\b\w*(password|contrasena)\w*\b/i.exec(
       withoutErrorCodes,
     );
   return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
@@ -137,6 +140,12 @@ const AUTH_ADMIN_PATTERN =
 /** Y, dentro de ella, la de los factores del segundo paso. */
 const AUTH_ADMIN_MFA_PATTERN =
   /\bauth\s*(?:\?\.|\.)\s*admin\s*(?:\?\.|\.)\s*mfa\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]\s*(?:\?\.|\.)\s*mfa\b/;
+/** H-004b: abrir una sesión con correo y contraseña. Solo el ingreso y la comprobación de «pedir la contraseña de nuevo». */
+const SIGN_IN_WITH_PASSWORD_PATTERN = /\bsignInWithPassword\b/;
+const SIGN_IN_WITH_PASSWORD_FILES: readonly string[] = [
+  "src/lib/auth/actions.ts",
+  "src/lib/auth/reauth.ts",
+];
 /** La pasarela de los factores (H-118). */
 const MFA_ADMIN_GATEWAY = "src/lib/security/mfa-admin-gateway.ts";
 /** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
@@ -153,6 +162,23 @@ function annulLogViolation(call: string): string | null {
       noStrings,
     );
   return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
+}
+
+/**
+ * H-004b: en el cuerpo de `confirmTotpEnrollmentAction`, la contraseña (`confirmPassword(`) se comprueba ANTES de los contadores
+ * y del bloqueo del código (`checkCodeBeforeVerifying(`) y del permiso de activación (`permitEnrollment(`). Devuelve el
+ * motivo si no se cumple, o `null`.
+ */
+function passwordBeforeCounters(body: string): string | null {
+  const password = body.indexOf("confirmPassword(");
+  const counters = body.indexOf("checkCodeBeforeVerifying(");
+  const permit = body.indexOf("permitEnrollment(");
+  if (password === -1) return "no pide la contraseña";
+  if (counters === -1 || permit === -1) return "faltan los contadores o el permiso";
+  if (password > counters) return "la contraseña va después de los contadores del código";
+  if (password > permit) return "la contraseña va después del permiso";
+  if (counters > permit) return "el permiso va antes de los contadores del código";
+  return null;
 }
 
 /** Carpetas del formulario público y de las solicitudes donde `serverLog` no puede recibir datos de una persona. */
@@ -1032,17 +1058,21 @@ describe("guardias estáticas del aislamiento", () => {
     // la de H-116 se suma a esta lista cuando exista. `auth.admin.mfa` solo vive en la de los factores.
     expect(only(AUTH_ADMIN_PATTERN, AUTH_ADMIN_GATEWAYS)).toEqual([]);
     expect(only(AUTH_ADMIN_MFA_PATTERN, MFA_ADMIN_GATEWAY)).toEqual([]);
+    // H-004b: comprobar una contraseña (abrir una sesión con ella) solo se hace en el ingreso y en «pedir la contraseña de nuevo».
+    expect(only(SIGN_IN_WITH_PASSWORD_PATTERN, SIGN_IN_WITH_PASSWORD_FILES)).toEqual([]);
     // Y esas acciones no usan la llave maestra ni nombran los métodos de sesión.
     const actions = stripComments(read(path.join(SRC, "lib/auth/second-step-actions.ts")));
     expect(/admin-client|createAdminClient/.test(actions)).toBe(false);
     expect(/\.(getUser|getClaims|getSession)\s*\(/.test(actions)).toBe(false);
   });
 
-  it("14b. (H-004a) serverLog y logAuditEvent en la verificación en dos pasos nunca reciben el código de 6 números, la clave, el uri, el QR ni el correo", () => {
+  it("14b. (H-004a, H-004b) serverLog y logAuditEvent en la verificación en dos pasos nunca reciben el código de 6 números, la clave, el uri, el QR, el correo ni la contraseña", () => {
     const files = [
       "src/lib/auth/second-step-actions.ts",
       "src/lib/auth/session.ts",
       "src/lib/security/login-rate-limit.ts",
+      // H-004b: pedir la contraseña de nuevo (la contraseña ni el correo van a un registro).
+      "src/lib/auth/reauth.ts",
     ];
     let found = 0;
     for (const file of files) {
@@ -1070,12 +1100,20 @@ describe("guardias estáticas del aislamiento", () => {
       "serverLog('warn', 'mfa', { secret: enrollment.secret })",
       "logAuditEvent({ details: { email: user.email } })",
       "serverLog('error', 'x', { code: userCode })",
+      // H-004b: la contraseña, con cualquier nombre que la delate
+      "serverLog('warn', 'reauth', { password })",
+      "logAuditEvent({ details: { reason: 'wrong_password', value: passwordFormat.data.password } })",
+      "logAuditEvent({ details: { contrasena } })",
+      "serverLog('warn', 'reauth', { code: 'x', pw: parsed.password })",
     ];
     for (const call of bad) expect(secondStepLogViolation(call), call).not.toBeNull();
     const good = [
       "serverLog('warn', 'mfa_verify_failed', { stage, code: errorCodeOf(error) })",
       "serverLog('error', 'x', { code: error.code ?? String(error.status) })",
       "logAuditEvent({ action: 'session.mfa_verified', result: 'success', actorUserId: user.id, details: { stage: 'sign_in', factorType: MFA_FACTOR_TYPE } })",
+      // H-004b: el motivo y el para qué (textos fijos o variables que no son la contraseña) y un código fijo
+      "logAuditEvent({ action: 'session.reauth_failed', result: 'failure', actorUserId: user.id, details: { reason, purpose } })",
+      "serverLog('warn', 'reauth_sign_out_failed', { code: 'unexpected' })",
     ];
     for (const call of good) expect(secondStepLogViolation(call), call).toBeNull();
     // Y encuentra las llamadas (con paréntesis anidados) de las dos funciones.
@@ -1254,6 +1292,59 @@ describe("guardias estáticas del aislamiento", () => {
     expect(
       Number(/export const maxDuration = (\d+);/.exec("export const maxDuration = 30;")![1]),
     ).toBeLessThan(MIN_SECONDS);
+  });
+
+  it("14j. (H-004b) «pedir la contraseña de nuevo»: el correo sale de la sesión (no del formulario), usa el límite del ingreso, cierra la sesión desechable solo en local, y la acción de activar la pide ANTES de los contadores y del permiso", () => {
+    const reauth = stripComments(read(path.join(ROOT, "src/lib/auth/reauth.ts")));
+    // El correo no puede venir del formulario ni de un parámetro: solo la sesión.
+    expect(reauth).toMatch(/getSessionState\(\)/);
+    expect(/formData|FormData|readText/.test(reauth)).toBe(false);
+    // Ni la llave maestra, ni los factores, ni la API de administración.
+    expect(/admin-client|createAdminClient|auth\s*\.\s*admin|\.mfa\./.test(reauth)).toBe(false);
+    // El límite del ingreso (no un presupuesto de intentos aparte).
+    for (const name of ["isLoginLocked", "recordLoginFailure", "clearLoginFailures"]) {
+      expect(reauth, name).toMatch(new RegExp(`\\b${name}\\(`));
+    }
+    // La sesión desechable: sin cookies ni renovación, y se cierra SIEMPRE con alcance local (nunca global ni «others»).
+    expect(reauth).toMatch(/persistSession:\s*false/);
+    expect(reauth).toMatch(/autoRefreshToken:\s*false/);
+    const signOuts = [...reauth.matchAll(/\.signOut\(([^)]*)\)/g)].map((match) => match[1]);
+    expect(signOuts.length).toBeGreaterThan(0);
+    for (const argument of signOuts) expect(argument).toMatch(/scope:\s*"local"/);
+    // La acción de activar: la contraseña va después de validar la forma y ANTES de todo lo demás.
+    const actions = stripComments(read(path.join(ROOT, "src/lib/auth/second-step-actions.ts")));
+    const body = actions.slice(
+      actions.indexOf("export async function confirmTotpEnrollmentAction"),
+    );
+    expect(passwordBeforeCounters(body)).toBeNull();
+    // Y la guardia muerde: sin la contraseña, o con ella después de los contadores o del permiso, se detecta.
+    expect(
+      passwordBeforeCounters("checkCodeBeforeVerifying(a); permitEnrollment(b);"),
+    ).not.toBeNull();
+    expect(
+      passwordBeforeCounters(
+        "checkCodeBeforeVerifying(a); confirmPassword(u, p, 'enroll'); permitEnrollment(b);",
+      ),
+    ).not.toBeNull();
+    expect(
+      passwordBeforeCounters(
+        "confirmPassword(u, p, 'enroll'); permitEnrollment(b); checkCodeBeforeVerifying(a);",
+      ),
+    ).not.toBeNull();
+    expect(
+      passwordBeforeCounters(
+        "confirmPassword(u, p, 'enroll'); checkCodeBeforeVerifying(a); permitEnrollment(b);",
+      ),
+    ).toBeNull();
+    // El patrón de signInWithPassword también muerde: se ve aunque venga encadenado.
+    expect(
+      SIGN_IN_WITH_PASSWORD_PATTERN.test(
+        "await client.auth.signInWithPassword({ email, password })",
+      ),
+    ).toBe(true);
+    expect(SIGN_IN_WITH_PASSWORD_PATTERN.test("await client.auth.signInWithOtp({ email })")).toBe(
+      false,
+    );
   });
 
   it("14g. la guardia 14f detecta de verdad el código del enlace, su huella, la contraseña y el correo; deja pasar un código de error", () => {

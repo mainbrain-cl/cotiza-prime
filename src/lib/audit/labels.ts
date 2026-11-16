@@ -20,6 +20,8 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "session.mfa_annul_failed":
     "No se pudo terminar de anular la activación de la verificación en dos pasos",
   "session.mfa_notice_sent": "Se envió el aviso de la activación de la verificación en dos pasos",
+  "session.reauth_failed":
+    "No se confirmó la contraseña al pedir una acción de seguridad de la cuenta",
   "member.created": "Se sumó un miembro",
   "member.updated": "Cambió un miembro",
   "member.role_changed": "Se cambió el rol de un miembro",

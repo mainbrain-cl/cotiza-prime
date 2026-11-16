@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
+import { freshTotp } from "../src/test/totp";
 
 /** Buzón de prueba de Supabase local (Mailpit). Puerto de `[local_smtp]` en supabase/config.toml. */
 const MAILBOX_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:56324";
@@ -85,4 +86,42 @@ export async function createTenant(page: Page, name: string, rut: string): Promi
   await page.getByRole("button", { name: "Crear organización" }).click();
   await expect(page).toHaveURL(/\/o\/[0-9a-f-]{36}$/);
   return page.url().split("/o/")[1];
+}
+
+/** Etiquetas de «Seguridad de tu cuenta» al activar la verificación en dos pasos (H-004b: el último paso pide también la contraseña). */
+const ENABLE_TWO_STEP_BUTTON = "Activar la verificación en dos pasos";
+const TOTP_CODE_LABEL = "Código de 6 números";
+const ENROLL_PASSWORD_LABEL = "Tu contraseña";
+
+/**
+ * El último paso de activar: escribe el código de la aplicación y la contraseña, y confirma. La contraseña se vuelve a
+ * pedir desde H-004b; por defecto es la de las cuentas de prueba.
+ */
+export async function submitEnrollmentConfirmation(
+  page: Page,
+  code: string,
+  password: string = TEST_PASSWORD,
+): Promise<void> {
+  await page.getByLabel(TOTP_CODE_LABEL).fill(code);
+  await page.getByLabel(ENROLL_PASSWORD_LABEL).fill(password);
+  await page.getByRole("button", { name: "Confirmar y activar" }).click();
+}
+
+/**
+ * Activa la verificación en dos pasos desde «Seguridad de tu cuenta», de punta a punta: abre la pantalla, lee la clave,
+ * escribe el código de la aplicación y la contraseña, y espera el aviso de «activada». Devuelve la clave y el período
+ * (de 30 s) del código usado, para seguir con códigos nuevos.
+ */
+export async function activateTwoStep(
+  page: Page,
+  password: string = TEST_PASSWORD,
+): Promise<{ secret: string; step: number }> {
+  await page.goto("/cuenta/seguridad");
+  await page.getByRole("button", { name: ENABLE_TWO_STEP_BUTTON }).click();
+  const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
+  await page.getByRole("button", { name: "Ya la escaneé" }).click();
+  const { code, step } = await freshTotp(secret);
+  await submitEnrollmentConfirmation(page, code, password);
+  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  return { secret, step };
 }

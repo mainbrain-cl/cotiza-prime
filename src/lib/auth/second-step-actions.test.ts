@@ -43,6 +43,7 @@ const grantEnrollmentPermit = vi.fn();
 const revertEnrollmentAlert = vi.fn();
 const deliverPendingEnrollmentNotices = vi.fn();
 const revertEnrollment = vi.fn();
+const confirmPassword = vi.fn();
 
 vi.mock("next/navigation", () => ({
   redirect: (target: string) => {
@@ -58,6 +59,9 @@ vi.mock("@/lib/auth/session", () => ({
   requirePendingSecondStep: () => requirePendingSecondStep(),
   requireUser: () => requireUser(),
   hasRecoverySession: () => hasRecoverySession(),
+}));
+vi.mock("@/lib/auth/reauth", () => ({
+  confirmPassword: (...args: unknown[]) => confirmPassword(...args),
 }));
 vi.mock("@/lib/auth/login-audit", () => ({
   logTenantLogins: (...args: unknown[]) => logTenantLogins(...args),
@@ -162,6 +166,7 @@ beforeEach(() => {
     revertEnrollmentAlert,
     deliverPendingEnrollmentNotices,
     revertEnrollment,
+    confirmPassword,
   ]) {
     mock.mockReset();
   }
@@ -180,6 +185,7 @@ beforeEach(() => {
   revertEnrollmentAlert.mockResolvedValue("closed");
   revertEnrollment.mockResolvedValue(true);
   deliverPendingEnrollmentNotices.mockResolvedValue(NOTICE_SENT);
+  confirmPassword.mockResolvedValue({ ok: true });
 });
 
 const auditActions = () => logAuditEvent.mock.calls.map(([event]) => event.action);
@@ -465,7 +471,11 @@ describe("startTotpEnrollmentAction (activar, paso 1)", () => {
     });
     const result = await startTotpEnrollmentAction();
     expect(unenroll.mock.calls.map(([args]) => args.factorId)).toEqual(["viejo-1", "viejo-2"]);
-    expect(enroll).toHaveBeenCalledWith({ factorType: "totp", issuer: "Cotiza Prime" });
+    expect(enroll).toHaveBeenCalledWith({
+      factorType: "totp",
+      issuer: "Cotiza Prime",
+      friendlyName: "Aplicación de códigos",
+    });
     expect(unenroll.mock.invocationCallOrder[1]).toBeLessThan(enroll.mock.invocationCallOrder[0]);
     expect(result.status).toBe("started");
   });
@@ -515,14 +525,107 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
     });
     activeTenantIdsOf.mockResolvedValue(["t1", "t2"]);
   });
+  const PASSWORD = "Contrasena-Muy-Secreta-9";
   const fields = (extra: Record<string, string> = {}) =>
-    form({ factorId: FACTOR_ID, code: "123456", ...extra });
+    form({ factorId: FACTOR_ID, code: "123456", password: PASSWORD, ...extra });
 
-  it("un código mal escrito no consulta nada", async () => {
+  it("un código mal escrito no consulta nada (ni siquiera la contraseña)", async () => {
     const state = await confirmTotpEnrollmentAction(IDLE, fields({ code: "12" }));
     expect(state.fieldErrors?.code).toBeTruthy();
+    expect(confirmPassword).not.toHaveBeenCalled();
     expect(listFactors).not.toHaveBeenCalled();
     expect(challengeAndVerify).not.toHaveBeenCalled();
+  });
+
+  it("sin contraseña (o más larga de lo posible) da error en el campo y no consulta nada", async () => {
+    for (const password of ["", "x".repeat(73)]) {
+      const state = await confirmTotpEnrollmentAction(IDLE, fields({ password }));
+      expect(state.status).toBe("error");
+      expect(state.fieldErrors?.password).toBeTruthy();
+      expect(state.fieldErrors?.code).toBeUndefined();
+    }
+    const data = new FormData();
+    data.set("factorId", FACTOR_ID);
+    data.set("code", "123456");
+    expect((await confirmTotpEnrollmentAction(IDLE, data)).fieldErrors?.password).toBeTruthy();
+    expect(confirmPassword).not.toHaveBeenCalled();
+    expect(beginSecondStepAttempt).not.toHaveBeenCalled();
+    expect(challengeAndVerify).not.toHaveBeenCalled();
+  });
+
+  it("código y contraseña mal escritos a la vez: los dos errores en sus campos", async () => {
+    const state = await confirmTotpEnrollmentAction(IDLE, fields({ code: "12", password: "" }));
+    expect(state.fieldErrors?.code).toBeTruthy();
+    expect(state.fieldErrors?.password).toBeTruthy();
+  });
+
+  it("la contraseña se pide a nombre de la persona de la sesión, para «enroll», ANTES de tocar contadores, el código ya usado, el permiso o Supabase", async () => {
+    await redirectOf(() => confirmTotpEnrollmentAction(IDLE, fields()));
+    expect(confirmPassword).toHaveBeenCalledWith(USER, PASSWORD, "enroll");
+    const passwordAt = confirmPassword.mock.invocationCallOrder[0];
+    for (const later of [
+      isSecondStepIpLocked,
+      beginSecondStepAttempt,
+      consumeTotpCode,
+      listFactors,
+      grantEnrollmentPermit,
+      challengeAndVerify,
+    ]) {
+      expect(passwordAt, later.getMockName()).toBeLessThan(later.mock.invocationCallOrder[0]);
+    }
+  });
+
+  it("contraseña incorrecta: error en el campo de la contraseña; no se gasta el código, no se tocan los contadores y no se da el permiso", async () => {
+    confirmPassword.mockResolvedValue({
+      ok: false,
+      reason: "wrong_password",
+      message: "La contraseña no es correcta.",
+    });
+    const state = await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(state).toEqual({
+      status: "error",
+      fieldErrors: { password: "La contraseña no es correcta." },
+    });
+    expect(JSON.stringify(state)).not.toContain(PASSWORD);
+    for (const untouched of [
+      isSecondStepIpLocked,
+      beginSecondStepAttempt,
+      consumeTotpCode,
+      releaseTotpCode,
+      recordSecondStepFailure,
+      clearSecondStepFailures,
+      listFactors,
+      grantEnrollmentPermit,
+      challengeAndVerify,
+      deliverPendingEnrollmentNotices,
+      logAuditEvent,
+    ]) {
+      expect(untouched).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(["locked", "rate_limited", "unavailable", "other_account"] as const)(
+    "la comprobación de la contraseña no pudo terminar (%s): mensaje general y nada de lo demás se toca",
+    async (reason) => {
+      confirmPassword.mockResolvedValue({ ok: false, reason, message: "Mensaje de prueba." });
+      const state = await confirmTotpEnrollmentAction(IDLE, fields());
+      expect(state).toEqual({ status: "error", message: "Mensaje de prueba." });
+      expect(beginSecondStepAttempt).not.toHaveBeenCalled();
+      expect(grantEnrollmentPermit).not.toHaveBeenCalled();
+      expect(challengeAndVerify).not.toHaveBeenCalled();
+    },
+  );
+
+  it("la contraseña nunca llega a la auditoría ni al registro ni vuelve en el estado (ni en éxito ni en error)", async () => {
+    challengeAndVerify.mockResolvedValueOnce({
+      error: { code: "mfa_verification_failed", status: 422 },
+    });
+    const failed = await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(failed.values).toBeUndefined();
+    await redirectOf(() => confirmTotpEnrollmentAction(IDLE, fields({ code: "654321" })));
+    const recorded = JSON.stringify([...logAuditEvent.mock.calls, ...serverLog.mock.calls]);
+    expect(recorded).not.toContain(PASSWORD);
+    expect(JSON.stringify(failed)).not.toContain(PASSWORD);
   });
 
   it("bloqueada: no llama a Supabase", async () => {

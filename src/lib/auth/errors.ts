@@ -80,3 +80,14 @@ export const MFA_LOCKED_DAY_ENROLLMENT_MESSAGE =
 /** Al ingresar, la verificación no se pudo completar por algo que no es el código (la sesión o el factor cambiaron). */
 export const MFA_SIGN_IN_FAILED_MESSAGE =
   "No pudimos verificar el código. Cierra sesión y vuelve a ingresar.";
+
+/**
+ * Al activar la verificación en dos pasos, el correo de aviso (con el enlace para anular la activación) no pudo salir
+ * (H-118a). La activación se revierte: dejarla activa sin que nadie fuera avisado no protege a la dueña de la cuenta.
+ */
+export const MFA_NOTICE_REVERTED_MESSAGE =
+  "No pudimos enviarte el correo de aviso, así que no dejamos activa la verificación. Inténtalo de nuevo en unos minutos.";
+
+/** El aviso no salió Y tampoco se pudo desactivar lo recién activado: la persona tiene que pedir ayuda. */
+export const MFA_NOTICE_REVERT_FAILED_MESSAGE =
+  "No pudimos enviarte el correo de aviso y la verificación quedó activa sin él. Escribe al equipo de Cotiza Prime para resolverlo.";

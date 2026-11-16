@@ -169,6 +169,8 @@ export interface IsolationFixture {
   platformAuditId: number;
   /** Clave de la fila de `auth_rate_limits` que monta la fixture. */
   rateLimitKeyHash: string;
+  /** Huella del enlace de anulación (`mfa_annul_links`) que monta la fixture: ningún pase debe poder leerla (H-118a). */
+  mfaLinkTokenSha: string;
 }
 
 const SEED_CUSTOMERS = (org: OrgKey, canary: string): CustomerInput[] => [
@@ -520,12 +522,29 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     [rateLimitKeyHash],
   );
 
+  // Un aviso de activación del segundo paso y su enlace de anulación (tablas de la plataforma, solo del servidor; H-118a)
+  const mfaLinkTokenSha = [
+    ...randomUUID().replaceAll("-", ""),
+    ...randomUUID().replaceAll("-", ""),
+  ].join("");
+  const mfaAlert = await db.query<{ id: string }>(
+    `insert into public.mfa_enrollment_alerts (user_id, factor_id, state, expected_until, verified_at, sent_at)
+     values ($1, gen_random_uuid(), 'sent', now(), now(), now()) returning id`,
+    [personas.ana.userId],
+  );
+  await db.query(
+    `insert into public.mfa_annul_links (alert_id, user_id, token_sha256, expires_at)
+     values ($1, $2, $3, now() + interval '72 hours')`,
+    [mfaAlert.rows[0].id, personas.ana.userId, mfaLinkTokenSha],
+  );
+
   return {
     runId,
     personas,
     orgs,
     platformAuditId: Number(audit.rows[0].id),
     rateLimitKeyHash,
+    mfaLinkTokenSha,
   };
 }
 

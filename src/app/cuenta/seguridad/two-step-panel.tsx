@@ -30,21 +30,30 @@ export function TwoStepPanel({
   active,
   sinceLabel,
   justEnabled,
+  noticeEmail,
 }: {
   active: boolean;
   sinceLabel: string | null;
   justEnabled: boolean;
+  /** El correo al que se mandó el aviso de la activación (solo se muestra recién activada). */
+  noticeEmail: string | null;
 }) {
-  if (active) return <ActivePanel sinceLabel={sinceLabel} justEnabled={justEnabled} />;
+  if (active) {
+    return (
+      <ActivePanel sinceLabel={sinceLabel} justEnabled={justEnabled} noticeEmail={noticeEmail} />
+    );
+  }
   return <EnablePanel />;
 }
 
 function ActivePanel({
   sinceLabel,
   justEnabled,
+  noticeEmail,
 }: {
   sinceLabel: string | null;
   justEnabled: boolean;
+  noticeEmail: string | null;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -52,6 +61,7 @@ function ActivePanel({
         <FormAlert tone="success">
           Listo: la verificación en dos pasos quedó activa. Cerramos tu sesión en tus otros
           dispositivos.
+          {noticeEmail ? ` Te enviamos un aviso a ${noticeEmail}.` : null}
         </FormAlert>
       ) : null}
       <div className="flex items-start gap-3">

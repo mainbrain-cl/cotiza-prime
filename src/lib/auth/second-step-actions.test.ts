@@ -8,6 +8,8 @@ const USER = {
 };
 const FACTOR_ID = "22222222-2222-4222-8222-222222222222";
 const IP = "203.0.113.7";
+/** El aviso de la activación salió. */
+const NOTICE_SENT = { sentFactorIds: [FACTOR_ID], sentTo: USER.email, failures: [] };
 
 const challengeAndVerify = vi.fn();
 const listFactors = vi.fn();
@@ -37,6 +39,10 @@ const releaseTotpCode = vi.fn();
 const recordSecondStepFailure = vi.fn();
 const clearSecondStepFailures = vi.fn();
 const consumeTotpCode = vi.fn();
+const grantEnrollmentPermit = vi.fn();
+const revertEnrollmentAlert = vi.fn();
+const deliverPendingEnrollmentNotices = vi.fn();
+const revertEnrollment = vi.fn();
 
 vi.mock("next/navigation", () => ({
   redirect: (target: string) => {
@@ -68,6 +74,24 @@ vi.mock("@/lib/security/login-rate-limit", () => ({
   recordSecondStepFailure: (...args: unknown[]) => recordSecondStepFailure(...args),
   clearSecondStepFailures: (...args: unknown[]) => clearSecondStepFailures(...args),
   consumeTotpCode: (...args: unknown[]) => consumeTotpCode(...args),
+}));
+vi.mock("@/lib/security/mfa-alerts-gateway", () => ({
+  MfaAlertsGatewayError: class extends Error {
+    code = "gateway";
+  },
+  grantEnrollmentPermit: (...args: unknown[]) => grantEnrollmentPermit(...args),
+  revertEnrollmentAlert: (...args: unknown[]) => revertEnrollmentAlert(...args),
+}));
+vi.mock("@/lib/security/mfa-enrollment-notice", () => ({
+  deliverPendingEnrollmentNotices: (...args: unknown[]) => deliverPendingEnrollmentNotices(...args),
+  revertEnrollment: (...args: unknown[]) => revertEnrollment(...args),
+  failureCodeFor: (
+    delivery: { failures: { factorId: string | null; code: string }[] },
+    factorId: string,
+  ) =>
+    delivery.failures.find((failure) => failure.factorId === factorId)?.code ??
+    delivery.failures[0]?.code ??
+    "not_sent",
 }));
 vi.mock("@/lib/tenant/active-tenant", () => ({
   requireActiveTenant: (...args: unknown[]) => requireActiveTenant(...args),
@@ -134,6 +158,10 @@ beforeEach(() => {
     recordSecondStepFailure,
     clearSecondStepFailures,
     consumeTotpCode,
+    grantEnrollmentPermit,
+    revertEnrollmentAlert,
+    deliverPendingEnrollmentNotices,
+    revertEnrollment,
   ]) {
     mock.mockReset();
   }
@@ -148,6 +176,10 @@ beforeEach(() => {
   consumeTotpCode.mockResolvedValue(true);
   challengeAndVerify.mockResolvedValue({ data: {}, error: null });
   activeTenantIdsOf.mockResolvedValue([]);
+  grantEnrollmentPermit.mockResolvedValue(true);
+  revertEnrollmentAlert.mockResolvedValue("closed");
+  revertEnrollment.mockResolvedValue(true);
+  deliverPendingEnrollmentNotices.mockResolvedValue(NOTICE_SENT);
 });
 
 const auditActions = () => logAuditEvent.mock.calls.map(([event]) => event.action);
@@ -340,6 +372,17 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
       details: { stage: "sign_in", factorType: "totp" },
     });
     expect(logTenantLogins).toHaveBeenCalledWith(supabase, USER.id);
+  });
+
+  it("tras ingresar con el código reintenta los avisos de activación pendientes; si el código es incorrecto, no", async () => {
+    challengeAndVerify.mockResolvedValue(WRONG);
+    await verifySecondStepAction(IDLE, form({ code: "987654" }));
+    expect(deliverPendingEnrollmentNotices).not.toHaveBeenCalled();
+    challengeAndVerify.mockResolvedValue({ error: null });
+    await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "246801" })));
+    expect(deliverPendingEnrollmentNotices).toHaveBeenCalledWith(USER.id);
+    // Quien ingresa con su código ya tiene el segundo paso: un aviso que no salga no revierte nada.
+    expect(revertEnrollment).not.toHaveBeenCalled();
   });
 
   it("éxito viniendo de una invitación va a unirse; viniendo del enlace de recuperar la contraseña, a elegir la nueva", async () => {
@@ -610,6 +653,121 @@ describe("confirmTotpEnrollmentAction (activar, paso 2)", () => {
     for (const event of enrolled) {
       expect(event.details).toEqual({ stage: "enrollment", factorType: "totp" });
     }
+  });
+
+  it("deja el permiso ANTES de verificar y verifica con un solo desafío; sin permiso no verifica y libera el código", async () => {
+    await redirectOf(() => confirmTotpEnrollmentAction(IDLE, fields()));
+    expect(grantEnrollmentPermit).toHaveBeenCalledWith(USER.id, FACTOR_ID);
+    expect(grantEnrollmentPermit.mock.invocationCallOrder[0]).toBeLessThan(
+      challengeAndVerify.mock.invocationCallOrder[0],
+    );
+    challengeAndVerify.mockClear();
+    grantEnrollmentPermit.mockResolvedValue(false);
+    const denied = await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(denied.message).toMatch(/No pudimos verificar el código/);
+    expect(challengeAndVerify).not.toHaveBeenCalled();
+    expect(releaseTotpCode).toHaveBeenCalledWith(USER.id, "123456");
+    grantEnrollmentPermit.mockRejectedValue(new Error("x"));
+    const failed = await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(failed.status).toBe("error");
+    expect(challengeAndVerify).not.toHaveBeenCalled();
+  });
+
+  it("los avisos pendientes salen SIEMPRE, también si la verificación falla; y entonces se cierra el permiso (un código incorrecto no deja la puerta abierta 2 minutos)", async () => {
+    challengeAndVerify.mockResolvedValue({
+      error: { code: "mfa_verification_failed", status: 422 },
+    });
+    deliverPendingEnrollmentNotices.mockResolvedValue({
+      sentFactorIds: [],
+      sentTo: null,
+      failures: [],
+    });
+    const state = await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(state.message).toMatch(/El código no coincide/);
+    expect(deliverPendingEnrollmentNotices).toHaveBeenCalledWith(USER.id);
+    expect(revertEnrollmentAlert).toHaveBeenCalledWith(USER.id, FACTOR_ID, "verify_failed", {
+      onlyPermit: true,
+    });
+    // Y no se borra el factor sin verificar: la persona reintenta con el mismo QR.
+    expect(revertEnrollment).not.toHaveBeenCalled();
+  });
+
+  it("si alguien verificó el factor directo mientras el permiso vivía y el aviso no salió, se revierte aunque el código de aquí fuera incorrecto", async () => {
+    challengeAndVerify.mockResolvedValue({
+      error: { code: "mfa_verification_failed", status: 422 },
+    });
+    deliverPendingEnrollmentNotices.mockResolvedValue({
+      sentFactorIds: [],
+      sentTo: null,
+      failures: [{ alertId: "a1", factorId: FACTOR_ID, code: "provider_rejected" }],
+    });
+    await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(revertEnrollment).toHaveBeenCalledWith(USER.id, FACTOR_ID, "provider_rejected");
+    // Y si el permiso estaba vivo y la base lo da como revertido (pendiente sin intento), también se borra el factor.
+    revertEnrollment.mockClear();
+    deliverPendingEnrollmentNotices.mockResolvedValue({
+      sentFactorIds: [],
+      sentTo: null,
+      failures: [],
+    });
+    // La base devuelve `pending` (sin tocarlo): el servidor borra el factor PRIMERO y recién después lo anota.
+    revertEnrollmentAlert.mockResolvedValue("pending");
+    await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(revertEnrollment).toHaveBeenCalledWith(USER.id, FACTOR_ID, "verify_failed");
+  });
+
+  it("el aviso sale DESPUÉS de verificar y la activación solo se audita y se celebra si el aviso salió", async () => {
+    const target = await redirectOf(() => confirmTotpEnrollmentAction(IDLE, fields()));
+    expect(target).toBe("/cuenta/seguridad?aviso=activada");
+    expect(deliverPendingEnrollmentNotices.mock.invocationCallOrder[0]).toBeGreaterThan(
+      challengeAndVerify.mock.invocationCallOrder[0],
+    );
+    expect(revertEnrollment).not.toHaveBeenCalled();
+    expect(auditActions()).toContain("session.mfa_enrolled");
+  });
+
+  it.each([
+    ["el proveedor no acepta el correo", "provider_rejected"],
+    ["hay un error de configuración del correo", "email_config"],
+    ["el destinatario no está permitido", "recipient_not_allowed"],
+  ])(
+    "si %s, se REVIERTE la activación, se dice con su mensaje y no se audita como activada",
+    async (_name, code) => {
+      deliverPendingEnrollmentNotices.mockResolvedValue({
+        sentFactorIds: [],
+        sentTo: null,
+        failures: [{ alertId: "a1", factorId: FACTOR_ID, code }],
+      });
+      const state = await confirmTotpEnrollmentAction(IDLE, fields());
+      expect(state).toEqual({
+        status: "error",
+        message:
+          "No pudimos enviarte el correo de aviso, así que no dejamos activa la verificación. Inténtalo de nuevo en unos minutos.",
+      });
+      expect(revertEnrollment).toHaveBeenCalledWith(USER.id, FACTOR_ID, code);
+      expect(auditActions()).not.toContain("session.mfa_enrolled");
+      expect(logTenantLogins).not.toHaveBeenCalled();
+      expect(activeTenantIdsOf).not.toHaveBeenCalled();
+    },
+  );
+
+  it("si el aviso no salió y tampoco se pudo revertir, lo dice distinto (la persona tiene que pedir ayuda)", async () => {
+    deliverPendingEnrollmentNotices.mockResolvedValue({
+      sentFactorIds: [],
+      sentTo: null,
+      failures: [{ alertId: null, factorId: null, code: "gateway_shape" }],
+    });
+    revertEnrollment.mockResolvedValue(false);
+    const state = await confirmTotpEnrollmentAction(IDLE, fields());
+    expect(state.message).toMatch(/quedó activa sin él/);
+    expect(revertEnrollment).toHaveBeenCalledWith(USER.id, FACTOR_ID, "gateway_shape");
+  });
+
+  it("la auditoría de la activación nunca lleva el correo ni el aviso", async () => {
+    await redirectOf(() => confirmTotpEnrollmentAction(IDLE, fields()));
+    expect(JSON.stringify([...logAuditEvent.mock.calls, ...serverLog.mock.calls])).not.toContain(
+      USER.email,
+    );
   });
 
   it("no mira rol ni organización activa ni lee tablas (solo recorre las organizaciones para auditar)", async () => {

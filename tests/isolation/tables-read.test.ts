@@ -624,4 +624,17 @@ describe("las tablas del servidor", () => {
       expect(res.text).not.toContain(fx.rateLimitKeyHash);
     }
   });
+
+  it("mfa_enrollment_alerts y mfa_annul_links no son legibles por nadie con pase (H-118a): ni la huella del enlace ni los avisos", async () => {
+    const fx = fixture();
+    for (const key of PERSONA_KEYS) {
+      for (const table of ["mfa_enrollment_alerts", "mfa_annul_links"]) {
+        const res = await rest(await tokenOf(key), `${table}?select=*`, {
+          headers: { Prefer: "count=exact", ...tenantHeader(fx.orgs.A.tenantId) },
+        });
+        expect(res.status, `${key} ${table}`).toBeGreaterThanOrEqual(400);
+        expect(res.text).not.toContain(fx.mfaLinkTokenSha);
+      }
+    }
+  });
 });

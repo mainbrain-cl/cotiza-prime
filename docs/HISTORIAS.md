@@ -2038,21 +2038,22 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 **quiero** poder anular, desde el correo que me avisa, una activación del segundo paso que yo no hice
 **para** que quien sepa mi contraseña no pueda activar el segundo paso con su teléfono y dejarme fuera de mi cuenta.
 
-**Criterios de aceptación** (el `planificador` los afina al diseñarla)
-- [ ] Al activar el segundo paso, a la cuenta le llega un correo con un enlace de un solo uso para **anular la activación**
-- [ ] El enlace solo funciona una vez, caduca, y su token se guarda solo como huella; abrirlo muestra una confirmación y la anulación se hace al confirmar, no al abrir (los escáneres de correo abren los enlaces)
-- [ ] Al anular: se quita el factor, se cierran todas las sesiones de la cuenta (también la de quien activó) y queda en el registro de actividad y en el de auditoría
-- [ ] Un token inválido, vencido o ya usado da el mismo mensaje (no revela cuál)
-- [ ] Quien tiene la contraseña no puede volver a activar de inmediato y dejar fuera otra vez al dueño: la anulación obliga a cambiar la contraseña, o a esperar, según el diseño
-- [ ] Si el correo no puede salir, la persona lo sabe y no queda con la cuenta protegida por un teléfono que nadie vigila sin saberlo
-- [ ] Una prueba reproduce el ataque completo: quien conoce la contraseña activa su teléfono, el dueño usa el enlace del correo y el atacante queda fuera
-- [ ] Se prueba en local con el correo de Mailpit
+**Criterios de aceptación** (marcados al 2026-11-12: lo cumplido está verificado en local con Mailpit; ver el registro de construcción en `docs/arquitectura/h-118-anular-activacion.md`)
+- [x] Al activar el segundo paso, a la cuenta le llega un correo con un enlace de un solo uso para **anular la activación**
+- [x] El enlace solo funciona una vez, caduca, y su token se guarda solo como huella; abrirlo muestra una confirmación y la anulación se hace al confirmar, no al abrir (los escáneres de correo abren los enlaces)
+- [x] Al anular: se quita el factor, se cierran todas las sesiones de la cuenta (también la de quien activó) y queda en el registro de actividad y en el de auditoría. **Salvedad:** el pase de acceso (JWT) del atacante sigue valiendo hasta 15 minutos contra la API de datos aunque su sesión ya no exista; lo cierra `app.session_alive()` de H-116 (decisión D5)
+- [x] Un token inválido, vencido o ya usado da el mismo mensaje (no revela cuál)
+- [x] Quien tiene la contraseña no puede volver a activar de inmediato y dejar fuera otra vez al dueño: la anulación obliga a cambiar la contraseña, o a esperar, según el diseño
+- [x] Si el correo no puede salir, la persona lo sabe y no queda con la cuenta protegida por un teléfono que nadie vigila sin saberlo
+- [x] Una prueba reproduce el ataque completo: quien conoce la contraseña activa su teléfono, el dueño usa el enlace del correo y el atacante queda fuera
+- [x] Se prueba en local con el correo de Mailpit
+- [ ] **Falta, no verificado:** el envío con el proveedor real (Resend, decisión 016) y que Gmail y Outlook conserven el «#» del enlace; el disparador sobre `auth.mfa_factors` y el 500 de GoTrue en el proyecto alojado de pruebas; la revisión adversarial y la prueba en pantalla de Aarón
 
 **Prioridad:** núcleo
 **Tamaño:** grande (unos 5,25 días con la revisión adversarial): **se parte en H-118a** (aviso: permiso, disparador y correo) **y H-118b** (anular: enlace, página y pasarela), dentro de un mismo PR con etapas
 **Depende de:** H-004a (mezclada); el proveedor de correo (decisión 016, Resend aprobado el 2026-11-12) para producción
 **Datos personales:** sí (correo de la persona)
-**Notas técnicas:** 🔒 **prioritaria antes del piloto** (hallazgo I1 de la revisión de Aarón al #44, 2026-11-12; seguimiento 0 de la decisión 021). Pedir la contraseña de nuevo antes de activar (H-004b) NO lo cierra: el atacante ya la sabe. El aviso de hoy es el de Supabase Auth (`[auth.email.notification.mfa_factor_enrolled]` en `supabase/config.toml`), una plantilla fija que no admite un enlace propio con token: el diseño decide quién envía el correo. Mientras no exista, vale el procedimiento de soporte de la decisión 021 (solicitud desde el correo registrado, confirmación del Dueño, 24 horas de espera con aviso; lo hace solo Aarón durante el piloto). Tabla nueva con `tenant_id` (organización «plataforma», como `auth_rate_limits`), migración con la guardia 15. **Diseño hecho (Opus, 2026-11-12) con las decisiones de José del mismo día:** `docs/arquitectura/h-118-anular-activacion.md`. Enlace de 72 horas; se cierra en la base la activación directa por la API de Supabase (disparador sobre `auth.mfa_factors` con un «permiso» de 2 minutos que deja nuestro servidor); si el correo no sale se revierte la activación; tras anular se envía un segundo correo de recuperación de contraseña; el aviso propio de Supabase se apaga.
+**Notas técnicas:** 🔒 **prioritaria antes del piloto** (hallazgo I1 de la revisión de Aarón al #44, 2026-11-12; seguimiento 0 de la decisión 021). Pedir la contraseña de nuevo antes de activar (H-004b) NO lo cierra: el atacante ya la sabe. El aviso ya NO es el de Supabase Auth (una plantilla fija que no admite un enlace propio): lo envía nuestro servidor con el enlace, y el de Supabase (`mfa_factor_enrolled`) está apagado. Mientras no exista, vale el procedimiento de soporte de la decisión 021 (solicitud desde el correo registrado, confirmación del Dueño, 24 horas de espera con aviso; lo hace solo Aarón durante el piloto). Tabla nueva con `tenant_id` (organización «plataforma», como `auth_rate_limits`), migración con la guardia 15. **Diseño hecho (Opus, 2026-11-12) con las decisiones de José del mismo día:** `docs/arquitectura/h-118-anular-activacion.md`. Enlace de 72 horas; se cierra en la base la activación directa por la API de Supabase (disparador sobre `auth.mfa_factors` con un «permiso» de 2 minutos que deja nuestro servidor); si el correo no sale se revierte la activación; tras anular se envía un segundo correo de recuperación de contraseña; el aviso propio de Supabase se apaga.
 
 ---
 

@@ -7,6 +7,7 @@ const signInWithPassword = vi.fn();
 const logAuditEvent = vi.fn();
 const logTenantLogins = vi.fn();
 const hasPendingInvitation = vi.fn();
+const deliverPendingEnrollmentNotices = vi.fn();
 class Redirected extends Error {
   constructor(readonly to: string) {
     super(to);
@@ -48,6 +49,9 @@ vi.mock("@/lib/security/login-rate-limit", () => ({
   recordLoginFailure: async () => false,
   clearLoginFailures: async () => undefined,
 }));
+vi.mock("@/lib/security/mfa-enrollment-notice", () => ({
+  deliverPendingEnrollmentNotices: (...args: unknown[]) => deliverPendingEnrollmentNotices(...args),
+}));
 vi.mock("@/lib/legal/documents", () => ({ legalDocuments: {} }));
 
 const { signInAction } = await import("./actions");
@@ -74,6 +78,9 @@ beforeEach(() => {
   logAuditEvent.mockReset();
   logTenantLogins.mockReset();
   hasPendingInvitation.mockReset().mockResolvedValue(false);
+  deliverPendingEnrollmentNotices
+    .mockReset()
+    .mockResolvedValue({ sentFactorIds: [], sentTo: null, failures: [] });
 });
 
 describe("signInAction y la verificación en dos pasos", () => {
@@ -91,6 +98,24 @@ describe("signInAction y la verificación en dos pasos", () => {
       actorUserId: "u1",
       details: { stage: "password", secondStepPending: true },
     });
+  });
+
+  it("con un factor verificado reintenta los avisos de activación pendientes de ESA cuenta (la dueña bloqueada) ANTES de ir al código; sin factor no los toca", async () => {
+    signInWithPassword.mockResolvedValue({
+      data: { user: { id: "u1", factors: [{ id: "f", status: "verified", factor_type: "totp" }] } },
+      error: null,
+    });
+    await redirectOf();
+    expect(deliverPendingEnrollmentNotices).toHaveBeenCalledTimes(1);
+    // Solo recibe la cuenta que acaba de entrar: el correo lo decide la base, nunca la petición.
+    expect(deliverPendingEnrollmentNotices).toHaveBeenCalledWith("u1");
+    deliverPendingEnrollmentNotices.mockClear();
+    signInWithPassword.mockResolvedValue({
+      data: { user: { id: "u1", factors: [] } },
+      error: null,
+    });
+    await redirectOf();
+    expect(deliverPendingEnrollmentNotices).not.toHaveBeenCalled();
   });
 
   it("con un factor a medias (sin verificar) o sin factores entra como siempre", async () => {

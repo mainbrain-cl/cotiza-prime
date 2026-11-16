@@ -258,12 +258,10 @@ enabled = true
 subject = "Tu contraseña de Cotiza Prime cambió"
 content_path = "./supabase/templates/password_changed_notification.html"
 
-# H-004a: aviso a la persona de que activó la verificación en dos pasos (alguien con su contraseña podría activar su propio
-# teléfono y dejarla fuera: este correo es la alerta).
-[auth.email.notification.mfa_factor_enrolled]
-enabled = true
-subject = "Activaste la verificación en dos pasos en Cotiza Prime"
-content_path = "./supabase/templates/mfa_factor_enrolled_notification.html"
+# H-004a / H-118: el aviso de que se activó la verificación en dos pasos YA NO lo envía Supabase Auth
+# (`[auth.email.notification.mfa_factor_enrolled]` está apagado y su plantilla se quitó). Lo envía nuestro servidor, con el
+# enlace para anular la activación (`src/lib/security/mfa-enrollment-notice.ts`). El de Supabase duplicaría el correo sin
+# enlace y, si la activación se revierte porque el correo no salió, diría «activaste» en falso.
 
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.

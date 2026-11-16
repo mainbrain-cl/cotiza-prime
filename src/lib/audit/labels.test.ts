@@ -24,6 +24,20 @@ describe("nombres del registro de actividad", () => {
     expect(isKnownAuditAction("session.mfa_enrolled")).toBe(true);
   });
 
+  it("nombra el aviso de la activación y su reversión (H-118a)", () => {
+    expect(actionLabel("session.mfa_notice_sent")).toBe(
+      "Se envió el aviso de la activación de la verificación en dos pasos",
+    );
+    expect(actionLabel("session.mfa_enroll_reverted")).toMatch(/Se revirtió la activación/);
+    expect(isKnownAuditAction("session.mfa_enroll_reverted")).toBe(true);
+  });
+
+  it("nombra la anulación de la activación y su fallo (H-118b)", () => {
+    expect(actionLabel("session.mfa_annulled")).toMatch(/Se anuló la activación/);
+    expect(actionLabel("session.mfa_annul_failed")).toMatch(/No se pudo terminar de anular/);
+    expect(isKnownAuditAction("session.mfa_annulled")).toBe(true);
+  });
+
   it("nombra los textos guardados y no muestra nunca su contenido (H-048a)", () => {
     expect(actionLabel("text_snippet.created")).toBe("Se creó un texto guardado");
     expect(actionLabel("text_snippet.updated")).toBe("Se cambió un texto guardado");

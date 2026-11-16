@@ -95,6 +95,30 @@ function secondStepLogViolation(call: string): string | null {
   return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
 }
 
+/** La API de administración de cuentas de Supabase Auth (con la llave maestra): `auth.admin`, también con espacios o saltos. */
+const AUTH_ADMIN_PATTERN =
+  /\bauth\s*(?:\?\.|\.)\s*admin\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]|\{[^{}]*\badmin\b[^{}]*\}\s*=\s*[^;\n]*\bauth\b|\bauth\s*:\s*\{[^{}]*\badmin\b[^{}]*\}/;
+/** Y, dentro de ella, la de los factores del segundo paso. */
+const AUTH_ADMIN_MFA_PATTERN =
+  /\bauth\s*(?:\?\.|\.)\s*admin\s*(?:\?\.|\.)\s*mfa\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]\s*(?:\?\.|\.)\s*mfa\b/;
+/** La pasarela de los factores (H-118). */
+const MFA_ADMIN_GATEWAY = "src/lib/security/mfa-admin-gateway.ts";
+/** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
+const AUTH_ADMIN_GATEWAYS: readonly string[] = [MFA_ADMIN_GATEWAY];
+
+/**
+ * Lo que NUNCA puede llegar a `serverLog` ni a `logAuditEvent` en los avisos de activación y su enlace (H-118): el código
+ * secreto del enlace, su huella, la contraseña ni el correo (ni el nombre de un destinatario o una dirección).
+ */
+function annulLogViolation(call: string): string | null {
+  const noStrings = call.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
+  const forbidden =
+    /\b(token\w*|\w*sha256\w*|\w*hash\w*|fingerprint\w*|password\w*|contrasena\w*|email\w*|recipient\w*|address\w*|secret\w*|url|link)\b/i.exec(
+      noStrings,
+    );
+  return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
+}
+
 /** Carpetas del formulario público y de las solicitudes donde `serverLog` no puede recibir datos de una persona. */
 const INTAKE_LOG_SCOPE =
   /^src\/(lib\/intake\/|app\/f\/|app\/api\/v1\/public\/forms\/|components\/intake\/|app\/o\/\[tenantId\]\/(formularios|solicitudes)\/)/;
@@ -870,11 +894,11 @@ describe("guardias estáticas del aislamiento", () => {
   });
 
   it("14. (H-004a) la sesión y su nivel de seguridad solo se miran en session.ts; el alta, la verificación y el borrado de factores, solo en second-step-actions.ts", () => {
-    const only = (pattern: RegExp, allowed: string) =>
+    const only = (pattern: RegExp, allowed: string | readonly string[]) =>
       sourceFiles
         .filter((f) => pattern.test(stripComments(read(f))))
         .map(rel)
-        .filter((f) => f !== allowed);
+        .filter((f) => !(Array.isArray(allowed) ? allowed : [allowed]).includes(f));
     // Quién es la persona y a qué nivel llegó: un solo archivo (recordatorio permanente del proyecto).
     expect(
       only(
@@ -886,9 +910,14 @@ describe("guardias estáticas del aislamiento", () => {
     expect(
       only(
         /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/,
-        "src/lib/auth/second-step-actions.ts",
+        // También la pasarela de administración, que lista y borra factores con la llave maestra (`auth.admin.mfa`).
+        ["src/lib/auth/second-step-actions.ts", MFA_ADMIN_GATEWAY],
       ),
     ).toEqual([]);
+    // La API de administración de cuentas (`auth.admin.*`, con la llave maestra): solo en las pasarelas. Hoy hay una (H-118);
+    // la de H-116 se suma a esta lista cuando exista. `auth.admin.mfa` solo vive en la de los factores.
+    expect(only(AUTH_ADMIN_PATTERN, AUTH_ADMIN_GATEWAYS)).toEqual([]);
+    expect(only(AUTH_ADMIN_MFA_PATTERN, MFA_ADMIN_GATEWAY)).toEqual([]);
     // Y esas acciones no usan la llave maestra ni nombran los métodos de sesión.
     const actions = stripComments(read(path.join(SRC, "lib/auth/second-step-actions.ts")));
     expect(/admin-client|createAdminClient/.test(actions)).toBe(false);
@@ -958,6 +987,46 @@ describe("guardias estáticas del aislamiento", () => {
         "supabase.auth.mfa.getAuthenticatorAssuranceLevel()",
       ),
     ).toBe(false);
+    // La API de administración: la detecta aunque venga encadenada, con espacios o saltos de línea; no confunde otras `auth`.
+    for (const violation of [
+      "await createAdminClient().auth.admin.mfa.deleteFactor({ id, userId })",
+      "admin.auth\n  .admin\n  .listUsers()",
+      "const { auth } = client; auth.admin.updateUserById(id, {})",
+      // Las formas con que se podría esquivar la regla simple
+      "await client.auth?.admin.listUsers()",
+      "await client.auth ?. admin.listUsers()",
+      "await client.auth['admin'].listUsers()",
+      'await client.auth["admin"]?.mfa.deleteFactor({})',
+      "const { admin } = client.auth; await admin.listUsers()",
+      "const { admin: cuentas, other } = createAdminClient().auth;",
+      // Desestructurar anidado (revisión Opus, ronda 2 de H-118)
+      "const { auth: { admin } } = createAdminClient(); await admin.listUsers()",
+    ]) {
+      expect(AUTH_ADMIN_PATTERN.test(violation), violation).toBe(true);
+    }
+    expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth.admin.mfa.deleteFactor({})")).toBe(true);
+    expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth.admin.listUsers()")).toBe(false);
+    expect(AUTH_ADMIN_MFA_PATTERN.test("x.auth?.admin?.mfa.deleteFactor({})")).toBe(true);
+    expect(AUTH_ADMIN_MFA_PATTERN.test('x.auth["admin"].mfa.deleteFactor({})')).toBe(true);
+    for (const harmless of [
+      "supabase.auth.getUser()",
+      "const isAdmin = true",
+      "auth.administrador()",
+      "const { admin } = props;",
+      "const { data, auth } = await load();",
+    ]) {
+      expect(AUTH_ADMIN_PATTERN.test(harmless), harmless).toBe(false);
+    }
+    // Y de verdad muerde: un archivo cualquiera con `auth.admin` aparece como infractor; la pasarela, no.
+    const flagged = (text: string, file: string) =>
+      AUTH_ADMIN_PATTERN.test(stripComments(text)) && !AUTH_ADMIN_GATEWAYS.includes(file);
+    expect(flagged("admin.auth.admin.deleteUser(id)", "src/lib/auth/second-step-actions.ts")).toBe(
+      true,
+    );
+    expect(flagged("// auth.admin.deleteUser(id)", "src/lib/auth/second-step-actions.ts")).toBe(
+      false,
+    );
+    expect(flagged("admin.auth.admin.mfa.deleteFactor({})", MFA_ADMIN_GATEWAY)).toBe(false);
   });
 
   it("14e. (menor 6 del PR #44) cancelTotpEnrollmentAction exige sesión y solo quita un factor TOTP SIN verificar de la persona, visto en su propia lista, antes de llamar a unenroll", () => {
@@ -974,6 +1043,122 @@ describe("guardias estáticas del aislamiento", () => {
     expect(before).toMatch(/status === "unverified"/);
     // Quita el factor que salió de la lista, no el texto que llegó del navegador.
     expect(body.slice(unenrollAt, unenrollAt + 60)).toMatch(/factorId:\s*factor\.id/);
+  });
+
+  it("14f. (H-118) serverLog y logAuditEvent en el aviso de activación del segundo paso y su enlace nunca reciben el código del enlace, su huella, la contraseña ni el correo", () => {
+    const files = [
+      "src/lib/security/mfa-admin-gateway.ts",
+      "src/lib/security/mfa-alerts-gateway.ts",
+      "src/lib/security/mfa-annul-token.ts",
+      "src/lib/security/mfa-enrollment-notice.ts",
+      "src/lib/email/mfa-enrollment-notice.ts",
+      // H-118b
+      "src/lib/security/mfa-annul.ts",
+      "src/lib/auth/mfa-annul-actions.ts",
+      "src/lib/email/mfa-annulled-notice.ts",
+    ];
+    let found = 0;
+    for (const file of files) {
+      const text = stripComments(read(path.join(ROOT, file)));
+      for (const name of ["serverLog", "logAuditEvent"]) {
+        for (const call of namedCalls(text, name)) {
+          found += 1;
+          expect(annulLogViolation(call), `${file}: ${call}`).toBeNull();
+        }
+      }
+    }
+    // La guardia no puede pasar en vacío: el envío del aviso registra sus fallos.
+    expect(found).toBeGreaterThanOrEqual(3);
+    const notice = stripComments(
+      read(path.join(ROOT, "src/lib/security/mfa-enrollment-notice.ts")),
+    );
+    expect(namedCalls(notice, "serverLog").length).toBeGreaterThan(1);
+    expect(namedCalls(notice, "logAuditEvent").length).toBeGreaterThan(0);
+    // Ninguno de esos archivos manda el correo ni el código a una auditoría o un registro por otro camino.
+    for (const file of files) {
+      const text = stripComments(read(path.join(ROOT, file)));
+      expect(/console\./.test(text), `${file}: escribe en la consola`).toBe(false);
+    }
+  });
+
+  it("14h. (H-118b) la página de anular no usa la llave maestra, no lee ni consulta nada al abrirse, y la acción solo habla con el servicio de anulación", () => {
+    const dir = path.join(SRC, "app/cuenta/anular-dos-pasos");
+    const pageFiles = readdirSync(dir).filter((name) => /\.(ts|tsx)$/.test(name));
+    expect(pageFiles).toEqual(expect.arrayContaining(["page.tsx", "annul-form.tsx"]));
+    for (const name of pageFiles) {
+      const text = stripComments(read(path.join(dir, name)));
+      expect(
+        /admin-client|createAdminClient|SERVICE_ROLE|auth\s*\.\s*admin/.test(text),
+        `${name}: llave maestra`,
+      ).toBe(false);
+      expect(
+        /@\/lib\/security\//.test(text),
+        `${name}: importa un módulo de seguridad del servidor`,
+      ).toBe(false);
+      expect(/@\/lib\/supabase\//.test(text), `${name}: habla con Supabase`).toBe(false);
+    }
+    // Al ABRIRLA (GET) no lee el código ni la sesión ni las cookies, ni consulta la base: no es async ni usa nada de la petición.
+    const page = stripComments(read(path.join(dir, "page.tsx")));
+    expect(
+      /searchParams|cookies\(|headers\(|await |getSessionState|requireUser|\.rpc\(|\.from\(/.test(
+        page,
+      ),
+    ).toBe(false);
+    // El código solo sale del cliente por el campo oculto del formulario: no va en la ruta ni en la consulta.
+    const form = stripComments(read(path.join(dir, "annul-form.tsx")));
+    expect(form).toMatch(/window\.location\.hash/);
+    expect(form).toMatch(/history\.replaceState/);
+    expect(/useSearchParams|fetch\(/.test(form)).toBe(false);
+    // La acción no usa la llave maestra ni nombra la API de cuentas: todo pasa por el servicio.
+    const action = stripComments(read(path.join(SRC, "lib/auth/mfa-annul-actions.ts")));
+    expect(/admin-client|createAdminClient|auth\s*\.\s*admin/.test(action)).toBe(false);
+    expect(action).toMatch(/annulSecondStep\(/);
+    // Y el servicio no abre una sesión de recuperación: no hay inicio de sesión ni cambio de contraseña con el pase de nadie.
+    const service = stripComments(read(path.join(SRC, "lib/security/mfa-annul.ts")));
+    expect(
+      /signIn|verifyOtp|exchangeCodeForSession|setSession|signInWithPassword/.test(service),
+    ).toBe(false);
+  });
+
+  it("14i. (H-118) las pantallas cuyas acciones envían avisos de la activación del segundo paso declaran un `maxDuration` de al menos 60 s (3 envíos de 15 s más margen)", () => {
+    // Un literal: Next lo lee sin ejecutar la pantalla. El plazo del hosting debe respetarlo (lista «Antes del piloto»).
+    const MIN_SECONDS = 60;
+    const screens = [
+      "src/app/(auth)/ingresar/page.tsx", // signInAction reintenta los avisos pendientes
+      "src/app/(auth)/ingresar/codigo/page.tsx", // verifySecondStepAction los reintenta
+      "src/app/cuenta/seguridad/page.tsx", // confirmTotpEnrollmentAction los envía
+      "src/app/cuenta/anular-dos-pasos/page.tsx", // annulSecondStepAction manda dos correos
+    ];
+    for (const screen of screens) {
+      const text = stripComments(read(path.join(ROOT, screen)));
+      const match = /export const maxDuration = (\d+);/.exec(text);
+      expect(match, `${screen}: falta export const maxDuration = <segundos>`).not.toBeNull();
+      expect(Number(match![1]), screen).toBeGreaterThanOrEqual(MIN_SECONDS);
+    }
+    // Y la guardia muerde: sin la declaración, o con un plazo corto, se detecta.
+    expect(/export const maxDuration = (\d+);/.exec("export const metadata = {};")).toBeNull();
+    expect(
+      Number(/export const maxDuration = (\d+);/.exec("export const maxDuration = 30;")![1]),
+    ).toBeLessThan(MIN_SECONDS);
+  });
+
+  it("14g. la guardia 14f detecta de verdad el código del enlace, su huella, la contraseña y el correo; deja pasar un código de error", () => {
+    const bad = [
+      "serverLog('warn', 'x', { token })",
+      "serverLog('warn', 'x', { tokenSha256 })",
+      "serverLog('warn', 'x', { fp: hashMfaAnnulToken(raw) })",
+      "logAuditEvent({ details: { email: user.email } })",
+      "logAuditEvent({ details: { to: reserved.email } })",
+      "serverLog('warn', 'x', { password })",
+      "serverLog('warn', 'x', { url: annulUrl })",
+    ];
+    for (const call of bad) expect(annulLogViolation(call), call).not.toBeNull();
+    const good = [
+      "serverLog('warn', 'mfa_notice_failed', { code: failureCode })",
+      "serverLog('error', 'mfa_notice_settle_failed', { code: codeOf(cause) })",
+      "logAuditEvent({ action: 'session.mfa_enroll_reverted', result: 'failure', actorUserId: user.id, details: { reason: 'provider_rejected', stage: 'enrollment' } })",
+    ];
+    for (const call of good) expect(annulLogViolation(call), call).toBeNull();
   });
 
   it("7. la guardia detecta de verdad: el texto de una violación sí coincide con las reglas", () => {

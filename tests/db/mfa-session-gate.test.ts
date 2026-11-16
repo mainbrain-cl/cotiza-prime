@@ -20,6 +20,7 @@ import {
   type Session,
 } from "../support/local-supabase";
 import { rest } from "../support/local-supabase";
+import { grantEnrollmentPermit } from "../support/mfa-gate";
 import {
   TENANT_HEADER,
   actAsAnon,
@@ -94,6 +95,8 @@ async function enrollAndVerify(
   expect(enrolled.status).toBe(200);
   const factorId = enrolled.json!.id as string;
   const secret = enrolled.json!.totp.secret as string;
+  // Desde H-118a la base exige el «permiso» de nuestro servidor para verificar un factor (migración 20261113100000).
+  await grantEnrollmentPermit(db, session.userId, factorId);
   const challenge = await auth(session.accessToken, "POST", `factors/${factorId}/challenge`, {});
   expect(challenge.status).toBe(200);
   const { code, step } = await freshTotp(secret);
@@ -133,6 +136,7 @@ describe("Comportamiento de Supabase Auth (paso 0 de H-004a)", () => {
     expect(enrolled.json!.totp.secret).toMatch(/^[A-Z2-7]{16,}$/);
 
     const factorId = enrolled.json!.id as string;
+    await grantEnrollmentPermit(db, session.userId, factorId);
     const challenge = await auth(session.accessToken, "POST", `factors/${factorId}/challenge`, {});
     const { code } = await freshTotp(enrolled.json!.totp.secret);
     const verified = await auth(session.accessToken, "POST", `factors/${factorId}/verify`, {

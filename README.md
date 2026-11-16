@@ -39,9 +39,23 @@ esta base no usa (analítica, vector, tiempo real, Studio), levantarla sin ellos
   «Activar la verificación en dos pasos».
 - Con el teléfono: escanea el código QR con Google Authenticator, Microsoft Authenticator o 1Password. Sin teléfono: copia
   la clave que aparece bajo el QR en cualquier generador TOTP (por ejemplo, `oathtool --totp -b CLAVE`).
-- El correo de aviso («Activaste la verificación en dos pasos…») sale por Mailpit (http://127.0.0.1:56324). Lo envía
-  Supabase Auth según `[auth.email.notification.mfa_factor_enrolled]` de `supabase/config.toml`; si la base local se
-  levantó antes de ese cambio, reiniciarla. Las pruebas lo exigen solo con `E2E_EXPECT_MFA_ENROLLED_MAIL=1`.
+- El correo de aviso («Se activó la verificación en dos pasos en tu cuenta») ya NO lo envía Supabase Auth: lo envía nuestro
+  servidor (H-118a, `src/lib/security/mfa-enrollment-notice.ts`) con el botón «No fui yo: anular la activación» y llega a
+  Mailpit (http://127.0.0.1:56324). Si el correo no sale (por ejemplo, el destinatario no es de `ejemplo.test`), la
+  activación se revierte y la pantalla lo dice. La base solo deja activar un factor si el servidor dejó antes un «permiso» de
+  2 minutos: activar hablando directo con Supabase (`/auth/v1/factors/.../verify`) responde 500 y no activa nada. Un script o
+  una prueba que quiera activar un factor por la API tiene que pedir antes el permiso: `select public.mfa_alert_expect(<cuenta>,
+  <factor>)` (ver `tests/support/mfa-gate.ts`).
+- **Si tu Supabase local se levantó antes de que se apagara el aviso propio de Supabase** (`[auth.email.notification.mfa_factor_enrolled]`
+  ya no está en `config.toml`): `npx supabase stop` y de nuevo `npx supabase start` (sin `--no-backup`, los datos se conservan).
+  Reiniciar Docker NO basta: el contenedor de Auth conserva la configuración con que se creó. Para comprobarlo:
+  `docker inspect supabase_auth_cotiza-prime --format '{{range .Config.Env}}{{println .}}{{end}}' | grep MFA_FACTOR_ENROLLED` no debe
+  mostrar nada.
+- **Probar la anulación (H-118b):** con una cuenta nueva, activa el segundo paso (el aviso llega a Mailpit con el botón «No fui yo:
+  anular la activación»). El enlace termina en `/cuenta/anular-dos-pasos#<código>`: el código va tras el «#», que el navegador no
+  manda al servidor. Abrirlo no hace nada; solo el botón rojo «Anular la activación» anula: quita el factor, deja la contraseña
+  sin uso, cierra todas las sesiones y manda dos correos (elegir la contraseña nueva, y «Anulamos la verificación en dos pasos de
+  tu cuenta»). El enlace vale 72 horas y una sola vez; un enlace que no sirve, por la causa que sea, da el mismo mensaje.
 - **Quitar el factor de una cuenta local** (aún no hay desactivar en la pantalla, es H-004b): en Studio, `auth.mfa_factors`,
   borrar la fila; o `delete from auth.mfa_factors where user_id = '…';` en `psql` (base local, puerto 56322).
 - **Desbloquear los intentos de una cuenta (soporte)**: los contadores del código viven en `auth_rate_limits` con las huellas

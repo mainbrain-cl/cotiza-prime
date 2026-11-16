@@ -11,6 +11,15 @@ import { roleLabel } from "@/lib/permissions/matrix";
 export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "session.login": "Ingresó a la plataforma",
   "session.mfa_enrolled": "Activó la verificación en dos pasos",
+  "session.mfa_enroll_reverted":
+    "Se revirtió la activación de la verificación en dos pasos (no salió el aviso por correo)",
+  "session.mfa_annulled":
+    "Se anuló la activación de la verificación en dos pasos desde el correo de aviso",
+  "session.mfa_annul_warning":
+    "Se anuló la activación, pero no se pudo comprobar el cierre de sesiones en la base",
+  "session.mfa_annul_failed":
+    "No se pudo terminar de anular la activación de la verificación en dos pasos",
+  "session.mfa_notice_sent": "Se envió el aviso de la activación de la verificación en dos pasos",
   "member.created": "Se sumó un miembro",
   "member.updated": "Cambió un miembro",
   "member.role_changed": "Se cambió el rol de un miembro",

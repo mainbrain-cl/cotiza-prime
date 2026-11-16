@@ -285,7 +285,7 @@ test("el límite: cinco intentos y el sexto se rechaza, también el código corr
   await expect(ownerPage.getByTestId("reset-request-sent")).toBeVisible();
   await openVerificationLink(
     ownerPage,
-    await waitForVerificationLink(account.email, "Reset"),
+    await waitForVerificationLink(account.email, "Elige"),
     "/auth/recuperar",
   );
   await expect(ownerPage).toHaveURL(SECOND_STEP_URL);
@@ -310,7 +310,7 @@ test("recuperar la contraseña con la verificación activa: primero el código, 
   await resetPage.getByLabel("Correo").fill(main.email);
   await resetPage.getByRole("button", { name: "Enviar enlace" }).click();
   await expect(resetPage.getByTestId("reset-request-sent")).toBeVisible();
-  const link = await waitForVerificationLink(main.email, "Reset");
+  const link = await waitForVerificationLink(main.email, "Elige");
   await openVerificationLink(resetPage, link, "/auth/recuperar");
 
   // El enlace del correo no basta: lleva al código.

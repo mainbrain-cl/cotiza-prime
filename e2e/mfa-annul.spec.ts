@@ -201,7 +201,7 @@ test("EL ATAQUE COMPLETO: quien sabe la contraseña activa su teléfono y deja f
   // A ella le llegan el correo para elegir la contraseña nueva y el aviso de que se anuló.
   const annulled = await waitForMail(email, "Anulamos");
   expect(annulled.Subject).toBe("Anulamos la verificación en dos pasos de tu cuenta");
-  const recovery = await waitForVerificationLink(email, "Reset");
+  const recovery = await waitForVerificationLink(email, "Elige");
   await openVerificationLink(page, recovery, "/auth/recuperar");
   await expect(page).toHaveURL(/\/restablecer-contrasena$/);
   await page.locator("input[name=password]").fill(NEW_PASSWORD);

@@ -89,6 +89,8 @@ export async function createTenant(page: Page, name: string, rut: string): Promi
 }
 
 /** Etiquetas de «Seguridad de tu cuenta» al activar la verificación en dos pasos (H-004b: el último paso pide también la contraseña). */
+/** Cuánto se espera la pantalla de códigos de respaldo tras confirmar la activación. */
+const RECOVERY_SCREEN_TIMEOUT_MS = 20_000;
 const ENABLE_TWO_STEP_BUTTON = "Activar la verificación en dos pasos";
 const TOTP_CODE_LABEL = "Código de 6 números";
 const ENROLL_PASSWORD_LABEL = "Tu contraseña";
@@ -108,20 +110,42 @@ export async function submitEnrollmentConfirmation(
 }
 
 /**
+ * La pantalla «Tus códigos de respaldo» que aparece al activar (H-004b): lee los 10 códigos, marca «Guardé estos códigos en un
+ * lugar seguro», aprieta «Listo» y espera volver a la pantalla de seguridad con el aviso `aviso` (por defecto, «activada»).
+ * Devuelve los códigos tal como se mostraron (con guiones).
+ */
+export async function finishRecoveryCodes(
+  page: Page,
+  notice: "activada" | "codigos" = "activada",
+): Promise<string[]> {
+  // Activar hace bastante en el servidor (contraseña, código, aviso por correo y los códigos): damos más margen que los 5 s de siempre.
+  await expect(page.getByTestId("recovery-codes-screen")).toBeVisible({
+    timeout: RECOVERY_SCREEN_TIMEOUT_MS,
+  });
+  const codes = await page.getByTestId("recovery-code").allInnerTexts();
+  expect(codes).toHaveLength(10);
+  await page.getByRole("checkbox", { name: "Guardé estos códigos en un lugar seguro" }).check();
+  await page.getByRole("button", { name: "Listo", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/cuenta/seguridad\\?aviso=${notice}$`));
+  return codes;
+}
+
+/**
  * Activa la verificación en dos pasos desde «Seguridad de tu cuenta», de punta a punta: abre la pantalla, lee la clave,
- * escribe el código de la aplicación y la contraseña, y espera el aviso de «activada». Devuelve la clave y el período
- * (de 30 s) del código usado, para seguir con códigos nuevos.
+ * escribe el código de la aplicación y la contraseña, y espera el aviso de «activada». Devuelve la clave, el período
+ * (de 30 s) del código usado, para seguir con códigos nuevos, y los códigos de respaldo.
  */
 export async function activateTwoStep(
   page: Page,
   password: string = TEST_PASSWORD,
-): Promise<{ secret: string; step: number }> {
+): Promise<{ secret: string; step: number; recoveryCodes: string[] }> {
   await page.goto("/cuenta/seguridad");
   await page.getByRole("button", { name: ENABLE_TWO_STEP_BUTTON }).click();
   const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
   const { code, step } = await freshTotp(secret);
   await submitEnrollmentConfirmation(page, code, password);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
-  return { secret, step };
+  // Desde H-004b la activación pasa por la pantalla de códigos de respaldo y «Listo».
+  const recoveryCodes = await finishRecoveryCodes(page);
+  return { secret, step, recoveryCodes };
 }

@@ -158,6 +158,8 @@ const MFA_RECOVERY_FUNCTION_PATTERN =
 const MFA_RECOVERY_TABLE_PATTERN = /\.from\(\s*["'`]mfa_recovery_codes["'`]/;
 /** Las acciones que desactivan el segundo paso o crean códigos con la sesión completa (se crean en la etapa C de H-004b). */
 const SECOND_STEP_MANAGE_ACTIONS = "src/lib/auth/second-step-manage-actions.ts";
+/** Crear códigos de respaldo con la sesión completa (pide el código de 6 números de la aplicación) y confirmar «Los guardé». */
+const RECOVERY_CODE_ACTIONS = "src/lib/auth/recovery-code-actions.ts";
 /** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
 const AUTH_ADMIN_GATEWAYS: readonly string[] = [MFA_ADMIN_GATEWAY];
 
@@ -1062,7 +1064,12 @@ describe("guardias estáticas del aislamiento", () => {
         /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/,
         // También la pasarela de administración, que lista y borra factores con la llave maestra (`auth.admin.mfa`), y
         // (H-004b) las acciones de desactivar y de crear códigos con la sesión completa: `mfa.unenroll` y `challengeAndVerify`.
-        ["src/lib/auth/second-step-actions.ts", MFA_ADMIN_GATEWAY, SECOND_STEP_MANAGE_ACTIONS],
+        [
+          "src/lib/auth/second-step-actions.ts",
+          MFA_ADMIN_GATEWAY,
+          SECOND_STEP_MANAGE_ACTIONS,
+          RECOVERY_CODE_ACTIONS,
+        ],
       ),
     ).toEqual([]);
     // H-004b: las siete funciones de los códigos de respaldo, solo desde su pasarela; la tabla, desde ninguna parte.
@@ -1091,14 +1098,21 @@ describe("guardias estáticas del aislamiento", () => {
       "src/lib/auth/recovery-code.ts",
       MFA_RECOVERY_GATEWAY,
       // Las acciones de los pasos 4 a 6 de H-004b: la guardia las cubre apenas existen (hoy no existen todas).
-      "src/lib/auth/recovery-code-actions.ts",
+      RECOVERY_CODE_ACTIONS,
       SECOND_STEP_MANAGE_ACTIONS,
+      // H-004b paso 4: lo que comparten las acciones (contadores y bloqueo del código), el que crea el juego y el que envía el aviso.
+      "src/lib/auth/second-step-checks.ts",
+      "src/lib/auth/recovery-code-issue.ts",
+      "src/lib/security/mfa-account-notice-send.ts",
     ].filter((file) => existsSync(path.join(ROOT, file)));
     // Lo que ya existe tiene que estar en la lista: ningún archivo de los códigos de respaldo queda sin vigilar.
     for (const required of [
       "src/lib/auth/reauth.ts",
       "src/lib/auth/recovery-code.ts",
       MFA_RECOVERY_GATEWAY,
+      RECOVERY_CODE_ACTIONS,
+      "src/lib/auth/second-step-checks.ts",
+      "src/lib/auth/recovery-code-issue.ts",
     ]) {
       expect(files, required).toContain(required);
     }
@@ -1114,7 +1128,11 @@ describe("guardias estáticas del aislamiento", () => {
     }
     // La guardia no puede pasar en vacío: las acciones llaman a las dos funciones muchas veces.
     expect(found).toBeGreaterThanOrEqual(8);
-    const actions = stripComments(read(path.join(ROOT, "src/lib/auth/second-step-actions.ts")));
+    // Las acciones y lo que comparten (los contadores y la auditoría de los fallos viven en `second-step-checks.ts`).
+    const actions = stripComments(
+      read(path.join(ROOT, "src/lib/auth/second-step-actions.ts")) +
+        read(path.join(ROOT, "src/lib/auth/second-step-checks.ts")),
+    );
     expect(namedCalls(actions, "serverLog").length).toBeGreaterThan(2);
     expect(namedCalls(actions, "logAuditEvent").length).toBeGreaterThan(4);
   });

@@ -12,6 +12,7 @@ import {
   createTenant,
   openVerificationLink,
   signUpAndVerify,
+  finishRecoveryCodes,
   submitEnrollmentConfirmation,
   uniqueEmail,
   waitForVerificationLink,
@@ -84,7 +85,7 @@ async function createAccountWithSecondStep(page: Page, label: string): Promise<A
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
   const { code, step } = await freshTotp(secret);
   await submitEnrollment(page, code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await finishRecoveryCodes(page);
   return { email, tenantId, secret, usedStep: step };
 }
 
@@ -189,7 +190,7 @@ test("activar: desde el menú, con el QR y la clave; un código incorrecto no ac
 
   // Con el código de verdad y la contraseña buena, se activa.
   await submitEnrollment(page, code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await finishRecoveryCodes(page);
   await expect(page.getByTestId("two-step-active")).toBeVisible();
   await expect(page.getByText(/Está activa desde el \d{2}-\d{2}-\d{4}/)).toBeVisible();
 
@@ -420,7 +421,33 @@ test("en el teléfono (375 px, con movimiento reducido): el código y la activac
   await tooSmall("seguridad, confirmar");
   const { code } = await freshTotp(secret);
   await submitEnrollment(page, code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  // La pantalla de códigos de respaldo (H-004b): sin desplazamiento horizontal, con los botones y la casilla de 44 px de alto,
+  // y los 10 códigos enteros dentro de la pantalla.
+  await expect(page.getByTestId("recovery-codes-screen")).toBeVisible();
+  await noOverflow("seguridad, códigos de respaldo");
+  const codesTargets = await page.evaluate(() =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-testid="recovery-codes-screen"] button, [data-testid="recovery-codes-screen"] label',
+      ),
+    ].map((el) => ({
+      name: el.textContent?.trim() ?? "",
+      height: el.getBoundingClientRect().height,
+    })),
+  );
+  expect(codesTargets.length).toBeGreaterThanOrEqual(4);
+  for (const target of codesTargets) {
+    expect(target.height, `${target.name}: área táctil menor a 44 px`).toBeGreaterThanOrEqual(44);
+  }
+  const codeBoxes = await page.getByTestId("recovery-code").evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      right: node.getBoundingClientRect().right,
+      width: window.innerWidth,
+    })),
+  );
+  expect(codeBoxes).toHaveLength(10);
+  for (const box of codeBoxes) expect(box.right).toBeLessThanOrEqual(box.width);
+  await finishRecoveryCodes(page);
   await noOverflow("seguridad, activada");
 
   // La pantalla del código, con la contraseña sola.
@@ -557,7 +584,7 @@ test("un Comercial activa la verificación en su propia cuenta (cualquier rol pu
   const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
   await submitEnrollment(page, (await freshTotp(secret)).code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await finishRecoveryCodes(page);
   await expect(page.getByTestId("two-step-active")).toBeVisible();
   // Y la organización del Dueño sigue abierta con sus permisos de Comercial.
   await page.goto(`/o/${owner.tenantId}`);
@@ -613,7 +640,7 @@ test("cancelar la activación quita de Supabase el intento a medias, desde el pa
   const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
   await submitEnrollment(page, (await freshTotp(secret)).code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await finishRecoveryCodes(page);
   expect(await factorStatuses(email)).toEqual(["verified"]);
 });
 
@@ -640,7 +667,7 @@ test("activar desde dos pestañas a la vez: la que se quedó con el intento reem
 
   // La segunda pestaña activa la cuenta.
   await submitEnrollment(tabB, (await freshTotp(secretB)).code);
-  await expect(tabB).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await finishRecoveryCodes(tabB);
 
   // La primera todavía muestra su intento (ya reemplazado): al confirmar, ve que la cuenta está activa.
   await submitEnrollment(page, (await freshTotp(secretA)).code);

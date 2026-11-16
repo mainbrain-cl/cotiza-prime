@@ -3,18 +3,25 @@
 import { Check, Copy, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { ACCOUNT_SECURITY_NOTICES, ACCOUNT_SECURITY_PATH } from "@/lib/auth/paths";
+import {
+  regenerateRecoveryCodesAction,
+  type RegenerateRecoveryCodesState,
+} from "@/lib/auth/recovery-code-actions";
 import { CodeField } from "@/components/auth/code-field";
 import { Button } from "@/components/ui/button";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
-import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
+import { INITIAL_FORM_STATE, type FormState } from "@/lib/auth/form-state";
 import { formatManualKey } from "@/lib/auth/second-step";
 import {
   cancelTotpEnrollmentAction,
   confirmTotpEnrollmentAction,
   startTotpEnrollmentAction,
+  type ConfirmEnrollmentState,
   type TotpEnrollment,
 } from "@/lib/auth/second-step-actions";
+import { RecoveryCodesScreen } from "./recovery-codes-screen";
 
 const COPIED_FEEDBACK_MS = 2000;
 /** Lado del código QR en pantalla (px): lo bastante grande para que la cámara del teléfono lo lea. */
@@ -25,46 +32,137 @@ type Phase =
   | { name: "scan"; enrollment: TotpEnrollment }
   | { name: "confirm"; enrollment: TotpEnrollment };
 
+/** El estado de los códigos de respaldo de la cuenta, tal como lo lee la página (nunca trae los códigos). */
+export type RecoveryInfo = {
+  /** Cuántos códigos sin usar tiene el juego vigente (0 = no tiene). */
+  total: number;
+  /** La persona confirmó que guardó los códigos del juego vigente. */
+  acknowledged: boolean;
+  /** Cuándo se crearon (dd-mm-aaaa). */
+  createdLabel: string | null;
+};
+
+/**
+ * Lo que la pantalla guarda en memoria después de una acción: los códigos recién creados (solo viven aquí hasta apretar
+ * «Listo»; recargar la página los borra) o el aviso de que la verificación quedó activa pero los códigos no se pudieron crear.
+ * Vive en este componente (que no se desmonta) y no en el formulario, porque al activar la página se vuelve a pedir al
+ * servidor y el formulario desaparece.
+ */
+type Reveal =
+  | { kind: "codes"; codes: string[]; setId: string; after: "enrollment" | "regenerate" }
+  | { kind: "codes_failed" };
+
 /** Estados de «Seguridad de tu cuenta»: sin activar, activando (escanear y confirmar) y activada. Solo superficies sólidas. */
 export function TwoStepPanel({
   active,
   sinceLabel,
   justEnabled,
+  justCodesCreated,
   noticeEmail,
   accountEmail,
+  recovery,
 }: {
   active: boolean;
   sinceLabel: string | null;
   justEnabled: boolean;
+  /** Recién se crearon códigos nuevos desde esta pantalla (aviso `?aviso=codigos`). */
+  justCodesCreated: boolean;
   /** El correo al que se mandó el aviso de la activación (solo se muestra recién activada). */
   noticeEmail: string | null;
   /** El correo de la cuenta: solo para que el gestor de contraseñas complete la contraseña (campo oculto «username»). */
   accountEmail: string | null;
+  /** Los códigos de respaldo de la cuenta; `null` si no se pudo leer o la verificación no está activa. */
+  recovery: RecoveryInfo | null;
 }) {
-  if (active) {
+  const [reveal, setReveal] = useState<Reveal | null>(null);
+  const [, startTransition] = useTransition();
+  const router = useRouter();
+
+  /** «Listo»: se borran los códigos de la memoria y se vuelve a la pantalla de seguridad, juntos (sin un parpadeo en medio). */
+  function finishReveal(after: "enrollment" | "regenerate") {
+    const notice =
+      after === "enrollment"
+        ? ACCOUNT_SECURITY_NOTICES.enabled
+        : ACCOUNT_SECURITY_NOTICES.codesCreated;
+    startTransition(() => {
+      router.replace(`${ACCOUNT_SECURITY_PATH}?aviso=${notice}`);
+      setReveal(null);
+    });
+  }
+
+  function onEnrollmentResult(result: ConfirmEnrollmentState) {
+    if (result.status === "enabled") {
+      setReveal({
+        kind: "codes",
+        codes: result.recoveryCodes,
+        setId: result.setId,
+        after: "enrollment",
+      });
+    } else if (result.status === "enabled_without_codes") {
+      setReveal({ kind: "codes_failed" });
+      router.replace(`${ACCOUNT_SECURITY_PATH}?aviso=${ACCOUNT_SECURITY_NOTICES.enabled}`);
+    }
+  }
+
+  if (reveal?.kind === "codes") {
     return (
-      <ActivePanel sinceLabel={sinceLabel} justEnabled={justEnabled} noticeEmail={noticeEmail} />
+      <RecoveryCodesScreen
+        codes={reveal.codes}
+        setId={reveal.setId}
+        onDone={() => finishReveal(reveal.after)}
+      />
     );
   }
-  return <EnablePanel accountEmail={accountEmail} />;
+  if (active || reveal?.kind === "codes_failed") {
+    return (
+      <ActivePanel
+        sinceLabel={sinceLabel}
+        justEnabled={justEnabled}
+        justCodesCreated={justCodesCreated}
+        noticeEmail={noticeEmail}
+        accountEmail={accountEmail}
+        recovery={recovery}
+        codesFailed={reveal?.kind === "codes_failed"}
+        onCodesCreated={(codes, setId) =>
+          setReveal({ kind: "codes", codes, setId, after: "regenerate" })
+        }
+      />
+    );
+  }
+  return <EnablePanel accountEmail={accountEmail} onResult={onEnrollmentResult} />;
 }
 
 function ActivePanel({
   sinceLabel,
   justEnabled,
+  justCodesCreated,
   noticeEmail,
+  accountEmail,
+  recovery,
+  codesFailed,
+  onCodesCreated,
 }: {
   sinceLabel: string | null;
   justEnabled: boolean;
+  justCodesCreated: boolean;
   noticeEmail: string | null;
+  accountEmail: string | null;
+  recovery: RecoveryInfo | null;
+  codesFailed: boolean;
+  onCodesCreated: (codes: string[], setId: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       {justEnabled ? (
         <FormAlert tone="success">
           Listo: la verificación en dos pasos quedó activa. Cerramos tu sesión en tus otros
           dispositivos.
           {noticeEmail ? ` Te enviamos un aviso a ${noticeEmail}.` : null}
+        </FormAlert>
+      ) : null}
+      {justCodesCreated ? (
+        <FormAlert tone="success">
+          Listo: tus códigos de respaldo nuevos quedaron creados. Los anteriores ya no sirven.
         </FormAlert>
       ) : null}
       <div className="flex items-start gap-3">
@@ -83,11 +181,208 @@ function ActivePanel({
           </p>
         </div>
       </div>
+      <RecoverySection
+        recovery={recovery}
+        codesFailed={codesFailed}
+        accountEmail={accountEmail}
+        onCodesCreated={onCodesCreated}
+      />
     </div>
   );
 }
 
-function EnablePanel({ accountEmail }: { accountEmail: string | null }) {
+/**
+ * Los códigos de respaldo en la pantalla de seguridad (§3.6): si no hay, crearlos; si hay, cuándo se crearon y generar
+ * otros (los anteriores dejan de servir); y si no se confirmó que se guardaron, avisarlo. Crear o generar pide la
+ * contraseña Y el código de 6 números de la aplicación.
+ */
+function RecoverySection({
+  recovery,
+  codesFailed,
+  accountEmail,
+  onCodesCreated,
+}: {
+  recovery: RecoveryInfo | null;
+  codesFailed: boolean;
+  accountEmail: string | null;
+  onCodesCreated: (codes: string[], setId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const openRef = useRef<HTMLButtonElement>(null);
+  const hasCodes = (recovery?.total ?? 0) > 0;
+  const unknown = recovery === null && !codesFailed;
+  const needsAcknowledge = recovery !== null && hasCodes && !recovery.acknowledged;
+  const buttonLabel = hasCodes || unknown ? "Generar códigos nuevos" : "Crear códigos de respaldo";
+
+  return (
+    <section
+      aria-labelledby="recovery-heading"
+      data-testid="recovery-section"
+      className="flex flex-col gap-3 border-t border-border pt-5"
+    >
+      <h3 id="recovery-heading" className="text-md">
+        Códigos de respaldo
+      </h3>
+      {codesFailed ? (
+        <FormAlert tone="warning">
+          La verificación quedó activa, pero no pudimos crear tus códigos de respaldo. Créalos
+          ahora.
+        </FormAlert>
+      ) : null}
+      {needsAcknowledge ? (
+        <FormAlert tone="warning">
+          No confirmaste que guardaste tus códigos de respaldo. Si no los guardaste, genera códigos
+          nuevos.
+        </FormAlert>
+      ) : null}
+      {unknown ? (
+        <p className="text-fg-muted">No pudimos revisar tus códigos de respaldo ahora.</p>
+      ) : hasCodes ? (
+        <p className="text-fg-muted" data-testid="recovery-has-codes">
+          Tienes códigos de respaldo
+          {recovery?.createdLabel ? `, creados el ${recovery.createdLabel}` : ""}. Cada uno sirve
+          una sola vez, para entrar si pierdes tu teléfono.
+        </p>
+      ) : (
+        <p className="text-fg-muted" data-testid="recovery-no-codes">
+          No tienes códigos de respaldo. Si pierdes tu teléfono, no podrás entrar.
+        </p>
+      )}
+      {open ? (
+        <RecoveryForm
+          accountEmail={accountEmail}
+          replacesPrevious={hasCodes || unknown}
+          submitLabel={buttonLabel}
+          onCancel={() => {
+            setOpen(false);
+            setTimeout(() => openRef.current?.focus(), 0);
+          }}
+          onCreated={onCodesCreated}
+        />
+      ) : (
+        <Button
+          ref={openRef}
+          type="button"
+          variant="secondary"
+          size="lg"
+          onClick={() => setOpen(true)}
+        >
+          {buttonLabel}
+        </Button>
+      )}
+    </section>
+  );
+}
+
+/** Contraseña y código de la aplicación para crear los códigos de respaldo. */
+function RecoveryForm({
+  accountEmail,
+  replacesPrevious,
+  submitLabel,
+  onCancel,
+  onCreated,
+}: {
+  accountEmail: string | null;
+  replacesPrevious: boolean;
+  submitLabel: string;
+  onCancel: () => void;
+  onCreated: (codes: string[], setId: string) => void;
+}) {
+  const [state, formAction] = useActionState<RegenerateRecoveryCodesState, FormData>(
+    async (previous, formData) => {
+      const result = await regenerateRecoveryCodesAction(previous, formData);
+      // Desde aquí, no desde el formulario: el padre es quien guarda los códigos hasta apretar «Listo».
+      if (result.status === "created") onCreated(result.recoveryCodes, result.setId);
+      return result;
+    },
+    INITIAL_FORM_STATE,
+  );
+  const formState: FormState = state.status === "created" ? INITIAL_FORM_STATE : state;
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const passwordError = formState.fieldErrors?.password;
+  const codeError = formState.fieldErrors?.code;
+  const onlyPasswordFailed = Boolean(passwordError) && !codeError;
+
+  useEffect(() => {
+    if (onlyPasswordFailed) passwordRef.current?.focus();
+  }, [formState, onlyPasswordFailed]);
+
+  return (
+    <form action={formAction} className="flex flex-col gap-4" noValidate>
+      <p className="text-sm text-fg-muted">
+        Para confirmar que eres tú, escribe tu contraseña y el código de 6 números que muestra tu
+        aplicación (no uno de respaldo).
+        {replacesPrevious ? " Los códigos anteriores dejarán de servir." : null}
+      </p>
+      {formState.message ? <FormAlert>{formState.message}</FormAlert> : null}
+      <CodeField
+        error={codeError}
+        focusSignal={formState.status === "error" && !onlyPasswordFailed ? formState : undefined}
+        autoFocus
+      />
+      <HiddenUsername accountEmail={accountEmail} />
+      <PasswordField error={passwordError} inputRef={passwordRef} />
+      <SubmitButton pendingLabel="Creando…">{submitLabel}</SubmitButton>
+      <div className="flex justify-center">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancelar
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** El correo va en un campo de texto SIN nombre (no se envía): solo para que el gestor de contraseñas sepa de qué cuenta es. */
+function HiddenUsername({ accountEmail }: { accountEmail: string | null }) {
+  if (!accountEmail) return null;
+  return (
+    <input
+      type="text"
+      autoComplete="username"
+      value={accountEmail}
+      readOnly
+      tabIndex={-1}
+      aria-hidden
+      className="sr-only"
+    />
+  );
+}
+
+function PasswordField({
+  error,
+  inputRef,
+}: {
+  error?: string;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  return (
+    <Field
+      label="Tu contraseña"
+      hint="La pedimos de nuevo para confirmar que eres tú."
+      error={error}
+      required
+    >
+      {(control) => (
+        <Input
+          {...control}
+          ref={inputRef}
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          required
+        />
+      )}
+    </Field>
+  );
+}
+
+function EnablePanel({
+  accountEmail,
+  onResult,
+}: {
+  accountEmail: string | null;
+  onResult: (result: ConfirmEnrollmentState) => void;
+}) {
   const [phase, setPhase] = useState<Phase>({ name: "idle" });
   const [startError, setStartError] = useState<string | null>(null);
   const [alreadyActive, setAlreadyActive] = useState(false);
@@ -181,6 +476,7 @@ function EnablePanel({ accountEmail }: { accountEmail: string | null }) {
           enrollment={phase.enrollment}
           accountEmail={accountEmail}
           headingRef={headingRef}
+          onResult={onResult}
           onBack={() => setPhase({ name: "scan", enrollment: phase.enrollment })}
           onCancel={cancel}
         />
@@ -277,67 +573,55 @@ function ConfirmStep({
   enrollment,
   accountEmail,
   headingRef,
+  onResult,
   onBack,
   onCancel,
 }: {
   enrollment: TotpEnrollment;
   accountEmail: string | null;
   headingRef: React.RefObject<HTMLHeadingElement | null>;
+  onResult: (result: ConfirmEnrollmentState) => void;
   onBack: () => void;
   onCancel: () => void;
 }) {
-  const [state, formAction] = useActionState(confirmTotpEnrollmentAction, INITIAL_FORM_STATE);
+  const [state, formAction] = useActionState<ConfirmEnrollmentState, FormData>(
+    async (previous, formData) => {
+      const result = await confirmTotpEnrollmentAction(previous, formData);
+      // Los códigos de respaldo se entregan al componente de arriba, que no se desmonta cuando la página se actualiza al
+      // quedar la verificación activa (este formulario sí desaparece).
+      onResult(result);
+      return result;
+    },
+    INITIAL_FORM_STATE,
+  );
+  const formState: FormState =
+    state.status === "enabled" || state.status === "enabled_without_codes"
+      ? INITIAL_FORM_STATE
+      : state;
   const passwordRef = useRef<HTMLInputElement>(null);
-  const passwordError = state.fieldErrors?.password;
-  const codeError = state.fieldErrors?.code;
+  const passwordError = formState.fieldErrors?.password;
+  const codeError = formState.fieldErrors?.code;
   // Si lo único que falló es la contraseña, el foco vuelve a ese campo; si falló el código (o ambos), vuelve al del código.
   const onlyPasswordFailed = Boolean(passwordError) && !codeError;
 
   useEffect(() => {
     if (onlyPasswordFailed) passwordRef.current?.focus();
-  }, [state, onlyPasswordFailed]);
+  }, [formState, onlyPasswordFailed]);
 
   return (
     <form action={formAction} className="flex flex-col gap-4" noValidate>
       <h2 ref={headingRef} tabIndex={-1} className="text-md outline-none">
         2. Escribe el código de tu aplicación y tu contraseña
       </h2>
-      {state.message ? <FormAlert>{state.message}</FormAlert> : null}
+      {formState.message ? <FormAlert>{formState.message}</FormAlert> : null}
       <input type="hidden" name="factorId" value={enrollment.factorId} />
       <CodeField
         error={codeError}
-        focusSignal={state.status === "error" && !onlyPasswordFailed ? state : undefined}
+        focusSignal={formState.status === "error" && !onlyPasswordFailed ? formState : undefined}
         autoFocus
       />
-      {/* El correo va en un campo de texto SIN nombre (no se envía): solo para que el gestor de contraseñas sepa de qué cuenta es. */}
-      {accountEmail ? (
-        <input
-          type="text"
-          autoComplete="username"
-          value={accountEmail}
-          readOnly
-          tabIndex={-1}
-          aria-hidden
-          className="sr-only"
-        />
-      ) : null}
-      <Field
-        label="Tu contraseña"
-        hint="La pedimos de nuevo para confirmar que eres tú."
-        error={passwordError}
-        required
-      >
-        {(control) => (
-          <Input
-            {...control}
-            ref={passwordRef}
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-          />
-        )}
-      </Field>
+      <HiddenUsername accountEmail={accountEmail} />
+      <PasswordField error={passwordError} inputRef={passwordRef} />
       <SubmitButton pendingLabel="Activando…">Confirmar y activar</SubmitButton>
       <div className="flex flex-wrap justify-center gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onBack}>

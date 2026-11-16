@@ -29,4 +29,6 @@ export const LOGIN_NOTICES = {
 /** Avisos que puede traer `/cuenta/seguridad?aviso=...`. */
 export const ACCOUNT_SECURITY_NOTICES = {
   enabled: "activada",
+  /** Se crearon códigos de respaldo nuevos desde la pantalla de seguridad (H-004b). */
+  codesCreated: "codigos",
 } as const;

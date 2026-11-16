@@ -7,6 +7,7 @@ import { expect, test, type Page } from "./fixtures";
 import {
   createTenant,
   signUpAndVerify,
+  finishRecoveryCodes,
   submitEnrollmentConfirmation,
   uniqueEmail,
 } from "./helpers";
@@ -79,7 +80,7 @@ test("activar manda el aviso por correo, con el botón «No fui yo» y el códig
   await createTenant(page, "Empresa Aviso", "76086428-5");
   const secret = await openEnrollment(page);
   await submitCode(page, secret);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await finishRecoveryCodes(page);
   await expect(page.getByText(`Te enviamos un aviso a ${email}`)).toBeVisible();
 
   const mail = await waitForNotice(email);

@@ -258,6 +258,18 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
       mfa_annul_complete: { p_link_id: randomUUID() },
       mfa_annul_release: { p_link_id: randomUUID() },
       mfa_revoke_sessions: { p_user_id: randomUUID() },
+      // Sprint 5 · H-004b · códigos de respaldo del segundo paso
+      mfa_recovery_codes_replace: {
+        p_user_id: randomUUID(),
+        p_factor_id: randomUUID(),
+        p_code_hashes: Array.from({ length: 10 }, (_, i) => String(i).repeat(64)),
+      },
+      mfa_recovery_code_claim: { p_user_id: randomUUID(), p_code_hash: "0".repeat(64) },
+      mfa_recovery_code_complete: { p_code_id: randomUUID() },
+      mfa_recovery_code_release: { p_code_id: randomUUID() },
+      mfa_recovery_codes_acknowledge: { p_user_id: randomUUID(), p_set_id: randomUUID() },
+      mfa_recovery_codes_status: { p_user_id: randomUUID() },
+      mfa_recovery_codes_revoke: { p_user_id: randomUUID() },
     };
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {

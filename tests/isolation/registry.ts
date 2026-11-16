@@ -563,6 +563,24 @@ export const ISOLATION_TABLES: TableSpec[] = [
     hasFixtureRowsInB: false,
     ownWriteAccepted: false,
   },
+  // Sprint 5 · H-004b: los códigos de respaldo del segundo paso (solo sus huellas). Tabla de la plataforma: solo el servidor la
+  // toca, siempre por las siete funciones `mfa_recovery_code*`.
+  {
+    name: "mfa_recovery_codes",
+    visibility: "server-only",
+    idColumn: "id",
+    ownedByB: () => "true",
+    readColumns: "id,tenant_id,user_id,set_id,factor_id,code_hash",
+    insertAttack: (fx, _tenant, marker) => ({
+      user_id: fx.personas.ana.userId,
+      set_id: randomUUID(),
+      factor_id: randomUUID(),
+      code_hash: "f".repeat(63) + (marker.length % 10),
+    }),
+    updateAttack: () => ({ used_at: new Date().toISOString() }),
+    hasFixtureRowsInB: false,
+    ownWriteAccepted: false,
+  },
 ];
 
 /** Cómo se llama a una función expuesta por la API (RPC) y qué se espera de ella. */
@@ -818,6 +836,14 @@ export const SERVER_ONLY_FUNCTIONS = [
   "mfa_annul_complete",
   "mfa_annul_release",
   "mfa_revoke_sessions",
+  // Sprint 5 · H-004b: los códigos de respaldo (reemplazar el juego, tomar, completar, soltar, «guardé», estado y borrar; el servidor)
+  "mfa_recovery_codes_replace",
+  "mfa_recovery_code_claim",
+  "mfa_recovery_code_complete",
+  "mfa_recovery_code_release",
+  "mfa_recovery_codes_acknowledge",
+  "mfa_recovery_codes_status",
+  "mfa_recovery_codes_revoke",
 ];
 
 /**
@@ -835,6 +861,7 @@ export const NON_BUSINESS_VISIBILITY: Readonly<Record<string, Visibility>> = {
   auth_rate_limits: "server-only",
   mfa_enrollment_alerts: "server-only",
   mfa_annul_links: "server-only",
+  mfa_recovery_codes: "server-only",
 };
 
 /** Errores de declaración de visibilidad del registro (vacío si todo calza con la lista cerrada). */

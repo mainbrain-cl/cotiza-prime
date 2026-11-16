@@ -641,3 +641,35 @@ El archivo lleva una advertencia: con la aplicación de H-004b funcionando, entr
 - Una contraseña incorrecta se muestra en el campo «Tu contraseña»; el bloqueo, el 429 y las caídas, como mensaje general.
 - El plazo de la llamada a Supabase al comprobar la contraseña es de 10 s (un fallo por plazo no suma al contador).
 - El campo oculto `autocomplete="username"` va **sin `name`**: no viaja en el envío; solo orienta al gestor de contraseñas.
+
+### Paso 2 (etapa B, base de datos) — 2026-11-16, Sonnet
+
+🟢 Entorno: PRUEBAS (Supabase local). Migración `20261116100000_mfa_recovery_codes.sql` (**54 archivos** en `supabase/migrations/` con ésta) y su deshacer `supabase/rollbacks/20261116100000_mfa_recovery_codes.down.sql`. Se aplicó con `npx supabase migration up --local`, sin reiniciar la base. Es solo código SQL: ninguna parte de la aplicación la usa todavía (la pasarela es del paso 3).
+
+**Qué quedó, tal como §4.1:** tabla `public.mfa_recovery_codes` (de la plataforma: `tenant_id` con valor por defecto, control `= app.platform_tenant_id()`, llave a `tenants` y `app.forbid_tenant_change()`; `user_id` con cascada a `auth.users`; RLS con una política para `service_role` y `revoke all` a `anon`/`authenticated`; los cuatro índices de §4.1) y las siete funciones (`security definer`, `search_path` vacío, nombres completos, `revoke … from public, anon, authenticated`, `grant execute … to service_role`; ninguna usa la sesión). `set local lock_timeout = '3s'` es la primera sentencia y su verificador va justo después (guardia 15). Los nombres `app.platform_tenant_id()` y `app.forbid_tenant_change()` existen y son los que ya usan las migraciones de H-118: no hubo que adaptar nada del diseño.
+
+**Detalles de construcción (no estaban en el diseño):**
+- **Candado por cuenta:** `pg_advisory_xact_lock(hashtextextended('mfa_recovery|' || cuenta, 0))`, como el de `create_tenant`. Lo toman `replace`, `claim`, `complete` (lee antes la cuenta del código, sin candado, y después lo toma), `acknowledge` y `revoke`. `claim` además bloquea la fila (`for update`).
+- **Limpieza** (en `replace`, `claim` y `status`): borra con `for update skip locked`, para que una llamada de una cuenta nunca espere filas de otra. El criterio «el factor ya no existe» se implementó como «ya no hay un factor TOTP verificado con ese id de esa cuenta» (el mismo que exige `claim`).
+- **`complete` es más estricto que el diseño:** solo acepta un código tomado **con su plazo de 2 minutos vigente** (`used_at is null and claimed_until > now()`); si el plazo ya pasó, otra llamada pudo tomarlo y responde `invalid`. Consecuencia para los pasos 5 y 6: si entre tomar y completar pasan más de 2 minutos, `complete` da `invalid` (el factor ya se quitó, así que los códigos igual quedan inútiles) y hay que tratarlo sin romper la sesión.
+- **`status` cuenta solo códigos sin usar:** un juego en el que ya se usó el único código (los demás se borran en `complete`) responde `{total: 0}`, no un juego fantasma. (Lo encontró la prueba ST1; la migración se corrigió antes de entregar, sin otra migración.)
+- **`acknowledge` es idempotente** (repetirlo responde `true` y no cambia la fecha) y responde `false` con un juego viejo, ajeno o sin factor verificado.
+- **`replace` responde `busy` solo con un código realmente tomado** (`claimed_until > now()` y sin usar).
+- **Deshacer, condición (d):** «juego vigente» = códigos **sin usar** cuyo factor TOTP sigue verificado. Un código usado o uno cuyo factor ya no existe (solo rastro) no impide deshacer. La condición (b) busca el texto `mfa_recovery_code` en las demás funciones de `public` y `app`, lo que cubre las siete funciones y la tabla.
+- **La lista de alcances de `auth_rate_limits` no se tocó** (como decía §1.2): no hace falta migración para los contadores.
+
+**Pruebas nuevas** (todas contra la Supabase local, cuentas `@ejemplo.test`):
+
+| Archivo | Qué cubre | Resultado |
+|---|---|---|
+| `tests/db/mfa-recovery-codes.test.ts` | 24 casos: `replace` (sin factor, factor sin verificar, de otro tipo o ajeno, 9/11/repetidas/malformadas/nulas, reemplazo, `busy`, dos `replace` a la vez), `claim` (todos los `invalid` iguales, plazo vencido, factor borrado por la API de Supabase con aal2, dos `claim` a la vez), `complete`, `release`, `acknowledge`, `status`, `revoke`, limpieza por `replace`/`claim`/`status`, tabla y cascada, `tenant_id`, atributos y permisos (base y API con pase aal1 y aal2) | 24 de 24 |
+| `tests/db/mfa-recovery-codes-rollback.test.ts` | 9 casos: lock_timeout y verificador, md5 de las siete funciones, el deshacer quita todo y se puede volver a aplicar, se niega dos veces, función redefinida, otra función que las nombra (función y tabla), código tomado, juego vigente; lo que **no** impide deshacer. Todo dentro de transacciones que se deshacen; **no vacía ni borra nada persistente** (las filas ajenas que hubiera se quitan solo dentro de la transacción) | 9 de 9 |
+| `tests/isolation/mfa-recovery.test.ts` | El código de A pedido para B da `invalid` y deja el juego de A intacto; la misma huella en dos cuentas son dos códigos; completar, soltar o borrar en una cuenta no toca la otra; ningún pase (B aal1 y aal2, una persona de A, sin sesión) lee ni escribe la tabla ni llama las siete funciones | 4 de 4, más 1 pendiente (`it.todo`) |
+
+**Registro de aislamiento:** tabla `mfa_recovery_codes` como `server-only` (en `ISOLATION_TABLES` y en `NON_BUSINESS_VISIBILITY`), las siete funciones en `SERVER_ONLY_FUNCTIONS`, sus argumentos en `tests/isolation/rpc.test.ts`, una fila de la fixture (`mfaRecoveryCodeHash`) y una comprobación en `tables-read.test.ts` de que nadie con pase la lee.
+
+**Pendiente de los pasos siguientes (anotado):** que `session.mfa_disabled` y `session.mfa_recovery_used` aparezcan solo en la plataforma y en las organizaciones donde la persona está **activa**, y que el registro de B no muestre eventos de una persona de A (necesitan el código de la aplicación que escribe esos eventos: pasos 3 a 6). Está como `it.todo` en `tests/isolation/mfa-recovery.test.ts`. También quedan para el paso 7 los documentos de §11 (`modelo-datos.md`, `PROYECTO.md` §11.2, etc.).
+
+**No se tocó:** `app.second_step_pending()`, el disparador de H-118, `auth_rate_limits`, ninguna política ni función existente.
+
+**Estado de la base local (ya reportado, no es de esta etapa):** las filas viejas `mfa_annul_ip` y `mfa_annul_token` de `auth_rate_limits` hacen fallar el `down` de `20261112100000` (violan su lista de alcances). Eso rompe, en esta base local, **30 pruebas de 7 archivos** de deshacer (`mfa-session-gate-rollback` MR3–MR6 y los de `invitation-*`, `member-*`, que parten de `tests/db/before-mfa-gate.ts`); `test:db:rollbacks` con la base vacía no las tiene.

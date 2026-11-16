@@ -5,6 +5,7 @@ import {
   buildMfaRecoveryCodesCreatedNotice,
   type MfaRecoveryCodesCreatedNoticeResult,
 } from "@/lib/email/mfa-recovery-codes-created-notice";
+import { buildMfaDisabledNotice } from "@/lib/email/mfa-disabled-notice";
 import { buildMfaRecoveryUsedNotice } from "@/lib/email/mfa-recovery-used-notice";
 import { EmailConfigError, getEmailTransport } from "@/lib/email/transport";
 import { getAppOrigin } from "@/lib/http/request-context";
@@ -96,6 +97,23 @@ export function sendRecoveryUsedNotice(
   return sendNotice(
     buildMfaRecoveryUsedNotice,
     "mfa_recovery_used_notice_failed",
+    recipientAddress,
+    happenedAt,
+  );
+}
+
+/**
+ * «Se pidió desactivar la verificación en dos pasos de tu cuenta» (OBLIGATORIO, decisión D4 = A de H-004b): sale ANTES de
+ * quitar el factor, y si no sale no se desactiva nada. Por eso, a diferencia de los otros avisos, quien llama DEBE mirar el
+ * resultado: devuelve `true` solo si el proveedor aceptó el correo. Nunca lanza (un fallo se registra con su código y da `false`).
+ */
+export function sendDisabledNotice(
+  recipientAddress: string,
+  happenedAt: Date = new Date(),
+): Promise<boolean> {
+  return sendNotice(
+    buildMfaDisabledNotice,
+    "mfa_disabled_notice_failed",
     recipientAddress,
     happenedAt,
   );

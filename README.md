@@ -56,8 +56,9 @@ esta base no usa (analítica, vector, tiempo real, Studio), levantarla sin ellos
   manda al servidor. Abrirlo no hace nada; solo el botón rojo «Anular la activación» anula: quita el factor, deja la contraseña
   sin uso, cierra todas las sesiones y manda dos correos (elegir la contraseña nueva, y «Anulamos la verificación en dos pasos de
   tu cuenta»). El enlace vale 72 horas y una sola vez; un enlace que no sirve, por la causa que sea, da el mismo mensaje.
-- **Quitar el factor de una cuenta local** (aún no hay desactivar en la pantalla, es H-004b): en Studio, `auth.mfa_factors`,
-  borrar la fila; o `delete from auth.mfa_factors where user_id = '…';` en `psql` (base local, puerto 56322).
+- **Quitar el factor de una cuenta local:** desde «Seguridad de tu cuenta» → «Desactivar la verificación en dos pasos» (H-004b); si
+  hace falta por la base, en Studio, `auth.mfa_factors`, borrar la fila; o `delete from auth.mfa_factors where user_id = '…';`
+  en `psql` (base local, puerto 56322).
 - **Desbloquear los intentos de una cuenta (soporte)**: los contadores del código viven en `auth_rate_limits` con las huellas
   `mfa_verify_user` (ventana de 15 min) y `mfa_verify_user_day` (día) del ingreso con contraseña, y las mismas con el sufijo
   `|recovery` del camino de recuperación por correo. No se leen a mano (son huellas): en `psql` local,
@@ -66,6 +67,28 @@ esta base no usa (analítica, vector, tiempo real, Studio), levantarla sin ellos
 - **Si todos los códigos fallan**, mira el reloj de la máquina virtual de Docker: tras suspender el equipo en macOS se
   atrasa. Compara `docker exec supabase_auth_cotiza-prime date -u` con `date -u`; si difieren, reinicia Docker.
 - Las pruebas de punta a punta de este flujo: `E2E_PROD=1 npx playwright test --project=chromium e2e/mfa.spec.ts --workers=1`.
+
+### Probar los códigos de respaldo (H-004b)
+
+Siempre con una cuenta **nueva** (como arriba: activar la verificación cierra las otras sesiones de la cuenta). Todos los correos llegan a
+Mailpit (http://127.0.0.1:56324).
+
+- **Activar** pide ahora también tu contraseña, junto al código de la aplicación. Si la contraseña está mal no se gasta el código. Al
+  activar aparece «Tus códigos de respaldo» (10 códigos): se ven **una sola vez**; «Listo» queda deshabilitado hasta marcar «Guardé
+  estos códigos en un lugar seguro». Al recargar no vuelven. En la base solo quedan huellas (`select count(*) from
+  public.mfa_recovery_codes` en el `psql` local, puerto 56322).
+- **Crear o generar códigos nuevos:** «Seguridad de tu cuenta» → «Crear códigos de respaldo» (si activaste antes de H-004b) o «Generar
+  códigos nuevos» (los anteriores dejan de servir). Pide la contraseña y el código de la aplicación, nunca uno de respaldo.
+- **Entrar con un código de respaldo:** ingresa solo con la contraseña, y en la pantalla del código usa «¿No tienes tu teléfono? Usa un
+  código de respaldo». Sirve una sola vez, **desactiva la verificación**, cierra las otras sesiones y llega el aviso «Se usó un código
+  de respaldo en tu cuenta». También funciona tras abrir el enlace de «¿Olvidaste tu contraseña?» (después se elige la contraseña nueva).
+- **Desactivar** (con la sesión abierta): «Seguridad de tu cuenta» → «Desactivar la verificación en dos pasos». Pide la contraseña y un
+  código (de la aplicación o de respaldo). El correo «Se pidió desactivar la verificación en dos pasos de tu cuenta» sale **antes** de
+  desactivar: si no sale (por ejemplo, el destinatario no es de `ejemplo.test`), no se desactiva nada y el código de respaldo no se
+  pierde. Al desactivar se borran los códigos y se cierran las otras sesiones.
+- **Límite:** el código de la aplicación y los de respaldo comparten los mismos intentos (5 en 15 minutos, 15 al día); el camino de
+  la contraseña, el del enlace del correo y el de las acciones con la sesión abierta («manage») tienen contadores aparte.
+- Las pruebas de punta a punta: `E2E_PROD=1 npx playwright test --project=chromium --workers=1 e2e/mfa-recovery.spec.ts`.
 
 ## Scripts
 

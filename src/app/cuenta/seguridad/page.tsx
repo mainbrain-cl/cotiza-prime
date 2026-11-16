@@ -74,6 +74,7 @@ export default async function AccountSecurityPage({
         justEnabled={aviso === ACCOUNT_SECURITY_NOTICES.enabled}
         justCodesCreated={aviso === ACCOUNT_SECURITY_NOTICES.codesCreated}
         justRecoveryUsed={aviso === ACCOUNT_SECURITY_NOTICES.recoveryUsed}
+        justDisabled={aviso === ACCOUNT_SECURITY_NOTICES.disabled}
         noticeEmail={user.email || null}
         accountEmail={user.email || null}
         recovery={recovery}

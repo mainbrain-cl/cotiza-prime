@@ -8,6 +8,7 @@ import {
   regenerateRecoveryCodesAction,
   type RegenerateRecoveryCodesState,
 } from "@/lib/auth/recovery-code-actions";
+import { AnyCodeField } from "@/components/auth/any-code-field";
 import { CodeField } from "@/components/auth/code-field";
 import { Button } from "@/components/ui/button";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
@@ -21,6 +22,7 @@ import {
   type ConfirmEnrollmentState,
   type TotpEnrollment,
 } from "@/lib/auth/second-step-actions";
+import { disableSecondStepAction } from "@/lib/auth/second-step-manage-actions";
 import { RecoveryCodesScreen } from "./recovery-codes-screen";
 
 const COPIED_FEEDBACK_MS = 2000;
@@ -59,6 +61,7 @@ export function TwoStepPanel({
   justEnabled,
   justCodesCreated,
   justRecoveryUsed = false,
+  justDisabled = false,
   noticeEmail,
   accountEmail,
   recovery,
@@ -70,7 +73,9 @@ export function TwoStepPanel({
   justCodesCreated: boolean;
   /** Se entró con un código de respaldo: la verificación quedó desactivada (aviso `?aviso=respaldo`). */
   justRecoveryUsed?: boolean;
-  /** El correo al que se mandó el aviso de la activación (solo se muestra recién activada). */
+  /** Se desactivó la verificación desde esta pantalla (aviso `?aviso=desactivada`). */
+  justDisabled?: boolean;
+  /** El correo al que se mandó el aviso de la activación o de la desactivación (solo se muestra recién hecha). */
   noticeEmail: string | null;
   /** El correo de la cuenta: solo para que el gestor de contraseñas complete la contraseña (campo oculto «username»). */
   accountEmail: string | null;
@@ -137,6 +142,8 @@ export function TwoStepPanel({
       accountEmail={accountEmail}
       onResult={onEnrollmentResult}
       recoveryUsed={justRecoveryUsed}
+      justDisabled={justDisabled}
+      noticeEmail={noticeEmail}
     />
   );
 }
@@ -196,7 +203,104 @@ function ActivePanel({
         accountEmail={accountEmail}
         onCodesCreated={onCodesCreated}
       />
+      <DisableSection accountEmail={accountEmail} />
     </div>
+  );
+}
+
+/**
+ * Desactivar la verificación en dos pasos (H-004b, §3.5): un botón de peligro que abre una sección sobre superficie sólida con
+ * la contraseña y un código (el de la aplicación o uno de respaldo). El servidor manda el correo de aviso ANTES de desactivar.
+ */
+function DisableSection({ accountEmail }: { accountEmail: string | null }) {
+  const [open, setOpen] = useState(false);
+  const openRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <section
+      aria-labelledby="disable-heading"
+      data-testid="disable-section"
+      className="flex flex-col gap-3 border-t border-border pt-5"
+    >
+      <h3 id="disable-heading" className="text-md">
+        Desactivar la verificación
+      </h3>
+      {open ? (
+        <DisableForm
+          accountEmail={accountEmail}
+          onCancel={() => {
+            setOpen(false);
+            setTimeout(() => openRef.current?.focus(), 0);
+          }}
+        />
+      ) : (
+        <>
+          <p className="text-fg-muted">
+            Si la desactivas, tu cuenta queda protegida solo con tu contraseña.
+          </p>
+          <Button
+            ref={openRef}
+            type="button"
+            variant="danger"
+            size="lg"
+            onClick={() => setOpen(true)}
+          >
+            Desactivar la verificación en dos pasos
+          </Button>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Contraseña y código (de la aplicación o de respaldo) para desactivar. */
+function DisableForm({
+  accountEmail,
+  onCancel,
+}: {
+  accountEmail: string | null;
+  onCancel: () => void;
+}) {
+  const [state, formAction] = useActionState<FormState, FormData>(
+    disableSecondStepAction,
+    INITIAL_FORM_STATE,
+  );
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const passwordError = state.fieldErrors?.password;
+  const codeError = state.fieldErrors?.code;
+  const onlyPasswordFailed = Boolean(passwordError) && !codeError;
+
+  useEffect(() => {
+    if (onlyPasswordFailed) passwordRef.current?.focus();
+  }, [state, onlyPasswordFailed]);
+
+  return (
+    <form
+      action={formAction}
+      className="flex flex-col gap-4 rounded-md border border-border bg-surface p-4"
+      noValidate
+    >
+      <p className="text-sm text-fg-muted">
+        Para confirmar que eres tú, escribe tu contraseña y un código. Al desactivarla cerramos tu
+        sesión en tus otros dispositivos y te enviamos un aviso por correo.
+      </p>
+      {state.message ? <FormAlert>{state.message}</FormAlert> : null}
+      <AnyCodeField
+        error={codeError}
+        focusSignal={state.status === "error" && !onlyPasswordFailed ? state : undefined}
+        autoFocus
+      />
+      <HiddenUsername accountEmail={accountEmail} />
+      <PasswordField error={passwordError} inputRef={passwordRef} />
+      <SubmitButton pendingLabel="Desactivando…" variant="danger">
+        Desactivar la verificación
+      </SubmitButton>
+      <div className="flex justify-center">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancelar
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -393,10 +497,14 @@ function EnablePanel({
   accountEmail,
   onResult,
   recoveryUsed,
+  justDisabled,
+  noticeEmail,
 }: {
   accountEmail: string | null;
   onResult: (result: ConfirmEnrollmentState) => void;
   recoveryUsed: boolean;
+  justDisabled: boolean;
+  noticeEmail: string | null;
 }) {
   const [phase, setPhase] = useState<Phase>({ name: "idle" });
   const [startError, setStartError] = useState<string | null>(null);
@@ -456,6 +564,13 @@ function EnablePanel({
       <div className="flex flex-col gap-4">
         <OfflineNotice />
         {recoveryUsed ? <FormAlert tone="warning">{RECOVERY_USED_NOTICE}</FormAlert> : null}
+        {justDisabled ? (
+          <FormAlert tone="success">
+            Desactivamos la verificación en dos pasos y cerramos tu sesión en tus otros
+            dispositivos.
+            {noticeEmail ? ` Te enviamos un aviso a ${noticeEmail}.` : null}
+          </FormAlert>
+        ) : null}
         {startError ? <FormAlert>{startError}</FormAlert> : null}
         <p className="text-fg-muted">
           Además de tu contraseña, te pediremos un código de 6 números que genera una aplicación en

@@ -24,7 +24,7 @@ import {
   readText,
 } from "@/lib/auth/second-step-checks";
 import { hasRecoverySession, requirePendingSecondStep, requireUser } from "@/lib/auth/session";
-import { AUTH_MESSAGES } from "@/lib/auth/errors";
+import { AUTH_MESSAGES, RECOVERY_CODE_INVALID_MESSAGE } from "@/lib/auth/errors";
 import { getRequestContext } from "@/lib/http/request-context";
 import { serverLog } from "@/lib/log/server-log";
 import {
@@ -196,9 +196,6 @@ const RECOVERY_LOOKS_LIKE_APP_CODE_MESSAGE =
 const RECOVERY_EMPTY_MESSAGE = "Escribe tu código de respaldo.";
 const RECOVERY_BAD_SHAPE_MESSAGE =
   "Un código de respaldo tiene 12 letras y números. Revisa cómo lo escribiste.";
-/** El MISMO mensaje para cualquier causa (no existe, ya se usó, está en uso, la cuenta no tiene códigos): no revela cuál fue. */
-const RECOVERY_INVALID_MESSAGE =
-  "Ese código de respaldo no sirve. Revisa cómo lo escribiste; cada código sirve una sola vez.";
 const RECOVERY_UNFINISHED_MESSAGE = "No pudimos terminar. Intenta de nuevo en unos minutos.";
 
 /** Suelta un código tomado cuando algo falló (así la persona no lo pierde). Nunca lanza: si no se puede, vence solo a los 2 minutos. */
@@ -276,7 +273,7 @@ export async function verifyRecoveryCodeAction(
       actorUserId: user.id,
       details: { reason: "recovery_invalid", stage, factorType: "recovery_code" },
     });
-    return { status: "error", message: RECOVERY_INVALID_MESSAGE };
+    return { status: "error", message: RECOVERY_CODE_INVALID_MESSAGE };
   }
 
   // 5) Quitar los factores. Si falla, se suelta el código: la persona no lo pierde.

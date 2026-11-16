@@ -161,6 +161,56 @@ function recoveryUseOrderViolation(body: string): string | null {
     : "las otras sesiones se cierran con scope «others»";
 }
 
+/**
+ * El orden de `disableSecondStepAction` (H-004b §3.5): sesión completa → contraseña → código (de respaldo: ventana y toma; de la
+ * aplicación: ventana y verificación) → aviso por correo → quitar el factor → completar y borrar los códigos → cerrar las otras
+ * sesiones → auditoría → redirigir. La redirección que cuenta es la ÚLTIMA (la primera, la de «ya no está activa», va al comienzo).
+ * Devuelve el motivo si falta algo o está fuera de orden.
+ */
+function disableOrderViolation(body: string): string | null {
+  const steps = [
+    "requireUser(",
+    "getSessionState(",
+    "confirmPassword(",
+    "blockedAttemptState(",
+    "claimRecoveryCode(",
+    "checkCodeBeforeVerifying(",
+    "challengeAndVerify(",
+    "sendDisabledNotice(",
+    ".unenroll(",
+    "completeRecoveryCode(",
+    "revokeRecoveryCodes(",
+    ".signOut(",
+    "session.mfa_disabled",
+  ];
+  let previous = -1;
+  for (const step of steps) {
+    const at = body.indexOf(step);
+    if (at === -1) return `falta ${step}`;
+    if (at < previous) return `${step} va antes de lo que debe`;
+    previous = at;
+  }
+  const lastRedirect = body.lastIndexOf("redirect(");
+  if (lastRedirect < previous) return "la redirección final va antes de la auditoría";
+  if (!/\.signOut\(\s*\{\s*scope:\s*["']others["']/.test(body)) {
+    return "las otras sesiones se cierran con scope «others»";
+  }
+  // El aviso es OBLIGATORIO: se mira su resultado y, si no salió, se corta antes de quitar nada.
+  const gate = /if\s*\(\s*!\s*noticeSent\s*\)/.exec(body);
+  if (
+    !gate ||
+    gate.index < body.indexOf("sendDisabledNotice(") ||
+    gate.index > body.indexOf(".unenroll(")
+  ) {
+    return "si el aviso no salió, hay que cortar ANTES de quitar el factor";
+  }
+  // El factor se quita con la PROPIA sesión de la persona, no con la llave maestra.
+  if (!/\bsupabase\s*\.\s*auth\s*\.\s*mfa\s*\.\s*unenroll\(/.test(body)) {
+    return "el factor se quita con la sesión de la persona (supabase.auth.mfa.unenroll)";
+  }
+  return null;
+}
+
 /** La API de administración de cuentas de Supabase Auth (con la llave maestra): `auth.admin`, también con espacios o saltos. */
 const AUTH_ADMIN_PATTERN =
   /\bauth\s*(?:\?\.|\.)\s*admin\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]|\{[^{}]*\badmin\b[^{}]*\}\s*=\s*[^;\n]*\bauth\b|\bauth\s*:\s*\{[^{}]*\badmin\b[^{}]*\}/;
@@ -1532,6 +1582,67 @@ describe("guardias estáticas del aislamiento", () => {
       expect(recoveryUseOrderViolation(broken.join("\n")), swap.join("↔")).not.toBeNull();
     }
     expect(recoveryUseOrderViolation(ordered.slice(1).join("\n"))).not.toBeNull();
+  });
+
+  it("14m. (H-004b) desactivar la verificación: contraseña antes que el código, el aviso por correo antes de quitar el factor, el factor se quita con la sesión de la persona (no con la llave maestra) y las otras sesiones se cierran al final", () => {
+    const text = stripComments(read(path.join(ROOT, SECOND_STEP_MANAGE_ACTIONS)));
+    const start = text.indexOf("export async function disableSecondStepAction");
+    expect(start, "falta disableSecondStepAction").toBeGreaterThan(-1);
+    const body = text.slice(start);
+    expect(disableOrderViolation(body)).toBeNull();
+    // Sin llave maestra ni la pasarela de factores en el archivo: el factor se quita con la propia sesión.
+    expect(
+      /admin-client|createAdminClient|auth\s*\.\s*admin|mfa-admin-gateway|removeAllFactors/.test(
+        text,
+      ),
+    ).toBe(false);
+    // Y la guardia muerde: cada orden roto o cada atajo se detecta.
+    const ordered = [
+      "await requireUser();",
+      "await getSessionState();",
+      "await confirmPassword(a);",
+      "await blockedAttemptState(a);",
+      "await claimRecoveryCode(a);",
+      "await checkCodeBeforeVerifying(a);",
+      "await supabase.auth.mfa.challengeAndVerify(a);",
+      "const noticeSent = await sendDisabledNotice(a);",
+      "if (!noticeSent) { return b; }",
+      "await supabase.auth.mfa.unenroll(a);",
+      "await completeRecoveryCode(a);",
+      "await revokeRecoveryCodes(a);",
+      "await supabase.auth.signOut({ scope: 'others' });",
+      "await logAuditEvent({ action: 'session.mfa_disabled' });",
+      "redirect(b);",
+    ];
+    expect(disableOrderViolation(ordered.join("\n"))).toBeNull();
+    for (const swap of [
+      [2, 3], // el código antes que la contraseña
+      [2, 5], // verificar el código de la aplicación antes que la contraseña
+      [7, 9], // quitar el factor antes del aviso
+      [9, 12], // cerrar las otras sesiones antes de quitar el factor
+      [12, 13], // la auditoría antes de cerrar las otras sesiones
+      [13, 14], // redirigir antes de la auditoría
+    ]) {
+      const broken = [...ordered];
+      [broken[swap[0]], broken[swap[1]]] = [broken[swap[1]], broken[swap[0]]];
+      expect(disableOrderViolation(broken.join("\n")), swap.join("↔")).not.toBeNull();
+    }
+    // Faltar el corte si el aviso no salió, o quitar el factor con otra cosa que la sesión de la persona.
+    expect(
+      disableOrderViolation(
+        ordered.filter((line) => !line.startsWith("if (!noticeSent")).join("\n"),
+      ),
+    ).not.toBeNull();
+    expect(
+      disableOrderViolation(
+        ordered
+          .map((line) =>
+            line.replace("supabase.auth.mfa.unenroll", "admin.auth.admin.mfa.deleteFactor"),
+          )
+          .join("\n"),
+      ),
+    ).not.toBeNull();
+    expect(disableOrderViolation(ordered.slice(1).join("\n"))).not.toBeNull();
   });
 
   it("14g. la guardia 14f detecta de verdad el código del enlace, su huella, la contraseña y el correo; deja pasar un código de error", () => {

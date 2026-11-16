@@ -682,3 +682,256 @@ test("la pantalla del código de respaldo en el teléfono (375 px): sin desplaza
   await mobile.screenshot({ path: testInfo.outputPath("respaldo-375-claro.png"), fullPage: true });
   await visitor.context.close();
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Etapa C · Desactivar la verificación en dos pasos (caso 5 del diseño).
+// ---------------------------------------------------------------------------------------------------------------------------
+
+const DISABLE_OPEN = "Desactivar la verificación en dos pasos";
+const DISABLE_SUBMIT = "Desactivar la verificación";
+const ANY_CODE_LABEL = "Código de tu aplicación o código de respaldo";
+const DISABLED_NOTICE_SUBJECT = "Se pidió desactivar la verificación en dos pasos de tu cuenta";
+const NOTICE_FAILED =
+  "No pudimos enviarte el correo de aviso, así que no desactivamos la verificación. Inténtalo de nuevo en unos minutos.";
+const WRONG_PASSWORD = "no-es-mi-clave-123";
+
+/** Cuántos factores de la verificación en dos pasos tiene esa cuenta (solo lectura, base local de pruebas). */
+async function factorCountOf(email: string): Promise<number> {
+  const db = await connect();
+  try {
+    const { rows } = await db.query<{ total: string }>(
+      `select count(*) as total from auth.mfa_factors f join auth.users u on u.id = f.user_id where u.email = $1`,
+      [email],
+    );
+    return Number(rows[0].total);
+  } finally {
+    await db.end();
+  }
+}
+
+/** Cuántos códigos de respaldo de esa cuenta están libres (ni usados ni tomados). */
+async function freeCodesOf(email: string): Promise<number> {
+  const db = await connect();
+  try {
+    const { rows } = await db.query<{ total: string }>(
+      `select count(*) as total from public.mfa_recovery_codes c join auth.users u on u.id = c.user_id
+        where u.email = $1 and c.used_at is null and (c.claimed_until is null or c.claimed_until < now())`,
+      [email],
+    );
+    return Number(rows[0].total);
+  } finally {
+    await db.end();
+  }
+}
+
+/** Abre la sección de desactivar y devuelve sus campos. */
+async function openDisable(page: Page) {
+  await page.goto("/cuenta/seguridad");
+  await expect(page.getByTestId("two-step-active")).toBeVisible();
+  await page.getByRole("button", { name: DISABLE_OPEN }).click();
+  const section = page.getByTestId("disable-section");
+  return {
+    section,
+    code: section.getByLabel(ANY_CODE_LABEL),
+    password: section.getByLabel("Tu contraseña"),
+    submit: section.getByRole("button", { name: DISABLE_SUBMIT, exact: true }),
+  };
+}
+
+/** Otra sesión completa de la misma cuenta (contraseña y código de la aplicación), en un navegador aparte. */
+async function otherFullSession(
+  browser: Browser,
+  account: { email: string; secret: string; step: number },
+) {
+  const other = await newVisitor(browser);
+  await logInPartially(other.page, account.email);
+  const entry = await freshTotp(account.secret, { avoidStep: account.step });
+  await other.page.getByLabel(CODE_LABEL).fill(entry.code);
+  await other.page.getByRole("button", { name: "Verificar", exact: true }).click();
+  await expect(other.page).not.toHaveURL(/\/ingresar/);
+  return { ...other, step: entry.step };
+}
+
+test("desactivar con el código de la aplicación: la contraseña mala y el código malo no cambian nada; con los buenos se desactiva, llega el aviso, la otra sesión queda fuera y los códigos de respaldo se borran", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(420_000);
+  const account = await createProtectedAccount(page, "desactiva");
+  const other = await otherFullSession(browser, account);
+  const form = await openDisable(page);
+  await expect(
+    form.section.getByText("cerramos tu sesión en tus otros dispositivos"),
+  ).toBeVisible();
+
+  // Contraseña mala (con un código de la aplicación que SÍ sirve): error en su campo, no se gasta el código ni se avisa.
+  const first = await freshTotp(account.secret, { avoidStep: other.step });
+  await form.code.fill(first.code);
+  await form.password.fill(WRONG_PASSWORD);
+  await form.submit.click();
+  await expect(page.getByText("La contraseña no es correcta.")).toBeVisible();
+  expect(await factorCountOf(account.email)).toBe(1);
+  expect(await countMails(account.email, DISABLED_NOTICE_SUBJECT)).toBe(0);
+
+  // Contraseña buena y un código de la aplicación incorrecto: el error del código; sigue activa.
+  await form.code.fill(wrongTotp(account.secret));
+  await form.password.fill(TEST_PASSWORD);
+  await form.submit.click();
+  await expect(page.getByText("El código no coincide")).toBeVisible();
+  expect(await factorCountOf(account.email)).toBe(1);
+
+  // Contraseña buena y un código de respaldo que no existe: el mensaje único; sigue activa y los 10 códigos intactos.
+  await form.code.fill(randomBackupCode());
+  await form.password.fill(TEST_PASSWORD);
+  await form.submit.click();
+  await expect(page.getByText(BACKUP_INVALID)).toBeVisible();
+  expect(await factorCountOf(account.email)).toBe(1);
+  expect(await codeHashesOf(account.email)).toHaveLength(10);
+  expect(await countMails(account.email, DISABLED_NOTICE_SUBJECT)).toBe(0);
+
+  // Algo que no es un código: el error en su campo, sin gastar nada.
+  await form.code.fill("hola");
+  await form.password.fill(TEST_PASSWORD);
+  await form.submit.click();
+  await expect(page.getByText("Revisa cómo lo escribiste.")).toBeVisible();
+
+  // Con todo bueno: se desactiva y se vuelve a la pantalla de seguridad con el aviso.
+  const good = await freshTotp(account.secret, { avoidStep: other.step });
+  await form.code.fill(good.code);
+  await form.password.fill(TEST_PASSWORD);
+  await form.submit.click();
+  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=desactivada$/);
+  await expect(
+    page.getByText(
+      `Desactivamos la verificación en dos pasos y cerramos tu sesión en tus otros dispositivos. Te enviamos un aviso a ${account.email}.`,
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: ENABLE_BUTTON })).toBeVisible();
+  await expect(page.getByTestId("two-step-active")).toHaveCount(0);
+  expect(await factorCountOf(account.email)).toBe(0);
+  expect(await codeHashesOf(account.email)).toEqual([]);
+
+  // Llegó el aviso (en presente, sin códigos) y la otra sesión quedó fuera.
+  await expect.poll(() => countMails(account.email, DISABLED_NOTICE_SUBJECT)).toBe(1);
+  await other.page.goto("/cuenta/seguridad");
+  await expect(other.page).toHaveURL(/\/ingresar/);
+
+  // Sin segundo paso, la contraseña sola ya entra directo; y se puede volver a activar con códigos NUEVOS.
+  const again = await newVisitor(browser);
+  await again.page.goto("/ingresar");
+  await again.page.getByLabel("Correo").fill(account.email);
+  await again.page.getByLabel("Contraseña").fill(TEST_PASSWORD);
+  await again.page.getByRole("button", { name: "Ingresar" }).click();
+  await expect(again.page).not.toHaveURL(/\/ingresar/);
+  const reenabled = await activateTwoStep(page);
+  expect(reenabled.recoveryCodes.filter((item) => account.recoveryCodes.includes(item))).toEqual(
+    [],
+  );
+  for (const visit of [other, again]) await visit.context.close();
+});
+
+test("desactivar con un código de respaldo (sin el teléfono pero con la sesión abierta): se desactiva, avisa, cierra la otra sesión y el código ya no sirve", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(420_000);
+  const account = await createProtectedAccount(page, "desrespaldo");
+  const other = await otherFullSession(browser, account);
+  const form = await openDisable(page);
+
+  // Escrito en minúsculas y sin guiones, como lo teclearía alguien. Con la contraseña mala no se toma el código.
+  const typed = account.recoveryCodes[0].toLowerCase().replaceAll("-", "");
+  await form.code.fill(typed);
+  await form.password.fill(WRONG_PASSWORD);
+  await form.submit.click();
+  await expect(page.getByText("La contraseña no es correcta.")).toBeVisible();
+  expect(await freeCodesOf(account.email)).toBe(10);
+  expect(await factorCountOf(account.email)).toBe(1);
+
+  await form.code.fill(typed);
+  await form.password.fill(TEST_PASSWORD);
+  await form.submit.click();
+  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=desactivada$/);
+  await expect(page.getByRole("button", { name: ENABLE_BUTTON })).toBeVisible();
+  expect(await factorCountOf(account.email)).toBe(0);
+  // El código usado y el resto del juego ya no sirven.
+  expect(await codeHashesOf(account.email)).toEqual([]);
+  await expect.poll(() => countMails(account.email, DISABLED_NOTICE_SUBJECT)).toBe(1);
+  await other.page.goto("/cuenta/seguridad");
+  await expect(other.page).toHaveURL(/\/ingresar/);
+  await other.context.close();
+});
+
+test("si el correo de aviso no sale (destinatario fuera de la lista permitida), NO se desactiva: la verificación sigue activa y el código de respaldo no se pierde", async ({
+  page,
+}) => {
+  test.setTimeout(420_000);
+  const email = `fuera-${randomInt(100000, 999999)}@otro-dominio.test`;
+  await signUpAndVerify(page, email, "Persona Ficticia");
+  await createTenant(page, "Empresa Sin Aviso", "76086428-5");
+
+  // La activa por la API de Supabase con el permiso del servidor (con el correo fuera de la lista, la pantalla la revertiría).
+  const { apiUrl, publishableKey } = localEnv();
+  const login = await fetch(`${apiUrl}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { apikey: publishableKey, "content-type": "application/json" },
+    body: JSON.stringify({ email, password: TEST_PASSWORD }),
+  });
+  expect(login.status).toBe(200);
+  const body = (await login.json()) as {
+    access_token: string;
+    expires_at: number;
+    user: { id: string };
+  };
+  const db = await connect();
+  let secret: string;
+  let usedStep: number;
+  try {
+    const enrolled = await enrollAndVerifyWithPermit(db, {
+      accessToken: body.access_token,
+      expiresAt: body.expires_at,
+      userId: body.user.id,
+    });
+    secret = enrolled.secret;
+    usedStep = enrolled.step;
+  } finally {
+    await db.end();
+  }
+
+  await page.context().clearCookies();
+  await logInPartially(page, email);
+  const entry = await freshTotp(secret, { avoidStep: usedStep });
+  await page.getByLabel(CODE_LABEL).fill(entry.code);
+  await page.getByRole("button", { name: "Verificar", exact: true }).click();
+  await expect(page).not.toHaveURL(/\/ingresar/);
+
+  // Crea sus códigos de respaldo (el aviso de esa creación es de mejor esfuerzo: no sale y no importa).
+  await page.goto("/cuenta/seguridad");
+  await page.getByRole("button", { name: "Crear códigos de respaldo", exact: true }).click();
+  const created = await freshTotp(secret, { avoidStep: entry.step });
+  await page.getByLabel(CODE_LABEL).fill(created.code);
+  await page.getByLabel("Tu contraseña").fill(TEST_PASSWORD);
+  await page.getByRole("button", { name: "Crear códigos de respaldo", exact: true }).last().click();
+  const codes = await finishRecoveryCodes(page, "codigos");
+
+  // Con el código de la aplicación: el aviso no sale, no se desactiva nada.
+  const form = await openDisable(page);
+  const attempt = await freshTotp(secret, { avoidStep: created.step });
+  await form.code.fill(attempt.code);
+  await form.password.fill(TEST_PASSWORD);
+  await form.submit.click();
+  await expect(page.getByText(NOTICE_FAILED)).toBeVisible();
+  await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
+  expect(await factorCountOf(email)).toBe(1);
+  expect(await codeHashesOf(email)).toHaveLength(10);
+
+  // Con un código de respaldo: tampoco, y el código se SUELTA (sigue libre, sin usar ni tomar).
+  await form.code.fill(codes[0]);
+  await form.password.fill(TEST_PASSWORD);
+  await form.submit.click();
+  await expect(page.getByText(NOTICE_FAILED)).toBeVisible();
+  expect(await factorCountOf(email)).toBe(1);
+  expect(await freeCodesOf(email)).toBe(10);
+  await page.goto("/cuenta/seguridad");
+  await expect(page.getByTestId("two-step-active")).toBeVisible();
+});

@@ -85,6 +85,20 @@ export const MFA_LOCKED_DAY_ENROLLMENT_MESSAGE =
 export const MFA_LOCKED_DAY_MANAGE_MESSAGE =
   "Demasiados intentos hoy. Vuelve a intentarlo mañana. Si no fuiste tú, cambia tu contraseña y pide ayuda al equipo de Cotiza Prime.";
 
+/**
+ * El MISMO mensaje para cualquier causa por la que un código de respaldo no sirve (no existe, ya se usó, está en uso, la cuenta
+ * no tiene códigos): no revela cuál fue. Lo usan entrar con un código y desactivar la verificación (H-004b).
+ */
+export const RECOVERY_CODE_INVALID_MESSAGE =
+  "Ese código de respaldo no sirve. Revisa cómo lo escribiste; cada código sirve una sola vez.";
+
+/**
+ * Al DESACTIVAR la verificación en dos pasos, el correo de aviso no pudo salir (H-004b, D4 = A): como al activar, sin el aviso no
+ * se cambia nada, para que la dueña de la cuenta no quede sin enterarse.
+ */
+export const MFA_DISABLE_NOTICE_FAILED_MESSAGE =
+  "No pudimos enviarte el correo de aviso, así que no desactivamos la verificación. Inténtalo de nuevo en unos minutos.";
+
 /** Al ingresar, la verificación no se pudo completar por algo que no es el código (la sesión o el factor cambiaron). */
 export const MFA_SIGN_IN_FAILED_MESSAGE =
   "No pudimos verificar el código. Cierra sesión y vuelve a ingresar.";

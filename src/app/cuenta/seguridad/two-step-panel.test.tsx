@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   startTotpEnrollmentAction: vi.fn(),
   confirmTotpEnrollmentAction: vi.fn(),
   cancelTotpEnrollmentAction: vi.fn(),
+  disableSecondStepAction: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh }),
@@ -25,6 +26,10 @@ vi.mock("@/lib/auth/second-step-actions", () => ({
   startTotpEnrollmentAction: mocks.startTotpEnrollmentAction,
   confirmTotpEnrollmentAction: mocks.confirmTotpEnrollmentAction,
   cancelTotpEnrollmentAction: mocks.cancelTotpEnrollmentAction,
+}));
+
+vi.mock("@/lib/auth/second-step-manage-actions", () => ({
+  disableSecondStepAction: mocks.disableSecondStepAction,
 }));
 
 import { TwoStepPanel, type RecoveryInfo } from "./two-step-panel";
@@ -42,6 +47,7 @@ const baseProps = {
   justEnabled: false,
   justCodesCreated: false,
   justRecoveryUsed: false,
+  justDisabled: false,
   noticeEmail: EMAIL,
   accountEmail: EMAIL,
   recovery: null as RecoveryInfo | null,
@@ -277,5 +283,107 @@ describe("TwoStepPanel tras entrar con un código de respaldo", () => {
   it("sin el aviso en la dirección no se muestra", async () => {
     await mount({ active: false, recovery: null });
     expect(text()).not.toContain("Entraste con un código de respaldo");
+  });
+});
+
+describe("TwoStepPanel activada: desactivar la verificación", () => {
+  const RECOVERY = { total: 10, acknowledged: true, createdLabel: "16-11-2026" };
+  const OPEN_LABEL = "Desactivar la verificación en dos pasos";
+
+  it("ofrece un botón de peligro «Desactivar la verificación en dos pasos» y no pide nada hasta apretarlo", async () => {
+    await mount({ recovery: RECOVERY });
+    const button = buttonByText(OPEN_LABEL);
+    expect(button).toBeTruthy();
+    expect(button.className).toContain("text-danger");
+    expect(host.querySelector('[data-testid="disable-section"] form')).toBeNull();
+  });
+
+  it("al abrirla pide la contraseña y UN solo campo para el código de la aplicación o de respaldo, a 16 px o más y con la contraseña lista para el gestor", async () => {
+    await mount({ recovery: RECOVERY });
+    await click(OPEN_LABEL);
+    const password = host.querySelector<HTMLInputElement>(
+      '[data-testid="disable-section"] input[name="password"]',
+    )!;
+    expect(password.type).toBe("password");
+    expect(password.autocomplete).toBe("current-password");
+    const code = host.querySelector<HTMLInputElement>(
+      '[data-testid="disable-section"] input[name="code"]',
+    )!;
+    expect(code.autocomplete).toBe("off");
+    expect(code.getAttribute("autocapitalize")).toBe("characters");
+    expect(code.getAttribute("spellcheck")).toBe("false");
+    // Sin `maxlength` corto: pegar «7KQM-3XHP-W2RT» tiene que funcionar.
+    expect(code.hasAttribute("maxlength")).toBe(false);
+    expect(text()).toContain("Código de tu aplicación o código de respaldo");
+    // El campo oculto del correo ayuda al gestor de contraseñas y no viaja en el envío.
+    const username = host.querySelector<HTMLInputElement>(
+      '[data-testid="disable-section"] input[autocomplete="username"]',
+    )!;
+    expect(username.value).toBe(EMAIL);
+    expect(username.hasAttribute("name")).toBe(false);
+    expect(text()).toContain("cerramos tu sesión en tus otros dispositivos");
+  });
+
+  it("«Cancelar» cierra la sección sin enviar nada", async () => {
+    await mount({ recovery: RECOVERY });
+    await click(OPEN_LABEL);
+    await click("Cancelar");
+    expect(host.querySelector('[data-testid="disable-section"] form')).toBeNull();
+    expect(mocks.disableSecondStepAction).not.toHaveBeenCalled();
+  });
+
+  it("un error (contraseña mala o el correo de aviso que no salió) se muestra sin salir de la pantalla ni quitar la sección", async () => {
+    mocks.disableSecondStepAction.mockResolvedValueOnce({
+      status: "error",
+      fieldErrors: { password: "La contraseña no es correcta." },
+    });
+    await mount({ recovery: RECOVERY });
+    await click(OPEN_LABEL);
+    await typeInto("code", "123456");
+    await typeInto("password", "x");
+    await submit();
+    expect(mocks.disableSecondStepAction).toHaveBeenCalledTimes(1);
+    expect(text()).toContain("La contraseña no es correcta.");
+    mocks.disableSecondStepAction.mockResolvedValueOnce({
+      status: "error",
+      message:
+        "No pudimos enviarte el correo de aviso, así que no desactivamos la verificación. Inténtalo de nuevo en unos minutos.",
+    });
+    await typeInto("code", "123456");
+    await typeInto("password", "x");
+    await submit();
+    expect(text()).toContain("así que no desactivamos la verificación");
+    expect(text()).toContain("La verificación en dos pasos está activa");
+  });
+
+  it("el envío lleva la contraseña y el código tal cual los escribió la persona", async () => {
+    mocks.disableSecondStepAction.mockResolvedValue({ status: "error", message: "x" });
+    await mount({ recovery: RECOVERY });
+    await click(OPEN_LABEL);
+    await typeInto("code", "7KQM-3XHP-W2RT");
+    await typeInto("password", "mi-clave");
+    await submit();
+    const sent = mocks.disableSecondStepAction.mock.calls[0][1] as FormData;
+    expect(sent.get("code")).toBe("7KQM-3XHP-W2RT");
+    expect(sent.get("password")).toBe("mi-clave");
+    // El correo del campo oculto no viaja.
+    expect([...sent.keys()].sort()).toEqual(["code", "password"]);
+  });
+});
+
+describe("TwoStepPanel tras desactivar la verificación", () => {
+  it("con el aviso `desactivada` dice qué pasó, a qué correo se avisó y ofrece activarla de nuevo", async () => {
+    await mount({ active: false, justDisabled: true, recovery: null });
+    expect(text()).toContain(
+      "Desactivamos la verificación en dos pasos y cerramos tu sesión en tus otros dispositivos. Te enviamos un aviso a ana@ejemplo.test.",
+    );
+    expect(buttonByText("Activar la verificación en dos pasos")).toBeTruthy();
+  });
+
+  it("sin el aviso en la dirección no se muestra, y activada no ofrece activar", async () => {
+    await mount({ active: false, recovery: null });
+    expect(text()).not.toContain("Desactivamos la verificación");
+    await mount({ active: true, justDisabled: true, recovery: null });
+    expect(text()).not.toContain("Desactivamos la verificación");
   });
 });

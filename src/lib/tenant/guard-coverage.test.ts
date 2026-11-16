@@ -38,6 +38,8 @@ const ACTIONS_WITHOUT_ACTIVE_TENANT: Record<string, string> = {
     "es de la cuenta, no de una organización: la persona confirma que guardó sus propios códigos de respaldo",
   "lib/auth/recovery-code-actions.ts#verifyRecoveryCodeAction":
     "es de la cuenta, no de una organización: la persona con la sesión a medias entra con uno de sus propios códigos de respaldo (la base lo toma una sola vez), lo que desactiva su verificación en dos pasos",
+  "lib/auth/second-step-manage-actions.ts#disableSecondStepAction":
+    "es de la cuenta, no de una organización: la propia persona, con su sesión completa, su contraseña y un código (de su aplicación o de respaldo), desactiva su verificación en dos pasos; el aviso por correo sale antes y el factor se quita con su propia sesión",
   "lib/auth/mfa-annul-actions.ts#annulSecondStepAction":
     "es pública y sin sesión: la usa quien abre el enlace del correo de aviso (que puede no tener ya sesión) y no actúa sobre una organización; la autoriza el código del enlace, de un solo uso, que la base toma y consume",
   "lib/tenant/actions.ts#createTenantAction": "crea la organización: aún no existe una activa",

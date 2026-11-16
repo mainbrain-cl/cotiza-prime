@@ -145,15 +145,21 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **quiero** tener códigos de respaldo y poder desactivar la verificación de forma segura
 **para** no quedar fuera de mi cuenta si pierdo el teléfono, sin que otra persona pueda apagarla.
 
-**Criterios de aceptación**
-- [ ] Recibo códigos de respaldo para guardar, y se me pide confirmar que los guardé
-- [ ] Puedo entrar con un código de respaldo, que sirve una sola vez
-- [ ] Desactivarla exige ingresar un código válido
+**Criterios de aceptación** (afinados al construirla, 2026-11-16; diseño: `docs/arquitectura/h-004b-codigos-de-respaldo.md`)
+- [ ] Activar la verificación pide mi contraseña de nuevo, junto al código; con la contraseña incorrecta no se gasta el código ni se activa nada
+- [ ] Al activar recibo 10 códigos de respaldo, los veo una sola vez (copiar, descargar) y se me pide marcar «Guardé estos códigos» antes de seguir; al recargar no vuelven a aparecer
+- [ ] Si no pudieron crearse, la verificación queda activa y la pantalla me deja crearlos ahora; las cuentas que activaron antes ven «No tienes códigos de respaldo» y pueden crearlos
+- [ ] Crear códigos o generar otros nuevos pide mi contraseña y el código de mi aplicación (nunca uno de respaldo); los anteriores dejan de servir
+- [ ] Puedo entrar con un código de respaldo (tras la contraseña o por el enlace del correo de recuperar la contraseña); sirve una sola vez; usarlo desactiva la verificación, cierra mis otras sesiones y me llega un aviso por correo
+- [ ] Los códigos de respaldo comparten el límite de intentos del código de la aplicación (5 en 15 minutos, 15 al día), sin intentos nuevos al cambiar de uno a otro
+- [ ] Desactivar la verificación exige mi contraseña y un código (de la aplicación o de respaldo) y un correo de aviso que sale ANTES; si el correo no sale, no se desactiva nada y mi código de respaldo no se pierde
+- [ ] Al desactivar se borran los códigos de respaldo, se cierran mis otras sesiones y queda constancia en la plataforma y en cada organización donde estoy activa (no en las que dejé)
 
 **Prioridad:** núcleo
-**Tamaño:** mediano
-**Depende de:** H-004a
-**Datos personales:** no
+**Tamaño:** grande: unos 6 días en tres etapas dentro de un solo PR (A: pedir la contraseña; B: códigos de respaldo; C: desactivar). Se partió del «mediano» original al diseñarla (D8 = A, 2026-11-16)
+**Depende de:** H-004a, H-118
+**Datos personales:** no (solo huellas de los códigos; nunca el código ni el correo)
+**Notas técnicas:** 🔒 construida el 2026-11-16 por José (decisión 020 §5); **no se mezcla sin revisión adversarial y sin Aarón**. Tabla propia `mfa_recovery_codes` (D1 = A), migración `20261116100000`; usar un código quita el factor (D2 = A); si el aviso de desactivar no sale, no se desactiva (D4 = A); queda abierto hasta H-117 que quien tenga una sesión completa robada quite el factor hablando directo con Supabase (D7 = B). Registro de construcción al final del documento de diseño.
 
 ---
 
@@ -2028,6 +2034,7 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 **Tamaño:** grande (2,5 a 3,5 días, más revisión adversarial)
 **Depende de:** H-004a (mezclada), H-118
 **Datos personales:** no (el secreto del segundo paso va cifrado)
+**Nota (H-004b, 2026-11-16):** la tabla `mfa_recovery_codes` y sus siete funciones **se reutilizan** con la opción B: solo cambia lo que pasa después de un código de respaldo válido (se marca la sesión como completa en vez de quitar el factor, y entonces tiene sentido contar «te quedan N códigos»). Con los códigos nativos de Supabase se habrían perdido todos.
 **Notas técnicas:** 🔒 antes del lanzamiento público (decisión 021, `docs/decisiones/021-limite-de-intentos-del-segundo-paso.md`; **opción B**: verificación propia sin el factor de Supabase). La opción A (hook `mfa_verification_attempt`, plan Team) se descartó porque no se paga. Se pierde lo que Supabase da gratis con aal2 (impedir cambiar la contraseña o borrar el factor con un pase aal1, cerrar las otras sesiones al activar): el diseño debe devolverlo. Rehace partes de H-004a (`session.ts`, la migración `20261112100000_mfa_session_gate`, activar e ingresar). Diseño pendiente del `planificador`.
 
 ---

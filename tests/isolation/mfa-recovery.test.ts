@@ -3,17 +3,56 @@
 // se lee ni se escribe con ningún pase, ni siquiera con el de una persona de una organización. Se llaman las funciones directo en la
 // base (como las llama el servidor con la llave maestra). Cuentas nuevas `@ejemplo.test`, nunca las de la fixture ni las de la semilla.
 //
-// PENDIENTE (pasos 3 a 6 de H-004b: aún no existe el código de la aplicación que escribe la auditoría): que `session.mfa_disabled` y
-// `session.mfa_recovery_used` aparezcan solo en la plataforma y en las organizaciones donde la persona está ACTIVA (no en una que dejó
-// ni en una ajena), y que el registro de actividad de la organización B no muestre eventos de una persona de A.
+// Al final: el CÓDIGO REAL de `disableSecondStepAction` y `verifyRecoveryCodeAction` (con la base, GoTrue, las pasarelas y la
+// auditoría reales; solo se reemplazan la sesión de Next, la contraseña, el correo y la verificación del código de 6 números) deja
+// `session.mfa_disabled` y `session.mfa_recovery_used` en la plataforma y SOLO en las organizaciones donde la persona está ACTIVA:
+// no en una que dejó ni en una ajena, y la dueña de una organización ajena no ve esos eventos.
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { adminCreateUser, rest, rpc, signIn } from "../support/local-supabase";
+import { normalizeRecoveryCode, recoveryCodeHash } from "@/lib/auth/recovery-code";
+import { verifyRecoveryCodeAction } from "@/lib/auth/recovery-code-actions";
+import { disableSecondStepAction } from "@/lib/auth/second-step-manage-actions";
+import { PLATFORM_TENANT_ID } from "@/lib/tenant/constants";
+import { adminCreateUser, localEnv, rest, rpc, signIn } from "../support/local-supabase";
 import { enrollAndVerifyWithPermit, gotrue } from "../support/mfa-gate";
-import { openDb, tokenOf } from "./context";
+import { fixture, openDb, tenantHeader, tokenOf } from "./context";
 
 vi.setConfig({ testTimeout: 90_000 });
+
+// Fuera de Next no hay petición, cookies ni proveedor de correo: la sesión, la contraseña de nuevo, el correo y el registro del
+// servidor se reemplazan. Todo lo demás (acciones, comprobación de intentos, pasarelas, auditoría, base y GoTrue) es el código real.
+const state = vi.hoisted(() => ({
+  user: null as { id: string; email: string; emailVerified: boolean } | null,
+  client: null as unknown,
+}));
+vi.mock("@/lib/log/server-log", () => ({ serverLog: async () => undefined }));
+vi.mock("@/lib/http/request-context", () => ({
+  getRequestContext: async () => ({
+    requestId: "5a1c0000-0000-4000-8000-000000000001",
+    clientIp: "203.0.113.50",
+    userAgent: "vitest",
+  }),
+  getAppOrigin: () => "https://app.ejemplo.test",
+}));
+vi.mock("@/lib/auth/session", () => ({
+  requireUser: async () => state.user,
+  requirePendingSecondStep: async () => state.user,
+  hasRecoverySession: async () => false,
+  getSessionState: async () => ({
+    status: "complete",
+    user: state.user,
+    secondStep: { active: true, since: null },
+  }),
+}));
+vi.mock("@/lib/auth/reauth", () => ({ confirmPassword: async () => ({ ok: true }) }));
+vi.mock("@/lib/security/mfa-account-notice-send", () => ({
+  sendDisabledNotice: async () => true,
+  sendRecoveryUsedNotice: async () => true,
+  sendRecoveryCodesCreatedNotice: async () => true,
+}));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => state.client }));
 
 const hex = () => createHash("sha256").update(randomBytes(32)).digest("hex");
 const hashes = () => Array.from({ length: 10 }, hex);
@@ -24,7 +63,11 @@ beforeAll(async () => {
   db = await openDb();
 });
 afterAll(async () => {
-  if (created.length > 0) await db.query("delete from auth.users where id = any($1)", [created]);
+  // Quienes llegaron a tener una membresía (aunque ya quitada) se quedan: el registro del equipo las conserva (como en `second-step.test.ts`).
+  const removable = created.filter((id) => !memberships.some((entry) => entry.userId === id));
+  if (removable.length > 0) {
+    await db.query("delete from auth.users where id = any($1)", [removable]);
+  }
   await db.end();
 });
 
@@ -187,8 +230,206 @@ describe("H-004b · ningún pase llega a los códigos", () => {
     for (const row of await rows(a.id))
       expect(row).toMatchObject({ claimed_until: null, used_at: null });
   });
+});
 
-  it.todo(
-    "pasos 3 a 6: `session.mfa_disabled` y `session.mfa_recovery_used` aparecen en la plataforma y solo en las organizaciones donde la persona está activa; el registro de B no muestra eventos de una persona de A",
+// ---------------------------------------------------------------------------------------------------------------------------
+// La auditoría de desactivar y de entrar con un código: plataforma y organizaciones donde la persona está ACTIVA.
+// ---------------------------------------------------------------------------------------------------------------------------
+
+const MEMBER_ROLE = "sales";
+const memberships: { tenantId: string; userId: string }[] = [];
+
+/** Una persona NUEVA con la verificación activa y un juego de códigos; activa en `active` y con membresía quitada en `left`. */
+async function personIn(label: string, active: string[], left: string[]) {
+  const person = await accountWithSet(label);
+  for (const tenantId of [...active, ...left]) {
+    await db.query("insert into public.members (tenant_id, user_id, role) values ($1, $2, $3)", [
+      tenantId,
+      person.id,
+      MEMBER_ROLE,
+    ]);
+    memberships.push({ tenantId, userId: person.id });
+  }
+  for (const tenantId of left) {
+    await db.query(
+      "update public.members set status = 'removed', removed_at = now() where tenant_id = $1 and user_id = $2",
+      [tenantId, person.id],
+    );
+  }
+  // Los códigos reales de ESTA cuenta: se reemplaza el juego de `accountWithSet` por huellas de códigos que conocemos.
+  const known = Array.from({ length: 10 }, () =>
+    randomBytes(8).toString("hex").slice(0, 12).toUpperCase(),
   );
+  const normalized = known.map((code) => normalizeRecoveryCode(code)!);
+  const replaced = (
+    await db.query<{ r: { result: string } }>(
+      "select public.mfa_recovery_codes_replace($1, $2, $3::text[]) as r",
+      [person.id, person.factorId, normalized.map((code) => recoveryCodeHash(person.id, code))],
+    )
+  ).rows[0].r;
+  expect(replaced.result).toBe("ok");
+  return { ...person, known };
+}
+
+/** Un cliente que habla con la base y con GoTrue con el pase dado (como el de la sesión de la persona), sin cookies. */
+function sessionClient(person: { id: string; factorId: string }, accessToken: string) {
+  const { apiUrl, publishableKey } = localEnv();
+  const restClient = createClient(apiUrl, publishableKey, {
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return {
+    from: restClient.from.bind(restClient),
+    auth: {
+      signOut: async () => ({ error: null }),
+      mfa: {
+        listFactors: async () => ({
+          data: { all: [{ id: person.factorId, factor_type: "totp", status: "verified" }] },
+          error: null,
+        }),
+        // La verificación del código de 6 números es de Supabase: aquí se da por buena; lo que se prueba es la auditoría.
+        challengeAndVerify: async () => ({ data: {}, error: null }),
+        // Quitar el factor SÍ es real: con el pase de la persona, como lo hace la acción.
+        unenroll: async ({ factorId }: { factorId: string }) => {
+          const res = await gotrue(accessToken, "DELETE", `factors/${factorId}`);
+          return res.status === 200
+            ? { data: {}, error: null }
+            : { data: null, error: { code: res.json?.error_code, status: res.status } };
+        },
+      },
+    },
+  };
+}
+
+const form = (fields: Record<string, string>) => {
+  const data = new FormData();
+  for (const [key, value] of Object.entries(fields)) data.set(key, value);
+  return data;
+};
+/** Las acciones terminan SIEMPRE en una redirección cuando salen bien: se la deja pasar y se devuelve el resultado si no. */
+async function run(action: () => Promise<unknown>): Promise<unknown> {
+  try {
+    return await action();
+  } catch (error) {
+    const digest = (error as { digest?: unknown }).digest;
+    if (error instanceof Error && /NEXT_REDIRECT/.test(error.message + String(digest))) {
+      return "redirect";
+    }
+    throw error;
+  }
+}
+const eventTenants = async (userId: string, action: string) =>
+  (
+    await db.query<{ tenant_id: string }>(
+      "select tenant_id from public.audit_log where actor_user_id = $1 and action = $2 order by tenant_id",
+      [userId, action],
+    )
+  ).rows.map((row) => row.tenant_id);
+
+describe("H-004b · la auditoría de desactivar y de entrar con un código solo queda donde la persona está activa", () => {
+  afterAll(async () => {
+    // Las personas de esta prueba salen de las organizaciones de la fixture (como hace `second-step.test.ts`).
+    for (const { tenantId, userId } of memberships) {
+      await db.query(
+        "update public.members set status = 'removed', removed_at = now() where tenant_id = $1 and user_id = $2 and status = 'active'",
+        [tenantId, userId],
+      );
+    }
+  });
+
+  it("desactivar con el código de la aplicación: `session.mfa_disabled` en la plataforma y en A (activa), no en B (la dejó) ni en C; la dueña de B no ve nada y la de A sí", async () => {
+    const { A, B, C } = fixture().orgs;
+    const person = await personIn("desactiva", [A.tenantId], [B.tenantId]);
+    state.user = { id: person.id, email: person.email, emailVerified: true };
+    state.client = sessionClient(person, person.aal2);
+
+    const result = await run(() =>
+      disableSecondStepAction({ status: "idle" }, form({ code: "123456", password: "x" })),
+    );
+    expect(result).toBe("redirect");
+
+    // La verificación quedó quitada de verdad (con el pase de la persona) y los códigos borrados.
+    expect(
+      (await db.query("select 1 from auth.mfa_factors where user_id = $1", [person.id])).rowCount,
+    ).toBe(0);
+    expect(await rows(person.id)).toHaveLength(0);
+
+    const tenants = await eventTenants(person.id, "session.mfa_disabled");
+    expect([...tenants].sort()).toEqual([PLATFORM_TENANT_ID, A.tenantId].sort());
+    expect(tenants).not.toContain(B.tenantId);
+    expect(tenants).not.toContain(C.tenantId);
+    const details = (
+      await db.query<{ details: { via: string } }>(
+        "select details from public.audit_log where actor_user_id = $1 and action = 'session.mfa_disabled' and tenant_id = $2",
+        [person.id, A.tenantId],
+      )
+    ).rows[0].details;
+    expect(details.via).toBe("totp");
+
+    // Lo que ven los dueños por la API: la de A ve el evento de su miembro; la de B (donde ya no está) y la de C, ninguno.
+    const seenBy = async (persona: "ana" | "beto" | "carla", tenantId: string) =>
+      (
+        await rest(
+          await tokenOf(persona),
+          `audit_log?actor_user_id=eq.${person.id}&action=eq.session.mfa_disabled&select=id`,
+          { headers: tenantHeader(tenantId) },
+        )
+      ).json as unknown[];
+    expect(await seenBy("ana", A.tenantId)).toHaveLength(1);
+    expect(await seenBy("beto", B.tenantId)).toHaveLength(0);
+    expect(await seenBy("carla", C.tenantId)).toHaveLength(0);
+  });
+
+  it("desactivar con un código de respaldo: `via: recovery_code`, en la plataforma y en las DOS organizaciones donde la persona está activa (y en ninguna otra)", async () => {
+    const { A, B, C } = fixture().orgs;
+    const person = await personIn("respaldo", [A.tenantId, B.tenantId], []);
+    state.user = { id: person.id, email: person.email, emailVerified: true };
+    state.client = sessionClient(person, person.aal2);
+
+    const result = await run(() =>
+      disableSecondStepAction({ status: "idle" }, form({ code: person.known[0], password: "x" })),
+    );
+    expect(result).toBe("redirect");
+    expect(
+      (await db.query("select 1 from auth.mfa_factors where user_id = $1", [person.id])).rowCount,
+    ).toBe(0);
+    // El código usado y el resto del juego ya no sirven.
+    expect(await rows(person.id)).toHaveLength(0);
+
+    const tenants = await eventTenants(person.id, "session.mfa_disabled");
+    expect([...tenants].sort()).toEqual([PLATFORM_TENANT_ID, A.tenantId, B.tenantId].sort());
+    expect(tenants).not.toContain(C.tenantId);
+    const vias = (
+      await db.query<{ details: { via: string } }>(
+        "select details from public.audit_log where actor_user_id = $1 and action = 'session.mfa_disabled'",
+        [person.id],
+      )
+    ).rows.map((row) => row.details.via);
+    expect(vias).toEqual(["recovery_code", "recovery_code", "recovery_code"]);
+  });
+
+  it("entrar con un código de respaldo desde la sesión a medias: `session.mfa_recovery_used` en la plataforma y solo en A (activa); el ingreso solo en A", async () => {
+    const { A, B, C } = fixture().orgs;
+    const person = await personIn("entra", [A.tenantId], [B.tenantId]);
+    // La sesión a medias: solo contraseña (aal1), con el factor todavía puesto.
+    const partial = (await signIn(person.email)).accessToken;
+    state.user = { id: person.id, email: person.email, emailVerified: true };
+    state.client = sessionClient(person, partial);
+
+    const result = await run(() =>
+      verifyRecoveryCodeAction({ status: "idle" }, form({ recoveryCode: person.known[1] })),
+    );
+    expect(result).toBe("redirect");
+    // Quitar el factor deja la sesión completa y el resto del juego borrado.
+    expect(
+      (await db.query("select 1 from auth.mfa_factors where user_id = $1", [person.id])).rowCount,
+    ).toBe(0);
+
+    const used = await eventTenants(person.id, "session.mfa_recovery_used");
+    expect([...used].sort()).toEqual([PLATFORM_TENANT_ID, A.tenantId].sort());
+    expect(used).not.toContain(B.tenantId);
+    expect(used).not.toContain(C.tenantId);
+    // El ingreso de cada organización (`session.login`) solo en la activa.
+    expect(await eventTenants(person.id, "session.login")).toEqual([A.tenantId]);
+  });
 });

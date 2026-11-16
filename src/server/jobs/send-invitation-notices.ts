@@ -23,3 +23,15 @@ import { deliverPendingInvitationNotices, type NoticeJobResult } from "@/lib/tea
 export async function runSendInvitationNotices(): Promise<NoticeJobResult> {
   return deliverPendingInvitationNotices();
 }
+
+/**
+ * Cuántos avisos atiende cada llamada del programador de tareas. Chico a propósito: cada envío puede tardar
+ * hasta 20 s (`SEND_DEADLINE_MS`) y la ruta tiene 60 s (`maxDuration`). Lo que no alcance queda para la
+ * corrida siguiente (la base solo reserva `limit` avisos por vez; no hace falta tocarla).
+ */
+export const SCHEDULED_NOTICE_BATCH_SIZE = 2;
+
+/** La tarea tal como la corre la ruta `/api/v1/jobs/invitation-notices`: un lote chico que cabe en 60 s. */
+export async function runScheduledInvitationNotices(): Promise<NoticeJobResult> {
+  return deliverPendingInvitationNotices(SCHEDULED_NOTICE_BATCH_SIZE);
+}

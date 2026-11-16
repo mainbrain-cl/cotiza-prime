@@ -28,6 +28,42 @@ function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
+/**
+ * Lo que está mal en el código de una ruta de `/api/v1/jobs/*` (guardia 8f). Una ruta así exporta SOLO la
+ * configuración (`runtime`, `dynamic`, `maxDuration`) y `GET = cronJobRoute("<nombre>", <tarea>)`: el secreto, el
+ * 404 / 401, los registros y las cabeceras los resuelve `cronJobRoute`. Cualquier otro `export` (un `HEAD`, un
+ * `POST`, un `export { x as POST }`, un `GET` escrito a mano que llame a `verifyCronRequest` e ignore o interprete
+ * mal su resultado, un `default`…) es un problema. Devuelve la lista de problemas, vacía si todo está bien.
+ */
+function jobRouteProblems(source: string): string[] {
+  const text = stripComments(source);
+  const problems: string[] = [];
+  const allowedExport = [
+    /^export const (runtime|dynamic) = "[a-z-]+";$/,
+    /^export const maxDuration = \d+;$/,
+  ];
+  const getExport = /^export const GET = cronJobRoute\(\s*"[a-z0-9-]+",\s*[A-Za-z_]\w*,?\s*\);$/;
+  let gets = 0;
+  // cada `export` hasta su primer `;` (un `export function` con cuerpo no calza y se marca)
+  for (const match of text.matchAll(/\bexport\b[^;]*;?/g)) {
+    const statement = match[0].replace(/\s+/g, " ").trim();
+    if (getExport.test(statement)) gets += 1;
+    else if (!allowedExport.some((pattern) => pattern.test(statement))) {
+      problems.push(`export no permitido: ${statement.slice(0, 80)}`);
+    }
+  }
+  if (gets !== 1)
+    problems.push(`debe exportar exactamente un GET = cronJobRoute(...) (hay ${gets})`);
+  if (!/import \{\s*cronJobRoute\s*\} from "@\/lib\/jobs\/cron-auth";/.test(text)) {
+    problems.push("debe importar cronJobRoute de @/lib/jobs/cron-auth");
+  }
+  if (/CRON_SECRET/.test(text)) problems.push("no lee CRON_SECRET por su cuenta");
+  if (/verifyCronRequest/.test(text))
+    problems.push("no llama a verifyCronRequest: lo hace cronJobRoute");
+  if (/admin-client|supabase|\.rpc\(|\.from\(/.test(text)) problems.push("no toca la base");
+  return problems;
+}
+
 /** Cada llamada `serverLog( … )` completa (con paréntesis anidados y sin contar los de dentro de textos). */
 function serverLogCalls(text: string): string[] {
   const calls: string[] = [];
@@ -468,7 +504,7 @@ describe("guardias estáticas del aislamiento", () => {
     expect(/\.(from|insert|update|upsert|delete|select)\(/.test(service)).toBe(false);
   });
 
-  it("8f. las tareas programadas (/api/v1/jobs): verifican el secreto antes que nada, solo GET, sin tocar la base ni registrar el secreto", () => {
+  it("8f. las tareas programadas (/api/v1/jobs): cada route.ts exporta SOLO `GET = cronJobRoute(...)` y las constantes de configuración, y el secreto vive en un solo archivo", () => {
     const jobRoutes = discoverAppRoutes(path.join(SRC, "app")).filter(
       (r) => r.path === "/api/v1/jobs" || r.path.startsWith("/api/v1/jobs/"),
     );
@@ -479,38 +515,66 @@ describe("guardias estáticas del aislamiento", () => {
       expect(declared.has(routeKey(route)), `${route.file} debe declararse con alcance "job"`).toBe(
         true,
       );
-      const text = stripComments(read(route.absoluteFile));
-      const verify = text.indexOf("verifyCronRequest(");
-      expect(verify, `${route.file} debe llamar a verifyCronRequest(`).toBeGreaterThan(-1);
-      // ninguna otra llamada a la tarea (`@/server/jobs`) ni a registros antes de verificar el secreto
-      const firstJobCall = text.search(/\brun[A-Z]\w*\(/);
-      expect(firstJobCall, `${route.file} debe ejecutar la tarea`).toBeGreaterThan(-1);
-      expect(verify, `${route.file}: el secreto se verifica antes de correr la tarea`).toBeLessThan(
-        firstJobCall,
-      );
-      expect(text.indexOf("serverLog("), route.file).toBeGreaterThan(verify);
-      // solo GET (el programador de Vercel usa GET): ningún método que escriba
-      expect(
-        /export\s+(async\s+)?function\s+(POST|PUT|PATCH|DELETE)\b/.test(text),
-        route.file,
-      ).toBe(false);
-      expect(/export\s+(async\s+)?function\s+GET\b/.test(text), route.file).toBe(true);
-      // la ruta no toca la base ni lee el secreto por su cuenta, y nunca registra encabezados
-      expect(/admin-client|createClient|\.rpc\(|\.from\(|CRON_SECRET/.test(text), route.file).toBe(
-        false,
-      );
-      expect(
-        /headers\b[^;]*serverLog|serverLog\([^)]*(authorization|headers|secret)/i.test(text),
-        route.file,
-      ).toBe(false);
+      expect(jobRouteProblems(read(route.absoluteFile)), route.file).toEqual([]);
     }
-    // el secreto se lee en un solo archivo
-    const readers = sourceFiles
-      .filter((f) =>
-        /process\.env\.CRON_SECRET|process\.env\[\s*CRON_SECRET_VAR/.test(stripComments(read(f))),
-      )
+    // lo declarado como `job` existe de verdad en el código (el registro no se queda con rutas fantasma)
+    expect(sorted(declared)).toEqual(sorted(jobRoutes.map((r) => routeKey(r))));
+
+    // `CRON_SECRET` (y su nombre en una constante) solo se nombra en `cron-auth.ts`, en cualquier forma de leerlo
+    // (`process.env.CRON_SECRET`, `process.env["CRON_SECRET"]`, el desestructurado…), y `verifyCronRequest` solo
+    // se llama desde ahí: las rutas no verifican el secreto por su cuenta, lo hace `cronJobRoute`.
+    const secretReaders = sourceFiles
+      .filter((f) => /CRON_SECRET/.test(stripComments(read(f))))
       .map(rel);
-    expect(readers).toEqual(["src/lib/jobs/cron-auth.ts"]);
+    expect(secretReaders).toEqual(["src/lib/jobs/cron-auth.ts"]);
+    const verifiers = sourceFiles
+      .filter((f) => /verifyCronRequest\s*\(/.test(stripComments(read(f))))
+      .map(rel);
+    expect(verifiers).toEqual(["src/lib/jobs/cron-auth.ts"]);
+  });
+
+  it("8f. y la guardia muerde: cada forma de saltarse el secreto, o de exportar algo de más, se detecta", () => {
+    const good = [
+      'import { cronJobRoute } from "@/lib/jobs/cron-auth";',
+      'import { runJob } from "@/server/jobs/job";',
+      'export const runtime = "nodejs";',
+      'export const dynamic = "force-dynamic";',
+      "export const maxDuration = 60;",
+      'export const GET = cronJobRoute("job-name", runJob);',
+    ].join("\n");
+    expect(jobRouteProblems(good)).toEqual([]);
+    // comentarios que nombran lo prohibido no cuentan
+    expect(
+      jobRouteProblems(`// export async function POST() {}\n/* CRON_SECRET */\n${good}`),
+    ).toEqual([]);
+
+    const replaceGet = (code: string) => good.replace(/export const GET[^\n]*/, code);
+    const cases: Record<string, string> = {
+      "sin GET": replaceGet(""),
+      "a. el resultado de verifyCronRequest se ignora": replaceGet(
+        'export const GET = async (request: Request) => { verifyCronRequest(request.headers.get("authorization")); return Response.json(await runJob()); };',
+      ),
+      "b. solo corta en «disabled»": replaceGet(
+        'export async function GET(request: Request) { const auth = verifyCronRequest(request.headers.get("authorization")); if (auth === "disabled") return new Response(null, { status: 404 }); return Response.json(await runJob()); }',
+      ),
+      "c. un HEAD escrito a mano": `${good}\nexport async function HEAD() { return Response.json(await runJob()); }`,
+      "d. un POST con la tarea": `${good}\nexport const POST = async () => Response.json(await runJob());`,
+      "e. un export con alias": `${good}\nconst x = async () => Response.json(await runJob());\nexport { x as POST };`,
+      "f. un secreto propio como segundo argumento": replaceGet(
+        'export const GET = async (request: Request) => { if (verifyCronRequest(request.headers.get("authorization"), "mio") !== "ok") return new Response(null, { status: 401 }); return Response.json(await runJob()); };',
+      ),
+      "OPTIONS escrito a mano": `${good}\nexport function OPTIONS() { return runJob(); }`,
+      "export default": `${good}\nexport default function handler() { return runJob(); }`,
+      "una constante exportada de más": `${good}\nexport const SECRET_HEADER = "x-secret";`,
+      "export let": `${good}\nexport let counter = 0;`,
+      "GET repetido": `${good}\nexport const GET = cronJobRoute("otro", runJob);`,
+      "sin usar cronJobRoute": good.replace("cronJobRoute(", "runJobWith("),
+      "lee el secreto por su cuenta": `${good}\nconst s = process.env["CRON_SECRET"];`,
+      "toca la base": `${good}\nimport { createAdminClient } from "@/lib/supabase/admin-client";`,
+    };
+    for (const [name, text] of Object.entries(cases)) {
+      expect(jobRouteProblems(text).length, `la guardia debe detectar: ${name}`).toBeGreaterThan(0);
+    }
   });
 
   it("9. el token no se escribe en los registros del servidor", () => {

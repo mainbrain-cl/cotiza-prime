@@ -13,6 +13,7 @@ import {
   ONLY_B_CUSTOMER_RUT,
   SHARED_CUSTOMER_RUT,
 } from "../tests/isolation/fixture";
+import { E2E_OTHER_CRON_SECRET } from "../tests/support/cron-secret";
 import { APP_ROUTES, TENANT_PAGES, concretePath } from "../tests/isolation/registry";
 import { expect, test, type Page } from "./fixtures";
 import { countRows, loadFixture, stateFile } from "./isolation-support";
@@ -278,6 +279,21 @@ test.describe("Ana (Dueña de A) frente a la organización B", () => {
         });
         expect(post.status(), path).toBe(401);
         expect(await post.text()).not.toContain(fx.orgs.B.canary);
+      } else if (route.scope === "job") {
+        // Tarea programada (decisión #17): el servidor de la prueba tiene un `CRON_SECRET` ficticio, así que la
+        // ruta está activada. Sin el secreto, o con otro, es 401; la sesión de Ana y la cabecera de B no la
+        // abren; y solo acepta GET.
+        const headers = { [TENANT_HEADER]: fx.orgs.B.tenantId };
+        const bare = await page.request.get(route.path, { headers });
+        expect(bare.status(), route.path).toBe(401);
+        expect(await bare.text()).not.toContain(fx.orgs.B.canary);
+        const other = await page.request.get(route.path, {
+          headers: { ...headers, Authorization: `Bearer ${E2E_OTHER_CRON_SECRET}` },
+        });
+        expect(other.status(), route.path).toBe(401);
+        expect(await other.text()).not.toContain(fx.orgs.B.canary);
+        const post = await page.request.post(route.path, { headers, data: {} });
+        expect(post.status(), route.path).toBe(405);
       } else if (route.scope === "none") {
         const res = await page.request.get(route.path, {
           headers: { [TENANT_HEADER]: fx.orgs.B.tenantId },

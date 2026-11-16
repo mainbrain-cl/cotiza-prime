@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { appSupabaseEnv } from "./tests/support/local-supabase";
 import { ensureTestCryptoEnv } from "./tests/support/test-env";
+import { E2E_CRON_SECRET } from "./tests/support/cron-secret";
 import { E2E_WEBHOOK_SECRET } from "./tests/support/webhook-secret";
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
@@ -69,6 +70,9 @@ export default defineConfig({
       MAILPIT_API_URL: process.env.MAILPIT_URL ?? "http://127.0.0.1:56324",
       // Secreto ficticio con que las pruebas firman los avisos de entrega (H-033).
       EMAIL_WEBHOOK_SECRET: E2E_WEBHOOK_SECRET,
+      // Secreto ficticio de las rutas de tareas programadas (decisión #17): con él la ruta queda activada y las
+      // pruebas de aislamiento comprueban que rechaza a quien no lo trae.
+      CRON_SECRET: E2E_CRON_SECRET,
     },
     reuseExistingServer: false,
     timeout: WEB_SERVER_STARTUP_TIMEOUT_MS,

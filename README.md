@@ -99,6 +99,23 @@ La primera vez, `npx playwright install chromium` descarga el navegador de las p
   pruebas de punta a punta con la aplicación compilada (ya va en `playwright.config.ts`); con
   `NEXT_PUBLIC_APP_ENV=production` se ignora. No se define nunca en un entorno real.
 
+## Despliegue: tareas programadas (decisión #17)
+
+La tarea de avisos al Dueño por invitaciones (H-008) la llama el programador de tareas del hosting. En el repositorio
+vive la ruta `GET /api/v1/jobs/invitation-notices` y su horario en `vercel.json`.
+
+- **Variable `CRON_SECRET`**: mínimo 32 caracteres, solo servidor, un valor distinto por entorno (nunca en el
+  repositorio). En Vercel se configura como variable de entorno `CRON_SECRET` del proyecto y Vercel la envía sola
+  como `Authorization: Bearer <valor>`. Sin ella (o con menos de 32 caracteres) la ruta queda **desactivada** y
+  responde 404; con un valor incorrecto responde 401. Cambiar el valor exige volver a desplegar. La ruta atiende un lote
+  chico (2 avisos por llamada) para caber en los 60 s que tiene.
+- **Horario**: `vercel.json` la programa **una vez al día** (`0 12 * * *`, hora UTC), porque el plan gratuito de Vercel
+  (Hobby) solo admite tareas diarias y una más frecuente hace fallar el despliegue. Con el plan Pro se puede cambiar a
+  cada hora (`0 * * * *`). Las tareas programadas solo corren en el despliegue de producción, no en las vistas previas.
+- **Probarla a mano**: con `CRON_SECRET` en el entorno de `npm run dev`,
+  `curl -i -H "Authorization: Bearer <valor>" http://localhost:3000/api/v1/jobs/invitation-notices`.
+  El script `npm run job:invitation-notices` sigue sirviendo para uso local o manual.
+
 ## Despliegue: cuentas y correo verificado (aceptar invitaciones, H-009)
 
 Aceptar una invitación solo funciona con el mismo correo al que se envió, y eso descansa en que el correo verificado

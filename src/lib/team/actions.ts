@@ -53,8 +53,8 @@ export async function inviteMemberAction(
   const result = await createInvitation(active, parsed.data);
   if (result.status === "ok") {
     refresh(active.tenantId);
-    // El aviso al Dueño ya quedó anotado en la base (la tarea lo envía y reintenta; en producción, solo cuando
-    // se resuelva la decisión #17, cómo se programa la tarea). Este es el intento inmediato, DESPUÉS de responder: quien invita no espera un segundo envío y un fallo no le llega.
+    // El aviso al Dueño ya quedó anotado en la base (la tarea lo envía y reintenta; en producción, cuando
+    // `CRON_SECRET` esté configurado y el programador llame a la ruta de la tarea). Este es el intento inmediato, DESPUÉS de responder: quien invita no espera un segundo envío y un fallo no le llega.
     // Desde H-010 la base ya no pide este aviso para invitaciones nuevas (solo el Dueño invita a un Administrador:
     // `owner_only`); se deja por si esa regla cambia.
     const invitationId = result.notifyOwnerOf;

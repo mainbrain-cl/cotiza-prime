@@ -112,7 +112,7 @@ tampoco se puede crear una organización, ni ver o aceptar invitaciones, ni acep
 
 **Decisiones de Aarón del 2026-11-12** (comentarios del #44 y del #11): **021 = C para el piloto y B antes del lanzamiento** (no se paga Team); decisión pendiente **8**
 resuelta (responde Aarón, hábiles de 9 a 19 h); **CI**: endurecer a `--audit-level=high` y marcar la 015 como superada; **`AGENTS.md`**: versionar el que genera Next y dejar en
-`CLAUDE.md` solo `@AGENTS.md`; **decisión #17**: ruta HTTP protegida con un secreto, llamada por el programador de tareas del hosting (antes del piloto; falta construirla);
+`CLAUDE.md` solo `@AGENTS.md`; **decisión #17**: ruta HTTP protegida con un secreto, llamada por el programador de tareas del hosting (**ruta construida en el PR de `feat/ruta-tareas-programadas`**; falta configurar `CRON_SECRET` en producción y probar que corre, antes del piloto);
 `npm audit` (34 moderados): sin acción; **H-116**: A1 sí, A2 sí, A3 Resend con su plan gratuito para el piloto, A4 Turnstile, A5 no hace falta lista de correos, A6 los textos los propone
 José y Aarón los ve en pantalla antes de mezclar; **H-042, D10**: ya estaba fijada el 2026-11-05 (sale de pendientes); **frase de privacidad del #36**: aprobada, pero no se publica sola:
 va en la próxima versión legal, antes del piloto, junto con el aviso de privacidad al cliente final (H-030, menor 9) y después del abogado (decisión pendiente 9).
@@ -123,7 +123,7 @@ va en la próxima versión legal, antes del piloto, junto con el aviso de privac
   H-117) → correo de aviso cuando la contraseña es correcta y el código falla (decisión 016). **9 menores de la revisión de Aarón al #44** (en su último comentario) van en un PR aparte.
 - Orden siguiente: H-004b → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el ingreso) → H-004c. **H-117** (hook del segundo paso, decisión 021) se construye antes del lanzamiento; Aarón decide cuándo.
 - La frase de la política de privacidad del #36 (aprobada por Aarón el 2026-11-12) va en la próxima versión legal con el abogado (editar `privacy.md` cambia su huella y exige versión nueva en
-  `legal_documents`). Del issue #11, ya decidido por Aarón (arriba) y por implementar: CI a `--audit-level=high` y 015 superada, `AGENTS.md` versionado, ruta de la decisión #17. El CI sigue apagado.
+  `legal_documents`). Del issue #11, ya decidido por Aarón (arriba) y por implementar: CI a `--audit-level=high` y 015 superada, `AGENTS.md` versionado, ruta de la decisión #17 (construida; ver arriba). Ya hechos: CI a `--audit-level=high` con la 015 superada (PR #52) y `AGENTS.md` versionado (PR #53). El CI sigue apagado.
 - Anotado fuera de alcance: el Dueño ve `audit_log.id` en `select=*`; la secuencia es común a todas las organizaciones y deja ver
   cuánta actividad hay. Se cierra con un permiso de lectura por columna, si se quiere.
 

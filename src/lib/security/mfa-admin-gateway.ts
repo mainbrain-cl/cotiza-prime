@@ -57,6 +57,19 @@ export async function removeAllFactors(userId: string): Promise<void> {
   for (const factor of listed.data.factors) await deleteMfaFactor(userId, factor.id);
 }
 
+/**
+ * ¿Le queda a la cuenta ALGÚN factor verificado (de cualquier tipo)? Es lo mismo que cuenta la base para dejar una sesión «a
+ * medias» (`app.second_step_pending()`). Sirve para saber, cuando `removeAllFactors` lanzó, si el factor SÍ se borró aunque la
+ * respuesta no llegó (H-004b, corrección C1). Lanza `MfaAdminGatewayError` (solo con un código) si no pudo listar.
+ */
+export async function hasVerifiedFactor(userId: string): Promise<boolean> {
+  const listed = await createAdminClient().auth.admin.mfa.listFactors({ userId });
+  if (listed.error) {
+    throw new MfaAdminGatewayError("list_factors", listed.error.code ?? listed.error.status);
+  }
+  return listed.data.factors.some((factor) => factor.status === "verified");
+}
+
 /** Bytes al azar de la contraseña que inutiliza la cuenta (en base64url son 64 caracteres), más un sufijo que cumple cualquier regla de composición. */
 const UNUSABLE_PASSWORD_BYTES = 48;
 const UNUSABLE_PASSWORD_SUFFIX = "Aa1!";

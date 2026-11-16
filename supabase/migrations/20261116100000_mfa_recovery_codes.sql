@@ -18,10 +18,11 @@
 -- y nadie tiene que tocar el código de H-118.
 --
 -- Un solo uso y carreras: cada función toma un candado por cuenta (`pg_advisory_xact_lock`) y `claim` además bloquea la fila.
--- Dos `claim` del mismo código a la vez: gana uno. Un `replace` con un código tomado responde `busy`.
+-- Dos `claim` del mismo código a la vez: gana uno. Un `replace` con un código tomado (cuyo factor sigue verificado) responde `busy`.
 --
 -- Retención: se borran los juegos cuyo factor ya no existe y tienen más de 1 día, y los códigos usados hace más de 30 días. La
--- limpieza va dentro de `replace`, `claim` y `status` (con `skip locked`: nunca espera filas de otra cuenta); no hace falta una
+-- limpieza va dentro de `replace`, `claim` y `status`, ACOTADA a 100 filas por llamada (`limit 100`) y con `skip locked`: nunca
+-- espera filas de otra cuenta ni borra un lote enorme de una vez (lo que sobre lo borra la actividad siguiente); no hace falta una
 -- tarea programada, y solo corre cuando hay actividad. `auth.users` en cascada: borrar la cuenta borra sus códigos.
 --
 -- Guardia 15 (tests/db/schema-guards.test.ts): primera sentencia `set local lock_timeout = '3s'` y, justo después, la
@@ -91,14 +92,20 @@ begin
                              where f.id = x.factor_id and f.user_id = x.user_id
                                and f.factor_type = 'totp' and f.status = 'verified'))
         or (x.used_at is not null and x.used_at < now() - interval '30 days')
+     limit 100
      for update skip locked);
   if not exists (select 1 from auth.mfa_factors f
                   where f.id = p_factor_id and f.user_id = p_user_id
                     and f.factor_type = 'totp' and f.status = 'verified') then
     return jsonb_build_object('result', 'no_factor');
   end if;
+  -- Ocupado = un código TOMADO ahora mismo cuyo factor sigue siendo un TOTP verificado. Un código huérfano (su factor ya no existe:
+  -- el servidor se cayó a mitad de un uso o el factor se quitó por otro camino) no bloquea a quien vuelve a activar.
   if exists (select 1 from public.mfa_recovery_codes c
-              where c.user_id = p_user_id and c.used_at is null and c.claimed_until > now()) then
+              where c.user_id = p_user_id and c.used_at is null and c.claimed_until > now()
+                and exists (select 1 from auth.mfa_factors f
+                             where f.id = c.factor_id and f.user_id = c.user_id
+                               and f.factor_type = 'totp' and f.status = 'verified')) then
     return jsonb_build_object('result', 'busy');
   end if;
   delete from public.mfa_recovery_codes where user_id = p_user_id;
@@ -127,6 +134,7 @@ begin
                              where f.id = x.factor_id and f.user_id = x.user_id
                                and f.factor_type = 'totp' and f.status = 'verified'))
         or (x.used_at is not null and x.used_at < now() - interval '30 days')
+     limit 100
      for update skip locked);
   select * into v_code
     from public.mfa_recovery_codes c
@@ -221,6 +229,7 @@ begin
                              where f.id = x.factor_id and f.user_id = x.user_id
                                and f.factor_type = 'totp' and f.status = 'verified'))
         or (x.used_at is not null and x.used_at < now() - interval '30 days')
+     limit 100
      for update skip locked);
   select c.set_id, count(*), bool_and(c.acknowledged_at is not null), min(c.created_at)
     into v_set, v_total, v_acknowledged, v_created

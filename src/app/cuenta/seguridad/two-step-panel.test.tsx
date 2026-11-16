@@ -259,6 +259,21 @@ describe("TwoStepPanel al activar: los códigos de respaldo", () => {
     expect(mocks.replace).toHaveBeenCalledWith("/cuenta/seguridad?aviso=activada");
   });
 
+  it("tras activar SIN códigos y desactivar sin recargar, vuelve el panel de «activar» (no «está activa»)", async () => {
+    mocks.confirmTotpEnrollmentAction.mockResolvedValue({ status: "enabled_without_codes" });
+    await reachConfirmStep();
+    await submit();
+    // Mientras la página aún no trae `active: true`, se ve el aviso de la activación (no un formulario en blanco).
+    expect(text()).toContain("La verificación quedó activa");
+    await mount({ active: true, recovery: { total: 0, acknowledged: false, createdLabel: null } });
+    expect(text()).toContain("La verificación en dos pasos está activa");
+    // Se desactiva desde aquí: la página trae `active: false` y no hay recarga completa.
+    await mount({ active: false, recovery: null, justDisabled: true });
+    expect(text()).not.toContain("La verificación en dos pasos está activa");
+    expect(text()).not.toContain("La verificación quedó activa");
+    expect(buttonByText("Activar la verificación en dos pasos")).toBeTruthy();
+  });
+
   it("un error de la activación (contraseña mala) se queda en el formulario y no muestra códigos", async () => {
     mocks.confirmTotpEnrollmentAction.mockResolvedValue({
       status: "error",
@@ -322,6 +337,46 @@ describe("TwoStepPanel activada: desactivar la verificación", () => {
     expect(username.value).toBe(EMAIL);
     expect(username.hasAttribute("name")).toBe(false);
     expect(text()).toContain("cerramos tu sesión en tus otros dispositivos");
+  });
+
+  it("el botón puede pasar a dos líneas (no se sale de la tarjeta a 360 o 375 px) y la contraseña va ANTES del código", async () => {
+    await mount({ recovery: RECOVERY });
+    const button = buttonByText(OPEN_LABEL);
+    expect(button.className).toContain("whitespace-normal");
+    expect(button.className).toContain("h-auto");
+    await click(OPEN_LABEL);
+    const names = [
+      ...host.querySelectorAll<HTMLInputElement>(
+        '[data-testid="disable-section"] input[name="password"], [data-testid="disable-section"] input[name="code"]',
+      ),
+    ].map((input) => input.name);
+    expect(names).toEqual(["password", "code"]);
+  });
+
+  it("al crear códigos nuevos la contraseña también va antes del código", async () => {
+    await mount({ recovery: RECOVERY });
+    await click("Generar códigos nuevos");
+    const names = [
+      ...host.querySelectorAll<HTMLInputElement>(
+        '[data-testid="recovery-section"] input[name="password"], [data-testid="recovery-section"] input[name="code"]',
+      ),
+    ].map((input) => input.name);
+    expect(names).toEqual(["password", "code"]);
+  });
+
+  it("sin conexión, los formularios de desactivar y de crear códigos muestran el aviso «Sin conexión»", async () => {
+    Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+    try {
+      await mount({ recovery: RECOVERY });
+      await click(OPEN_LABEL);
+      await click("Generar códigos nuevos");
+      const notices = host.querySelectorAll(
+        '[data-testid="disable-section"] [data-testid="offline-notice"], [data-testid="recovery-section"] [data-testid="offline-notice"]',
+      );
+      expect(notices).toHaveLength(2);
+    } finally {
+      Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    }
   });
 
   it("«Cancelar» cierra la sección sin enviar nada", async () => {

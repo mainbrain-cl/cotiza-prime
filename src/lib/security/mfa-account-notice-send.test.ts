@@ -40,7 +40,7 @@ describe("sendRecoveryCodesCreatedNotice", () => {
     const [transport, message] = sendWithRetry.mock.calls[0];
     expect(transport).toEqual({ name: "transporte" });
     expect(message.to).toBe(RECIPIENT);
-    expect(message.subject).toBe("Creaste códigos de respaldo nuevos en tu cuenta");
+    expect(message.subject).toBe("Se crearon códigos de respaldo nuevos en tu cuenta");
     expect(message.text).toContain("https://app.ejemplo.test/recuperar-contrasena");
     expect(message.text).not.toMatch(/[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}/);
   });

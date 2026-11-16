@@ -88,9 +88,9 @@ export async function createTenant(page: Page, name: string, rut: string): Promi
   return page.url().split("/o/")[1];
 }
 
-/** Etiquetas de «Seguridad de tu cuenta» al activar la verificación en dos pasos (H-004b: el último paso pide también la contraseña). */
 /** Cuánto se espera la pantalla de códigos de respaldo tras confirmar la activación. */
 const RECOVERY_SCREEN_TIMEOUT_MS = 20_000;
+/** Etiquetas de «Seguridad de tu cuenta» al activar la verificación en dos pasos (H-004b: el último paso pide también la contraseña). */
 const ENABLE_TWO_STEP_BUTTON = "Activar la verificación en dos pasos";
 const TOTP_CODE_LABEL = "Código de 6 números";
 const ENROLL_PASSWORD_LABEL = "Tu contraseña";
@@ -148,4 +148,45 @@ export async function activateTwoStep(
   // Desde H-004b la activación pasa por la pantalla de códigos de respaldo y «Listo».
   const recoveryCodes = await finishRecoveryCodes(page);
   return { secret, step, recoveryCodes };
+}
+
+/**
+ * Ningún botón, enlace, campo, casilla ni código de la pantalla se sale de su tarjeta (`AuthCard`, que tiene `overflow-hidden`:
+ * lo que se sale queda cortado y el `scrollWidth` del documento NO lo ve). Compara el rectángulo de cada control con el de la
+ * tarjeta. Si no hay controles o no hay tarjeta, falla (la prueba no puede pasar en vacío).
+ */
+export async function expectControlsInsideCard(page: Page, where: string): Promise<void> {
+  const measure = () =>
+    page.evaluate(() => {
+      const card = document.querySelector<HTMLElement>('section[aria-labelledby="auth-title"]');
+      if (!card) return { missingCard: true, controls: 0, outside: [] as string[] };
+      const box = card.getBoundingClientRect();
+      const controls = [
+        ...card.querySelectorAll<HTMLElement>(
+          'button, a[href], input:not([type="hidden"]), label, code, select, textarea',
+        ),
+      ].filter(
+        (el) => el.getAttribute("aria-hidden") !== "true" && !el.classList.contains("sr-only"),
+      );
+      const visible = controls.filter((el) => el.getClientRects().length > 0);
+      const bad = visible
+        .filter((el) => {
+          const rect = el.getBoundingClientRect();
+          return rect.left < box.left - 1 || rect.right > box.right + 1;
+        })
+        .map((el) => el.textContent?.trim().slice(0, 40) || el.getAttribute("name") || el.tagName);
+      return { missingCard: false, controls: visible.length, outside: bad };
+    });
+  // Tras navegar puede verse un instante la pantalla de carga (misma tarjeta, sin controles): se espera a que haya controles.
+  await expect
+    .poll(async () => (await measure()).controls, {
+      message: `${where}: la tarjeta no mostró controles`,
+    })
+    .toBeGreaterThan(0);
+  const outside = await measure();
+  expect(outside.missingCard, `${where}: no se encontró la tarjeta de la pantalla`).toBe(false);
+  expect(outside.controls, `${where}: no encontró controles dentro de la tarjeta`).toBeGreaterThan(
+    0,
+  );
+  expect(outside.outside, `${where}: controles que se salen de la tarjeta`).toEqual([]);
 }

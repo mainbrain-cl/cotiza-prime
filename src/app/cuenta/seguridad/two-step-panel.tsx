@@ -83,8 +83,17 @@ export function TwoStepPanel({
   recovery: RecoveryInfo | null;
 }) {
   const [reveal, setReveal] = useState<Reveal | null>(null);
+  const [wasActive, setWasActive] = useState(active);
   const [, startTransition] = useTransition();
   const router = useRouter();
+
+  // Si la verificación pasa de activa a desactivada SIN recargar la página (se desactivó desde aquí), el aviso «activa pero sin
+  // códigos» ya no vale: se limpia en el mismo render (sin un parpadeo con el panel de «activa»). Mientras la página aún no
+  // trae `active: true` tras activar, el aviso sí se mantiene (por eso se mira el CAMBIO de `active`, no su valor).
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (!active && reveal?.kind === "codes_failed") setReveal(null);
+  }
 
   /** «Listo»: se borran los códigos de la memoria y se vuelve a la pantalla de seguridad, juntos (sin un parpadeo en medio). */
   function finishReveal(after: "enrollment" | "regenerate") {
@@ -238,11 +247,13 @@ function DisableSection({ accountEmail }: { accountEmail: string | null }) {
           <p className="text-fg-muted">
             Si la desactivas, tu cuenta queda protegida solo con tu contraseña.
           </p>
+          {/* El texto puede pasar a dos líneas: a 360 o 375 px no cabe en una y no debe salirse de la tarjeta. */}
           <Button
             ref={openRef}
             type="button"
             variant="danger"
             size="lg"
+            className="h-auto min-h-12 py-2 whitespace-normal md:min-h-11"
             onClick={() => setOpen(true)}
           >
             Desactivar la verificación en dos pasos
@@ -284,14 +295,14 @@ function DisableForm({
         Para confirmar que eres tú, escribe tu contraseña y un código. Al desactivarla cerramos tu
         sesión en tus otros dispositivos y te enviamos un aviso por correo.
       </p>
+      <OfflineNotice />
       {state.message ? <FormAlert>{state.message}</FormAlert> : null}
+      <HiddenUsername accountEmail={accountEmail} />
+      <PasswordField error={passwordError} inputRef={passwordRef} autoFocus />
       <AnyCodeField
         error={codeError}
         focusSignal={state.status === "error" && !onlyPasswordFailed ? state : undefined}
-        autoFocus
       />
-      <HiddenUsername accountEmail={accountEmail} />
-      <PasswordField error={passwordError} inputRef={passwordRef} />
       <SubmitButton pendingLabel="Desactivando…" variant="danger">
         Desactivar la verificación
       </SubmitButton>
@@ -427,14 +438,14 @@ function RecoveryForm({
         aplicación (no uno de respaldo).
         {replacesPrevious ? " Los códigos anteriores dejarán de servir." : null}
       </p>
+      <OfflineNotice />
       {formState.message ? <FormAlert>{formState.message}</FormAlert> : null}
+      <HiddenUsername accountEmail={accountEmail} />
+      <PasswordField error={passwordError} inputRef={passwordRef} autoFocus />
       <CodeField
         error={codeError}
         focusSignal={formState.status === "error" && !onlyPasswordFailed ? formState : undefined}
-        autoFocus
       />
-      <HiddenUsername accountEmail={accountEmail} />
-      <PasswordField error={passwordError} inputRef={passwordRef} />
       <SubmitButton pendingLabel="Creando…">{submitLabel}</SubmitButton>
       <div className="flex justify-center">
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
@@ -464,9 +475,11 @@ function HiddenUsername({ accountEmail }: { accountEmail: string | null }) {
 function PasswordField({
   error,
   inputRef,
+  autoFocus = false,
 }: {
   error?: string;
   inputRef: React.RefObject<HTMLInputElement | null>;
+  autoFocus?: boolean;
 }) {
   return (
     <Field
@@ -482,6 +495,7 @@ function PasswordField({
           name="password"
           type="password"
           autoComplete="current-password"
+          autoFocus={autoFocus}
           required
         />
       )}

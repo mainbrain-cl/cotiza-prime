@@ -70,7 +70,7 @@ async function sendNotice(
 }
 
 /**
- * «Creaste códigos de respaldo nuevos» (de mejor esfuerzo: si no sale, la creación ya está hecha y solo se registra el
+ * «Se crearon códigos de respaldo nuevos» (de mejor esfuerzo: si no sale, la creación ya está hecha y solo se registra el
  * código del error). Devuelve si el aviso salió. Nunca lanza.
  */
 export function sendRecoveryCodesCreatedNotice(

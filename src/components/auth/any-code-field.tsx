@@ -27,7 +27,7 @@ export function AnyCodeField({
   return (
     <Field
       label="Código de tu aplicación o código de respaldo"
-      hint="El de 6 números que muestra tu aplicación, o uno de tus 12 letras y números. Cada código de respaldo sirve una sola vez."
+      hint="El de 6 números que muestra tu aplicación, o un código de respaldo (12 letras y números). Cada código de respaldo sirve una sola vez."
       error={error}
       required
     >

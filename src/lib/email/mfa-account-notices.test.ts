@@ -32,7 +32,10 @@ const notices = [
     name: "códigos de respaldo nuevos",
     build: buildMfaRecoveryCodesCreatedNotice,
     subject: MFA_RECOVERY_CODES_CREATED_SUBJECT,
-    mentions: ["se crearon códigos de respaldo nuevos", "Los códigos anteriores ya no sirven"],
+    mentions: [
+      "se crearon códigos de respaldo nuevos",
+      "Si había otros códigos de respaldo, ya no sirven",
+    ],
   },
 ] as const;
 

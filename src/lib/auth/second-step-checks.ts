@@ -83,6 +83,8 @@ export async function blockedAttemptState(
   clientIp: string | null,
   stage: AttemptStage,
   context: SecondStepContext,
+  /** Qué tipo de código se estaba probando (para la auditoría): `totp` por defecto, `recovery_code` con uno de respaldo. */
+  factorType: "totp" | "recovery_code" = MFA_FACTOR_TYPE,
 ): Promise<FormState | null> {
   const blocked = (await isSecondStepIpLocked(clientIp))
     ? "short"
@@ -92,7 +94,7 @@ export async function blockedAttemptState(
     action: "session.mfa_locked",
     result: "denied",
     actorUserId: userId,
-    details: { reason: "blocked", stage, factorType: MFA_FACTOR_TYPE },
+    details: { reason: "blocked", stage, factorType },
   });
   return {
     status: "error",

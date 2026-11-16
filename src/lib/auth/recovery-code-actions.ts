@@ -37,7 +37,11 @@ import {
   sendRecoveryCodesCreatedNotice,
   sendRecoveryUsedNotice,
 } from "@/lib/security/mfa-account-notice-send";
-import { MfaAdminGatewayError, removeAllFactors } from "@/lib/security/mfa-admin-gateway";
+import {
+  MfaAdminGatewayError,
+  hasVerifiedFactor,
+  removeAllFactors,
+} from "@/lib/security/mfa-admin-gateway";
 import {
   MfaRecoveryGatewayError,
   acknowledgeRecoveryCodes,
@@ -210,16 +214,33 @@ async function releaseClaimedCode(codeId: string): Promise<void> {
 }
 
 /**
+ * Después de que `removeAllFactors` lanzó: ¿puede seguir puesto algún factor? Solo un «no» comprobado (la lista de la cuenta no
+ * trae ninguno verificado) permite seguir por el camino de éxito; si no se puede saber, se trata como «sigue puesto».
+ */
+async function factorMayRemain(userId: string): Promise<boolean> {
+  try {
+    return await hasVerifiedFactor(userId);
+  } catch (error) {
+    await serverLog("error", "mfa_recovery_factor_check_failed", {
+      code: error instanceof MfaAdminGatewayError ? error.code : "unexpected",
+    });
+    return true;
+  }
+}
+
+/**
  * Entrar con un código de respaldo (H-004b, §3.4 del diseño): la persona perdió su teléfono y tiene una sesión PARCIAL (la de la
  * contraseña o la del enlace del correo de recuperar la contraseña). Como Supabase no puede subir esa sesión a completa sin el
  * factor, ENTRAR CON UN CÓDIGO LO QUITA: la verificación en dos pasos queda desactivada, se cierran las otras sesiones y sale un
  * aviso por correo; la persona debe activarla de nuevo con su teléfono nuevo.
  *
  * Orden (no se puede cambiar): 1) sesión parcial y contadores del camino; 2) forma del código (sin tocar nada); 3) límite de
- * intentos, COMPARTIDO con el código de la aplicación dentro del mismo camino; 4) tomar el código por 2 minutos; 5) quitar los
- * factores (si falla, se suelta el código); 6) cerrar las otras sesiones, DESPUÉS de quitar el factor; 7) completar (marca el
- * código usado y borra el resto del juego); 8) contadores, auditoría, ingreso en cada organización y aviso por correo (de mejor
- * esfuerzo); 9) redirigir. El código escrito, su forma normalizada y su huella nunca llegan a un registro ni a la auditoría.
+ * intentos, COMPARTIDO con el código de la aplicación dentro del mismo camino; 4) tomar el código por 2 minutos; 5) cerrar las
+ * otras sesiones (antes de quitar el factor: una caída a mitad de camino no deja sesiones ajenas abiertas); 6) quitar los
+ * factores (si lanza error se vuelve a preguntar si queda alguno: solo si SIGUE puesto se suelta el código; si ya no queda, se
+ * sigue por el camino de éxito); 7) el aviso por correo, lo antes posible; 8) cerrar otra vez las otras sesiones; 9) completar
+ * (marca el código usado y borra el resto del juego); 10) contadores, auditoría e ingreso en cada organización (de mejor
+ * esfuerzo); 11) redirigir. El código escrito, su forma normalizada y su huella nunca llegan a un registro ni a la auditoría.
  */
 export async function verifyRecoveryCodeAction(
   _previous: FormState,
@@ -252,7 +273,7 @@ export async function verifyRecoveryCodeAction(
   }
 
   // 3) El límite de intentos, el mismo del código de la aplicación en este camino (ventana de 15 minutos, tope del día y de la IP).
-  const blocked = await blockedAttemptState(user.id, clientIp, stage, counters);
+  const blocked = await blockedAttemptState(user.id, clientIp, stage, counters, "recovery_code");
   if (blocked) return blocked;
 
   // 4) Tomar el código por 2 minutos. La base no dice por qué no sirve; aquí tampoco.
@@ -276,26 +297,44 @@ export async function verifyRecoveryCodeAction(
     return { status: "error", message: RECOVERY_CODE_INVALID_MESSAGE };
   }
 
-  // 5) Quitar los factores. Si falla, se suelta el código: la persona no lo pierde.
+  // 5) Cerrar las otras sesiones ANTES de quitar el factor (barato; con la sesión a medias funciona): así, si el servidor se
+  // cae a mitad de camino, no queda abierta ninguna sesión ajena de las que existían. Se repite después de quitarlo.
+  const supabase = await createClient();
+  const { error: earlyOthersError } = await supabase.auth.signOut({ scope: "others" });
+  if (earlyOthersError) {
+    await serverLog("error", "mfa_recovery_signout_others_failed", {
+      code: errorCodeOf(earlyOthersError),
+    });
+  }
+
+  // 6) Quitar los factores. Si lanza error NO se asume que no pasó nada: la respuesta pudo perderse con el factor ya borrado.
+  // Solo si el factor SIGUE puesto (o no se puede saber) se suelta el código: la persona no lo pierde.
   try {
     await removeAllFactors(user.id);
   } catch (error) {
     await serverLog("error", "mfa_recovery_remove_factors_failed", {
       code: error instanceof MfaAdminGatewayError ? error.code : "unexpected",
     });
-    await releaseClaimedCode(claimed.codeId);
-    await logAuditEvent({
-      action: "session.mfa_failed",
-      result: "failure",
-      actorUserId: user.id,
-      details: { reason: "recovery_remove_failed", stage, factorType: "recovery_code" },
-    });
-    return { status: "error", message: RECOVERY_UNFINISHED_MESSAGE };
+    if (await factorMayRemain(user.id)) {
+      await releaseClaimedCode(claimed.codeId);
+      await logAuditEvent({
+        action: "session.mfa_failed",
+        result: "failure",
+        actorUserId: user.id,
+        details: { reason: "recovery_remove_failed", stage, factorType: "recovery_code" },
+      });
+      return { status: "error", message: RECOVERY_UNFINISHED_MESSAGE };
+    }
+    await serverLog("warn", "mfa_recovery_remove_factors_applied_anyway", { stage });
   }
 
-  // 6) Cerrar las otras sesiones, DESPUÉS de quitar el factor (así alcanza también a una abierta en este mismo momento). Esta
-  // sesión ya quedó completa (sin factor la base la tiene por completa). Si no se pudieron cerrar, se anota y se sigue.
-  const supabase = await createClient();
+  // 7) El aviso, de mejor esfuerzo (D5 = A) y LO ANTES POSIBLE: apenas el factor está fuera, para que una caída a mitad de
+  // camino no deje a la dueña sin enterarse. Va al correo de la sesión que verificó Supabase Auth (nunca uno del formulario).
+  // Si la sesión no trae correo, se intenta más abajo con el que lee la base de `auth.users`.
+  let noticeSent = user.email ? await sendRecoveryUsedNotice(user.email) : false;
+
+  // 8) Cerrar otra vez las otras sesiones, DESPUÉS de quitar el factor (alcanza también a una abierta en este mismo momento).
+  // Esta sesión ya quedó completa (sin factor la base la tiene por completa). Si no se pudieron cerrar, se anota y se sigue.
   const { error: othersError } = await supabase.auth.signOut({ scope: "others" });
   if (othersError) {
     await serverLog("error", "mfa_recovery_signout_others_failed", {
@@ -303,7 +342,7 @@ export async function verifyRecoveryCodeAction(
     });
   }
 
-  // 7) Completar: marca el código usado y borra el resto del juego. Si pasaron más de 2 minutos desde que se tomó, la base no lo
+  // 9) Completar: marca el código usado y borra el resto del juego. Si pasaron más de 2 minutos desde que se tomó, la base no lo
   // da por usado (`null`): el factor YA se quitó y la persona ya quedó completa, así que no se rompe nada (los códigos de un
   // factor que no existe no sirven de todos modos).
   let completed: Awaited<ReturnType<typeof completeRecoveryCode>> = null;
@@ -315,8 +354,9 @@ export async function verifyRecoveryCodeAction(
     });
   }
   if (!completed) await serverLog("warn", "mfa_recovery_complete_not_applied", { stage });
+  if (!noticeSent && completed?.email) noticeSent = await sendRecoveryUsedNotice(completed.email);
 
-  // 8) Con la sesión completa: limpiar los contadores de la ventana de ESTE camino, dejar constancia en la plataforma y en cada
+  // 10) Con la sesión completa: limpiar los contadores de la ventana de ESTE camino, dejar constancia en la plataforma y en cada
   // organización donde la persona está activa, y anotar el ingreso de cada una (con la sesión parcial la base no entregaba
   // ninguna).
   await clearSecondStepFailures(user.id, counters);
@@ -325,18 +365,14 @@ export async function verifyRecoveryCodeAction(
     result: "success",
     actorUserId: user.id,
   } as const;
-  const details = { stage, otherSessionsClosed: !othersError };
+  const details = { stage, otherSessionsClosed: !othersError, noticeSent };
   await logAuditEvent({ ...used, details });
   for (const tenantId of await activeTenantIdsOf(supabase, user.id)) {
     await logAuditEvent({ ...used, tenantId, details });
   }
   await logTenantLogins(supabase, user.id);
-  // El aviso, de mejor esfuerzo (D5 = A): la salida de emergencia de quien perdió el teléfono no se bloquea porque falle el
-  // correo. El destinatario lo lee la base de `auth.users`; si no lo trajo, el de la sesión que verificó Supabase Auth.
-  const recipient = completed?.email ?? user.email;
-  if (recipient) await sendRecoveryUsedNotice(recipient);
 
-  // 9) A elegir la contraseña nueva si llegó por el enlace del correo; si no, a activar de nuevo con el teléfono.
+  // 11) A elegir la contraseña nueva si llegó por el enlace del correo; si no, a activar de nuevo con el teléfono.
   redirect(
     viaEmailLink
       ? RESET_PASSWORD_PATH

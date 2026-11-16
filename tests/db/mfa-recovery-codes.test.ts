@@ -109,6 +109,13 @@ const countFor = async (client: Client, user: string) =>
       )
     ).rows[0].n,
   );
+const newestHash = async (client: Client, userId: string) =>
+  (
+    await client.query<{ code_hash: string }>(
+      "select code_hash from public.mfa_recovery_codes where user_id = $1 and used_at is null limit 1",
+      [userId],
+    )
+  ).rows[0]?.code_hash;
 const rowOf = async (client: Client, userId: string, hash: string) =>
   (
     await client.query<{
@@ -227,6 +234,24 @@ describe("mfa_recovery_codes_replace", () => {
         [taken.code_id],
       );
       expect((await replace(db, set.user.id, set.factorId, hashes())).result).toBe("ok");
+    }));
+
+  it("RP4b · un código tomado cuyo factor YA NO existe (huérfano: caída a mitad de un uso) no bloquea a quien vuelve a activar", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      const set = await withSet(db);
+      const taken = await claim(db, set.user.id, set.codeHashes[3]);
+      expect(taken.result).toBe("ok");
+      // El factor se quita por otro camino mientras el código sigue tomado (plazo vigente de 2 minutos).
+      await db.query("delete from auth.mfa_factors where id = $1", [set.factorId]);
+      const again = await addFactor(db, set.user.id);
+      const result = await replace(db, set.user.id, again, hashes());
+      expect(result.result).toBe("ok");
+      expect(await countFor(db, set.user.id)).toBe(10);
+      // Con el factor vivo, en cambio, un código tomado SÍ sigue bloqueando (RP4).
+      const taken2 = await claim(db, set.user.id, (await newestHash(db, set.user.id)) as string);
+      expect(taken2.result).toBe("ok");
+      expect(await replace(db, set.user.id, again, hashes())).toEqual({ result: "busy" });
     }));
 
   it("RP5 · dos `replace` a la vez de la misma cuenta dejan UN solo juego de 10", async () => {
@@ -552,6 +577,43 @@ describe("limpieza y retención", () => {
         expect(await countFor(db, alive.user.id)).toBe(10);
         expect(await countFor(db, usedOld.user.id)).toBe(0);
         expect(await countFor(db, usedYoung.user.id)).toBe(1);
+      }));
+  }
+});
+
+describe("limpieza acotada", () => {
+  const ORPHANS = 150;
+  const LOT = 100;
+  const sweepers: [string, (user: TestUser) => Promise<unknown>][] = [
+    ["replace", async (u) => replace(db, u.id, await addFactor(db, u.id), hashes())],
+    ["claim", (u) => claim(db, u.id, hex())],
+    ["status", (u) => status(db, u.id)],
+  ];
+
+  for (const [name, sweep] of sweepers) {
+    it(`LA · ${name} borra como máximo ${LOT} filas por llamada (no recorre y borra toda la tabla) y la actividad siguiente termina el trabajo`, () =>
+      withTx(db, async () => {
+        await actAsPostgres(db);
+        const caller = await createUser(db);
+        const owner = await createUser(db);
+        // 150 códigos huérfanos (su factor no existe) de hace 3 días: todos están vencidos para la limpieza.
+        await db.query(
+          `insert into public.mfa_recovery_codes (user_id, set_id, factor_id, code_hash, created_at)
+           select $1, gen_random_uuid(), gen_random_uuid(), md5(i::text) || md5('x' || i::text), now() - interval '3 days'
+             from generate_series(1, $2::int) i`,
+          [owner.id, ORPHANS],
+        );
+        expect(await countFor(db, owner.id)).toBe(ORPHANS);
+        await sweep(caller);
+        const afterFirst = await countFor(db, owner.id);
+        // Con la limpieza sin tope no quedaría ninguno; con el lote de ${LOT}, quedan al menos ${ORPHANS - LOT}.
+        expect(afterFirst).toBeGreaterThanOrEqual(ORPHANS - LOT);
+        expect(afterFirst).toBeLessThan(ORPHANS);
+        // Llamadas siguientes (de cualquier cuenta) siguen borrando de a lotes hasta terminar.
+        for (let round = 0; round < 10 && (await countFor(db, owner.id)) > 0; round += 1) {
+          await sweep(caller);
+        }
+        expect(await countFor(db, owner.id)).toBe(0);
       }));
   }
 });

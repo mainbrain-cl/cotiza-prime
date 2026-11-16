@@ -16,6 +16,7 @@ import {
   submitEnrollmentConfirmation,
   uniqueEmail,
   waitForVerificationLink,
+  expectControlsInsideCard,
 } from "./helpers";
 
 // H-004a · Verificación en dos pasos, de punta a punta. En SERIE y solo con cuentas nuevas @ejemplo.test: activar un factor
@@ -377,6 +378,8 @@ test("en el teléfono (375 px, con movimiento reducido): el código y la activac
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow, `${where}: desplazamiento horizontal`).toBeLessThanOrEqual(0);
+    // La tarjeta recorta lo que se sale (`overflow-hidden`): el ancho del documento no lo ve; se compara cada control con ella.
+    await expectControlsInsideCard(page, where);
   };
   const tooSmall = async (where: string) => {
     const small = await page.evaluate(() =>
@@ -449,6 +452,17 @@ test("en el teléfono (375 px, con movimiento reducido): el código y la activac
   for (const box of codeBoxes) expect(box.right).toBeLessThanOrEqual(box.width);
   await finishRecoveryCodes(page);
   await noOverflow("seguridad, activada");
+  // Con los formularios de desactivar y de crear códigos abiertos (el botón de peligro puede pasar a dos líneas).
+  await page.getByRole("button", { name: "Desactivar la verificación en dos pasos" }).click();
+  await expect(page.getByTestId("disable-section").locator("form")).toBeVisible();
+  await noOverflow("seguridad, desactivar");
+  await tooSmall("seguridad, desactivar");
+  await page.getByTestId("disable-section").getByRole("button", { name: "Cancelar" }).click();
+  await noOverflow("seguridad, desactivar cerrado");
+  await page.getByRole("button", { name: "Generar códigos nuevos" }).click();
+  await expect(page.getByTestId("recovery-section").locator("form")).toBeVisible();
+  await noOverflow("seguridad, generar códigos");
+  await tooSmall("seguridad, generar códigos");
 
   // La pantalla del código, con la contraseña sola.
   await page.context().clearCookies();

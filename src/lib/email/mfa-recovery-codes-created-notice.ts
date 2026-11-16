@@ -9,7 +9,8 @@ import {
   type MfaAccountNoticeResult,
 } from "./mfa-account-notice";
 
-export const MFA_RECOVERY_CODES_CREATED_SUBJECT = "Creaste códigos de respaldo nuevos en tu cuenta";
+export const MFA_RECOVERY_CODES_CREATED_SUBJECT =
+  "Se crearon códigos de respaldo nuevos en tu cuenta";
 
 export type MfaRecoveryCodesCreatedNoticeInput = MfaAccountNoticeInput;
 export type MfaRecoveryCodesCreatedNoticeResult = MfaAccountNoticeResult;
@@ -21,7 +22,7 @@ export function buildMfaRecoveryCodesCreatedNotice(
     subject: MFA_RECOVERY_CODES_CREATED_SUBJECT,
     describe: ({ when, account }) => [
       `El ${when}, hora de Chile, se crearon códigos de respaldo nuevos de la verificación en dos pasos de tu cuenta de Cotiza Prime (${account}).`,
-      "Los códigos anteriores ya no sirven. Por seguridad, este correo no lleva ningún código: los viste una sola vez en la pantalla.",
+      "Si había otros códigos de respaldo, ya no sirven. Por seguridad, este correo no lleva ningún código: los viste una sola vez en la pantalla.",
     ],
   });
 }

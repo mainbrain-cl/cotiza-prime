@@ -440,6 +440,17 @@ describe("disableSecondStepAction (desactivar la verificación en dos pasos)", (
       untouched(unenroll, completeRecoveryCode, revokeRecoveryCodes, signOut);
     });
 
+    it("si el código tomado respalda OTRO factor que el que se va a quitar: se suelta, mensaje general y no se cambia nada", async () => {
+      claimRecoveryCode.mockResolvedValue({
+        codeId: CODE_ID,
+        factorId: "99999999-9999-4999-8999-999999999999",
+      });
+      const state = await disable(backupFields());
+      expect(state.message).toMatch(/No pudimos desactivar/);
+      expect(releaseRecoveryCode).toHaveBeenCalledWith(CODE_ID);
+      untouched(sendDisabledNotice, unenroll, completeRecoveryCode, revokeRecoveryCodes, signOut);
+    });
+
     it("si falla quitar el factor: se SUELTA el código, no se borran los códigos ni se cierran sesiones", async () => {
       unenroll.mockResolvedValue({ data: null, error: { code: "x", status: 500 } });
       const state = await disable(backupFields());
@@ -497,6 +508,16 @@ describe("disableSecondStepAction (desactivar la verificación en dos pasos)", (
       const state = await disable(backupFields());
       expect(state.message).toMatch(/Demasiados intentos/);
       untouched(beginSecondStepAttempt, claimRecoveryCode, sendDisabledNotice, unenroll);
+    });
+
+    it("el bloqueo anota el tipo REAL del código probado: «totp» con el de la aplicación y «recovery_code» con uno de respaldo", async () => {
+      beginSecondStepAttempt.mockResolvedValue("short");
+      await disable(fields());
+      await disable(backupFields());
+      const locked = logAuditEvent.mock.calls
+        .map(([event]) => event)
+        .filter((event) => event.action === "session.mfa_locked");
+      expect(locked.map((event) => event.details.factorType)).toEqual(["totp", "recovery_code"]);
     });
 
     it("el bloqueo de 24 h del camino «manage» tiene su propio mensaje (esperar y, si no fuiste tú, cambiar la contraseña)", async () => {
@@ -558,6 +579,61 @@ describe("disableSecondStepAction (desactivar la verificación en dos pasos)", (
       expect(logAuditEvent.mock.calls.map(([event]) => event.action)).not.toContain(
         "session.mfa_disabled",
       );
+    });
+
+    it("si `unenroll` falla pero el factor SÍ se borró (la respuesta se perdió): sigue por el camino de éxito, con el código de la aplicación", async () => {
+      unenroll.mockResolvedValue({ data: null, error: { code: "x", status: 500 } });
+      // La primera lectura (antes del código) trae el factor; la de después de fallar ya no.
+      listFactors
+        .mockResolvedValueOnce({
+          data: { all: [{ id: FACTOR_ID, status: "verified", factor_type: "totp" }] },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: { all: [] }, error: null });
+      expect(await redirectedTo()).toBe(DONE_URL);
+      expect(listFactors).toHaveBeenCalledTimes(2);
+      expect(revokeRecoveryCodes).toHaveBeenCalledWith(USER.id);
+      expect(signOut).toHaveBeenCalledWith({ scope: "others" });
+      expect(releaseRecoveryCode).not.toHaveBeenCalled();
+      const actions = logAuditEvent.mock.calls.map(([event]) => event.action);
+      expect(actions.filter((action) => action === "session.mfa_disabled")).toHaveLength(3);
+    });
+
+    it("si `unenroll` falla pero el factor SÍ se borró, con un código de respaldo: no se suelta, se completa y se borran los códigos", async () => {
+      unenroll.mockResolvedValue({ data: null, error: { code: "x", status: 500 } });
+      listFactors
+        .mockResolvedValueOnce({
+          data: { all: [{ id: FACTOR_ID, status: "verified", factor_type: "totp" }] },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: { all: [] }, error: null });
+      expect(await redirectedTo(backupFields())).toBe(DONE_URL);
+      expect(releaseRecoveryCode).not.toHaveBeenCalled();
+      expect(completeRecoveryCode).toHaveBeenCalledWith(CODE_ID);
+      expect(revokeRecoveryCodes).toHaveBeenCalledWith(USER.id);
+    });
+
+    it("si `unenroll` falla y el factor SIGUE puesto: se suelta el código y no se cambia nada más", async () => {
+      unenroll.mockResolvedValue({ data: null, error: { code: "x", status: 500 } });
+      const state = await disable(backupFields());
+      expect(state.message).toMatch(/No pudimos desactivar/);
+      expect(listFactors).toHaveBeenCalledTimes(2);
+      expect(releaseRecoveryCode).toHaveBeenCalledWith(CODE_ID);
+      untouched(completeRecoveryCode, revokeRecoveryCodes, signOut);
+    });
+
+    it("si `unenroll` falla y tampoco se puede volver a leer la lista: se trata como «sigue puesto» (se suelta el código)", async () => {
+      unenroll.mockResolvedValue({ data: null, error: { code: "x", status: 500 } });
+      listFactors
+        .mockResolvedValueOnce({
+          data: { all: [{ id: FACTOR_ID, status: "verified", factor_type: "totp" }] },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: null, error: { code: "boom", status: 500 } });
+      const state = await disable(backupFields());
+      expect(state.message).toMatch(/No pudimos desactivar/);
+      expect(releaseRecoveryCode).toHaveBeenCalledWith(CODE_ID);
+      untouched(revokeRecoveryCodes, signOut);
     });
 
     it("si borrar los códigos falla, se anota y se sigue: sin factor no sirven de todos modos", async () => {

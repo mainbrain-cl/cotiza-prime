@@ -46,7 +46,8 @@ import { createClient } from "@/lib/supabase/server";
  * Orden (no se puede cambiar; lo vigila la guardia 14m): 1) sesión completa con la verificación activa; 2) forma de los campos;
  * 3) la CONTRASEÑA; 4) el código, con los contadores propios del camino «manage» (los de respaldo se TOMAN por 2 minutos); 5) el
  * correo de aviso, OBLIGATORIO (D4 = A): si no sale no se cambia nada y se suelta el código de respaldo; 6) quitar el factor
- * con la PROPIA sesión de la persona (nunca con la llave maestra: así Supabase vuelve a exigir el segundo paso); 7) borrar los
+ * con la PROPIA sesión de la persona (nunca con la llave maestra: así Supabase vuelve a exigir el segundo paso; si falla se
+ * vuelve a leer la lista y solo si el factor SIGUE puesto se suelta el código); 7) borrar los
  * códigos de respaldo; 8) cerrar las otras sesiones; 9) auditoría; 10) redirigir.
  *
  * No toca los enlaces de anulación de H-118 (nada hecho desde una sesión los invalida). Si algo falla antes de quitar el factor,
@@ -74,6 +75,23 @@ async function releaseClaimedCode(codeId: string | null): Promise<void> {
       code: error instanceof MfaRecoveryGatewayError ? error.code : "unexpected",
     });
   }
+}
+
+/**
+ * Después de que `unenroll` falló: ¿puede seguir puesto el factor TOTP verificado? Solo un «no» comprobado (la lista de la
+ * propia sesión ya no lo trae) permite seguir por el camino de éxito; si no se puede leer, se trata como «sigue puesto».
+ */
+async function factorMayRemain(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<boolean> {
+  const listed = await supabase.auth.mfa.listFactors();
+  if (listed.error) {
+    await serverLog("error", "mfa_list_failed", { code: errorCodeOf(listed.error) });
+    return true;
+  }
+  return listed.data.all.some(
+    (entry) => entry.factor_type === MFA_FACTOR_TYPE && entry.status === "verified",
+  );
 }
 
 export async function disableSecondStepAction(
@@ -134,7 +152,13 @@ export async function disableSecondStepAction(
   // de la IP: cambiar de uno a otro no da intentos nuevos.
   let claimedCodeId: string | null = null;
   if (recoveryNormalized !== null) {
-    const blocked = await blockedAttemptState(user.id, clientIp, "manage", "manage");
+    const blocked = await blockedAttemptState(
+      user.id,
+      clientIp,
+      "manage",
+      "manage",
+      "recovery_code",
+    );
     if (blocked) return blocked;
     let claimed: Awaited<ReturnType<typeof claimRecoveryCode>>;
     try {
@@ -154,6 +178,12 @@ export async function disableSecondStepAction(
         details: { reason: "recovery_invalid", stage: "manage", factorType: "recovery_code" },
       });
       return { status: "error", message: RECOVERY_CODE_INVALID_MESSAGE };
+    }
+    // El código tiene que respaldar el MISMO factor que se va a quitar. Si no coincide, se suelta y se corta: no es de este factor.
+    if (claimed.factorId !== factor.id) {
+      await serverLog("warn", "mfa_recovery_factor_mismatch", { stage: "manage" });
+      await releaseClaimedCode(claimed.codeId);
+      return { status: "error", message: UNFINISHED_MESSAGE };
     }
     claimedCodeId = claimed.codeId;
   } else {
@@ -185,7 +215,9 @@ export async function disableSecondStepAction(
   }
 
   // 6) Quitar el factor con la PROPIA sesión (aal2): sin llave maestra, así Supabase sigue exigiendo el segundo paso. Si el
-  // factor ya no existe (doble envío), se da por hecho.
+  // factor ya no existe (doble envío), se da por hecho. Si lanza otro error NO se asume que no pasó nada (la respuesta pudo
+  // perderse con el factor ya borrado): se vuelve a leer la lista y solo si el factor SIGUE puesto (o no se puede saber) se
+  // suelta el código y se corta.
   const removed = await supabase.auth.mfa.unenroll({ factorId: factor.id });
   if (
     removed.error &&
@@ -193,8 +225,11 @@ export async function disableSecondStepAction(
     removed.error.status !== HTTP_NOT_FOUND
   ) {
     await serverLog("error", "mfa_unenroll_failed", { code: errorCodeOf(removed.error) });
-    await releaseClaimedCode(claimedCodeId);
-    return { status: "error", message: UNFINISHED_MESSAGE };
+    if (await factorMayRemain(supabase)) {
+      await releaseClaimedCode(claimedCodeId);
+      return { status: "error", message: UNFINISHED_MESSAGE };
+    }
+    await serverLog("warn", "mfa_unenroll_applied_anyway", { stage: "manage" });
   }
 
   // 7) Los códigos de respaldo ya no sirven (sin factor no hay a qué respaldar): se marca el usado y se borra el juego. Si el

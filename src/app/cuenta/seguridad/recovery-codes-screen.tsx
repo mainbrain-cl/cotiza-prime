@@ -4,9 +4,15 @@ import { Check, Copy, Download, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
+import { OfflineNotice } from "@/components/ui/offline-notice";
 import { acknowledgeRecoveryCodesAction } from "@/lib/auth/recovery-code-actions";
 
 const COPIED_FEEDBACK_MS = 2000;
+/** Cuando «Listo» no pudo llegar al servidor: los códigos siguen en pantalla y se puede reintentar. */
+const OFFLINE_RETRY_MESSAGE =
+  "No pudimos conectarnos. Tus códigos siguen aquí: revisa tu conexión y vuelve a apretar «Listo».";
+/** Cuánto se espera antes de soltar el enlace temporal de la descarga (el navegador ya empezó a guardar el archivo). */
+const REVOKE_DOWNLOAD_URL_MS = 10_000;
 /** Nombre del archivo que se descarga. */
 const DOWNLOAD_FILE_NAME = "codigos-de-respaldo-cotiza-prime.txt";
 const DOWNLOAD_HEADER = [
@@ -34,7 +40,7 @@ function downloadCodes(codes: readonly string[]): void {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DOWNLOAD_URL_MS);
 }
 
 /**
@@ -81,14 +87,20 @@ export function RecoveryCodesScreen({
   function finish() {
     setError(null);
     startTransition(async () => {
-      const result = await acknowledgeRecoveryCodesAction(setId);
-      if (result.status === "ok") onDone();
-      else setError(result.message);
+      // Si la red falla, los códigos NO se pierden: siguen en pantalla y «Listo» se puede volver a apretar.
+      try {
+        const result = await acknowledgeRecoveryCodesAction(setId);
+        if (result.status === "ok") onDone();
+        else setError(result.message);
+      } catch {
+        setError(OFFLINE_RETRY_MESSAGE);
+      }
     });
   }
 
   return (
     <div className="flex flex-col gap-5" data-testid="recovery-codes-screen">
+      <OfflineNotice />
       <h2 ref={headingRef} tabIndex={-1} className="text-md outline-none">
         Tus códigos de respaldo
       </h2>

@@ -9,8 +9,13 @@ vi.mock("@/lib/supabase/admin-client", () => ({
   }),
 }));
 
-const { MfaAdminGatewayError, deleteMfaFactor, lockAccountAndRemoveFactors, removeAllFactors } =
-  await import("./mfa-admin-gateway");
+const {
+  MfaAdminGatewayError,
+  deleteMfaFactor,
+  hasVerifiedFactor,
+  lockAccountAndRemoveFactors,
+  removeAllFactors,
+} = await import("./mfa-admin-gateway");
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const FACTOR_ID = "22222222-2222-4222-8222-222222222222";
@@ -111,5 +116,46 @@ describe("quitar todos los factores sin tocar la contraseña (H-004b)", () => {
       "mfa_admin_gateway_lock_password:boom",
     );
     expect(listFactors).not.toHaveBeenCalled();
+  });
+});
+
+describe("¿le queda algún factor verificado? (H-004b, corrección C1)", () => {
+  it("responde que sí si hay un factor verificado, de cualquier tipo", async () => {
+    listFactors.mockResolvedValue({
+      data: {
+        factors: [
+          { id: FACTOR_ID, status: "unverified" },
+          { id: "x", status: "verified" },
+        ],
+      },
+      error: null,
+    });
+    await expect(hasVerifiedFactor(USER_ID)).resolves.toBe(true);
+    expect(listFactors).toHaveBeenCalledWith({ userId: USER_ID });
+  });
+
+  it("responde que no sin factores o solo con factores sin verificar", async () => {
+    listFactors.mockResolvedValue({ data: { factors: [] }, error: null });
+    await expect(hasVerifiedFactor(USER_ID)).resolves.toBe(false);
+    listFactors.mockResolvedValue({
+      data: { factors: [{ id: FACTOR_ID, status: "unverified" }] },
+      error: null,
+    });
+    await expect(hasVerifiedFactor(USER_ID)).resolves.toBe(false);
+  });
+
+  it("si no puede listar, lanza un error que trae solo un código (no se puede afirmar que no queda)", async () => {
+    listFactors.mockResolvedValue({ data: null, error: { status: 500, code: "boom" } });
+    const error = await hasVerifiedFactor(USER_ID).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(MfaAdminGatewayError);
+    expect((error as Error).message).toBe("mfa_admin_gateway_list_factors:boom");
+    expect((error as Error).message).not.toContain(USER_ID);
+  });
+
+  it("no borra nada ni cambia la contraseña: solo lee", async () => {
+    listFactors.mockResolvedValue({ data: { factors: [] }, error: null });
+    await hasVerifiedFactor(USER_ID);
+    expect(deleteFactor).not.toHaveBeenCalled();
+    expect(updateUserById).not.toHaveBeenCalled();
   });
 });

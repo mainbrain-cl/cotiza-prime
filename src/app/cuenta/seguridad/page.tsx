@@ -15,9 +15,14 @@ export const metadata: Metadata = {
 };
 
 /**
- * Tiempo máximo (segundos) de las acciones de servidor de esta pantalla. Una de ellas puede enviar hasta 3 avisos de la
- * activación del segundo paso de 15 segundos cada uno (H-118): 45 s más un margen. Next exige un LITERAL aquí (no una
- * constante importada); una guardia estática (14i) vigila que valga al menos 60. El plazo del hosting debe respetarlo.
+ * Tiempo máximo (segundos) de las acciones de servidor de esta pantalla. Peor caso teórico, si TODO se agota a la vez:
+ * activar = contraseña de nuevo (hasta 10 s de `confirmPassword`, H-004b) + hasta 3 avisos de la activación de 15 s cada uno
+ * (H-118) = 55 s, más las llamadas a Supabase (unas décimas de segundo cada una): toca el tope de 60 s. Desactivar y crear
+ * códigos nuevos son menos (10 s + un aviso de 15 s = 25 s). Lo normal es de 1 a 3 s. Mitigación si el plazo se corta: nada
+ * queda a medias sin remedio (la activación se revierte o sus avisos pendientes se reintentan en el próximo ingreso, H-118; un
+ * código de respaldo tomado vence solo a los 2 minutos) y la persona ve el error y reintenta. Si el hosting da más plazo, se
+ * sube; si da menos de 60 s, hay que bajar el plazo de `confirmPassword` o repartir los avisos (anotado en «Antes del piloto»).
+ * Next exige un LITERAL aquí (no una constante importada); una guardia estática (14i) vigila que valga al menos 60.
  */
 export const maxDuration = 60;
 

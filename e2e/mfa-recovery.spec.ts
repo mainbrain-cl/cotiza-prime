@@ -17,6 +17,7 @@ import {
   submitEnrollmentConfirmation,
   uniqueEmail,
   waitForVerificationLink,
+  expectControlsInsideCard,
 } from "./helpers";
 
 // H-004b · Códigos de respaldo: crearlos al activar, generar nuevos y crearlos en una cuenta activada antes. En SERIE y solo con
@@ -29,7 +30,7 @@ const CODE_LABEL = "Código de 6 números";
 const CODE_SHAPE = /^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){2}$/;
 const NO_CODES_MESSAGE = "No tienes códigos de respaldo. Si pierdes tu teléfono, no podrás entrar.";
 const NOT_ACKNOWLEDGED_MESSAGE = "No confirmaste que guardaste tus códigos de respaldo";
-const CREATED_NOTICE_SUBJECT = "Creaste códigos de respaldo nuevos en tu cuenta";
+const CREATED_NOTICE_SUBJECT = "Se crearon códigos de respaldo nuevos en tu cuenta";
 
 /** Las huellas de los códigos vigentes de esa cuenta (solo lectura, en la base local de pruebas). */
 async function codeHashesOf(email: string): Promise<string[]> {
@@ -268,6 +269,7 @@ test("teclado, teléfono (375 px) y modo oscuro: la pantalla de códigos se mane
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
+  await expectControlsInsideCard(page, "pantalla de códigos");
   // Los 10 códigos caben enteros en el ancho de la pantalla.
   const rights = await page
     .getByTestId("recovery-code")
@@ -327,6 +329,15 @@ test("teclado, teléfono (375 px) y modo oscuro: la pantalla de códigos se mane
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(afterOverflow).toBeLessThanOrEqual(0);
+  await expectControlsInsideCard(page, "seguridad, activada");
+  // El botón de peligro puede pasar a dos líneas: ni él ni los formularios de desactivar y crear se salen de la tarjeta.
+  await page.getByRole("button", { name: "Desactivar la verificación en dos pasos" }).click();
+  await expect(page.getByTestId("disable-section").locator("form")).toBeVisible();
+  await expectControlsInsideCard(page, "seguridad, desactivar");
+  await page.getByTestId("disable-section").getByRole("button", { name: "Cancelar" }).click();
+  await page.getByRole("button", { name: "Generar códigos nuevos" }).click();
+  await expect(page.getByTestId("recovery-section").locator("form")).toBeVisible();
+  await expectControlsInsideCard(page, "seguridad, generar códigos");
 });
 
 // ───────────────────────────── Paso 5: entrar con un código de respaldo ─────────────────────────────
@@ -627,6 +638,7 @@ test("la pantalla del código de respaldo en el teléfono (375 px): sin desplaza
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow, `${where}: desplazamiento horizontal`).toBeLessThanOrEqual(0);
+    await expectControlsInsideCard(mobile, where);
   };
   const smallTargets = () =>
     mobile.evaluate(() =>

@@ -12,6 +12,7 @@ import type { FormState } from "@/lib/auth/form-state";
 import { activeTenantIdsOf, logTenantLogins } from "@/lib/auth/login-audit";
 import { ACCOUNT_SECURITY_PATH } from "@/lib/auth/paths";
 import { issueRecoveryCodes, type RecoveryCodesIssued } from "@/lib/auth/recovery-code-issue";
+import { normalizeRecoveryCode } from "@/lib/auth/recovery-code";
 import { confirmPassword } from "@/lib/auth/reauth";
 import { fieldErrorsOf, reauthPasswordSchema, totpCodeSchema } from "@/lib/auth/schemas";
 import {
@@ -67,6 +68,10 @@ import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
  *   auditoría solo `{reason, stage, factorType}`.
  */
 
+/** Lo que se le dice a quien escribe un código de respaldo donde va el de 6 números de su aplicación. */
+const RECOVERY_CODE_IN_APP_FIELD_MESSAGE =
+  "Ese parece un código de respaldo. Si no tienes tu teléfono, usa el enlace «¿No tienes tu teléfono? Usa un código de respaldo»; si lo tienes, escribe aquí el código de 6 números de tu aplicación.";
+
 const FACTOR_FIELD = "factorId";
 const PASSWORD_FIELD = "password";
 const SVG_DATA_URL_PREFIX = "data:image/svg+xml;utf-8,";
@@ -89,6 +94,16 @@ export async function verifySecondStepAction(
   const recovery = await hasRecoverySession();
   const counters: SecondStepContext = recovery ? "recovery" : "password";
   const context = { recovery, invitation: await hasPendingInvitation() };
+
+  // Con la forma de un código de respaldo (12 letras y números) en el campo del código de la aplicación: se orienta hacia el
+  // enlace «¿No tienes tu teléfono?», sin contar el intento ni consultar nada.
+  const typed = readText(formData, CODE_FIELD);
+  if (typeof typed === "string" && normalizeRecoveryCode(typed) !== null) {
+    return {
+      status: "error",
+      fieldErrors: { [CODE_FIELD]: RECOVERY_CODE_IN_APP_FIELD_MESSAGE },
+    };
+  }
 
   const checked = await checkCodeBeforeVerifying(formData, user.id, clientIp, "sign_in", counters);
   if (!checked.ok) return checked.state;

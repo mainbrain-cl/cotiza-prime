@@ -27,9 +27,9 @@ declare
 begin
   -- (a) las siete funciones son las de esta migración
   if not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_recovery_codes_replace(uuid, uuid, text[])')::oid
-                    and md5(p.prosrc) = '7aa1a52e10d260b25a9c31c8310518cc')
+                    and md5(p.prosrc) = '797c19941db44e2054a7d42ca25ca77d')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_recovery_code_claim(uuid, text)')::oid
-                    and md5(p.prosrc) = '735736fd6598c27848d92174fe94a455')
+                    and md5(p.prosrc) = '092a61f2b1c0e4728c4d24973a661661')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_recovery_code_complete(uuid)')::oid
                     and md5(p.prosrc) = '669834e0b1fedee7a8c6d83f54add449')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_recovery_code_release(uuid)')::oid
@@ -37,7 +37,7 @@ begin
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_recovery_codes_acknowledge(uuid, uuid)')::oid
                     and md5(p.prosrc) = '2955d13dca9ce389852bc7dd6d72e326')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_recovery_codes_status(uuid)')::oid
-                    and md5(p.prosrc) = '8eba6e12048213d9fb660dc9cf1e9474')
+                    and md5(p.prosrc) = 'f2e7623b12bc6d8cf90a14eac3e67beb')
      or not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.mfa_recovery_codes_revoke(uuid)')::oid
                     and md5(p.prosrc) = 'da5d8ecadf86fd0ddaa40936cd563f44') then
     raise exception 'no se puede deshacer 20261116100000_mfa_recovery_codes: alguna de las funciones (public.mfa_recovery_codes_replace, public.mfa_recovery_code_claim, public.mfa_recovery_code_complete, public.mfa_recovery_code_release, public.mfa_recovery_codes_acknowledge, public.mfa_recovery_codes_status, public.mfa_recovery_codes_revoke) ya no es la de esta migracion: otra migracion la redefinio o ya se deshizo; revise el orden de los deshacer';

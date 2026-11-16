@@ -230,6 +230,28 @@ describe("verifySecondStepAction (código tras la contraseña)", () => {
     },
   );
 
+  it.each(["7KQM-3XHP-W2RT", "7kqm3xhpw2rt", "7KQM 3XHP W2RT"])(
+    "un código con la forma de uno de RESPALDO (%j) orienta al enlace «¿No tienes tu teléfono?», sin contar el intento ni consultar nada",
+    async (code) => {
+      const state = await verifySecondStepAction(IDLE, form({ code }));
+      expect(state.status).toBe("error");
+      expect(state.fieldErrors?.code).toMatch(/código de respaldo/);
+      expect(state.fieldErrors?.code).toMatch(/¿No tienes tu teléfono\? Usa un código de respaldo/);
+      expect(isSecondStepIpLocked).not.toHaveBeenCalled();
+      expect(beginSecondStepAttempt).not.toHaveBeenCalled();
+      expect(recordSecondStepFailure).not.toHaveBeenCalled();
+      expect(consumeTotpCode).not.toHaveBeenCalled();
+      expect(challengeAndVerify).not.toHaveBeenCalled();
+      expect(logAuditEvent).not.toHaveBeenCalled();
+    },
+  );
+
+  it("el código normal de 6 números sigue su camino (la pista de respaldo no lo toca)", async () => {
+    await redirectOf(() => verifySecondStepAction(IDLE, form({ code: "123456" })));
+    expect(beginSecondStepAttempt).toHaveBeenCalledTimes(1);
+    expect(challengeAndVerify).toHaveBeenCalledTimes(1);
+  });
+
   it("bloqueo corto (15 min) de la cuenta: «demasiados intentos» y NO llama a Supabase ni gasta el código", async () => {
     beginSecondStepAttempt.mockResolvedValue("short");
     const state = await verifySecondStepAction(IDLE, form({ code: "123456" }));
@@ -475,7 +497,7 @@ describe("startTotpEnrollmentAction (activar, paso 1)", () => {
     expect(enroll).not.toHaveBeenCalled();
   });
 
-  it("quita los intentos sin verificar y luego activa con el nombre Cotiza Prime, sin nombre propio", async () => {
+  it("quita los intentos sin verificar y luego activa con el emisor Cotiza Prime y el nombre «Aplicación de códigos»", async () => {
     listFactors.mockResolvedValue({
       data: {
         all: [

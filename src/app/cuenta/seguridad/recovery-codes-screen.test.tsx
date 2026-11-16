@@ -110,6 +110,42 @@ describe("RecoveryCodesScreen (Tus códigos de respaldo)", () => {
     expect(buttonByText("Listo").disabled).toBe(false);
   });
 
+  it("si la red falla al apretar «Listo» (la acción lanza): los códigos NO se pierden, se avisa y se puede reintentar", async () => {
+    mocks.acknowledgeRecoveryCodesAction
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ status: "ok" });
+    await act(async () => {
+      checkbox().click();
+    });
+    await act(async () => {
+      buttonByText("Listo").click();
+    });
+    expect(host.textContent).toContain("No pudimos conectarnos. Tus códigos siguen aquí");
+    expect(
+      [...host.querySelectorAll('[data-testid="recovery-code"]')].map((node) => node.textContent),
+    ).toEqual(CODES);
+    expect(onDone).not.toHaveBeenCalled();
+    expect(buttonByText("Listo").disabled).toBe(false);
+    await act(async () => {
+      buttonByText("Listo").click();
+    });
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("sin conexión del navegador muestra el aviso «Sin conexión» y los códigos siguen a la vista", async () => {
+    Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+    await act(async () => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(host.querySelector('[data-testid="offline-notice"]')).not.toBeNull();
+    expect(host.querySelectorAll('[data-testid="recovery-code"]')).toHaveLength(10);
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(host.querySelector('[data-testid="offline-notice"]')).toBeNull();
+  });
+
   it("«Copiar todos» copia los códigos uno por línea", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
@@ -132,6 +168,8 @@ describe("RecoveryCodesScreen (Tus códigos de respaldo)", () => {
       buttonByText("Descargar (.txt)").click();
     });
     expect(click).toHaveBeenCalledTimes(1);
+    // El enlace temporal NO se suelta de inmediato: el navegador necesita unos segundos para empezar a guardar el archivo.
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
     expect(blob).not.toBeNull();
     const text = await new Promise<string>((resolve) => {
       const reader = new FileReader();

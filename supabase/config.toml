@@ -252,6 +252,13 @@ otp_expiry = 3600
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
 
+# Correo de recuperar la contraseña, en español y con la marca (visto en la prueba de H-118, 2026-11-16: salía el de
+# Supabase, en inglés). El enlace vence con `otp_expiry` (3600 s): si cambia ese valor, cambia también «1 hora» del texto.
+# En producción esta plantilla se carga en el panel de Supabase (Authentication → Emails → Reset password) o con la CLI.
+[auth.email.template.recovery]
+subject = "Elige una contraseña nueva en Cotiza Prime"
+content_path = "./supabase/templates/recovery.html"
+
 # H-003: aviso a la persona de que su contraseña cambió.
 [auth.email.notification.password_changed]
 enabled = true

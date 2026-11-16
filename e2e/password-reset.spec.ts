@@ -12,7 +12,8 @@ import {
 
 const NEW_PASSWORD = "otra-clave-nueva-456";
 const SENT_MESSAGE = /Si ese correo tiene una cuenta en Cotiza Prime/;
-const RESET_SUBJECT = "Reset";
+// Asunto del correo de recuperar la contraseña: «Elige una contraseña nueva en Cotiza Prime» (supabase/templates/recovery.html).
+const RESET_SUBJECT = "Elige";
 const CHANGED_SUBJECT = "cambió";
 const RECOVERY_PATH = "/auth/recuperar";
 

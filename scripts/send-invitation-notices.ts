@@ -1,6 +1,6 @@
 // Tarea de los avisos al Dueño por invitaciones (H-008): envía los pendientes y reintenta los fallidos.
 // SOLO PARA USO LOCAL O MANUAL: usa `tsx` y `.env.local` (herramientas de desarrollo). En producción hay que
-// programarla de otra forma (decisión pendiente; ver docs/PROYECTO.md §16.2 #17).
+// llamarla por la ruta /api/v1/jobs/invitation-notices con CRON_SECRET (decisión #17; ver docs/PROYECTO.md §16.2).
 // Uso: npm run job:invitation-notices. Termina con código 1 si la tarea no pudo correr.
 import { runSendInvitationNotices } from "../src/server/jobs/send-invitation-notices";
 

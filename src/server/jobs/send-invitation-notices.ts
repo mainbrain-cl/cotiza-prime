@@ -3,7 +3,7 @@ import { deliverPendingInvitationNotices, type NoticeJobResult } from "@/lib/tea
 
 /**
  * Tarea del aviso al Dueño (H-008, decisión de José: el aviso es robusto, no de mejor esfuerzo). EN PRODUCCIÓN eso
- * vale solo cuando se resuelva la decisión #17 (cómo se programa la tarea de avisos); ver más abajo.
+ * vale cuando `CRON_SECRET` esté definido y el programador la llame; ver más abajo.
  *
  * Cuando alguien que no es el Dueño invita a un Administrador, la base deja el aviso anotado como pendiente en
  * la misma operación (`invitations.owner_notice_state`). Esta tarea envía los pendientes y REINTENTA los que
@@ -14,10 +14,11 @@ import { deliverPendingInvitationNotices, type NoticeJobResult } from "@/lib/tea
  *
  * Nunca lanza: `failed` dice que no pudo ni empezar.
  *
- * PENDIENTE (decisión propia, antes del piloto): cómo se programa en producción. El script
- * `scripts/send-invitation-notices.ts` es SOLO para uso local o manual (usa `tsx` y `.env.local`). En Vercel las
- * tareas programadas llaman a una dirección HTTP protegida por un secreto; esa ruta no existe, a propósito,
- * hasta decidirlo. Mientras tanto, en producción el aviso es de mejor esfuerzo: solo corre el intento inmediato.
+ * Quién la llama: en producción, el programador de tareas de Vercel por la ruta
+ * `GET /api/v1/jobs/invitation-notices` (protegida con `CRON_SECRET`; decisión #17). Falta configurar el
+ * secreto en el proyecto de Vercel y probar que corre. El script `scripts/send-invitation-notices.ts` es SOLO
+ * para uso local o manual (usa `tsx` y `.env.local`). Es seguro llamarla dos veces a la vez: la base reserva
+ * cada aviso con `for update skip locked` y gasta el intento al reservarlo.
  */
 export async function runSendInvitationNotices(): Promise<NoticeJobResult> {
   return deliverPendingInvitationNotices();

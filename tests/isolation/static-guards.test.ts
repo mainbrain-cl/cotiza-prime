@@ -312,6 +312,9 @@ describe("guardias estáticas del aislamiento", () => {
       APP_ROUTES.filter((r) => r.scope === "signed").map((r) => routeKey(r)),
     );
     const byForm = new Set(APP_ROUTES.filter((r) => r.scope === "form").map((r) => routeKey(r)));
+    const byJobSecret = new Set(
+      APP_ROUTES.filter((r) => r.scope === "job").map((r) => routeKey(r)),
+    );
     for (const route of discovered) {
       // Una ruta que no esté en el registro la atrapa G5; aquí solo cuentan las declaradas "none".
       if (withoutOrganization.has(routeKey(route))) continue;
@@ -321,6 +324,8 @@ describe("guardias estáticas del aislamiento", () => {
       if (byForm.has(routeKey(route))) continue;
       // Las de avisos firmados por un proveedor tienen su propia guardia (8e).
       if (bySignature.has(routeKey(route))) continue;
+      // Las tareas programadas con secreto tienen su propia guardia (8f).
+      if (byJobSecret.has(routeKey(route))) continue;
       expect(
         read(route.absoluteFile),
         `src/app/${route.file} debe llamar a requireActiveTenant( o declararse sin organización en APP_ROUTES`,
@@ -461,6 +466,51 @@ describe("guardias estáticas del aislamiento", () => {
     ]);
     expect(service).toContain('RECORD_FUNCTION = "record_email_event"');
     expect(/\.(from|insert|update|upsert|delete|select)\(/.test(service)).toBe(false);
+  });
+
+  it("8f. las tareas programadas (/api/v1/jobs): verifican el secreto antes que nada, solo GET, sin tocar la base ni registrar el secreto", () => {
+    const jobRoutes = discoverAppRoutes(path.join(SRC, "app")).filter(
+      (r) => r.path === "/api/v1/jobs" || r.path.startsWith("/api/v1/jobs/"),
+    );
+    // la guardia mira de verdad la carpeta, y todo lo que hay ahí está declarado como `job`
+    expect(jobRoutes.length).toBeGreaterThanOrEqual(1);
+    const declared = new Set(APP_ROUTES.filter((r) => r.scope === "job").map((r) => routeKey(r)));
+    for (const route of jobRoutes) {
+      expect(declared.has(routeKey(route)), `${route.file} debe declararse con alcance "job"`).toBe(
+        true,
+      );
+      const text = stripComments(read(route.absoluteFile));
+      const verify = text.indexOf("verifyCronRequest(");
+      expect(verify, `${route.file} debe llamar a verifyCronRequest(`).toBeGreaterThan(-1);
+      // ninguna otra llamada a la tarea (`@/server/jobs`) ni a registros antes de verificar el secreto
+      const firstJobCall = text.search(/\brun[A-Z]\w*\(/);
+      expect(firstJobCall, `${route.file} debe ejecutar la tarea`).toBeGreaterThan(-1);
+      expect(verify, `${route.file}: el secreto se verifica antes de correr la tarea`).toBeLessThan(
+        firstJobCall,
+      );
+      expect(text.indexOf("serverLog("), route.file).toBeGreaterThan(verify);
+      // solo GET (el programador de Vercel usa GET): ningún método que escriba
+      expect(
+        /export\s+(async\s+)?function\s+(POST|PUT|PATCH|DELETE)\b/.test(text),
+        route.file,
+      ).toBe(false);
+      expect(/export\s+(async\s+)?function\s+GET\b/.test(text), route.file).toBe(true);
+      // la ruta no toca la base ni lee el secreto por su cuenta, y nunca registra encabezados
+      expect(/admin-client|createClient|\.rpc\(|\.from\(|CRON_SECRET/.test(text), route.file).toBe(
+        false,
+      );
+      expect(
+        /headers\b[^;]*serverLog|serverLog\([^)]*(authorization|headers|secret)/i.test(text),
+        route.file,
+      ).toBe(false);
+    }
+    // el secreto se lee en un solo archivo
+    const readers = sourceFiles
+      .filter((f) =>
+        /process\.env\.CRON_SECRET|process\.env\[\s*CRON_SECRET_VAR/.test(stripComments(read(f))),
+      )
+      .map(rel);
+    expect(readers).toEqual(["src/lib/jobs/cron-auth.ts"]);
   });
 
   it("9. el token no se escribe en los registros del servidor", () => {

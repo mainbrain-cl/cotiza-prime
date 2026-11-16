@@ -862,13 +862,15 @@ export function visibilityDeclarationErrors(
  * - `signed`: la llama un proveedor externo (avisos de entrega del correo, `/api/v1/webhooks/...`), sin
  *   sesión ni token: solo vale con la firma del proveedor verificada ANTES de mirar el cuerpo o tocar
  *   la base (guardia 8e).
+ * - `job`: la llama el programador de tareas del hosting (`/api/v1/jobs/...`, decisión #17), sin sesión ni token:
+ *   solo vale con el secreto `CRON_SECRET` verificado ANTES de hacer cualquier otra cosa (guardia 8f).
  * - `form`: la abre un desconocido SIN cuenta con el identificador público de un formulario (`/f/[publicId]`
  *   y `/api/v1/public/forms/[publicId]/...`). La organización sale de la fila del formulario, nunca de la
  *   dirección; pasan por el portero (`src/lib/intake/gateway.ts`). Estas rutas ESCRIBEN datos de un
  *   desconocido, así que toda ruta `form` con POST comprueba el `Origin` antes que cualquier otra cosa
  *   (guardia 10b).
  */
-export type RouteScope = "tenant" | "none" | "token" | "signed" | "form";
+export type RouteScope = "tenant" | "none" | "token" | "signed" | "form" | "job";
 
 export interface AppRoute {
   /** Como la escribe Next.js, p. ej. `/o/[tenantId]/clientes/[customerId]`. Sin grupos `(x)`. */
@@ -914,6 +916,8 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/f/[publicId]/incrustar", kind: "page", scope: "form" },
   { path: "/api/v1/public/forms/[publicId]/requests", kind: "api", scope: "form" },
   { path: "/api/v1/webhooks/email/[provider]", kind: "api", scope: "signed" },
+  // Decisión #17: la tarea de avisos al Dueño, llamada por el programador de tareas con un secreto.
+  { path: "/api/v1/jobs/invitation-notices", kind: "api", scope: "job" },
   { path: "/o/[tenantId]", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/catalogo/[itemId]", kind: "page", scope: "tenant" },

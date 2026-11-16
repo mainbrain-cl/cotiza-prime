@@ -5,6 +5,7 @@ import {
   buildMfaRecoveryCodesCreatedNotice,
   type MfaRecoveryCodesCreatedNoticeResult,
 } from "@/lib/email/mfa-recovery-codes-created-notice";
+import { buildMfaRecoveryUsedNotice } from "@/lib/email/mfa-recovery-used-notice";
 import { EmailConfigError, getEmailTransport } from "@/lib/email/transport";
 import { getAppOrigin } from "@/lib/http/request-context";
 import { serverLog } from "@/lib/log/server-log";
@@ -78,6 +79,23 @@ export function sendRecoveryCodesCreatedNotice(
   return sendNotice(
     buildMfaRecoveryCodesCreatedNotice,
     "mfa_recovery_codes_notice_failed",
+    recipientAddress,
+    happenedAt,
+  );
+}
+
+/**
+ * «Se usó un código de respaldo en tu cuenta» (de mejor esfuerzo, decisión D5 = A de H-004b): lo que avisa ya pasó, y bloquear
+ * la salida de emergencia de quien perdió el teléfono porque falla el correo la dejaría fuera. Si no sale, solo se registra el
+ * código del error. Devuelve si el aviso salió. Nunca lanza.
+ */
+export function sendRecoveryUsedNotice(
+  recipientAddress: string,
+  happenedAt: Date = new Date(),
+): Promise<boolean> {
+  return sendNotice(
+    buildMfaRecoveryUsedNotice,
+    "mfa_recovery_used_notice_failed",
     recipientAddress,
     happenedAt,
   );

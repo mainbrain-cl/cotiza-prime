@@ -58,6 +58,7 @@ export function TwoStepPanel({
   sinceLabel,
   justEnabled,
   justCodesCreated,
+  justRecoveryUsed = false,
   noticeEmail,
   accountEmail,
   recovery,
@@ -67,6 +68,8 @@ export function TwoStepPanel({
   justEnabled: boolean;
   /** Recién se crearon códigos nuevos desde esta pantalla (aviso `?aviso=codigos`). */
   justCodesCreated: boolean;
+  /** Se entró con un código de respaldo: la verificación quedó desactivada (aviso `?aviso=respaldo`). */
+  justRecoveryUsed?: boolean;
   /** El correo al que se mandó el aviso de la activación (solo se muestra recién activada). */
   noticeEmail: string | null;
   /** El correo de la cuenta: solo para que el gestor de contraseñas complete la contraseña (campo oculto «username»). */
@@ -129,7 +132,13 @@ export function TwoStepPanel({
       />
     );
   }
-  return <EnablePanel accountEmail={accountEmail} onResult={onEnrollmentResult} />;
+  return (
+    <EnablePanel
+      accountEmail={accountEmail}
+      onResult={onEnrollmentResult}
+      recoveryUsed={justRecoveryUsed}
+    />
+  );
 }
 
 function ActivePanel({
@@ -376,12 +385,18 @@ function PasswordField({
   );
 }
 
+/** Lo que se le dice a quien acaba de entrar con un código de respaldo (la verificación quedó desactivada). */
+const RECOVERY_USED_NOTICE =
+  "Entraste con un código de respaldo. Desactivamos la verificación en dos pasos y cerramos tus otras sesiones. Actívala de nuevo con tu teléfono; si recuperas el anterior, borra de su aplicación la entrada vieja de Cotiza Prime.";
+
 function EnablePanel({
   accountEmail,
   onResult,
+  recoveryUsed,
 }: {
   accountEmail: string | null;
   onResult: (result: ConfirmEnrollmentState) => void;
+  recoveryUsed: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>({ name: "idle" });
   const [startError, setStartError] = useState<string | null>(null);
@@ -440,6 +455,7 @@ function EnablePanel({
     return (
       <div className="flex flex-col gap-4">
         <OfflineNotice />
+        {recoveryUsed ? <FormAlert tone="warning">{RECOVERY_USED_NOTICE}</FormAlert> : null}
         {startError ? <FormAlert>{startError}</FormAlert> : null}
         <p className="text-fg-muted">
           Además de tu contraseña, te pediremos un código de 6 números que genera una aplicación en

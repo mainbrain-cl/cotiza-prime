@@ -41,6 +41,7 @@ const baseProps = {
   sinceLabel: "10-11-2026",
   justEnabled: false,
   justCodesCreated: false,
+  justRecoveryUsed: false,
   noticeEmail: EMAIL,
   accountEmail: EMAIL,
   recovery: null as RecoveryInfo | null,
@@ -261,5 +262,20 @@ describe("TwoStepPanel al activar: los códigos de respaldo", () => {
     await submit();
     expect(text()).toContain("La contraseña no es correcta.");
     expect(host.querySelector('[data-testid="recovery-codes-screen"]')).toBeNull();
+  });
+});
+
+describe("TwoStepPanel tras entrar con un código de respaldo", () => {
+  it("sin verificación activa y con el aviso `respaldo`: dice qué pasó y que hay que activarla de nuevo", async () => {
+    await mount({ active: false, justRecoveryUsed: true, recovery: null });
+    expect(text()).toContain(
+      "Entraste con un código de respaldo. Desactivamos la verificación en dos pasos y cerramos tus otras sesiones. Actívala de nuevo con tu teléfono; si recuperas el anterior, borra de su aplicación la entrada vieja de Cotiza Prime.",
+    );
+    expect(buttonByText("Activar la verificación en dos pasos")).toBeTruthy();
+  });
+
+  it("sin el aviso en la dirección no se muestra", async () => {
+    await mount({ active: false, recovery: null });
+    expect(text()).not.toContain("Entraste con un código de respaldo");
   });
 });

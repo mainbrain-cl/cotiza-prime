@@ -9,6 +9,9 @@ const USER = {
 };
 const FACTOR_ID = "22222222-2222-4222-8222-222222222222";
 const SET_ID = "33333333-3333-4333-8333-333333333333";
+const CODE_ID = "44444444-4444-4444-8444-444444444444";
+const TENANT_A = "55555555-5555-4555-8555-555555555555";
+const TENANT_B = "66666666-6666-4666-8666-666666666666";
 const IP = "203.0.113.7";
 const PASSWORD = "Contrasena-Muy-Secreta-9";
 const APP_CODE = "123456";
@@ -22,7 +25,11 @@ const ISSUED = {
 const challengeAndVerify = vi.fn();
 const listFactors = vi.fn();
 const tableReads = vi.fn();
-const supabase = { auth: { mfa: { challengeAndVerify, listFactors } }, from: tableReads };
+const signOut = vi.fn();
+const supabase = {
+  auth: { mfa: { challengeAndVerify, listFactors }, signOut },
+  from: tableReads,
+};
 const logAuditEvent = vi.fn();
 const serverLog = vi.fn();
 const requireUser = vi.fn();
@@ -36,12 +43,39 @@ const consumeTotpCode = vi.fn();
 const issueRecoveryCodes = vi.fn();
 const sendRecoveryCodesCreatedNotice = vi.fn();
 const acknowledgeRecoveryCodes = vi.fn();
+const requirePendingSecondStep = vi.fn();
+const hasRecoverySession = vi.fn();
+const activeTenantIdsOf = vi.fn();
+const logTenantLogins = vi.fn();
+const sendRecoveryUsedNotice = vi.fn();
+const removeAllFactors = vi.fn();
+const claimRecoveryCode = vi.fn();
+const completeRecoveryCode = vi.fn();
+const releaseRecoveryCode = vi.fn();
 
+vi.mock("next/navigation", () => ({
+  redirect: (target: string) => {
+    throw new RedirectSignal(target);
+  },
+}));
 vi.mock("@/lib/audit/log", () => ({ logAuditEvent: (e: unknown) => logAuditEvent(e) }));
 vi.mock("@/lib/log/server-log", () => ({
   serverLog: (...args: unknown[]) => serverLog(...args),
 }));
-vi.mock("@/lib/auth/session", () => ({ requireUser: () => requireUser() }));
+vi.mock("@/lib/auth/session", () => ({
+  requireUser: () => requireUser(),
+  requirePendingSecondStep: () => requirePendingSecondStep(),
+  hasRecoverySession: () => hasRecoverySession(),
+}));
+vi.mock("@/lib/auth/login-audit", () => ({
+  activeTenantIdsOf: (...args: unknown[]) => activeTenantIdsOf(...args),
+  logTenantLogins: (...args: unknown[]) => logTenantLogins(...args),
+}));
+// La huella usa la llave de la plataforma, que aquí no existe: se reemplaza por un texto que muestra de qué cuenta y código sale.
+vi.mock("@/lib/auth/recovery-code", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/recovery-code")>()),
+  recoveryCodeHash: (userId: string, normalized: string) => `hash(${userId}|${normalized})`,
+}));
 vi.mock("@/lib/auth/reauth", () => ({
   confirmPassword: (...args: unknown[]) => confirmPassword(...args),
 }));
@@ -62,16 +96,26 @@ vi.mock("@/lib/security/login-rate-limit", () => ({
 }));
 vi.mock("@/lib/security/mfa-account-notice-send", () => ({
   sendRecoveryCodesCreatedNotice: (...args: unknown[]) => sendRecoveryCodesCreatedNotice(...args),
+  sendRecoveryUsedNotice: (...args: unknown[]) => sendRecoveryUsedNotice(...args),
+}));
+vi.mock("@/lib/security/mfa-admin-gateway", () => ({
+  MfaAdminGatewayError: class extends Error {
+    code = "admin_gateway";
+  },
+  removeAllFactors: (...args: unknown[]) => removeAllFactors(...args),
 }));
 vi.mock("@/lib/security/mfa-recovery-gateway", () => ({
   MfaRecoveryGatewayError: class extends Error {
     code = "gateway";
   },
   acknowledgeRecoveryCodes: (...args: unknown[]) => acknowledgeRecoveryCodes(...args),
+  claimRecoveryCode: (...args: unknown[]) => claimRecoveryCode(...args),
+  completeRecoveryCode: (...args: unknown[]) => completeRecoveryCode(...args),
+  releaseRecoveryCode: (...args: unknown[]) => releaseRecoveryCode(...args),
 }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => supabase }));
 
-const { acknowledgeRecoveryCodesAction, regenerateRecoveryCodesAction } =
+const { acknowledgeRecoveryCodesAction, regenerateRecoveryCodesAction, verifyRecoveryCodeAction } =
   await import("./recovery-code-actions");
 
 const IDLE = { status: "idle" } as const;
@@ -104,6 +148,16 @@ beforeEach(() => {
     issueRecoveryCodes,
     sendRecoveryCodesCreatedNotice,
     acknowledgeRecoveryCodes,
+    requirePendingSecondStep,
+    hasRecoverySession,
+    activeTenantIdsOf,
+    logTenantLogins,
+    sendRecoveryUsedNotice,
+    removeAllFactors,
+    claimRecoveryCode,
+    completeRecoveryCode,
+    releaseRecoveryCode,
+    signOut,
   ]) {
     mock.mockReset();
   }
@@ -120,6 +174,17 @@ beforeEach(() => {
   challengeAndVerify.mockResolvedValue({ data: {}, error: null });
   issueRecoveryCodes.mockResolvedValue(ISSUED);
   sendRecoveryCodesCreatedNotice.mockResolvedValue(true);
+  requirePendingSecondStep.mockResolvedValue(USER);
+  hasRecoverySession.mockResolvedValue(false);
+  activeTenantIdsOf.mockResolvedValue([TENANT_A, TENANT_B]);
+  logTenantLogins.mockResolvedValue(undefined);
+  sendRecoveryUsedNotice.mockResolvedValue(true);
+  removeAllFactors.mockResolvedValue(undefined);
+  claimRecoveryCode.mockResolvedValue({ codeId: CODE_ID, factorId: FACTOR_ID });
+  completeRecoveryCode.mockResolvedValue({ email: "ana@ejemplo.test" });
+  releaseRecoveryCode.mockResolvedValue(true);
+  signOut.mockResolvedValue({ error: null });
+  clearSecondStepFailures.mockResolvedValue(undefined);
 });
 
 describe("regenerateRecoveryCodesAction (crear o generar códigos de respaldo)", () => {
@@ -371,5 +436,291 @@ describe("acknowledgeRecoveryCodesAction («Listo»)", () => {
     expect(serverLog).toHaveBeenCalledWith("error", "mfa_recovery_acknowledge_failed", {
       code: "unexpected",
     });
+  });
+});
+
+describe("verifyRecoveryCodeAction (entrar con un código de respaldo)", () => {
+  const NORMALIZED = "7KQM3XHPW2RT";
+  const HASH = `hash(${USER.id}|${NORMALIZED})`;
+  const INVALID_MESSAGE =
+    "Ese código de respaldo no sirve. Revisa cómo lo escribiste; cada código sirve una sola vez.";
+  const UNFINISHED_MESSAGE = "No pudimos terminar. Intenta de nuevo en unos minutos.";
+  const backupForm = (typed: string = BACKUP_CODE) => form({ recoveryCode: typed });
+  const verify = async (data: FormData = backupForm()) =>
+    (await verifyRecoveryCodeAction(IDLE, data)) as FormState;
+  /** La acción termina SIEMPRE con una redirección (éxito): devuelve a dónde. */
+  const redirectedTo = async (data: FormData = backupForm()): Promise<string> => {
+    try {
+      await verifyRecoveryCodeAction(IDLE, data);
+    } catch (error) {
+      if (error instanceof RedirectSignal) return error.target;
+      throw error;
+    }
+    throw new Error("la acción debía redirigir");
+  };
+  const auditActions = () => logAuditEvent.mock.calls.map(([event]) => event.action);
+
+  it("solo funciona con la sesión a medias: sin ella la redirección la hace session.ts y no se consulta nada", async () => {
+    requirePendingSecondStep.mockRejectedValue(new RedirectSignal("/ingresar"));
+    await expect(verifyRecoveryCodeAction(IDLE, backupForm())).rejects.toBeInstanceOf(
+      RedirectSignal,
+    );
+    for (const untouched of [
+      isSecondStepIpLocked,
+      beginSecondStepAttempt,
+      claimRecoveryCode,
+      removeAllFactors,
+      signOut,
+    ]) {
+      expect(untouched).not.toHaveBeenCalled();
+    }
+  });
+
+  it("un código mal escrito (o vacío) da error en su campo y no toca la base ni los contadores", async () => {
+    for (const typed of [
+      "",
+      "   ",
+      "7KQM-3XHP",
+      "7KQM-3XHP-W2RT-ZZZZ",
+      "7KQM-3XHP-W2R!",
+      "U7KQ-3XHP-W2RT",
+    ]) {
+      const state = await verify(backupForm(typed));
+      expect(state.status, typed).toBe("error");
+      expect(state.fieldErrors?.recoveryCode, typed).toBeTruthy();
+    }
+    for (const untouched of [
+      isSecondStepIpLocked,
+      beginSecondStepAttempt,
+      recordSecondStepFailure,
+      claimRecoveryCode,
+      removeAllFactors,
+      logAuditEvent,
+    ]) {
+      expect(untouched).not.toHaveBeenCalled();
+    }
+  });
+
+  it("6 números parecen el código de la aplicación: se le dice, sin contar el intento ni consultar nada", async () => {
+    for (const typed of ["123456", "123 456", "123-456"]) {
+      const state = await verify(backupForm(typed));
+      expect(state.fieldErrors?.recoveryCode).toBe(
+        "Eso parece el código de tu aplicación. Aquí va un código de respaldo de 12 letras y números.",
+      );
+    }
+    expect(beginSecondStepAttempt).not.toHaveBeenCalled();
+    expect(claimRecoveryCode).not.toHaveBeenCalled();
+  });
+
+  it("acepta el código con minúsculas, espacios y guiones: toma la huella de la forma normalizada y de ESA cuenta", async () => {
+    await redirectedTo(backupForm(" 7kqm 3xhp-w2rt "));
+    expect(claimRecoveryCode).toHaveBeenCalledWith(USER.id, HASH);
+  });
+
+  it("con la cuenta bloqueada no se consulta la base: mensaje de bloqueo y auditoría `denied`", async () => {
+    beginSecondStepAttempt.mockResolvedValue("short");
+    const state = await verify();
+    expect(state.message).toMatch(/Demasiados intentos/);
+    expect(claimRecoveryCode).not.toHaveBeenCalled();
+    expect(removeAllFactors).not.toHaveBeenCalled();
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "session.mfa_locked", result: "denied" }),
+    );
+  });
+
+  it("la IP bloqueada también corta antes de consultar la base, sin registrar un intento más de la cuenta", async () => {
+    isSecondStepIpLocked.mockResolvedValue(true);
+    const state = await verify();
+    expect(state.message).toMatch(/Demasiados intentos/);
+    expect(beginSecondStepAttempt).not.toHaveBeenCalled();
+    expect(claimRecoveryCode).not.toHaveBeenCalled();
+  });
+
+  it("el bloqueo de 24 h con la contraseña orienta a recuperarla; por el enlace del correo, no", async () => {
+    beginSecondStepAttempt.mockResolvedValue("day");
+    expect((await verify()).message).toMatch(/¿Olvidaste tu contraseña\?/);
+    hasRecoverySession.mockResolvedValue(true);
+    const viaLink = (await verify()).message ?? "";
+    expect(viaLink).toMatch(/mañana/);
+    expect(viaLink).not.toMatch(/¿Olvidaste tu contraseña\?/);
+  });
+
+  it("un código que no sirve suma al contador de ESE camino, deja auditoría y da un solo mensaje", async () => {
+    claimRecoveryCode.mockResolvedValue(null);
+    const state = await verify();
+    expect(state).toEqual({ status: "error", message: INVALID_MESSAGE });
+    expect(beginSecondStepAttempt).toHaveBeenCalledWith(USER.id, "password");
+    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, "password", IP);
+    expect(logAuditEvent).toHaveBeenCalledWith({
+      action: "session.mfa_failed",
+      result: "failure",
+      actorUserId: USER.id,
+      details: { reason: "recovery_invalid", stage: "sign_in", factorType: "recovery_code" },
+    });
+    // No se quitó nada ni se cerró ninguna sesión.
+    expect(removeAllFactors).not.toHaveBeenCalled();
+    expect(signOut).not.toHaveBeenCalled();
+  });
+
+  it("por el enlace del correo usa los contadores «recovery» y la etapa «recovery»", async () => {
+    hasRecoverySession.mockResolvedValue(true);
+    claimRecoveryCode.mockResolvedValue(null);
+    await verify();
+    expect(beginSecondStepAttempt).toHaveBeenCalledWith(USER.id, "recovery");
+    expect(recordSecondStepFailure).toHaveBeenCalledWith(USER.id, "recovery", IP);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: { reason: "recovery_invalid", stage: "recovery", factorType: "recovery_code" },
+      }),
+    );
+  });
+
+  it("5 intentos que mezclan el código de la aplicación y el de respaldo bloquean el sexto: comparten la ventana del camino", async () => {
+    // El contador de la ventana vive en la base; aquí se simula con uno solo, que es lo que comparten los dos formularios. La
+    // prueba de punta a punta (`e2e/mfa-recovery.spec.ts`) lo comprueba con el código real de la aplicación.
+    let attempts = 0;
+    beginSecondStepAttempt.mockImplementation(async () => (++attempts > 5 ? "short" : "none"));
+    claimRecoveryCode.mockResolvedValue(null);
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      // Los intentos 1, 3 y 5 son del respaldo; los otros dos, de la aplicación: ambos usan `beginSecondStepAttempt`.
+      if (attempt % 2 === 1) await verify();
+      else await beginSecondStepAttempt(USER.id, "password");
+    }
+    expect(beginSecondStepAttempt.mock.calls.every(([, camino]) => camino === "password")).toBe(
+      true,
+    );
+    const sixth = await verify();
+    expect(sixth.message).toMatch(/Demasiados intentos/);
+    expect(claimRecoveryCode).toHaveBeenCalledTimes(3);
+  });
+
+  it("el orden exacto: tomar → quitar factores → cerrar otras sesiones → completar → limpiar → auditoría → correo → redirección", async () => {
+    const target = await redirectedTo();
+    expect(target).toBe("/cuenta/seguridad?aviso=respaldo");
+    const order = [
+      claimRecoveryCode,
+      removeAllFactors,
+      signOut,
+      completeRecoveryCode,
+      clearSecondStepFailures,
+      logAuditEvent,
+      activeTenantIdsOf,
+      logTenantLogins,
+      sendRecoveryUsedNotice,
+    ].map((mock) => mock.mock.invocationCallOrder[0]);
+    expect(order.every((position) => position !== undefined)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(claimRecoveryCode).toHaveBeenCalledWith(USER.id, HASH);
+    expect(removeAllFactors).toHaveBeenCalledWith(USER.id);
+    expect(signOut).toHaveBeenCalledWith({ scope: "others" });
+    expect(completeRecoveryCode).toHaveBeenCalledWith(CODE_ID);
+    expect(clearSecondStepFailures).toHaveBeenCalledWith(USER.id, "password");
+    expect(sendRecoveryUsedNotice).toHaveBeenCalledWith("ana@ejemplo.test");
+    // Nunca se suelta un código que se usó.
+    expect(releaseRecoveryCode).not.toHaveBeenCalled();
+  });
+
+  it("deja `session.mfa_recovery_used` en la plataforma y en cada organización activa, y el ingreso de cada una", async () => {
+    await redirectedTo();
+    const used = logAuditEvent.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.action === "session.mfa_recovery_used");
+    expect(used).toHaveLength(3);
+    expect(used.map((event) => event.tenantId)).toEqual([undefined, TENANT_A, TENANT_B]);
+    for (const event of used) {
+      expect(event).toMatchObject({
+        result: "success",
+        actorUserId: USER.id,
+        details: { stage: "sign_in", otherSessionsClosed: true },
+      });
+    }
+    expect(logTenantLogins).toHaveBeenCalledWith(supabase, USER.id);
+    // Ningún registro lleva el código, su forma normalizada ni su huella.
+    const everything = JSON.stringify([logAuditEvent.mock.calls, serverLog.mock.calls]);
+    for (const secret of [BACKUP_CODE, NORMALIZED, HASH, "7KQM"]) {
+      expect(everything).not.toContain(secret);
+    }
+  });
+
+  it("si falla quitar el factor se SUELTA el código, se avisa, no se cierra ninguna sesión ni se completa", async () => {
+    removeAllFactors.mockRejectedValue(new Error("boom"));
+    const state = await verify();
+    expect(state).toEqual({ status: "error", message: UNFINISHED_MESSAGE });
+    expect(releaseRecoveryCode).toHaveBeenCalledWith(CODE_ID);
+    expect(signOut).not.toHaveBeenCalled();
+    expect(completeRecoveryCode).not.toHaveBeenCalled();
+    expect(sendRecoveryUsedNotice).not.toHaveBeenCalled();
+    expect(auditActions()).toEqual(["session.mfa_failed"]);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: {
+          reason: "recovery_remove_failed",
+          stage: "sign_in",
+          factorType: "recovery_code",
+        },
+      }),
+    );
+    // Quitar el factor falló: no cuenta como un código incorrecto.
+    expect(recordSecondStepFailure).not.toHaveBeenCalled();
+  });
+
+  it("si no se puede ni soltar el código, igual responde el mensaje (el código vence solo a los 2 minutos)", async () => {
+    removeAllFactors.mockRejectedValue(new Error("boom"));
+    releaseRecoveryCode.mockRejectedValue(new Error("boom"));
+    expect(await verify()).toEqual({ status: "error", message: UNFINISHED_MESSAGE });
+  });
+
+  it("si la base falla al tomar el código: mensaje general, sin sumar fallo ni quitar nada", async () => {
+    claimRecoveryCode.mockRejectedValue(new Error("boom"));
+    expect(await verify()).toEqual({ status: "error", message: UNFINISHED_MESSAGE });
+    expect(recordSecondStepFailure).not.toHaveBeenCalled();
+    expect(removeAllFactors).not.toHaveBeenCalled();
+  });
+
+  it("si `complete` dice que el plazo venció, NO rompe: el factor ya se quitó, la persona ya quedó completa y entra", async () => {
+    completeRecoveryCode.mockResolvedValue(null);
+    expect(await redirectedTo()).toBe("/cuenta/seguridad?aviso=respaldo");
+    // El aviso sale igual, al correo de la sesión (la base no entregó uno).
+    expect(sendRecoveryUsedNotice).toHaveBeenCalledWith(USER.email);
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "session.mfa_recovery_used" }),
+    );
+  });
+
+  it("si cerrar las otras sesiones falla, se anota y se sigue (el factor ya no está): la auditoría lo dice", async () => {
+    signOut.mockResolvedValue({ error: { code: "x", status: 500 } });
+    expect(await redirectedTo()).toBe("/cuenta/seguridad?aviso=respaldo");
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "session.mfa_recovery_used",
+        details: { stage: "sign_in", otherSessionsClosed: false },
+      }),
+    );
+  });
+
+  it("el aviso por correo es de MEJOR ESFUERZO: si no sale, igual entra (decisión D5 = A)", async () => {
+    sendRecoveryUsedNotice.mockResolvedValue(false);
+    expect(await redirectedTo()).toBe("/cuenta/seguridad?aviso=respaldo");
+  });
+
+  it("por el enlace del correo: contadores «recovery», etapa «recovery» y lleva a elegir la contraseña nueva", async () => {
+    hasRecoverySession.mockResolvedValue(true);
+    expect(await redirectedTo()).toBe("/restablecer-contrasena");
+    expect(beginSecondStepAttempt).toHaveBeenCalledWith(USER.id, "recovery");
+    expect(clearSecondStepFailures).toHaveBeenCalledWith(USER.id, "recovery");
+    expect(logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "session.mfa_recovery_used",
+        details: { stage: "recovery", otherSessionsClosed: true },
+      }),
+    );
+  });
+
+  it("no usa el código de la aplicación ni la contraseña: no pide contraseña ni consulta factores de Supabase", async () => {
+    await redirectedTo();
+    expect(confirmPassword).not.toHaveBeenCalled();
+    expect(consumeTotpCode).not.toHaveBeenCalled();
+    expect(challengeAndVerify).not.toHaveBeenCalled();
+    expect(listFactors).not.toHaveBeenCalled();
   });
 });

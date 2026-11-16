@@ -69,6 +69,37 @@ export async function auditFailure(userId: string, stage: Stage, reason: string)
   });
 }
 
+/** Etapa para la auditoría de un intento: las de arriba y `recovery` (el camino del enlace del correo con un código de respaldo). */
+export type AttemptStage = Stage | "recovery";
+
+/**
+ * El freno de los intentos, igual para todo lo que escribe un código del segundo paso (el de 6 números y, desde H-004b, el
+ * de respaldo): bloqueo de la IP, tope del día de la cuenta en ese camino y la ventana de 15 minutos, que se REGISTRA aquí
+ * (antes de verificar) para que los envíos en paralelo no pasen del tope. Los dos tipos de código comparten los mismos
+ * contadores de un camino; los caminos entre sí, nunca. Devuelve `null` si pasa, o el estado de error que se muestra.
+ */
+export async function blockedAttemptState(
+  userId: string,
+  clientIp: string | null,
+  stage: AttemptStage,
+  context: SecondStepContext,
+): Promise<FormState | null> {
+  const blocked = (await isSecondStepIpLocked(clientIp))
+    ? "short"
+    : await beginSecondStepAttempt(userId, context);
+  if (blocked === "none") return null;
+  await logAuditEvent({
+    action: "session.mfa_locked",
+    result: "denied",
+    actorUserId: userId,
+    details: { reason: "blocked", stage, factorType: MFA_FACTOR_TYPE },
+  });
+  return {
+    status: "error",
+    message: blocked === "day" ? lockedDayMessageFor(context) : RATE_LIMITED_MESSAGE,
+  };
+}
+
 /**
  * Lo que va ANTES de pedirle la verificación a Supabase: formato del código, bloqueo (de la IP, del día y de la ventana de
  * 15 minutos) y código ya usado. Los intentos de la ventana se REGISTRAN aquí, antes de verificar, para que los envíos en
@@ -87,24 +118,8 @@ export async function checkCodeBeforeVerifying(
   }
   const { code } = parsed.data;
 
-  const blocked = (await isSecondStepIpLocked(clientIp))
-    ? "short"
-    : await beginSecondStepAttempt(userId, context);
-  if (blocked !== "none") {
-    await logAuditEvent({
-      action: "session.mfa_locked",
-      result: "denied",
-      actorUserId: userId,
-      details: { reason: "blocked", stage, factorType: MFA_FACTOR_TYPE },
-    });
-    return {
-      ok: false,
-      state: {
-        status: "error",
-        message: blocked === "day" ? lockedDayMessageFor(context) : RATE_LIMITED_MESSAGE,
-      },
-    };
-  }
+  const blockedState = await blockedAttemptState(userId, clientIp, stage, context);
+  if (blockedState) return { ok: false, state: blockedState };
 
   if (!(await consumeTotpCode(userId, code))) {
     // Un código ya usado NO es un código incorrecto (menor 5 de la revisión de Aarón al PR #44): quien lo escribe en dos

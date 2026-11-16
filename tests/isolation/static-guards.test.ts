@@ -135,6 +135,32 @@ function secondStepLogViolation(call: string): string | null {
   return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
 }
 
+/**
+ * El orden de `verifyRecoveryCodeAction` (H-004b §3.4): sesión a medias → límite de intentos → tomar el código → quitar los
+ * factores → cerrar las otras sesiones → completar → redirigir. Devuelve el motivo si falta algo o está fuera de orden.
+ */
+function recoveryUseOrderViolation(body: string): string | null {
+  const steps = [
+    "requirePendingSecondStep(",
+    "blockedAttemptState(",
+    "claimRecoveryCode(",
+    "removeAllFactors(",
+    ".signOut(",
+    "completeRecoveryCode(",
+    "redirect(",
+  ];
+  let previous = -1;
+  for (const step of steps) {
+    const at = body.indexOf(step);
+    if (at === -1) return `falta ${step}`;
+    if (at < previous) return `${step} va antes de lo que debe`;
+    previous = at;
+  }
+  return /\.signOut\(\s*\{\s*scope:\s*["']others["']/.test(body)
+    ? null
+    : "las otras sesiones se cierran con scope «others»";
+}
+
 /** La API de administración de cuentas de Supabase Auth (con la llave maestra): `auth.admin`, también con espacios o saltos. */
 const AUTH_ADMIN_PATTERN =
   /\bauth\s*(?:\?\.|\.)\s*admin\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]|\{[^{}]*\badmin\b[^{}]*\}\s*=\s*[^;\n]*\bauth\b|\bauth\s*:\s*\{[^{}]*\badmin\b[^{}]*\}/;
@@ -1472,6 +1498,40 @@ describe("guardias estáticas del aislamiento", () => {
     ]) {
       expect(flagged(harmless, "src/lib/auth/second-step-manage-actions.ts"), harmless).toBe(false);
     }
+  });
+
+  it("14l. (H-004b) entrar con un código de respaldo: sesión a medias primero; el código se toma antes de quitar los factores, las otras sesiones se cierran DESPUÉS de quitarlos, y la redirección es lo último; el código ni su huella llegan a un registro", () => {
+    const text = stripComments(read(path.join(ROOT, RECOVERY_CODE_ACTIONS)));
+    const start = text.indexOf("export async function verifyRecoveryCodeAction");
+    expect(start, "falta verifyRecoveryCodeAction").toBeGreaterThan(-1);
+    const body = text.slice(start);
+    expect(recoveryUseOrderViolation(body)).toBeNull();
+    // Sin llave maestra ni métodos de sesión en el archivo: los factores se quitan por la pasarela.
+    expect(
+      /admin-client|createAdminClient|auth\s*\.\s*admin|\.mfa\s*\.\s*unenroll/.test(text),
+    ).toBe(false);
+    // Y la guardia muerde: el orden roto se detecta.
+    const ordered = [
+      "await requirePendingSecondStep();",
+      "await blockedAttemptState(a);",
+      "await claimRecoveryCode(a);",
+      "await removeAllFactors(a);",
+      "await supabase.auth.signOut({ scope: 'others' });",
+      "await completeRecoveryCode(a);",
+      "redirect(b);",
+    ];
+    expect(recoveryUseOrderViolation(ordered.join("\n"))).toBeNull();
+    for (const swap of [
+      [2, 3], // quitar los factores antes de tomar el código
+      [3, 4], // cerrar las otras sesiones antes de quitar el factor
+      [0, 1], // contar el intento antes de pedir la sesión a medias
+      [5, 6], // redirigir antes de completar
+    ]) {
+      const broken = [...ordered];
+      [broken[swap[0]], broken[swap[1]]] = [broken[swap[1]], broken[swap[0]]];
+      expect(recoveryUseOrderViolation(broken.join("\n")), swap.join("↔")).not.toBeNull();
+    }
+    expect(recoveryUseOrderViolation(ordered.slice(1).join("\n"))).not.toBeNull();
   });
 
   it("14g. la guardia 14f detecta de verdad el código del enlace, su huella, la contraseña y el correo; deja pasar un código de error", () => {

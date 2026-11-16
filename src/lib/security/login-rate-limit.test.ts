@@ -470,6 +470,29 @@ describe("código de la verificación en dos pasos (H-004a)", () => {
     );
   });
 
+  it("las acciones de una sesión completa (`manage`, H-004b) usan OTRAS huellas (`|manage`, mismo alcance de la tabla): no comparten tope con ningún otro camino y no hay un contador común", async () => {
+    await beginSecondStepAttempt(USER, "manage");
+    await recordSecondStepFailure(USER, "manage", "203.0.113.7");
+    await clearSecondStepFailures(USER, "manage");
+    await beginSecondStepAttempt(USER, "password");
+    await beginSecondStepAttempt(USER, "recovery");
+    await beginSecondStepAttempt(USER, "enrollment");
+    const keys = calls().map(([, scope, key]) => `${scope}:${key}`);
+    expect(keys).toContain(`mfa_verify_user:mfa_verify_user|${USER}|manage`);
+    expect(keys).toContain(`mfa_verify_user_day:mfa_verify_user_day|${USER}|manage`);
+    const manage = keys.filter((key) => key.endsWith("|manage"));
+    const others = keys.filter((key) => !key.endsWith("|manage"));
+    expect(manage.length).toBeGreaterThan(0);
+    expect(others.length).toBeGreaterThan(0);
+    for (const key of manage) expect(others).not.toContain(key);
+    // Cuatro familias distintas de la ventana de 15 minutos: ingreso, recuperación, activación y gestión.
+    expect(new Set(keys.filter((key) => key.startsWith("mfa_verify_user:"))).size).toBe(4);
+    // Los mismos alcances de la tabla: no hace falta migración.
+    expect(new Set(calls().map(([, scope]) => scope))).toEqual(
+      new Set(["mfa_verify_user_day", "mfa_verify_user", "login_ip"]),
+    );
+  });
+
   it("las claves del código no se mezclan con las de la contraseña (login_email) ni con las del restablecer", async () => {
     await beginSecondStepAttempt(USER, "password");
     await recordLoginFailure("ana@ejemplo.test", null);

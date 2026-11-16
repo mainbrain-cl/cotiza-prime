@@ -654,11 +654,14 @@ export async function recordMfaAnnulMiss(ip: string | null, tokenSha256: string)
 }
 
 /**
- * Qué camino trae a la persona al código: el ingreso con contraseña, el enlace de recuperación del correo, o la ACTIVACIÓN de
+ * Qué camino trae a la persona al código: el ingreso con contraseña, el enlace de recuperación del correo, la ACTIVACIÓN de
  * la verificación (menor 4 de la revisión de Aarón al PR #44: quien tiene la hora del teléfono atrasada y falla al activar no
- * debe quedar bloqueada 24 h para ingresar, ni el aviso hablarle de que alguien tiene su contraseña).
+ * debe quedar bloqueada 24 h para ingresar, ni el aviso hablarle de que alguien tiene su contraseña), o las acciones DENTRO de
+ * una sesión completa (`manage`, H-004b: desactivar la verificación y generar códigos nuevos). Cada camino tiene sus propios
+ * contadores y NUNCA hay uno común a todos: quien solo tiene la contraseña, o solo una sesión, podría gastarlo y dejar a la
+ * dueña sin poder usar un código por otro camino (la corrección A3 de la ronda 1 de H-004a).
  */
-export type SecondStepContext = "password" | "recovery" | "enrollment";
+export type SecondStepContext = "password" | "recovery" | "enrollment" | "manage";
 
 /** Resultado de empezar un intento: pasa, o está bloqueada un rato (`short`) o hasta mañana (`day`). */
 export type SecondStepBlock = "none" | "short" | "day";
@@ -668,12 +671,13 @@ const SECOND_STEP_KEY_SUFFIX: Record<SecondStepContext, string> = {
   password: "",
   recovery: "|recovery",
   enrollment: "|enroll",
+  manage: "|manage",
 };
 
 /**
  * Huella de la cuenta para un contador del código. El camino de recuperación (`<cuenta>|recovery`) y el de la activación
- * (`<cuenta>|enroll`) usan OTRA huella cada uno con el mismo alcance de la tabla: así los fallos de uno no bloquean a los
- * otros. Nunca el correo, la IP ni el código.
+ * (`<cuenta>|enroll`) y las acciones de una sesión completa (`<cuenta>|manage`) usan OTRA huella cada uno con el mismo alcance
+ * de la tabla (sin migración): así los fallos de uno no bloquean a los otros. Nunca el correo, la IP ni el código.
  */
 function secondStepAccountKey(
   scope: "mfa_verify_user" | "mfa_verify_user_day",

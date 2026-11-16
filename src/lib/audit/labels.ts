@@ -22,6 +22,10 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "session.mfa_notice_sent": "Se envió el aviso de la activación de la verificación en dos pasos",
   "session.reauth_failed":
     "No se confirmó la contraseña al pedir una acción de seguridad de la cuenta",
+  "session.mfa_recovery_codes_created": "Creó códigos de respaldo de la verificación en dos pasos",
+  "session.mfa_recovery_used":
+    "Entró con un código de respaldo (se desactivó la verificación en dos pasos)",
+  "session.mfa_disabled": "Desactivó la verificación en dos pasos",
   "member.created": "Se sumó un miembro",
   "member.updated": "Cambió un miembro",
   "member.role_changed": "Se cambió el rol de un miembro",

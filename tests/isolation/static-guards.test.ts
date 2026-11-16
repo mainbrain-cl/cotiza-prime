@@ -1,7 +1,7 @@
 // H-012 · Guardias estáticas: leen el código, sin red. Complementan (no repiten)
 // `src/lib/tenant/guard-coverage.test.ts`, que ya exige `requireActiveTenant` en toda pantalla y
 // acción de servidor. Aquí se vigilan los otros caminos por los que se puede romper el aislamiento.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { APP_ROUTES } from "./registry";
@@ -116,7 +116,8 @@ function namedCalls(text: string, name: string): string[] {
 
 /**
  * H-004a: ¿esta llamada a `serverLog` o `logAuditEvent` lleva el código de 6 números, la clave, el uri, el QR o el correo?
- * H-004b: tampoco la contraseña (ningún identificador que contenga «password» o «contrasena»).
+ * H-004b: tampoco la contraseña (ningún identificador que contenga «password» o «contrasena»), ni los códigos de respaldo
+ * (`codes`, `recoveryCode…`), su forma normalizada ni su huella (identificadores con «normalized», «hash» o «fingerprint»).
  * Sin los textos entre comillas, solo se permite `code:` si su valor viene de un error (`errorCodeOf(error)`, `error.code`) y
  * no puede quedar ningún `code` suelto ni `x.code` que no sea de un error. Devuelve el motivo o `null`.
  */
@@ -128,7 +129,7 @@ function secondStepLogViolation(call: string): string | null {
     .replace(/\bcode:\s*''/g, "")
     .replace(/\b[A-Za-z_]*error[A-Za-z_]*\??\.code\b/gi, "");
   const forbidden =
-    /\.code\b|\bcode\b|\b(otp|totp|secret|uri|qrCode|qr_code|email|checked|parsed)\b|\b\w*(password|contrasena)\w*\b/i.exec(
+    /\.code\b|\bcode\b|\bcodes\b|\b(otp|totp|secret|uri|qrCode|qr_code|email|checked|parsed)\b|\b\w*(password|contrasena|recoveryCode|normalized|hash|fingerprint)\w*\b/i.exec(
       withoutErrorCodes,
     );
   return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
@@ -148,6 +149,15 @@ const SIGN_IN_WITH_PASSWORD_FILES: readonly string[] = [
 ];
 /** La pasarela de los factores (H-118). */
 const MFA_ADMIN_GATEWAY = "src/lib/security/mfa-admin-gateway.ts";
+/** La pasarela de los códigos de respaldo (H-004b): la ÚNICA que llama a las siete funciones `mfa_recovery_*` de la base. */
+const MFA_RECOVERY_GATEWAY = "src/lib/security/mfa-recovery-gateway.ts";
+/** Las siete funciones de la base (`mfa_recovery_codes_replace`, `mfa_recovery_code_claim`…). Ni el propósito de la huella (`"mfa_recovery_code"`) ni los nombres de la auditoría (`session.mfa_recovery_codes_created`) calzan. */
+const MFA_RECOVERY_FUNCTION_PATTERN =
+  /\bmfa_recovery_codes?_(?:replace|claim|complete|release|acknowledge|status|revoke)\b/;
+/** Y la tabla: nadie la lee ni la escribe directo (ni siquiera la pasarela: todo pasa por las funciones). */
+const MFA_RECOVERY_TABLE_PATTERN = /\.from\(\s*["'`]mfa_recovery_codes["'`]/;
+/** Las acciones que desactivan el segundo paso o crean códigos con la sesión completa (se crean en la etapa C de H-004b). */
+const SECOND_STEP_MANAGE_ACTIONS = "src/lib/auth/second-step-manage-actions.ts";
 /** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
 const AUTH_ADMIN_GATEWAYS: readonly string[] = [MFA_ADMIN_GATEWAY];
 
@@ -1050,10 +1060,14 @@ describe("guardias estáticas del aislamiento", () => {
     expect(
       only(
         /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/,
-        // También la pasarela de administración, que lista y borra factores con la llave maestra (`auth.admin.mfa`).
-        ["src/lib/auth/second-step-actions.ts", MFA_ADMIN_GATEWAY],
+        // También la pasarela de administración, que lista y borra factores con la llave maestra (`auth.admin.mfa`), y
+        // (H-004b) las acciones de desactivar y de crear códigos con la sesión completa: `mfa.unenroll` y `challengeAndVerify`.
+        ["src/lib/auth/second-step-actions.ts", MFA_ADMIN_GATEWAY, SECOND_STEP_MANAGE_ACTIONS],
       ),
     ).toEqual([]);
+    // H-004b: las siete funciones de los códigos de respaldo, solo desde su pasarela; la tabla, desde ninguna parte.
+    expect(only(MFA_RECOVERY_FUNCTION_PATTERN, MFA_RECOVERY_GATEWAY)).toEqual([]);
+    expect(only(MFA_RECOVERY_TABLE_PATTERN, [])).toEqual([]);
     // La API de administración de cuentas (`auth.admin.*`, con la llave maestra): solo en las pasarelas. Hoy hay una (H-118);
     // la de H-116 se suma a esta lista cuando exista. `auth.admin.mfa` solo vive en la de los factores.
     expect(only(AUTH_ADMIN_PATTERN, AUTH_ADMIN_GATEWAYS)).toEqual([]);
@@ -1073,7 +1087,21 @@ describe("guardias estáticas del aislamiento", () => {
       "src/lib/security/login-rate-limit.ts",
       // H-004b: pedir la contraseña de nuevo (la contraseña ni el correo van a un registro).
       "src/lib/auth/reauth.ts",
-    ];
+      // H-004b: los códigos de respaldo (ni el código, ni su forma normalizada, ni su huella, ni el juego).
+      "src/lib/auth/recovery-code.ts",
+      MFA_RECOVERY_GATEWAY,
+      // Las acciones de los pasos 4 a 6 de H-004b: la guardia las cubre apenas existen (hoy no existen todas).
+      "src/lib/auth/recovery-code-actions.ts",
+      SECOND_STEP_MANAGE_ACTIONS,
+    ].filter((file) => existsSync(path.join(ROOT, file)));
+    // Lo que ya existe tiene que estar en la lista: ningún archivo de los códigos de respaldo queda sin vigilar.
+    for (const required of [
+      "src/lib/auth/reauth.ts",
+      "src/lib/auth/recovery-code.ts",
+      MFA_RECOVERY_GATEWAY,
+    ]) {
+      expect(files, required).toContain(required);
+    }
     let found = 0;
     for (const file of files) {
       const text = stripComments(read(path.join(ROOT, file)));
@@ -1105,6 +1133,16 @@ describe("guardias estáticas del aislamiento", () => {
       "logAuditEvent({ details: { reason: 'wrong_password', value: passwordFormat.data.password } })",
       "logAuditEvent({ details: { contrasena } })",
       "serverLog('warn', 'reauth', { code: 'x', pw: parsed.password })",
+      // H-004b: los códigos de respaldo, su forma normalizada y su huella
+      "serverLog('warn', 'recovery', { codes })",
+      "logAuditEvent({ details: { reason: 'x', codes: result.codes } })",
+      "serverLog('warn', 'recovery', { recoveryCode })",
+      "logAuditEvent({ details: { value: recoveryCodeInput } })",
+      "serverLog('warn', 'recovery', { normalized })",
+      "logAuditEvent({ details: { value: normalizedCode } })",
+      "serverLog('warn', 'recovery', { hash: recoveryCodeHash(user.id, normalized) })",
+      "logAuditEvent({ details: { codeHash } })",
+      "serverLog('warn', 'recovery', { fingerprint })",
     ];
     for (const call of bad) expect(secondStepLogViolation(call), call).not.toBeNull();
     const good = [
@@ -1114,6 +1152,11 @@ describe("guardias estáticas del aislamiento", () => {
       // H-004b: el motivo y el para qué (textos fijos o variables que no son la contraseña) y un código fijo
       "logAuditEvent({ action: 'session.reauth_failed', result: 'failure', actorUserId: user.id, details: { reason, purpose } })",
       "serverLog('warn', 'reauth_sign_out_failed', { code: 'unexpected' })",
+      // H-004b: lo que sí se registra de los códigos de respaldo: motivos, etapas y códigos de error
+      "logAuditEvent({ action: 'session.mfa_recovery_used', result: 'success', actorUserId: user.id, details: { stage: 'sign_in' } })",
+      "logAuditEvent({ action: 'session.mfa_disabled', result: 'success', actorUserId: user.id, details: { via: 'recovery_code' } })",
+      "logAuditEvent({ action: 'session.mfa_recovery_codes_created', result: 'success', actorUserId: user.id, details: { stage: 'regenerate' } })",
+      "serverLog('error', 'mfa_recovery_claim_failed', { code: error instanceof MfaRecoveryGatewayError ? error.code : 'unexpected' })",
     ];
     for (const call of good) expect(secondStepLogViolation(call), call).toBeNull();
     // Y encuentra las llamadas (con paréntesis anidados) de las dos funciones.
@@ -1345,6 +1388,72 @@ describe("guardias estáticas del aislamiento", () => {
     expect(SIGN_IN_WITH_PASSWORD_PATTERN.test("await client.auth.signInWithOtp({ email })")).toBe(
       false,
     );
+  });
+
+  it("14k. (H-004b) los códigos de respaldo: solo la pasarela llama a las siete funciones de la base, nadie lee ni escribe la tabla directo, y la pasarela y las piezas de los códigos no registran ni escriben en la consola", () => {
+    // La pasarela existe, nombra las siete funciones y ningún otro archivo de la aplicación nombra ninguna.
+    const gateway = stripComments(read(path.join(ROOT, MFA_RECOVERY_GATEWAY)));
+    const functionNames = [
+      "mfa_recovery_codes_replace",
+      "mfa_recovery_code_claim",
+      "mfa_recovery_code_complete",
+      "mfa_recovery_code_release",
+      "mfa_recovery_codes_acknowledge",
+      "mfa_recovery_codes_status",
+      "mfa_recovery_codes_revoke",
+    ];
+    for (const name of functionNames) {
+      expect(gateway, name).toMatch(new RegExp(`\\.rpc\\(\\s*"${name}"`));
+    }
+    const offenders = sourceFiles
+      .filter((file) => MFA_RECOVERY_FUNCTION_PATTERN.test(stripComments(read(file))))
+      .map(rel)
+      .filter((file) => file !== MFA_RECOVERY_GATEWAY);
+    expect(offenders).toEqual([]);
+    // La pasarela usa la llave maestra (es su razón de ser) pero no la API de cuentas ni los factores: eso es de la otra pasarela.
+    expect(gateway).toMatch(/createAdminClient/);
+    expect(AUTH_ADMIN_PATTERN.test(gateway)).toBe(false);
+    expect(/\.mfa\s*\./.test(gateway)).toBe(false);
+    expect(MFA_RECOVERY_TABLE_PATTERN.test(gateway)).toBe(false);
+    // La huella: solo se calcula en `recovery-code.ts`, con la llave de búsqueda (nada de comparar a mano).
+    const pieces = stripComments(read(path.join(ROOT, "src/lib/auth/recovery-code.ts")));
+    expect(pieces).toMatch(/searchHash\(/);
+    expect(pieces).toMatch(/from "node:crypto"/);
+    expect(/Math\.random/.test(pieces)).toBe(false);
+    for (const file of ["src/lib/auth/recovery-code.ts", MFA_RECOVERY_GATEWAY]) {
+      const text = stripComments(read(path.join(ROOT, file)));
+      expect(/console\./.test(text), `${file}: escribe en la consola`).toBe(false);
+      expect(/\bserverLog\(|\blogAuditEvent\(/.test(text), `${file}: no debe registrar nada`).toBe(
+        false,
+      );
+    }
+    // Y la guardia muerde: cada forma de llamar a una función, o de leer la tabla, fuera de la pasarela se detecta; las demás no.
+    const flagged = (text: string, file: string) =>
+      (MFA_RECOVERY_FUNCTION_PATTERN.test(stripComments(text)) && file !== MFA_RECOVERY_GATEWAY) ||
+      MFA_RECOVERY_TABLE_PATTERN.test(stripComments(text));
+    for (const violation of [
+      'await admin.rpc("mfa_recovery_code_claim", { p_user_id: id, p_code_hash: hash })',
+      "await admin.rpc('mfa_recovery_codes_replace', args)",
+      "await admin.rpc(`mfa_recovery_codes_status`, { p_user_id })",
+      'const name = "mfa_recovery_codes_revoke"; await admin.rpc(name, args)',
+      'await admin.from("mfa_recovery_codes").select("code_hash")',
+      "await admin.from('mfa_recovery_codes').delete().eq('user_id', id)",
+    ]) {
+      expect(flagged(violation, "src/lib/auth/second-step-manage-actions.ts"), violation).toBe(
+        true,
+      );
+      expect(flagged(violation, MFA_RECOVERY_GATEWAY), `${violation} en la pasarela`).toBe(
+        violation.includes(".from("),
+      );
+    }
+    for (const harmless of [
+      'searchHash("mfa_recovery_code", PLATFORM_TENANT_ID, value)',
+      "// admin.rpc('mfa_recovery_code_claim', args)",
+      'const table = "mfa_recovery_codes"',
+      "await claimRecoveryCode(user.id, hash)",
+    ]) {
+      expect(flagged(harmless, "src/lib/auth/second-step-manage-actions.ts"), harmless).toBe(false);
+    }
   });
 
   it("14g. la guardia 14f detecta de verdad el código del enlace, su huella, la contraseña y el correo; deja pasar un código de error", () => {

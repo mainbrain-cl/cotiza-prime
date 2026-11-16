@@ -1,6 +1,6 @@
 # 015 · Vulnerabilidades sin corrección en herramientas de desarrollo
 
-**Estado:** aceptada, **pendiente de ratificación de Aarón** · **Fecha:** 2026-10-05 ·
+**Estado:** ⚠️ **superada el 2026-11-12** (Aarón, comentarios del issue #11): ya no hay vulnerabilidades altas ni críticas en ninguna dependencia, así que la regla completa de `SEGURIDAD.md` §8 y `STACK.md` §8 vuelve a aplicar a todo, y el CI bloquea también las de las herramientas de desarrollo (`npm audit --audit-level=high`). El texto de abajo se conserva como historia. · **Fecha:** 2026-10-05 ·
 **Relaja:** `SEGURIDAD.md` §8 y `STACK.md` §8 ("no se integra con vulnerabilidades de severidad alta
 o crítica abiertas"), solo para herramientas de desarrollo.
 
@@ -61,3 +61,8 @@ de usuarios), esta decisión deja de aplicar y se revisa.
   paquetes nuevos como `cn` no deben aparecer en `package.json` sin verificar su licencia).
 - La regla de esta decisión sigue vigente por si vuelve a aparecer una falla sin corrección en una
   herramienta de desarrollo.
+
+## Superada el 2026-11-12
+
+- Aarón decidió endurecer el CI a `--audit-level=high` para todas las dependencias y marcar esta decisión como superada. El motivo de fondo ya había desaparecido: tras el PR #2 y la salida del paquete `shadcn`, `npm audit` no reporta altas ni críticas (2026-11-16: 25 de severidad moderada, ninguna alta ni crítica; las moderadas no bloquean).
+- La regla de cada actualización de dependencias sigue: si vuelve a aparecer una falla alta o crítica sin corrección en una herramienta de desarrollo, se registra una decisión nueva y no se relaja el CI en silencio.

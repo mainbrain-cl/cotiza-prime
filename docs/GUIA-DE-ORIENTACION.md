@@ -38,7 +38,7 @@ Tiempos aproximados. Los marcados ★ son los que realmente hace falta leer ente
 | 6 | `docs/sprints/001-base-segura.md` | 10 min | La tabla de los 12 sprints y por qué van en ese orden |
 | 7 | `docs/arquitectura/modelo-datos.md` | 40 min | **El documento técnico más importante**: cómo se separan las organizaciones, las tablas, el cifrado, la numeración. Léelo antes de tocar la base de datos |
 | 8 | `docs/DISENO.md` | 15 min | Colores, tipografía, vidrio, movimiento y las librerías aprobadas |
-| 9 | `docs/decisiones/` (19 fichas) | consulta | Cada decisión con su porqué. Las 013 (cómo se trabaja), 015 (vulnerabilidades en herramientas), 017 (enlace del cliente), 018 (React Bits) y 019 (anti-robot) son las que más se citan |
+| 9 | `docs/decisiones/` (19 fichas) | consulta | Cada decisión con su porqué. Las 013 (cómo se trabaja), 015 (vulnerabilidades en herramientas; superada el 2026-11-12), 017 (enlace del cliente), 018 (React Bits) y 019 (anti-robot) son las que más se citan |
 | 10 | `docs/arquitectura/` (otros) | consulta | Un plan por sprint complejo: `cotizaciones-y-calculo.md`, `sprint-3-envio-y-enlace.md`, `sprint-4-formulario-publico.md`, `h-012-aislamiento.md` |
 
 **Dos ideas para no perderse:** `CLAUDE.md` y `TRASPASO.md` dicen *dónde estamos*; `PROYECTO.md` dice

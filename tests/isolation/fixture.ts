@@ -97,6 +97,10 @@ export interface OrgData {
   snippets: SnippetsData | null;
   /** La regla de aprobación (H-040), cambiada por la dueña con su pase (A y B; C no la cambia). */
   approval: ApprovalData | null;
+  /** El tope de descuento de quien vende (H-041, centésimas de punto): A y C no lo fijan (`null`); el de B es el testigo numérico. */
+  maxDiscountBp: number | null;
+  /** Un servicio de catálogo con el precio BLOQUEADO (H-041), puesto por la dueña con su pase (solo B). */
+  lockedCatalogId: string | null;
   /** La fila de `members` de la dueña (H-010): sirve para atacar y abrir la ficha de un miembro (`/equipo/[memberId]`). */
   ownerMemberId: string;
 }
@@ -285,6 +289,8 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
       invitation: null,
       snippets: null,
       approval: null,
+      maxDiscountBp: null,
+      lockedCatalogId: null,
       ownerMemberId: (
         await db.query<{ id: string }>(
           "select id from public.members where tenant_id = $1 and user_id = $2",
@@ -490,6 +496,9 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
   for (const key of ["A", "B"] as const) {
     orgs[key].approval = await buildApprovalData(orgs[key], personas[owners[key]], key);
   }
+  // El tope de descuento de B y un servicio suyo con el precio bloqueado (H-041): de lo último, para no estorbar lo que la fixture
+  // envía con `pg` antes (ya pasó por la regla con el tope vacío).
+  await buildPriceLockData(orgs.B, personas.beto);
   // C: un cliente, y luego se archiva
   {
     const id = randomUUID();
@@ -595,6 +604,30 @@ async function buildSnippetsData(
     conditionsName,
     conditionsBody,
   };
+}
+
+/** El tope de descuento que fija la fixture en B (4.321 = 43,21 %): número poco común, que nunca debe aparecer en una respuesta a A. */
+export const B_MAX_DISCOUNT_BP = 4_321;
+
+async function buildPriceLockData(data: OrgData, owner: Persona): Promise<void> {
+  const token = owner.session.accessToken;
+  const result = await mustOk<{ changed: boolean; max_discount_bp: number | null }>(
+    rpc(token, "set_quote_max_discount", { p_max_bp: B_MAX_DISCOUNT_BP }, org(data.tenantId)),
+    "set_quote_max_discount B",
+  );
+  if (!result.changed || result.max_discount_bp !== B_MAX_DISCOUNT_BP)
+    throw new Error("Fixture: el tope de descuento de B no se fijó");
+  // Se bloquea el primer servicio de B (el de la cotización de la fixture); el segundo queda libre, para comparar errores.
+  await mustOk(
+    rest(token, `catalog_items?id=eq.${data.catalogIds[0]}`, {
+      method: "PATCH",
+      headers: org(data.tenantId),
+      body: { price_locked: true },
+    }),
+    "bloquear el precio de un servicio de B",
+  );
+  data.maxDiscountBp = B_MAX_DISCOUNT_BP;
+  data.lockedCatalogId = data.catalogIds[0];
 }
 
 /** Umbrales de monto de la regla de A y de B: números distintos y reconocibles (el de B es el canario de la regla). */

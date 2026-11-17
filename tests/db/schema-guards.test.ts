@@ -83,7 +83,6 @@ const FROZEN_HAS_ROLE_FUNCTIONS = [
   "public.restore_intake_request",
   "public.revoke_quote_links",
   "public.save_intake_form",
-  "public.save_quote_draft",
   "public.save_tenant_brand",
   "public.set_intake_form_status",
   "public.set_numbering",

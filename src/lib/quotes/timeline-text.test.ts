@@ -25,6 +25,17 @@ describe("texto de la línea de tiempo", () => {
     );
   });
 
+  it("un precio bloqueado que alguien con permiso cambió dice la línea y de cuánto a cuánto (H-041)", () => {
+    expect(
+      describeQuoteEvent("locked_price_overridden", {
+        count: 1,
+        lines: [{ position: 2, catalog_item_id: "x", old_price_clp: 10_000, new_price_clp: 8_000 }],
+      }),
+    ).toBe("Se cambió un precio bloqueado (línea 2: $10.000 → $8.000)");
+    expect(describeQuoteEvent("locked_price_overridden")).toBe("Se cambió un precio bloqueado");
+    expect(describeQuoteEvent("locked_price_overridden")).not.toBe(UNKNOWN_EVENT_TEXT);
+  });
+
   it("un evento desconocido no rompe la pantalla", () => {
     expect(describeQuoteEvent("algo_nuevo")).toBe(UNKNOWN_EVENT_TEXT);
   });

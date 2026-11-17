@@ -1,7 +1,7 @@
 ---
 document_id: CP-ARQ-H041
 title: H-041 — Bloquear precios y poner topes de descuento
-status: diseño del planificador (Opus), 2026-11-17, sobre `main` en `30a2a72` (54 migraciones). Sin construir
+status: diseño del planificador (Opus), 2026-11-17, sobre `main` en `30a2a72` (54 migraciones). Etapa A (base de datos) y etapa B (pantallas) construidas el 2026-11-17, sin mezclar
 ---
 
 # H-041 · Bloquear precios y poner topes de descuento
@@ -140,3 +140,44 @@ Construida el 2026-11-17 sobre `main` en `30a2a72`, rama `feat/h-041-precios-blo
 ### Para la etapa B
 
 `mapSaveError` y `prepareErrorMessage` deben reconocer `line_rules_invalid` (el mensaje exacto es `line_rules_invalid: <lista>` con código `CP422`; `parseLineRulesError` ya lo lee); `quotable_catalog_items` (H-042) y el editor deben traer `price_locked` desde `catalog_items` (el candado NO está en `quote_items`) y `max_discount_bp` desde `tenants`; el evento nuevo se lee con `data.lines[].{position, old_price_clp, new_price_clp}` (`old_price_clp` puede ser `null`); la etiqueta de actividad es `quote.locked_price_overridden`. `lineRuleFieldErrors` ya devuelve las llaves del editor (`items.i.price`, `items.i.discount`, `globalDiscount`, `items.i.name`, `form`).
+
+## Registro de construcción — etapa B (pantallas y acciones de servidor)
+
+Construida el 2026-11-17 sobre la etapa A, misma rama. 🟢 PRUEBAS (Supabase local). No toca migraciones ni la base. **Qué entra:** casilla «Bloquear el precio» y candado en el catálogo; tarjeta «Descuento máximo de los Comerciales»; editor de cotizaciones con candado, «Máximo 10 %» y errores por línea; bloqueo de `/enviar`; línea de tiempo y registro de actividad; pruebas unitarias y e2e; documentos.
+
+### Archivos
+
+- **Catálogo:** `catalog-fields.tsx` (casilla), `[itemId]/edit-forms.tsx` y `[itemId]/page.tsx` (`priceLocked` en la ficha), `page.tsx` (ícono `Lock` con texto `sr-only` junto al precio, tarjeta del tope arriba de la lista), `discount-cap-form.tsx` (nuevo), `src/lib/catalog/schemas.ts` (`priceLocked`: `""` o `"1"`, cualquier otro valor se rechaza), `actions.ts` (manda `price_locked`), `discount-cap-actions.ts` y `discount-cap-messages.ts` (nuevos; `saveDiscountCapAction(tenantId, bp|null)` llama a `set_quote_max_discount` con `requirePermission(…, 'catalog.manage')` ANTES de tocar la base).
+- **Reglas en lo puro:** `src/lib/quotes/discount-cap.ts` (leer el texto del tope, frase en vivo, «Máximo 10 %»), `line-rules-block.ts` (el bloqueo de `/enviar` y el texto del error de la base), `line-rules-queries.ts` (lee el tope y los candados de HOY con el pase de la persona; `null` si falla), `save-error.ts` (todo el mapa de errores de `save_quote_draft`, ahora puro y probado), `send/prepare-error.ts` (idem para `prepare_quote_send`), `locked-price-text.ts` (la frase del evento).
+- **Editor:** `editor-model.ts` (`EditorLine.priceLocked`, `EditorContext.rules`, `catalogPriceToRestore`, `evaluateEditor` suma `lineRuleIssues`), `catalog-source.ts` y `convert-lines.ts`/`convert-model.ts` (`priceLocked` desde `catalog_items`), `queries.ts` (`lockedCatalogIds`: el candado se lee del catálogo de hoy, no de la línea), `page.tsx` (pasa `rules`), `quote-editor.tsx`, `use-quote-saver.ts` (`failedKey`).
+- **Otros:** `send/actions.ts` (usa `prepare-error.ts`; el rechazo por reglas de precio ya no se registra como advertencia del servidor), `enviar/page.tsx`, `timeline-text.ts`, `src/lib/audit/labels.ts`, comentario de `matrix.ts` (sin acciones nuevas).
+
+### Desviaciones y decisiones de construcción
+
+1. **Dos funciones sacadas de los archivos `use server`:** `mapSaveError` y `prepareErrorMessage` eran privadas de archivos `use server`, que solo pueden exportar funciones asíncronas: no se podían probar. `mapSaveRpcError` (pura, devuelve `{result, log}`) vive en `save-error.ts` y `prepareErrorMessage` + `isExpectedPrepareError` en `send/prepare-error.ts`; las acciones solo registran y devuelven. Los mensajes y los códigos no cambiaron (salvo lo de H-041).
+2. **El error por línea del servidor vale mientras no se cambie nada.** El guardado del editor (`useQuoteSaver`) recuerda la clave del contenido que el servidor rechazó (`failedKey`); los errores por campo se muestran solo si el contenido actual es el mismo. La clave `form` no se repite (ya sale como aviso del guardado). Mezcla: `{...errores del servidor, ...errores de la pantalla}`.
+3. **Con un error de reglas la pantalla igual muestra los totales** (`evaluateEditor` devuelve `totals` y `content: null`): se ve cuánto sale, pero no se puede guardar.
+4. **«Mejora de uso anotada» (CLAUDE.md): ya existía** y no se duplicó: el aviso «Bajo el precio de catálogo (…): cuenta como descuento al enviar» (`priceBelowCatalog`, `quote-editor.tsx`) y la ayuda «Elige un tipo de descuento para escribir un valor.» bajo el campo del descuento apagado. Con candado, el Comercial no ve el primero (su precio no se puede bajar); el Dueño y el Administrador sí.
+5. **El bloqueo de `/enviar` usa el catálogo de HOY** (como la base): `loadMaxDiscountBp` y `loadLockedCatalogIds` se leen con el pase de la persona; si alguna falla se dice «No pudimos revisar los precios y descuentos de esta cotización» y no se deja enviar. Quien se salta la regla (`catalog.price_lock.override`) no lee nada y nunca queda bloqueado. Va ANTES del bloqueo de aprobación, igual que los disparadores. Si la base rechaza el envío con `line_rules_invalid`, `prepareErrorMessage` lee la lista y dice qué líneas (sin la cifra del tope, que no viaja en el error).
+6. **«Usar el precio del catálogo» vuelve al precio que la LÍNEA congeló** (el que compara la regla), no al de hoy del catálogo: si el catálogo cambió después de agregar la línea, la línea vale lo que costaba al agregarse (decisión 7 de la etapa A). El botón solo aparece si el precio escrito es otro.
+7. **`lineFromSaved(row, inactive, priceLocked = false)`:** tercer argumento opcional (los tests y otros usos no cambian); una línea libre nunca tiene candado.
+8. **La tarjeta del tope va en la lista del catálogo, no en Configuración:** es lo que el diseño pedía («catálogo») y el Comercial la puede leer (el tope es público dentro de la organización). Quien no maneja el catálogo la ve en solo lectura, sin botón.
+9. **La prueba e2e usa una organización propia por corrida** (Ana Dueña y Carla Comercial ficticias, creadas en la prueba, con el servicio bloqueado creado por la interfaz) en vez de la semilla `ana@ejemplo.test` / `carla@ejemplo.test`: así no deja el tope ni candados en Negocio Demo 1 y no choca con otros e2e. `roles.spec.ts` (proyecto `isolation`) gana dos controles: «Guardar el descuento máximo» y la casilla «Bloquear el precio», solo para Dueño y Administrador.
+10. **Los textos nuevos de usuario no tienen jerga:** «Precio bloqueado por tu organización», «Usar el precio del catálogo ($10.000)», «Máximo 10 %», «Tu organización no permite descuentos», «Tu organización cambió sus reglas de precio. Recarga para ver las vigentes.» (CP422 de reglas), «Se cambió un precio bloqueado (línea 2: $10.000 → $8.000)» y, en el registro de actividad, «Se cambió un precio bloqueado en una cotización» con «Cambió: línea 2: $10.000 → $8.000».
+
+### Hallazgos
+
+- **Línea nueva con precio distinto al de catálogo:** el evento dice «línea N: agregada a $X» (la etapa A guarda `old_price_clp = null`): se probó con el texto y queda en la línea de tiempo como tal.
+- **El «Guardar cotización» del Dueño con un precio bloqueado cambiado deja UN evento por guardado con cambio real** (cada guardado intermedio con otro precio suma un evento: el guardado automático de H-072 lo tendrá que tener en cuenta, ya anotado en «Sin verificar»).
+- **`SaveQuoteResult` ya no se define en `actions.ts`:** vive en `save-error.ts` y `actions.ts` lo reexporta como tipo (el editor y el hook lo importan de ahí sin cambios).
+- **Sin fallos en `line-rules.ts`:** no se tocó.
+
+### Verificación (2026-11-17, local, base reconstruida con `supabase db reset` + `npm run db:seed` antes de `test:db`)
+
+`npx tsc --noEmit`, `npm run lint` y `prettier --check` de lo tocado: limpios. `npm test`: 2.972 pasan (1 omitida, 185 archivos; eran 2.837 tras la etapa A). `npm run test:db`: 1.442 de 1.442 (65 archivos). `npm run test:isolation`: 1.423 pasan (3 pendientes, 24 archivos). e2e con la app compilada (`E2E_PROD=1`, `--workers=1`): `price-locks.spec.ts` 7 de 7; proyecto `chromium` con `catalog`, `catalog-edit`, `quotes`, `quote-send`, `quote-pdf`, `approval-rules`, `audit-log`, `intake-convert` y `price-locks`: 42 de 42; proyecto `isolation` completo (`isolation.spec.ts` y `roles.spec.ts`, con los controles nuevos): 48 de 48. **Sin correr:** `test:db:rollbacks` (no se tocaron migraciones) ni el `chromium` completo (lo corre quien integra). **No probado:** iPhone real, Firefox, Safari ni lector de pantalla. La base local queda reconstruida con la semilla.
+
+### Para quien integre (puntos a confirmar con Aarón)
+
+- **Supuesto por confirmar:** que el Dueño y el Administrador sigan sin tope de descuento (aquí no lo tienen); si se quisiera un tope para ellos, es otra regla.
+- **La tarjeta del tope vive en el Catálogo** (arriba de la lista). Si Aarón la prefiere en Configuración, es mover un componente.
+- **El hueco de la pregunta 18 sigue abierto** (líneas libres, renombrar una línea de catálogo, bajar la cantidad): H-041 no lo cierra; ver `sprint-5-h-040-aprobaciones.md` §12.

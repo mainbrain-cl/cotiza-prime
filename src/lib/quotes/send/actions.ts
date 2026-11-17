@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { encryptPii } from "@/lib/crypto/pii";
 import { searchHash } from "@/lib/crypto/search-hash";
-import { approvalPrepareError } from "@/lib/approvals/send-block";
 import { getCustomer } from "@/lib/customers/queries";
 import { BASIC_FORMAT_ERROR_MESSAGES, parseBasicFormat } from "@/lib/email/basic-format";
 import { buildQuoteEmail, MAX_PDF_BYTES } from "@/lib/email/quote-email";
@@ -21,6 +20,22 @@ import { quotePdfFileName } from "@/lib/pdf/file-name";
 import { loadQuoteDocumentData } from "@/lib/pdf/quote-document-data";
 import { renderQuotePdf } from "@/lib/pdf/render";
 import { canRevokeLinks, REVOCABLE_STATUSES } from "@/lib/quotes/link-rules";
+import {
+  MSG_ANONYMIZED,
+  MSG_CHANGED,
+  MSG_FORBIDDEN_SEND,
+  MSG_NO_LINES,
+  MSG_NOT_DRAFT,
+  MSG_NOT_FOUND,
+  MSG_UNEXPECTED,
+  prepareErrorMessage,
+  SQLSTATE_CONFLICT,
+  SQLSTATE_FORBIDDEN,
+  SQLSTATE_INVALID,
+  SQLSTATE_NOT_ALLOWED,
+  SQLSTATE_NOT_FOUND,
+  isExpectedPrepareError,
+} from "@/lib/quotes/send/prepare-error";
 import { getQuote } from "@/lib/quotes/queries";
 import {
   consumePdfQuota,
@@ -61,26 +76,12 @@ export type SendQuoteResult =
 
 const SECONDS_PER_MINUTE = 60;
 
-const SQLSTATE_FORBIDDEN = "42501";
-const SQLSTATE_NOT_FOUND = "CP404";
-const SQLSTATE_CONFLICT = "CP409";
-const SQLSTATE_INVALID = "CP422";
-const SQLSTATE_NOT_ALLOWED = "CP423";
 const SQLSTATE_LIMIT = "CP429";
 
-const MSG_NOT_FOUND = "No encontramos esta cotización.";
-const MSG_FORBIDDEN_SEND = "Solo quien creó esta cotización puede enviarla.";
-const MSG_NOT_DRAFT =
-  "Esta cotización ya no está en borrador, así que no se puede enviar de nuevo.";
 const MSG_NO_EMAIL =
   "Este cliente no tiene correo. Agrégalo en la ficha del cliente para poder enviarle la cotización.";
 const MSG_UNREADABLE_CUSTOMER =
   "No pudimos leer los datos del cliente. Revisa su ficha e inténtalo de nuevo.";
-const MSG_NO_LINES = "Agrega al menos una línea a la cotización antes de enviarla.";
-const MSG_ANONYMIZED = "Este cliente ya no está disponible. Elige otro en la cotización.";
-const MSG_VALIDITY_PAST = "La vigencia de la cotización ya pasó. Cambia la fecha y guarda.";
-const MSG_CHANGED = "La cotización cambió mientras la enviabas. Recarga la página y revísala.";
-const MSG_IN_PROGRESS_OTHER = "Esta cotización ya se está enviando. Espera unos segundos.";
 // El correo no salió. Se distingue "la dirección no sirve" (se arregla en la ficha del cliente) de
 // "problema nuestro" (se arregla esperando), para no mandar a nadie a revisar lo que no falla.
 const MSG_FAILED_ADDRESS =
@@ -114,7 +115,6 @@ const MSG_SEND_QUOTA = `Hiciste muchos envíos en poco tiempo. Espera ${SEND_QUO
 const MSG_PDF_QUOTA = `Pediste muchos PDF en poco tiempo. No se envió nada: espera ${PDF_LOCK_SECONDS / SECONDS_PER_MINUTE} minuto e inténtalo de nuevo.`;
 const MSG_RESEND_PREVIOUS_FAILED =
   "El intento anterior de este reenvío no salió. No se envió nada: presiona «Reenviar al cliente» otra vez.";
-const MSG_UNEXPECTED = "No pudimos enviar la cotización. Intenta de nuevo en unos minutos.";
 const MSG_EMAIL_NOT_CONFIGURED =
   "El envío de correos no está configurado todavía. Avisa al equipo de Cotiza Prime.";
 const MSG_PDF_FAILED =
@@ -138,29 +138,6 @@ const failure = (message: string, fieldErrors?: Record<string, string>): SendQuo
 function revalidateQuote(tenantId: string, quoteId: string) {
   revalidatePath(tenantPath(tenantId, "cotizaciones"));
   revalidatePath(tenantPath(tenantId, `cotizaciones/${quoteId}`));
-}
-
-function prepareErrorMessage(error: SupabaseError): string {
-  const message = error.message ?? "";
-  switch (error.code) {
-    case SQLSTATE_FORBIDDEN:
-      return MSG_FORBIDDEN_SEND;
-    case SQLSTATE_NOT_FOUND:
-      return MSG_NOT_FOUND;
-    case SQLSTATE_NOT_ALLOWED:
-      // La regla de aprobación (H-040b) rechaza con el mismo código que "ya no está en borrador": se distingue por el
-      // motivo, y ANTES del mensaje general.
-      return approvalPrepareError(message, error.details) ?? MSG_NOT_DRAFT;
-    case SQLSTATE_CONFLICT:
-      return message.startsWith("send_in_progress") ? MSG_IN_PROGRESS_OTHER : MSG_CHANGED;
-    case SQLSTATE_INVALID:
-      if (message.startsWith("no_lines")) return MSG_NO_LINES;
-      if (message.startsWith("customer_anonymized")) return MSG_ANONYMIZED;
-      if (message.startsWith("validity_past")) return MSG_VALIDITY_PAST;
-      return MSG_UNEXPECTED;
-    default:
-      return MSG_UNEXPECTED;
-  }
 }
 
 /** El correo no salió: queda registrado como fallido y se suelta el candado. */
@@ -362,13 +339,9 @@ export async function sendQuoteAction(
     p_customer_snapshot_enc: snapshotEnc,
   });
   if (prepareError) {
-    // Esperados (no son un fallo nuestro): choque de revisión o de envío, falta de permiso y la regla de aprobación.
-    const expected =
-      prepareError.code === SQLSTATE_CONFLICT ||
-      prepareError.code === SQLSTATE_FORBIDDEN ||
-      (prepareError.code === SQLSTATE_NOT_ALLOWED &&
-        (prepareError.message ?? "").startsWith("approval_required"));
-    if (!expected) {
+    // Esperados (no son un fallo nuestro): choque de revisión o de envío, falta de permiso, la regla de aprobación y las
+    // reglas de precio y descuento.
+    if (!isExpectedPrepareError(prepareError)) {
       await serverLog("warn", "quote_send_prepare_failed", { code: prepareError.code });
     }
     return failure(prepareErrorMessage(prepareError));

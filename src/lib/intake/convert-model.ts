@@ -59,6 +59,8 @@ export type CatalogSnapshot = {
   unit: string;
   unitPriceClp: number;
   taxTreatment: "taxable" | "exempt";
+  /** El precio está bloqueado en el catálogo hoy (H-041). */
+  priceLocked: boolean;
 };
 
 export type LinePlan = {

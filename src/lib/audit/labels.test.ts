@@ -11,6 +11,37 @@ import {
   resourceLabel,
 } from "./labels";
 
+describe("nombres del registro de actividad · precios bloqueados y descuento máximo (H-041)", () => {
+  it("nombra la acción nueva y la puede elegir el filtro", () => {
+    expect(actionLabel("quote.locked_price_overridden")).toBe(
+      "Se cambió un precio bloqueado en una cotización",
+    );
+    expect(isKnownAuditAction("quote.locked_price_overridden")).toBe(true);
+  });
+
+  it("el detalle cuenta las líneas y los precios, sin nombres de línea", () => {
+    const text = describeAuditEntry({
+      action: "quote.locked_price_overridden",
+      details: {
+        count: 1,
+        lines: [{ position: 2, catalog_item_id: "x", old_price_clp: 10_000, new_price_clp: 8_000 }],
+      },
+    });
+    expect(text).toBe("Cambió: línea 2: $10.000 → $8.000");
+  });
+
+  it("un detalle ilegible no rompe el registro", () => {
+    expect(
+      describeAuditEntry({ action: "quote.locked_price_overridden", details: { count: 1 } }),
+    ).toBeNull();
+  });
+
+  it("los campos nuevos tienen nombre en español", () => {
+    expect(describeAuditDetails({ changed: ["price_locked"] })).toBe("Cambió: precio bloqueado");
+    expect(describeAuditDetails({ changed: ["max_discount_bp"] })).toBe("Cambió: descuento máximo");
+  });
+});
+
 describe("nombres del registro de actividad", () => {
   it("cada acción conocida tiene nombre en español; las nuevas se muestran con su código", () => {
     expect(actionLabel("session.login")).toBe("Ingresó a la plataforma");

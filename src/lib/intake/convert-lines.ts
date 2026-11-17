@@ -22,6 +22,7 @@ type CatalogRow = {
   unit: string;
   unit_price_clp: number;
   tax_treatment: "taxable" | "exempt";
+  price_locked: boolean;
 };
 
 /** Servicios del catálogo, de esta organización, que siguen activos, por id. `null` si no se pudo leer. */
@@ -34,7 +35,7 @@ export async function loadActiveCatalog(
   if (ids.length === 0) return result;
   const { data, error } = await active.supabase
     .from("catalog_items")
-    .select("id, name, description, unit, unit_price_clp, tax_treatment")
+    .select("id, name, description, unit, unit_price_clp, tax_treatment, price_locked")
     .eq("tenant_id", active.tenantId)
     .eq("is_active", true)
     .in("id", ids);
@@ -50,6 +51,7 @@ export async function loadActiveCatalog(
       unit: row.unit,
       unitPriceClp: row.unit_price_clp,
       taxTreatment: row.tax_treatment,
+      priceLocked: row.price_locked,
     });
   }
   return result;

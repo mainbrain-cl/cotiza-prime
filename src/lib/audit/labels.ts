@@ -6,6 +6,7 @@
 import { describeApprovalRule } from "@/lib/approvals/describe";
 import { isApprovalMode, type ApprovalRule } from "@/lib/approvals/rule";
 import { roleLabel } from "@/lib/permissions/matrix";
+import { describeLockedPriceChanges } from "@/lib/quotes/locked-price-text";
 
 /** Acciones que el registro de la organización sabe nombrar, en el orden del selector. */
 export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
@@ -44,6 +45,7 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "quote.send_failed": "No se pudo enviar una cotización",
   "quote.accepted": "El cliente aceptó una cotización",
   "quote.rejected": "El cliente rechazó una cotización",
+  "quote.locked_price_overridden": "Se cambió un precio bloqueado en una cotización",
   "share_link.revoked": "Se revocó el enlace de una cotización",
   "invitation.created": "Se invitó a una persona al equipo",
   "invitation.updated": "Cambió una invitación",
@@ -102,6 +104,8 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   resent_by: "quién la reenvió",
   body: "texto",
   is_default: "predeterminado",
+  price_locked: "precio bloqueado",
+  max_discount_bp: "descuento máximo",
 };
 
 /** Quién hizo algo cuando la fila no lo identifica: una persona con cuenta que no es ni fue de esta organización. */
@@ -238,6 +242,11 @@ export function describeAuditEntry(entry: {
     if (before && after) {
       return `Antes: ${describeApprovalRule(before)} Ahora: ${describeApprovalRule(after)}`;
     }
+  }
+  if (entry.action === "quote.locked_price_overridden") {
+    // Qué líneas y de cuánto a cuánto; nunca nombres de línea (el registro no los guarda).
+    const changes = describeLockedPriceChanges(entry.details);
+    if (changes) return `Cambió: ${changes}`;
   }
   return describeAuditDetails(entry.details);
 }

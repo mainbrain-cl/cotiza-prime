@@ -321,8 +321,7 @@ a mano en vez de dar descuento (lo cubren H-041 y el margen); una organización 
     servicio si la persona (a) lo escribe a mano como **línea libre**, sin catálogo; (b) **renombra una línea de catálogo más
     barata** (el navegador puede editar el nombre de una línea de catálogo, `quote-editor.tsx:386-394`; el `catalog_item_id` queda
     en el servicio barato y el cliente lee otro nombre); o (c) **baja la cantidad** (horas, km) manteniendo el precio unitario.
-    **H-042 NO lo cubre** (D2 solo ordena la lista del Comercial, no controla lo que vende). **H-041 (pregunta 18) debe fijar
-    también el nombre de las líneas de catálogo.** Aarón debe aceptarlo con este alcance real.
+    **H-042 NO lo cubre** (D2 solo ordena la lista del Comercial, no controla lo que vende). **H-041 NO lo cierra** (corrección del 2026-11-17, tras construirla): H-041 bloquea el PRECIO de una línea de catálogo y pone un tope al descuento, pero **fijar también el nombre de las líneas de catálogo no cierra este hueco mientras existan las líneas libres**: quien quiere cobrar menos escribe el servicio caro como línea libre y listo. Lo cierra una opción de la organización «solo cotizan desde el catálogo» (pregunta 18, opción B de H-041, mejor como H-041b), que de paso hace que H-042 controle de verdad. Hasta entonces el hueco sigue como riesgo aceptado. Aarón debe aceptarlo con este alcance real.
   - **Para M14 («duplicar») y §6.8 («versión 2»):** al copiar una cotización no se debe copiar `catalog_unit_price_clp` sin decidirlo
     (copiaría un precio de catálogo viejo como si fuera el de hoy); lo normal es volver a pedirlo al catálogo vigente.
 - **Una cuenta de Administrador puede mover la regla sin que el Dueño se entere (I3).** Un Administrador (o su cuenta robada)

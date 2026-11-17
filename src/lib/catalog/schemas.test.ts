@@ -20,6 +20,7 @@ describe("createCatalogItemSchema", () => {
         unit: "service",
         unitPriceClp: 1250000,
         taxTreatment: "taxable",
+        priceLocked: false,
       });
     }
   });
@@ -55,6 +56,24 @@ describe("createCatalogItemSchema", () => {
         taxTreatment: "exempt",
       });
     }
+  });
+});
+
+describe("la casilla «Bloquear el precio» (H-041)", () => {
+  it("sin la casilla el precio no queda bloqueado", () => {
+    const result = createCatalogItemSchema.safeParse(valid);
+    expect(result.success && result.data.priceLocked).toBe(false);
+  });
+  it("«1» lo bloquea y vacío lo deja libre", () => {
+    const locked = createCatalogItemSchema.safeParse({ ...valid, priceLocked: "1" });
+    expect(locked.success && locked.data.priceLocked).toBe(true);
+    const free = createCatalogItemSchema.safeParse({ ...valid, priceLocked: "" });
+    expect(free.success && free.data.priceLocked).toBe(false);
+  });
+  it.each(["on", "true", "0", "si", " 1"])("rechaza el valor %j", (priceLocked) => {
+    const result = createCatalogItemSchema.safeParse({ ...valid, priceLocked });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0].path).toEqual(["priceLocked"]);
   });
 });
 

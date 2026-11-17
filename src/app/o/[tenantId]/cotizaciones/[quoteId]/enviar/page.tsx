@@ -14,9 +14,15 @@ import { maskEmail } from "@/lib/customers/mask";
 import { getCustomer } from "@/lib/customers/queries";
 import { resolvePdfBrand } from "@/lib/pdf/brand-colors";
 import { formatQuoteNumber } from "@/lib/quotes/format";
+import {
+  LINE_RULES_UNAVAILABLE_MESSAGE,
+  lineRulesBlockMessage,
+} from "@/lib/quotes/line-rules-block";
+import { loadLockedCatalogIds, loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
 import { getQuote } from "@/lib/quotes/queries";
 import { defaultEmailBody, defaultEmailSubject } from "@/lib/quotes/send/content";
 import { loadSendContext } from "@/lib/quotes/send/context";
+import { can } from "@/lib/permissions/matrix";
 import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
@@ -53,6 +59,31 @@ export default async function SendQuotePage({
     customer === null || customer === "unreadable" ? "Cliente" : customer.displayName;
   const customerEmail =
     customer !== null && customer !== "unreadable" ? (customer.email ?? null) : null;
+
+  // Las reglas de precio y descuento (H-041): el precio bloqueado y el descuento máximo mandan sobre la aprobación. Quien puede
+  // saltárselas (Dueño y Administrador) no queda bloqueado. Si no se puede leer el tope o los candados, no se deja enviar.
+  let lineRulesBlock: string | null = null;
+  let lineRulesUnreadable = false;
+  if (!can(active.role, "catalog.price_lock.override")) {
+    const [cap, locked] = await Promise.all([
+      loadMaxDiscountBp(active),
+      loadLockedCatalogIds(
+        active,
+        items.flatMap((item) => (item.catalog_item_id ? [item.catalog_item_id] : [])),
+      ),
+    ]);
+    if (cap === null || locked === null) {
+      lineRulesUnreadable = true;
+    } else {
+      lineRulesBlock = lineRulesBlockMessage({
+        items,
+        quote,
+        lockedCatalogIds: locked,
+        maxDiscountBp: cap.maxDiscountBp,
+        canOverride: false,
+      });
+    }
+  }
 
   // Lo que impide enviar, dicho con claridad (la acción de enviar lo vuelve a verificar).
   // Bajar el precio de un servicio del catálogo también cuenta como descuento (decisión de Aarón, 2026-11-11), pero solo si la
@@ -100,6 +131,10 @@ export default async function SendQuotePage({
   } else if (!customerEmail) {
     blocker =
       "Este cliente no tiene correo. Agrégalo en su ficha para poder enviarle la cotización.";
+  } else if (lineRulesUnreadable) {
+    blocker = LINE_RULES_UNAVAILABLE_MESSAGE;
+  } else if (lineRulesBlock) {
+    blocker = lineRulesBlock;
   } else if (approvalRule.status !== "ok" || rebateUnreadable) {
     blocker = APPROVAL_RULE_UNAVAILABLE_MESSAGE;
   } else if (approvalBlock) {

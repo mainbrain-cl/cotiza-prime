@@ -81,7 +81,11 @@ export const PERMISSIONS = {
   "customer.write": { any: WRITERS },
 
   "catalog.manage": { any: MANAGERS },
-  /** Sprint 5 (H-041): cambiar un precio que está bloqueado en el catálogo. */
+  /**
+   * Sprint 5 (H-041): saltarse el precio bloqueado de un servicio y el descuento máximo al cotizar. Es lo que separa al Dueño y al
+   * Administrador del Comercial; quien tiene `catalog.manage` bloquea el precio de un servicio y fija el descuento máximo
+   * (`catalog.manage`, no este permiso). La base lo decide con `app.can('catalog.price_lock.override')`.
+   */
   "catalog.price_lock.override": { any: MANAGERS },
 
   /** Empresa, marca, numeración, plantillas, textos y reglas. Los demás roles no ven «Configuración» (supuesto 12). */

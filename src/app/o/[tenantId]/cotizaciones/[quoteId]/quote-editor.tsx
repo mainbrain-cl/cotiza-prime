@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Loader2, Plus, Save, Search, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Lock, Plus, Save, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FormAlert, Input, Select, Textarea } from "@/components/ui/form-controls";
@@ -14,7 +14,9 @@ import {
 } from "@/lib/quotes/actions";
 import type { QuotableCatalogItem } from "@/lib/quotes/catalog-source";
 import { QUOTE_MAX_LINES } from "@/lib/quotes/calc";
+import { maxDiscountHint } from "@/lib/quotes/discount-cap";
 import {
+  catalogPriceToRestore,
   contentKey,
   evaluateEditor,
   moveLine,
@@ -23,6 +25,7 @@ import {
   priceBelowCatalog,
   type DiscountKind,
   type EditorLine,
+  type EditorRules,
   type EditorState,
   type ValidityMode,
 } from "@/lib/quotes/editor-model";
@@ -113,6 +116,7 @@ export function QuoteEditor({
   savedValidUntil,
   initialCatalog,
   requestSeedLines = [],
+  rules,
 }: {
   tenantId: string;
   quoteId: string;
@@ -124,6 +128,8 @@ export function QuoteEditor({
   initialCatalog: QuotableCatalogItem[];
   /** Líneas de los servicios de la solicitud de origen; solo se ofrecen si la cotización no tiene líneas. */
   requestSeedLines?: EditorLine[];
+  /** Las reglas de precio y descuento de la organización (H-041): el tope de descuento y si esta persona se salta el candado. */
+  rules: EditorRules;
 }) {
   const [state, setState] = useState<EditorState>(initialState);
   const [catalog, setCatalog] = useState<QuotableCatalogItem[]>(initialCatalog);
@@ -133,7 +139,10 @@ export function QuoteEditor({
   const pendingFocus = useRef<string | null>(null);
 
   const [today] = useState(() => todayInChile());
-  const context = useMemo(() => ({ today, savedValidUntil }), [today, savedValidUntil]);
+  const context = useMemo(
+    () => ({ today, savedValidUntil, rules }),
+    [today, savedValidUntil, rules],
+  );
   const view = useMemo(
     () => evaluateEditor(state, taxRateBp, context),
     [state, taxRateBp, context],
@@ -152,7 +161,18 @@ export function QuoteEditor({
 
   const currentKey = view.content ? contentKey(view.content) : null;
   const dirty = currentKey === null || currentKey !== saver.savedKey;
-  const hasErrors = Object.keys(view.errors).length > 0;
+  // Los errores por campo del servidor (el candado o el tope cambiaron desde que se abrió la cotización) valen solo mientras no se
+  // cambie nada; los de la pantalla se calculan siempre. `form` ya se muestra como el aviso del guardado.
+  const serverErrors = useMemo(() => {
+    if (saver.state.status !== "invalid" || saver.failedKey === null) return {};
+    if (saver.failedKey !== currentKey) return {};
+    const perField = { ...saver.state.fieldErrors };
+    delete perField.form;
+    return perField;
+  }, [saver.state, saver.failedKey, currentKey]);
+  const errors = useMemo(() => ({ ...serverErrors, ...view.errors }), [serverErrors, view.errors]);
+  const hasErrors = Object.keys(errors).length > 0;
+  const capHint = maxDiscountHint(rules.canOverride ? null : rules.maxDiscountBp);
   const blocked = saver.state.status === "conflict" || saver.state.status === "not_editable";
 
   // Avisa antes de cerrar la pestaña con cambios sin guardar.
@@ -369,10 +389,15 @@ export function QuoteEditor({
           ) : (
             <ol className="flex flex-col gap-3">
               {state.lines.map((line, index) => {
-                const err = (field: string) => view.errors[`items.${index}.${field}`];
+                const err = (field: string) => errors[`items.${index}.${field}`];
                 const lineTotal = totals?.lines[index]?.totalClp;
                 const fromCatalog = line.catalogItemId !== null;
                 const belowCatalogPrice = priceBelowCatalog(line);
+                // El precio bloqueado en el catálogo (H-041): quien no se lo salta lo ve fijo; el Dueño y los Administradores lo
+                // editan y queda registrado.
+                const lockedForMe = line.priceLocked && !rules.canOverride;
+                const lockedEditable = line.priceLocked && rules.canOverride;
+                const restorePrice = lockedForMe ? catalogPriceToRestore(line) : null;
                 const idFor = (field: string) => `${line.id}-${field}`;
                 return (
                   <li
@@ -478,25 +503,73 @@ export function QuoteEditor({
                         <label htmlFor={idFor("price")} className="text-sm font-semibold text-fg">
                           Precio unitario (neto)
                         </label>
-                        <Input
-                          id={idFor("price")}
-                          inputMode="numeric"
-                          value={line.price}
-                          onChange={(event) => updateLine(index, { price: event.target.value })}
-                          aria-invalid={Boolean(err("price"))}
-                          aria-describedby={
-                            [
-                              err("price") ? idFor("price-error") : null,
-                              belowCatalogPrice !== null ? idFor("price-below-catalog") : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" ") || undefined
-                          }
-                          autoComplete="off"
-                          disabled={blocked}
-                          className="tabular-nums"
-                        />
+                        <div className="relative">
+                          {lockedForMe ? (
+                            <Lock
+                              aria-hidden
+                              data-testid="price-lock-icon"
+                              className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-fg-muted"
+                            />
+                          ) : null}
+                          <Input
+                            id={idFor("price")}
+                            inputMode="numeric"
+                            value={line.price}
+                            readOnly={lockedForMe}
+                            onChange={(event) => updateLine(index, { price: event.target.value })}
+                            aria-invalid={Boolean(err("price"))}
+                            aria-describedby={
+                              [
+                                err("price") ? idFor("price-error") : null,
+                                lockedForMe || lockedEditable ? idFor("price-locked") : null,
+                                belowCatalogPrice !== null ? idFor("price-below-catalog") : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" ") || undefined
+                            }
+                            autoComplete="off"
+                            disabled={blocked}
+                            className={cn("tabular-nums", lockedForMe && "bg-surface-2 pl-9")}
+                          />
+                        </div>
                         <FieldError id={idFor("price-error")} message={err("price")} />
+                        {lockedForMe ? (
+                          <p
+                            id={idFor("price-locked")}
+                            data-testid="price-locked-note"
+                            className="text-xs text-fg-muted"
+                          >
+                            Precio bloqueado por tu organización
+                          </p>
+                        ) : null}
+                        {lockedEditable ? (
+                          <p
+                            id={idFor("price-locked")}
+                            data-testid="price-locked-override-note"
+                            className="text-xs text-fg-muted"
+                          >
+                            Precio bloqueado en el catálogo. Puedes cambiarlo; quedará registrado.
+                          </p>
+                        ) : null}
+                        {restorePrice !== null ? (
+                          <div>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              data-testid="use-catalog-price"
+                              disabled={blocked}
+                              onClick={() => {
+                                updateLine(index, { price: String(restorePrice) });
+                                setAnnouncement(
+                                  `La línea ${index + 1} volvió al precio del catálogo.`,
+                                );
+                              }}
+                            >
+                              Usar el precio del catálogo ({formatClp(restorePrice)})
+                            </Button>
+                          </div>
+                        ) : null}
                         {belowCatalogPrice !== null ? (
                           <p
                             id={idFor("price-below-catalog")}
@@ -601,11 +674,16 @@ export function QuoteEditor({
                           disabled={blocked || line.discountKind === "none"}
                           aria-invalid={Boolean(err("discount"))}
                           aria-describedby={
-                            line.discountKind === "none"
-                              ? idFor("discount-hint")
-                              : err("discount")
-                                ? idFor("discount-error")
-                                : undefined
+                            [
+                              line.discountKind === "none"
+                                ? idFor("discount-hint")
+                                : err("discount")
+                                  ? idFor("discount-error")
+                                  : null,
+                              capHint ? idFor("discount-cap") : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" ") || undefined
                           }
                           autoComplete="off"
                           className="tabular-nums"
@@ -613,6 +691,15 @@ export function QuoteEditor({
                         {line.discountKind === "none" ? (
                           <p id={idFor("discount-hint")} className="text-xs text-fg-subtle">
                             Elige un tipo de descuento para escribir un valor.
+                          </p>
+                        ) : null}
+                        {capHint ? (
+                          <p
+                            id={idFor("discount-cap")}
+                            data-testid="discount-cap-hint"
+                            className="text-xs text-fg-muted"
+                          >
+                            {capHint}
                           </p>
                         ) : null}
                         <FieldError id={idFor("discount-error")} message={err("discount")} />
@@ -680,8 +767,8 @@ export function QuoteEditor({
                       onChange={(event) =>
                         setState((current) => ({ ...current, validityDays: event.target.value }))
                       }
-                      aria-invalid={Boolean(view.errors.validity)}
-                      aria-describedby={view.errors.validity ? "validity-error" : "validity-help"}
+                      aria-invalid={Boolean(errors.validity)}
+                      aria-describedby={errors.validity ? "validity-error" : "validity-help"}
                       autoComplete="off"
                       disabled={blocked}
                       className="tabular-nums"
@@ -700,15 +787,15 @@ export function QuoteEditor({
                       onChange={(event) =>
                         setState((current) => ({ ...current, validityDate: event.target.value }))
                       }
-                      aria-invalid={Boolean(view.errors.validity)}
-                      aria-describedby={view.errors.validity ? "validity-error" : "validity-help"}
+                      aria-invalid={Boolean(errors.validity)}
+                      aria-describedby={errors.validity ? "validity-error" : "validity-help"}
                       disabled={blocked}
                     />
                   </>
                 )}
               </div>
             </div>
-            <FieldError id="validity-error" message={view.errors.validity} />
+            <FieldError id="validity-error" message={errors.validity} />
             {view.content ? (
               <p
                 id="validity-help"
@@ -729,7 +816,7 @@ export function QuoteEditor({
             label="Observaciones"
             hint="Aparecen en el documento que recibe tu cliente. Solo texto."
             value={state.observations}
-            error={view.errors.observations}
+            error={errors.observations}
             disabled={blocked}
             onChange={(value) => setState((current) => ({ ...current, observations: value }))}
           />
@@ -738,7 +825,7 @@ export function QuoteEditor({
             label="Condiciones comerciales"
             hint="Plazos, forma de pago, exclusiones. Solo texto."
             value={state.conditions}
-            error={view.errors.conditions}
+            error={errors.conditions}
             disabled={blocked}
             onChange={(value) => setState((current) => ({ ...current, conditions: value }))}
           />
@@ -783,13 +870,18 @@ export function QuoteEditor({
                   setState((current) => ({ ...current, globalDiscount: event.target.value }))
                 }
                 disabled={blocked || state.globalDiscountKind === "none"}
-                aria-invalid={Boolean(view.errors.globalDiscount)}
+                aria-invalid={Boolean(errors.globalDiscount)}
                 aria-describedby={
-                  state.globalDiscountKind === "none"
-                    ? "global-discount-hint"
-                    : view.errors.globalDiscount
-                      ? "global-discount-error"
-                      : undefined
+                  [
+                    state.globalDiscountKind === "none"
+                      ? "global-discount-hint"
+                      : errors.globalDiscount
+                        ? "global-discount-error"
+                        : null,
+                    capHint ? "global-discount-cap" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined
                 }
                 autoComplete="off"
                 className="tabular-nums"
@@ -801,12 +893,21 @@ export function QuoteEditor({
                   Elige un tipo de descuento para escribir un valor.
                 </p>
               ) : null}
-              <FieldError id="global-discount-error" message={view.errors.globalDiscount} />
+              {capHint ? (
+                <p
+                  id="global-discount-cap"
+                  data-testid="global-discount-cap-hint"
+                  className="text-xs text-fg-muted"
+                >
+                  {capHint}
+                </p>
+              ) : null}
+              <FieldError id="global-discount-error" message={errors.globalDiscount} />
             </div>
           </div>
         </TotalsPanel>
 
-        {view.errors.form ? <FormAlert>{view.errors.form}</FormAlert> : null}
+        {errors.form ? <FormAlert>{errors.form}</FormAlert> : null}
 
         <div className="flex flex-col gap-2">
           <Button

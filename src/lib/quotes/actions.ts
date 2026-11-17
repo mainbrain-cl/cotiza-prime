@@ -20,82 +20,25 @@ import {
 import { toCustomerChoices, type CustomerChoice } from "./customer-choice";
 import { calcIssueFieldErrors, toCalcInput, toSaveRpcArgs } from "./payload";
 import { payloadFieldErrors, saveQuotePayloadSchema } from "./schemas";
+import { mapSaveRpcError, SAVE_FAILED, type SaveQuoteResult } from "./save-error";
 
 const SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
 const SQLSTATE_NOT_FOUND = "CP404";
-const SQLSTATE_REVISION_CONFLICT = "CP409";
 const SQLSTATE_INVALID = "CP422";
-const SQLSTATE_NOT_EDITABLE = "CP423";
-const SQLSTATE_CALC_MISMATCH = "CP500";
 
 const NO_PERMISSION_CREATE = NO_PERMISSION_MESSAGE;
 const CREATE_FAILED = "No pudimos crear la cotización. Intenta de nuevo en unos minutos.";
-const CONFLICT_MESSAGE =
-  "Esta cotización cambió en otra pestaña. Recarga para ver la última versión.";
 
 // ---------------------------------------------------------------------------------------------
 // Guardar el borrador (H-026)
 // ---------------------------------------------------------------------------------------------
 
-export type SaveQuoteResult =
-  | { status: "saved"; revision: number }
-  | { status: "conflict"; message: string }
-  | { status: "not_editable"; message: string }
-  | { status: "forbidden"; message: string }
-  | { status: "not_found"; message: string }
-  | { status: "invalid"; message: string; fieldErrors: Record<string, string> }
-  | { status: "error"; message: string };
-
-const SAVE_FAILED = "No pudimos guardar los cambios. Intenta de nuevo en unos minutos.";
-
-function invalidMessage(rpcMessage: string): string {
-  if (rpcMessage.startsWith("catalog_item_unavailable")) {
-    return "Un servicio de la cotización ya no está disponible en el catálogo. Quítalo o usa una línea libre.";
-  }
-  if (rpcMessage.startsWith("catalog_item_changed")) {
-    return "El servicio cambió en el catálogo; vuelve a agregarlo.";
-  }
-  if (rpcMessage.startsWith("validity_in_past")) {
-    return "La fecha de vigencia no puede estar en el pasado.";
-  }
-  if (rpcMessage.startsWith("customer_not_found") || rpcMessage.startsWith("invalid_customer")) {
-    return "El cliente ya no está disponible. Elige otro.";
-  }
-  return "Revisa los datos de la cotización e intenta de nuevo.";
-}
+export type { SaveQuoteResult };
 
 async function mapSaveError(error: { code?: string; message?: string }): Promise<SaveQuoteResult> {
-  switch (error.code) {
-    case SQLSTATE_REVISION_CONFLICT:
-      return { status: "conflict", message: CONFLICT_MESSAGE };
-    case SQLSTATE_NOT_EDITABLE:
-      return { status: "not_editable", message: "Esta cotización ya no se puede editar." };
-    case SQLSTATE_INSUFFICIENT_PRIVILEGE:
-      return { status: "forbidden", message: "Solo quien creó este borrador puede editarlo." };
-    case SQLSTATE_NOT_FOUND:
-      return { status: "not_found", message: "No encontramos esta cotización." };
-    case SQLSTATE_INVALID: {
-      const message = error.message ?? "";
-      return {
-        status: "invalid",
-        message: invalidMessage(message),
-        fieldErrors: message.startsWith("validity_in_past")
-          ? { validity: "La fecha de vigencia no puede estar en el pasado." }
-          : {},
-      };
-    }
-    case SQLSTATE_CALC_MISMATCH:
-      // El cálculo de la aplicación y el de la base no coinciden: error grave, sin datos personales.
-      await serverLog("error", "quote_calc_mismatch", { code: error.code });
-      return {
-        status: "error",
-        message:
-          "No pudimos confirmar los totales de esta cotización, así que no se guardó nada. Ya avisamos al equipo.",
-      };
-    default:
-      await serverLog("error", "quote_save_failed", { code: error.code });
-      return { status: "error", message: SAVE_FAILED };
-  }
+  const mapped = mapSaveRpcError(error);
+  if (mapped.log) await serverLog("error", mapped.log, { code: error.code });
+  return mapped.result;
 }
 
 /**

@@ -14,6 +14,7 @@ import {
   type TaxTreatment,
 } from "./calc";
 import { formatPercentBp, formatQuantity } from "./format";
+import { lineRuleFieldErrors, lineRuleIssues, type RuleLine } from "./line-rules";
 import { calcIssueFieldErrors } from "./payload";
 import { parsePercent, parseQuantity } from "./parse";
 import type { QuoteItemPayload } from "./schemas";
@@ -40,6 +41,12 @@ export type EditorLine = {
    * que un precio más bajo cuenta como descuento; la decisión de verdad la toma el servidor al enviar.
    */
   catalogPriceClp: number | null;
+  /**
+   * El servicio del catálogo de esta línea tiene hoy el precio bloqueado (H-041; `false` en las líneas libres). Se lee del
+   * catálogo al abrir la cotización, no de la línea: quien se salta el candado (Dueño, Administrador) la edita igual. La que
+   * decide es la base de datos; esto solo dice a la pantalla qué mostrar y qué avisar.
+   */
+  priceLocked: boolean;
   name: string;
   description: string;
   unit: string;
@@ -72,6 +79,17 @@ export type EditorContext = {
   today: string;
   /** Fecha de vigencia ya guardada (si no se toca, aunque esté en el pasado, se puede guardar). */
   savedValidUntil: string | null;
+  /**
+   * Las reglas de precio y descuento de la organización (H-041). Sin ellas (`undefined`) la pantalla no marca nada: el servidor
+   * y la base las hacen cumplir igual. `canOverride` es quien se salta el candado y el tope (Dueño y Administrador).
+   */
+  rules?: EditorRules;
+};
+
+export type EditorRules = {
+  /** Descuento máximo en centésimas de punto (1.000 = 10 %); `null` = sin tope. */
+  maxDiscountBp: number | null;
+  canOverride: boolean;
 };
 
 /** Contenido que se guarda (sin la revisión ni la clave del guardado, que pone quien guarda). */
@@ -210,6 +228,32 @@ export function evaluateEditor(
       totals: null,
     };
   }
+  // Las reglas de precio y descuento de la organización (H-041). Los totales se ven igual, pero no se puede guardar así.
+  const rules = context.rules;
+  if (rules) {
+    const issues = lineRuleIssues({
+      lines: items.map((item, index): RuleLine => ({
+        priceLocked: state.lines[index].priceLocked,
+        catalogUnitPriceClp: state.lines[index].catalogPriceClp,
+        unitPriceClp: item.unitPriceClp,
+        discount: item.discount,
+        grossClp: calc.totals.lines[index].grossClp,
+      })),
+      global: { discount: global.value, baseClp: calc.totals.subtotalClp },
+      maxDiscountBp: rules.maxDiscountBp,
+      canOverride: rules.canOverride,
+    });
+    if (issues.length > 0) {
+      return {
+        errors: {
+          ...errors,
+          ...lineRuleFieldErrors(issues, { maxDiscountBp: rules.maxDiscountBp }),
+        },
+        content: null,
+        totals: calc.totals,
+      };
+    }
+  }
   return {
     errors,
     content: {
@@ -236,6 +280,7 @@ export function newFreeLine(id: string): EditorLine {
     catalogItemId: null,
     catalogInactive: false,
     catalogPriceClp: null,
+    priceLocked: false,
     name: "",
     description: "",
     unit: "service",
@@ -257,6 +302,7 @@ export function newCatalogLine(
     unit: string;
     unitPriceClp: number;
     taxTreatment: TaxTreatment;
+    priceLocked: boolean;
   },
 ): EditorLine {
   return {
@@ -264,6 +310,7 @@ export function newCatalogLine(
     catalogItemId: item.id,
     catalogInactive: false,
     catalogPriceClp: item.unitPriceClp,
+    priceLocked: item.priceLocked,
     name: item.name,
     description: item.description ?? "",
     unit: item.unit,
@@ -291,12 +338,14 @@ export function lineFromSaved(
     discount_value: number;
   },
   catalogInactive: boolean,
+  priceLocked = false,
 ): EditorLine {
   return {
     id: row.id,
     catalogItemId: row.catalog_item_id,
     catalogInactive,
     catalogPriceClp: row.catalog_item_id === null ? null : row.catalog_unit_price_clp,
+    priceLocked: row.catalog_item_id !== null && priceLocked,
     name: row.name,
     description: row.description ?? "",
     unit: row.unit,
@@ -324,6 +373,18 @@ export function priceBelowCatalog(
   const typed = parseMoney(line.price);
   if (!typed.ok) return null;
   return typed.value < line.catalogPriceClp ? line.catalogPriceClp : null;
+}
+
+/**
+ * El precio de catálogo al que se puede volver cuando la línea tiene el precio bloqueado y está a otro precio (H-041); `null` si no
+ * hay a qué volver: línea libre, sin candado, o ya está al precio de catálogo que la línea congeló al agregarse.
+ */
+export function catalogPriceToRestore(
+  line: Pick<EditorLine, "priceLocked" | "catalogPriceClp" | "price">,
+): number | null {
+  if (!line.priceLocked || line.catalogPriceClp === null) return null;
+  const typed = parseMoney(line.price);
+  return typed.ok && typed.value === line.catalogPriceClp ? null : line.catalogPriceClp;
 }
 
 /** Mueve una línea una posición (-1 arriba, +1 abajo). Devuelve el mismo arreglo si no se puede. */

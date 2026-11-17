@@ -18,6 +18,8 @@ export type QuotableCatalogItem = {
   unit: string;
   unitPriceClp: number;
   taxTreatment: "taxable" | "exempt";
+  /** El precio está bloqueado en el catálogo (H-041): el Comercial no puede cambiarlo al cotizar. */
+  priceLocked: boolean;
 };
 
 type CatalogRow = {
@@ -27,6 +29,7 @@ type CatalogRow = {
   unit: string;
   unit_price_clp: number;
   tax_treatment: "taxable" | "exempt";
+  price_locked: boolean;
 };
 
 /** Escapa los comodines de `ilike` para que "50%" se busque tal cual. */
@@ -42,7 +45,7 @@ export async function listQuotableCatalogItems(
   const search = term.trim().slice(0, QUOTABLE_SEARCH_MAX_LENGTH);
   let query = active.supabase
     .from("catalog_items")
-    .select("id, name, description, unit, unit_price_clp, tax_treatment")
+    .select("id, name, description, unit, unit_price_clp, tax_treatment, price_locked")
     .eq("tenant_id", active.tenantId)
     .eq("is_active", true)
     .order("name", { ascending: true })
@@ -60,5 +63,6 @@ export async function listQuotableCatalogItems(
     unit: row.unit,
     unitPriceClp: row.unit_price_clp,
     taxTreatment: row.tax_treatment,
+    priceLocked: row.price_locked,
   }));
 }

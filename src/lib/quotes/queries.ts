@@ -177,6 +177,8 @@ export type QuoteDetail = {
   authorName: string;
   /** Servicios del catálogo de las líneas que hoy están desactivados (informativo: "Ya no está en el catálogo"). */
   inactiveCatalogIds: string[];
+  /** Servicios del catálogo de las líneas que HOY tienen el precio bloqueado (H-041). El candado se lee del catálogo, no de la línea. */
+  lockedCatalogIds: string[];
 };
 
 /** Una cotización de la organización activa con sus líneas, o `null` si no existe en ella. */
@@ -211,14 +213,19 @@ export async function getQuote(active: ActiveTenant, quoteId: string): Promise<Q
     .map((item) => item.catalog_item_id)
     .filter((id): id is string => id !== null);
   let inactiveCatalogIds: string[] = [];
+  let lockedCatalogIds: string[] = [];
   if (catalogIds.length > 0) {
-    const { data: inactive } = await active.supabase
+    const { data: states, error: statesError } = await active.supabase
       .from("catalog_items")
-      .select("id")
+      .select("id, is_active, price_locked")
       .eq("tenant_id", active.tenantId)
-      .eq("is_active", false)
       .in("id", catalogIds);
-    inactiveCatalogIds = ((inactive ?? []) as { id: string }[]).map((row) => row.id);
+    // Si no se pueden leer, la pantalla ofrece el precio como editable: la base igual rechaza lo que no corresponda al guardar.
+    if (statesError)
+      await serverLog("error", "quote_catalog_states_failed", { code: statesError.code });
+    const rows = (states ?? []) as { id: string; is_active: boolean; price_locked: boolean }[];
+    inactiveCatalogIds = rows.filter((row) => !row.is_active).map((row) => row.id);
+    lockedCatalogIds = rows.filter((row) => row.price_locked).map((row) => row.id);
   }
   const authors = await authorNames(active, [quote.created_by]);
   return {
@@ -226,5 +233,6 @@ export async function getQuote(active: ActiveTenant, quoteId: string): Promise<Q
     items,
     authorName: authors.get(quote.created_by) ?? "—",
     inactiveCatalogIds,
+    lockedCatalogIds,
   };
 }

@@ -16,6 +16,8 @@ export type EditableItem = {
   unit: string;
   unitPriceClp: string;
   taxTreatment: string;
+  /** `"1"` si el precio está bloqueado; vacío si no (como lo manda la casilla). */
+  priceLocked: string;
 };
 
 export function EditCatalogItemForm({ tenantId, item }: { tenantId: string; item: EditableItem }) {

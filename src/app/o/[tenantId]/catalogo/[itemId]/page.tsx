@@ -1,4 +1,4 @@
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Lock } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -22,6 +22,7 @@ type ItemRow = {
   unit_price_clp: number;
   tax_treatment: "taxable" | "exempt";
   is_active: boolean;
+  price_locked: boolean;
 };
 
 export default async function CatalogItemPage({
@@ -34,7 +35,7 @@ export default async function CatalogItemPage({
   // El filtro por organización lo pone la base (RLS); un servicio de otra organización no aparece.
   const { data } = await active.supabase
     .from("catalog_items")
-    .select("id, name, description, unit, unit_price_clp, tax_treatment, is_active")
+    .select("id, name, description, unit, unit_price_clp, tax_treatment, is_active, price_locked")
     .eq("id", itemId)
     .maybeSingle();
   if (!data) notFound();
@@ -79,6 +80,7 @@ export default async function CatalogItemPage({
                 unit: item.unit,
                 unitPriceClp: String(item.unit_price_clp),
                 taxTreatment: item.tax_treatment,
+                priceLocked: item.price_locked ? "1" : "",
               }}
             />
           </section>
@@ -110,7 +112,15 @@ export default async function CatalogItemPage({
             </div>
             <div>
               <dt className="text-sm text-fg-muted">Precio neto</dt>
-              <dd className="font-semibold tabular-nums">{formatClp(item.unit_price_clp)}</dd>
+              <dd className="flex items-center gap-1.5 font-semibold tabular-nums">
+                {formatClp(item.unit_price_clp)}
+                {item.price_locked ? (
+                  <>
+                    <Lock aria-hidden className="size-4 text-fg-muted" />
+                    <span className="sr-only">Precio bloqueado</span>
+                  </>
+                ) : null}
+              </dd>
             </div>
             <div>
               <dt className="text-sm text-fg-muted">IVA</dt>

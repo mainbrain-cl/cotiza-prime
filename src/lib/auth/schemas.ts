@@ -65,6 +65,18 @@ export const totpCodeSchema = z.object({
     ),
 });
 
+/**
+ * La contraseña que se vuelve a pedir dentro de una sesión (H-004b). Solo se mira que venga y que no sea más larga de lo
+ * que acepta el sistema (una más larga no puede ser la correcta y ni se consulta a Supabase); si es incorrecta lo dice la
+ * comprobación contra Supabase, no este esquema.
+ */
+export const reauthPasswordSchema = z.object({
+  password: z
+    .string({ error: "Ingresa tu contraseña." })
+    .min(1, "Ingresa tu contraseña.")
+    .max(PASSWORD_MAX_LENGTH, "La contraseña no es correcta."),
+});
+
 export const forgotPasswordSchema = z.object({ email: emailField });
 
 export const resetPasswordSchema = z

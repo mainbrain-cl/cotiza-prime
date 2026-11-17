@@ -342,8 +342,10 @@ no copiar nombres ni correos en otras tablas.
 > vive en `getSessionState` (`session.ts`); la recuperación de contraseña con factor pide el código ANTES de elegir la nueva;
 > un mismo código no sirve dos veces en 120 s; el límite propio es de 5 fallos por cuenta cada 15 min y 15 por día; el aviso
 > por correo lo manda Supabase Auth; el enlace «Seguridad de tu cuenta» está abajo del menú flotante (y en «Más» en el
-> teléfono), no dentro del menú «Principal». H-004b (códigos de respaldo y desactivar) y H-004c (obligatoria para Dueño y
-> Administrador) siguen pendientes. Lo de abajo (códigos de respaldo, `effective_role`) es su diseño original.
+> teléfono), no dentro del menú «Principal». H-004b (códigos de respaldo y desactivar) tiene su propio diseño y registro de
+> construcción en `docs/arquitectura/h-004b-codigos-de-respaldo.md` (**manda ese documento**: tabla propia `mfa_recovery_codes`, no los códigos
+> de Supabase); H-004c (obligatoria para Dueño y Administrador) sigue pendiente. Lo de abajo (códigos de respaldo, `effective_role`) es
+> su diseño original, **superado en lo de los códigos de respaldo**.
 
 Supabase trae el registro del factor (`mfa.enroll`), el desafío (`challenge`), la verificación (`verify`) y
 quitar el factor (`unenroll`). El pase de sesión lleva `aal`: «aal2» significa que la persona también ingresó
@@ -371,7 +373,9 @@ el segundo paso. **No trae códigos de respaldo.**
 - **Pruebas:** los códigos se generan con `node:crypto`, sin agregar dependencias. La fixture registra el
   factor de ana y de mixta para obtener pases «aal2».
 - **Tamaño:** pasa de dos días; se parte en tres: H-004a (activar y pedir el código al ingresar), H-004b
-  (códigos de respaldo y desactivar) y H-004c (obligatoria y ajuste de las pruebas).
+  (códigos de respaldo y desactivar) y H-004c (obligatoria y ajuste de las pruebas). **H-004b se construyó con su propio diseño**
+  (`docs/arquitectura/h-004b-codigos-de-respaldo.md`, que manda sobre esta sección): pasó a unos 6 días de trabajo en un solo PR
+  de tres etapas (decisión D8 = A), no el «1,5 días» de la tabla de la sección 7.
 
 ### 5c. H-041: precios bloqueados y descuento máximo
 
@@ -462,7 +466,7 @@ nueva en H-092).
 | 4 | **H-010:** cambiar rol, quitar, nombre de los ex miembros | 1,5 | `member_management` |
 | 5 | **H-011b:** semilla, fixture y pruebas por rol, más la revisión de Opus de H-011 (y de H-008 a H-010) | 1,5 | — |
 | 6 | **H-004a:** activar y pedir el código al ingresar | 2 | — |
-| 7 | **H-004b:** códigos de respaldo y desactivar | 1,5 | `mfa_recovery_codes` |
+| 7 | **H-004b:** códigos de respaldo y desactivar (**estimación original; se rehízo: ~6 días en un PR de tres etapas, ver `h-004b-codigos-de-respaldo.md`**) | 1,5 → ~6 | `mfa_recovery_codes` |
 | 8 | **H-041:** bloqueo de precio y tope de descuento | 2 | `price_locks` |
 | 9 | **H-004c:** obligatoria para Dueño y Admin; fixture y Playwright con «aal2» | 1,5 | `mfa_required_roles` |
 

@@ -1,7 +1,7 @@
 // H-012 · Guardias estáticas: leen el código, sin red. Complementan (no repiten)
 // `src/lib/tenant/guard-coverage.test.ts`, que ya exige `requireActiveTenant` en toda pantalla y
 // acción de servidor. Aquí se vigilan los otros caminos por los que se puede romper el aislamiento.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { APP_ROUTES } from "./registry";
@@ -116,6 +116,8 @@ function namedCalls(text: string, name: string): string[] {
 
 /**
  * H-004a: ¿esta llamada a `serverLog` o `logAuditEvent` lleva el código de 6 números, la clave, el uri, el QR o el correo?
+ * H-004b: tampoco la contraseña (ningún identificador que contenga «password» o «contrasena»), ni los códigos de respaldo
+ * (`codes`, `recoveryCode…`), su forma normalizada ni su huella (identificadores con «normalized», «hash» o «fingerprint»).
  * Sin los textos entre comillas, solo se permite `code:` si su valor viene de un error (`errorCodeOf(error)`, `error.code`) y
  * no puede quedar ningún `code` suelto ni `x.code` que no sea de un error. Devuelve el motivo o `null`.
  */
@@ -123,12 +125,227 @@ function secondStepLogViolation(call: string): string | null {
   const noStrings = call.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
   const withoutErrorCodes = noStrings
     .replace(/\bcode:\s*[^,}]*(?:errorCodeOf\(|\berror\b)[^,}]*/g, "")
+    // Un texto fijo (ya vaciado arriba) no puede llevar el código de nadie: `{ code: "unexpected" }` es inofensivo.
+    .replace(/\bcode:\s*''/g, "")
     .replace(/\b[A-Za-z_]*error[A-Za-z_]*\??\.code\b/gi, "");
   const forbidden =
-    /\.code\b|\bcode\b|\b(otp|totp|secret|uri|qrCode|qr_code|email|checked|parsed)\b/i.exec(
+    /\.code\b|\bcode\b|\bcodes\b|\b(otp|totp|secret|uri|qrCode|qr_code|email|checked|parsed)\b|\b\w*(password|contrasena|recoveryCode|normalized|hash|fingerprint)\w*\b/i.exec(
       withoutErrorCodes,
     );
   return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
+}
+
+/**
+ * H-004b (corrección C7): para los archivos de la verificación en dos pasos y los códigos de respaldo, una LISTA CERRADA de
+ * claves permitidas en los datos de `serverLog` y `logAuditEvent` (como `INTAKE_LOG_KEYS`), y de nombres permitidos en sus
+ * valores: lo que no está en la lista no se puede registrar, aunque su nombre no delate nada (`{ value: typed }`, `{ rawCode }`).
+ * Además, `readText(` (lo que escribió la persona) no puede aparecer dentro de una llamada que registra. La lista corta de
+ * `secondStepLogViolation` (código, clave, correo, contraseña, huella…) sigue valiendo encima de esta.
+ */
+const SECOND_STEP_LOG_KEYS = new Set([
+  // los datos de `serverLog` y de `details` de la auditoría
+  "code", // solo si viene de un error (`errorCodeOf(...)`, `error.code`): lo comprueba `secondStepLogViolation`
+  "reason",
+  "stage",
+  "purpose",
+  "via",
+  "factorType",
+  "otherSessionsClosed",
+  "noticeSent",
+  "operation",
+  // el sobre de `logAuditEvent`
+  "action",
+  "result",
+  "actorUserId",
+  "tenantId",
+  "details",
+]);
+/** Primer nombre permitido de un valor (`error.code`, `user.id`, `!othersError`…). Un nombre que no está aquí (`typed`, `rawCode`) no se registra. */
+const SECOND_STEP_LOG_VALUE_NAMES = new Set([
+  "reason",
+  "stage",
+  "purpose",
+  "via",
+  "factorType",
+  "MFA_FACTOR_TYPE",
+  "tenantId",
+  "details",
+  "user",
+  "userId",
+  "othersError",
+  "earlyOthersError",
+  "usingRecovery",
+  "noticeSent",
+  "error",
+  "listed",
+  "removed",
+  "signInError",
+  "errorCodeOf",
+  "MfaRecoveryGatewayError",
+  "MfaAdminGatewayError",
+  "MfaAlertsGatewayError",
+  "instanceof",
+  "null",
+  "undefined",
+  "true",
+  "false",
+]);
+
+/** Todos los objetos escritos dentro de una llamada (también los anidados), sin sus textos. */
+function logObjectsIn(call: string): string[] {
+  const text = call.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
+  const objects: string[] = [];
+  const open: number[] = [];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "{") open.push(index);
+    else if (text[index] === "}") {
+      const start = open.pop();
+      if (start !== undefined) objects.push(text.slice(start, index + 1));
+    }
+  }
+  return objects;
+}
+
+/** ¿Por qué esta llamada a `serverLog` o `logAuditEvent` no cumple la lista cerrada? `null` si está bien. */
+function secondStepStrictLogProblem(call: string): string | null {
+  if (/\breadText\(/.test(call))
+    return "«readText(» (lo que escribió la persona) no puede ir en un registro";
+  for (const object of logObjectsIn(call)) {
+    for (const { key, value } of logObjectEntries(object)) {
+      if (key === "?") {
+        // Solo `...used`, `...disabled`, `...enrolled`: un sobre ya armado arriba (sus claves se revisan donde se arma).
+        if (!/^\.\.\.(?:used|disabled|enrolled)$/.test(value))
+          return `entrada no permitida (${value})`;
+        continue;
+      }
+      if (!SECOND_STEP_LOG_KEYS.has(key))
+        return `la clave «${key}» no está en la lista de lo que se puede registrar`;
+      // El valor: textos fijos y solo nombres de la lista (el de `details` y los objetos anidados se revisan aparte).
+      if (value.startsWith("{")) continue;
+      const code = value.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");
+      for (const route of code.match(/[A-Za-z_]\w*(?:\??\.[A-Za-z_]\w*)*/g) ?? []) {
+        const first = route.split(/\??\./)[0];
+        if (!SECOND_STEP_LOG_VALUE_NAMES.has(first)) {
+          return `el valor de «${key}» nombra «${first}», que no está en la lista`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Los objetos `const details = {…}`, `const used = {…}`… armados ANTES de la llamada que registra (también deben cumplir la lista). */
+function logEnvelopeObjects(text: string): string[] {
+  const found: string[] = [];
+  const start = /\bconst\s+(?:details|used|disabled|enrolled)\s*=\s*\{/g;
+  for (let match = start.exec(text); match; match = start.exec(text)) {
+    let depth = 0;
+    let index = match.index + match[0].length - 1;
+    for (; index < text.length; index += 1) {
+      if (text[index] === "{") depth += 1;
+      else if (text[index] === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    found.push(text.slice(match.index + match[0].length - 1, index + 1));
+  }
+  return found;
+}
+
+/**
+ * El orden de `verifyRecoveryCodeAction` (H-004b §3.4, con la corrección C1): sesión a medias → límite de intentos → tomar el
+ * código → cerrar las otras sesiones (ANTES de quitar el factor) → quitar los factores → aviso por correo → cerrar otra vez las
+ * otras sesiones → completar → redirigir. Si quitar los factores lanza error, hay que volver a preguntar si queda alguno
+ * (`factorMayRemain(`) antes de soltar el código. Devuelve el motivo si falta algo o está fuera de orden.
+ */
+function recoveryUseOrderViolation(body: string): string | null {
+  const steps = [
+    "requirePendingSecondStep(",
+    "blockedAttemptState(",
+    "claimRecoveryCode(",
+    ".signOut(",
+    "removeAllFactors(",
+    "factorMayRemain(",
+    "releaseClaimedCode(",
+    "sendRecoveryUsedNotice(",
+    "completeRecoveryCode(",
+    "redirect(",
+  ];
+  let previous = -1;
+  for (const step of steps) {
+    const at = body.indexOf(step);
+    if (at === -1) return `falta ${step}`;
+    if (at < previous) return `${step} va antes de lo que debe`;
+    previous = at;
+  }
+  if (!/\.signOut\(\s*\{\s*scope:\s*["']others["']/.test(body)) {
+    return "las otras sesiones se cierran con scope «others»";
+  }
+  // Las otras sesiones se cierran también DESPUÉS de quitar el factor (y antes de completar).
+  const lastSignOut = body.lastIndexOf(".signOut(");
+  if (lastSignOut < body.indexOf("removeAllFactors(")) {
+    return "falta cerrar las otras sesiones también DESPUÉS de quitar el factor";
+  }
+  if (lastSignOut > body.indexOf("completeRecoveryCode(")) {
+    return "las otras sesiones se cierran antes de completar";
+  }
+  return null;
+}
+
+/**
+ * El orden de `disableSecondStepAction` (H-004b §3.5): sesión completa → contraseña → código (de respaldo: ventana y toma; de la
+ * aplicación: ventana y verificación) → aviso por correo → quitar el factor → completar y borrar los códigos → cerrar las otras
+ * sesiones → auditoría → redirigir. La redirección que cuenta es la ÚLTIMA (la primera, la de «ya no está activa», va al comienzo).
+ * Devuelve el motivo si falta algo o está fuera de orden.
+ */
+function disableOrderViolation(body: string): string | null {
+  const steps = [
+    "requireUser(",
+    "getSessionState(",
+    "confirmPassword(",
+    "blockedAttemptState(",
+    "claimRecoveryCode(",
+    "checkCodeBeforeVerifying(",
+    "challengeAndVerify(",
+    "sendDisabledNotice(",
+    ".unenroll(",
+    "completeRecoveryCode(",
+    "revokeRecoveryCodes(",
+    ".signOut(",
+    "session.mfa_disabled",
+  ];
+  let previous = -1;
+  for (const step of steps) {
+    const at = body.indexOf(step);
+    if (at === -1) return `falta ${step}`;
+    if (at < previous) return `${step} va antes de lo que debe`;
+    previous = at;
+  }
+  const lastRedirect = body.lastIndexOf("redirect(");
+  if (lastRedirect < previous) return "la redirección final va antes de la auditoría";
+  if (!/\.signOut\(\s*\{\s*scope:\s*["']others["']/.test(body)) {
+    return "las otras sesiones se cierran con scope «others»";
+  }
+  // El aviso es OBLIGATORIO: se mira su resultado y, si no salió, se corta antes de quitar nada.
+  const gate = /if\s*\(\s*!\s*noticeSent\s*\)/.exec(body);
+  if (
+    !gate ||
+    gate.index < body.indexOf("sendDisabledNotice(") ||
+    gate.index > body.indexOf(".unenroll(")
+  ) {
+    return "si el aviso no salió, hay que cortar ANTES de quitar el factor";
+  }
+  // El factor se quita con la PROPIA sesión de la persona, no con la llave maestra.
+  if (!/\bsupabase\s*\.\s*auth\s*\.\s*mfa\s*\.\s*unenroll\(/.test(body)) {
+    return "el factor se quita con la sesión de la persona (supabase.auth.mfa.unenroll)";
+  }
+  // Si `unenroll` falla no se asume que no pasó nada: se vuelve a leer la lista antes de soltar el código y cortar.
+  const recheck = body.indexOf("factorMayRemain(");
+  if (recheck === -1 || recheck < body.indexOf(".unenroll(")) {
+    return "si quitar el factor falla, hay que volver a preguntar si el factor sigue puesto (C1)";
+  }
+  return null;
 }
 
 /** La API de administración de cuentas de Supabase Auth (con la llave maestra): `auth.admin`, también con espacios o saltos. */
@@ -137,8 +354,48 @@ const AUTH_ADMIN_PATTERN =
 /** Y, dentro de ella, la de los factores del segundo paso. */
 const AUTH_ADMIN_MFA_PATTERN =
   /\bauth\s*(?:\?\.|\.)\s*admin\s*(?:\?\.|\.)\s*mfa\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]admin["'`]\s*\]\s*(?:\?\.|\.)\s*mfa\b/;
+/**
+ * H-004b (C7): las formas de llegar a `auth.mfa` sin escribir `.mfa.` pegado a la llamada (misma idea que `AUTH_ADMIN_PATTERN`):
+ * `const { mfa } = supabase.auth`, `const { auth: { mfa } } = supabase`, `auth["mfa"]`.
+ */
+const AUTH_MFA_ESCAPE_PATTERN =
+  /\{[^{}]*\bmfa\b[^{}]*\}\s*=\s*[^;\n]*\bauth\b|\bauth\s*(?:\?\.)?\s*\[\s*["'`]mfa["'`]\s*\]|\bauth\s*:\s*\{[^{}]*\bmfa\b[^{}]*\}/;
+/** H-004b: abrir una sesión con correo y contraseña. Solo el ingreso y la comprobación de «pedir la contraseña de nuevo». */
+const SIGN_IN_WITH_PASSWORD_PATTERN = /\bsignInWithPassword\b/;
+const SIGN_IN_WITH_PASSWORD_FILES: readonly string[] = [
+  "src/lib/auth/actions.ts",
+  "src/lib/auth/reauth.ts",
+];
 /** La pasarela de los factores (H-118). */
 const MFA_ADMIN_GATEWAY = "src/lib/security/mfa-admin-gateway.ts";
+/** La pasarela de los códigos de respaldo (H-004b): la ÚNICA que llama a las siete funciones `mfa_recovery_*` de la base. */
+const MFA_RECOVERY_GATEWAY = "src/lib/security/mfa-recovery-gateway.ts";
+/** Las siete funciones de la base (`mfa_recovery_codes_replace`, `mfa_recovery_code_claim`…). Ni el propósito de la huella (`"mfa_recovery_code"`) ni los nombres de la auditoría (`session.mfa_recovery_codes_created`) calzan. */
+const MFA_RECOVERY_FUNCTION_PATTERN =
+  /\bmfa_recovery_codes?_(?:replace|claim|complete|release|acknowledge|status|revoke)\b/;
+/**
+ * H-004b (C7): el nombre de una de las siete funciones ARMADO POR PARTES para esquivar la regla de arriba:
+ * `"mfa_recovery_code" + "_claim"`, `` `mfa_recovery_code${suffix}` ``, `["mfa_recovery", "code_claim"].join(…)` o `… + "_claim"`.
+ * Ningún archivo de la aplicación junta así un texto que empieza con `mfa_recovery`.
+ */
+const MFA_RECOVERY_SPLIT_NAME_PATTERN =
+  /["'`]mfa_recovery(?:_codes?)?_?["'`]\s*\+|["'`]mfa_recovery(?:_codes?)?_?\$\{|\+\s*["'`]_?(?:replace|claim|complete|release|acknowledge|status|revoke)["'`]|\[\s*["'`]mfa_recovery(?:_codes?)?_?["'`]\s*,[^\]]*\]\s*\.join\(/;
+/** Y la tabla: nadie la lee ni la escribe directo (ni siquiera la pasarela: todo pasa por las funciones). */
+const MFA_RECOVERY_TABLE_PATTERN = /\.from\(\s*["'`]mfa_recovery_codes["'`]/;
+/** Las acciones que desactivan el segundo paso o crean códigos con la sesión completa (se crean en la etapa C de H-004b). */
+const SECOND_STEP_MANAGE_ACTIONS = "src/lib/auth/second-step-manage-actions.ts";
+/** Crear códigos de respaldo con la sesión completa (pide el código de 6 números de la aplicación) y confirmar «Los guardé». */
+const RECOVERY_CODE_ACTIONS = "src/lib/auth/recovery-code-actions.ts";
+/** Los archivos de H-004b con la lista CERRADA de lo que se puede registrar (`secondStepStrictLogProblem`). */
+const SECOND_STEP_STRICT_LOG_FILES: readonly string[] = [
+  "src/lib/auth/reauth.ts",
+  "src/lib/auth/recovery-code.ts",
+  RECOVERY_CODE_ACTIONS,
+  SECOND_STEP_MANAGE_ACTIONS,
+  MFA_RECOVERY_GATEWAY,
+  "src/lib/auth/second-step-actions.ts",
+  "src/lib/auth/second-step-checks.ts",
+];
 /** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
 const AUTH_ADMIN_GATEWAYS: readonly string[] = [MFA_ADMIN_GATEWAY];
 
@@ -153,6 +410,23 @@ function annulLogViolation(call: string): string | null {
       noStrings,
     );
   return forbidden ? `«${forbidden[0]}» no puede ir en un registro` : null;
+}
+
+/**
+ * H-004b: en el cuerpo de `confirmTotpEnrollmentAction`, la contraseña (`confirmPassword(`) se comprueba ANTES de los contadores
+ * y del bloqueo del código (`checkCodeBeforeVerifying(`) y del permiso de activación (`permitEnrollment(`). Devuelve el
+ * motivo si no se cumple, o `null`.
+ */
+function passwordBeforeCounters(body: string): string | null {
+  const password = body.indexOf("confirmPassword(");
+  const counters = body.indexOf("checkCodeBeforeVerifying(");
+  const permit = body.indexOf("permitEnrollment(");
+  if (password === -1) return "no pide la contraseña";
+  if (counters === -1 || permit === -1) return "faltan los contadores o el permiso";
+  if (password > counters) return "la contraseña va después de los contadores del código";
+  if (password > permit) return "la contraseña va después del permiso";
+  if (counters > permit) return "el permiso va antes de los contadores del código";
+  return null;
 }
 
 /** Carpetas del formulario público y de las solicitudes donde `serverLog` no puede recibir datos de una persona. */
@@ -1024,39 +1298,107 @@ describe("guardias estáticas del aislamiento", () => {
     expect(
       only(
         /\.mfa\s*\.\s*(enroll|challenge|verify|challengeAndVerify|unenroll|listFactors)\s*\(/,
-        // También la pasarela de administración, que lista y borra factores con la llave maestra (`auth.admin.mfa`).
-        ["src/lib/auth/second-step-actions.ts", MFA_ADMIN_GATEWAY],
+        // También la pasarela de administración, que lista y borra factores con la llave maestra (`auth.admin.mfa`), y
+        // (H-004b) las acciones de desactivar y de crear códigos con la sesión completa: `mfa.unenroll` y `challengeAndVerify`.
+        [
+          "src/lib/auth/second-step-actions.ts",
+          MFA_ADMIN_GATEWAY,
+          SECOND_STEP_MANAGE_ACTIONS,
+          RECOVERY_CODE_ACTIONS,
+        ],
       ),
     ).toEqual([]);
+    // H-004b (C7): ni desestructurando `mfa` de `auth` (`const { mfa } = supabase.auth`) ni con `auth["mfa"]`.
+    expect(
+      only(AUTH_MFA_ESCAPE_PATTERN, [
+        "src/lib/auth/second-step-actions.ts",
+        MFA_ADMIN_GATEWAY,
+        SECOND_STEP_MANAGE_ACTIONS,
+        RECOVERY_CODE_ACTIONS,
+      ]),
+    ).toEqual([]);
+    // H-004b: las siete funciones de los códigos de respaldo, solo desde su pasarela; la tabla, desde ninguna parte.
+    expect(only(MFA_RECOVERY_FUNCTION_PATTERN, MFA_RECOVERY_GATEWAY)).toEqual([]);
+    expect(only(MFA_RECOVERY_TABLE_PATTERN, [])).toEqual([]);
+    // H-004b (C7): y el nombre de ninguna función se arma por partes en ningún archivo.
+    expect(only(MFA_RECOVERY_SPLIT_NAME_PATTERN, [])).toEqual([]);
     // La API de administración de cuentas (`auth.admin.*`, con la llave maestra): solo en las pasarelas. Hoy hay una (H-118);
     // la de H-116 se suma a esta lista cuando exista. `auth.admin.mfa` solo vive en la de los factores.
     expect(only(AUTH_ADMIN_PATTERN, AUTH_ADMIN_GATEWAYS)).toEqual([]);
     expect(only(AUTH_ADMIN_MFA_PATTERN, MFA_ADMIN_GATEWAY)).toEqual([]);
+    // H-004b: comprobar una contraseña (abrir una sesión con ella) solo se hace en el ingreso y en «pedir la contraseña de nuevo».
+    expect(only(SIGN_IN_WITH_PASSWORD_PATTERN, SIGN_IN_WITH_PASSWORD_FILES)).toEqual([]);
     // Y esas acciones no usan la llave maestra ni nombran los métodos de sesión.
     const actions = stripComments(read(path.join(SRC, "lib/auth/second-step-actions.ts")));
     expect(/admin-client|createAdminClient/.test(actions)).toBe(false);
     expect(/\.(getUser|getClaims|getSession)\s*\(/.test(actions)).toBe(false);
   });
 
-  it("14b. (H-004a) serverLog y logAuditEvent en la verificación en dos pasos nunca reciben el código de 6 números, la clave, el uri, el QR ni el correo", () => {
+  it("14b. (H-004a, H-004b) serverLog y logAuditEvent en la verificación en dos pasos nunca reciben el código de 6 números, la clave, el uri, el QR, el correo ni la contraseña", () => {
     const files = [
       "src/lib/auth/second-step-actions.ts",
       "src/lib/auth/session.ts",
       "src/lib/security/login-rate-limit.ts",
-    ];
+      // H-004b: pedir la contraseña de nuevo (la contraseña ni el correo van a un registro).
+      "src/lib/auth/reauth.ts",
+      // H-004b: los códigos de respaldo (ni el código, ni su forma normalizada, ni su huella, ni el juego).
+      "src/lib/auth/recovery-code.ts",
+      MFA_RECOVERY_GATEWAY,
+      // Las acciones de los pasos 4 a 6 de H-004b: la guardia las cubre apenas existen (hoy no existen todas).
+      RECOVERY_CODE_ACTIONS,
+      SECOND_STEP_MANAGE_ACTIONS,
+      // H-004b paso 4: lo que comparten las acciones (contadores y bloqueo del código), el que crea el juego y el que envía el aviso.
+      "src/lib/auth/second-step-checks.ts",
+      "src/lib/auth/recovery-code-issue.ts",
+      "src/lib/security/mfa-account-notice-send.ts",
+    ].filter((file) => existsSync(path.join(ROOT, file)));
+    // Lo que ya existe tiene que estar en la lista: ningún archivo de los códigos de respaldo queda sin vigilar.
+    for (const required of [
+      "src/lib/auth/reauth.ts",
+      "src/lib/auth/recovery-code.ts",
+      MFA_RECOVERY_GATEWAY,
+      RECOVERY_CODE_ACTIONS,
+      "src/lib/auth/second-step-checks.ts",
+      "src/lib/auth/recovery-code-issue.ts",
+    ]) {
+      expect(files, required).toContain(required);
+    }
     let found = 0;
+    let strictChecked = 0;
     for (const file of files) {
       const text = stripComments(read(path.join(ROOT, file)));
+      const strict = SECOND_STEP_STRICT_LOG_FILES.includes(file);
       for (const name of ["serverLog", "logAuditEvent"]) {
         for (const call of namedCalls(text, name)) {
           found += 1;
           expect(secondStepLogViolation(call), `${file}: ${call}`).toBeNull();
+          // H-004b (C7): los archivos de los códigos de respaldo, además, con la lista CERRADA de claves y de nombres.
+          if (strict) {
+            strictChecked += 1;
+            expect(secondStepStrictLogProblem(call), `${file}: ${call}`).toBeNull();
+          }
+        }
+      }
+      if (strict) {
+        for (const envelope of logEnvelopeObjects(text)) {
+          expect(secondStepLogViolation(envelope), `${file}: ${envelope}`).toBeNull();
+          expect(secondStepStrictLogProblem(envelope), `${file}: ${envelope}`).toBeNull();
         }
       }
     }
+    // Los siete archivos de la lista cerrada existen y la guardia no pasa en vacío sobre ellos.
+    for (const required of SECOND_STEP_STRICT_LOG_FILES) {
+      expect(existsSync(path.join(ROOT, required)), required).toBe(true);
+      expect(files, required).toContain(required);
+    }
+    expect(strictChecked).toBeGreaterThanOrEqual(40);
     // La guardia no puede pasar en vacío: las acciones llaman a las dos funciones muchas veces.
     expect(found).toBeGreaterThanOrEqual(8);
-    const actions = stripComments(read(path.join(ROOT, "src/lib/auth/second-step-actions.ts")));
+    // Las acciones y lo que comparten (los contadores y la auditoría de los fallos viven en `second-step-checks.ts`).
+    const actions = stripComments(
+      read(path.join(ROOT, "src/lib/auth/second-step-actions.ts")) +
+        read(path.join(ROOT, "src/lib/auth/second-step-checks.ts")),
+    );
     expect(namedCalls(actions, "serverLog").length).toBeGreaterThan(2);
     expect(namedCalls(actions, "logAuditEvent").length).toBeGreaterThan(4);
   });
@@ -1070,12 +1412,70 @@ describe("guardias estáticas del aislamiento", () => {
       "serverLog('warn', 'mfa', { secret: enrollment.secret })",
       "logAuditEvent({ details: { email: user.email } })",
       "serverLog('error', 'x', { code: userCode })",
+      // H-004b: la contraseña, con cualquier nombre que la delate
+      "serverLog('warn', 'reauth', { password })",
+      "logAuditEvent({ details: { reason: 'wrong_password', value: passwordFormat.data.password } })",
+      "logAuditEvent({ details: { contrasena } })",
+      "serverLog('warn', 'reauth', { code: 'x', pw: parsed.password })",
+      // H-004b: los códigos de respaldo, su forma normalizada y su huella
+      "serverLog('warn', 'recovery', { codes })",
+      "logAuditEvent({ details: { reason: 'x', codes: result.codes } })",
+      "serverLog('warn', 'recovery', { recoveryCode })",
+      "logAuditEvent({ details: { value: recoveryCodeInput } })",
+      "serverLog('warn', 'recovery', { normalized })",
+      "logAuditEvent({ details: { value: normalizedCode } })",
+      "serverLog('warn', 'recovery', { hash: recoveryCodeHash(user.id, normalized) })",
+      "logAuditEvent({ details: { codeHash } })",
+      "serverLog('warn', 'recovery', { fingerprint })",
     ];
     for (const call of bad) expect(secondStepLogViolation(call), call).not.toBeNull();
+    // H-004b (C7): la lista CERRADA detecta lo que la lista corta no ve por el nombre.
+    const strictBad = [
+      "serverLog('warn', 'x', { value: typed })",
+      "serverLog('warn', 'x', { rawCode })",
+      "serverLog('warn', 'x', { stage, typed })",
+      "logAuditEvent({ action: 'session.mfa_failed', result: 'failure', details: { value: typed } })",
+      "logAuditEvent({ action: 'a', result: 'failure', details: { reason: typed } })",
+      "logAuditEvent({ action: 'a', result: 'failure', details: { reason: readText(formData, 'x') } })",
+      "serverLog('warn', 'x', { code: readText(formData, 'x') })",
+      "logAuditEvent({ action: 'a', result: 'failure', details: { stage, extra: 1 } })",
+      "serverLog('warn', 'x', { ...rest })",
+      "serverLog('warn', 'x', { stage: rawInput.slice(0, 4) })",
+    ];
+    for (const call of strictBad) {
+      expect(secondStepStrictLogProblem(call), call).not.toBeNull();
+    }
+    const strictGood = [
+      "serverLog('warn', 'mfa_verify_failed', { stage, code: errorCodeOf(error) })",
+      "serverLog('error', 'x', { code: error instanceof MfaRecoveryGatewayError ? error.code : 'unexpected' })",
+      "serverLog('warn', 'x', { stage: 'manage' })",
+      "logAuditEvent({ action: 'session.mfa_failed', result: 'failure', actorUserId: user.id, details: { reason: 'recovery_invalid', stage, factorType: 'recovery_code' } })",
+      "logAuditEvent({ ...used, tenantId, details })",
+      "logAuditEvent({ action: 'session.reauth_failed', result: reason === 'locked' ? 'denied' : 'failure', actorUserId: user.id, details: { reason, purpose } })",
+    ];
+    for (const call of strictGood) expect(secondStepStrictLogProblem(call), call).toBeNull();
+    // Los sobres armados antes de la llamada (`const details = {…}`) también se revisan.
+    expect(logEnvelopeObjects("const details = { stage, noticeSent };")).toEqual([
+      "{ stage, noticeSent }",
+    ]);
+    expect(
+      secondStepStrictLogProblem(logEnvelopeObjects("const details = { stage, typed };")[0]),
+    ).not.toBeNull();
+    expect(logEnvelopeObjects("const other = { typed };\nconst used = { action: 'a' };")).toEqual([
+      "{ action: 'a' }",
+    ]);
     const good = [
       "serverLog('warn', 'mfa_verify_failed', { stage, code: errorCodeOf(error) })",
       "serverLog('error', 'x', { code: error.code ?? String(error.status) })",
       "logAuditEvent({ action: 'session.mfa_verified', result: 'success', actorUserId: user.id, details: { stage: 'sign_in', factorType: MFA_FACTOR_TYPE } })",
+      // H-004b: el motivo y el para qué (textos fijos o variables que no son la contraseña) y un código fijo
+      "logAuditEvent({ action: 'session.reauth_failed', result: 'failure', actorUserId: user.id, details: { reason, purpose } })",
+      "serverLog('warn', 'reauth_sign_out_failed', { code: 'unexpected' })",
+      // H-004b: lo que sí se registra de los códigos de respaldo: motivos, etapas y códigos de error
+      "logAuditEvent({ action: 'session.mfa_recovery_used', result: 'success', actorUserId: user.id, details: { stage: 'sign_in' } })",
+      "logAuditEvent({ action: 'session.mfa_disabled', result: 'success', actorUserId: user.id, details: { via: 'recovery_code' } })",
+      "logAuditEvent({ action: 'session.mfa_recovery_codes_created', result: 'success', actorUserId: user.id, details: { stage: 'regenerate' } })",
+      "serverLog('error', 'mfa_recovery_claim_failed', { code: error instanceof MfaRecoveryGatewayError ? error.code : 'unexpected' })",
     ];
     for (const call of good) expect(secondStepLogViolation(call), call).toBeNull();
     // Y encuentra las llamadas (con paréntesis anidados) de las dos funciones.
@@ -1101,6 +1501,25 @@ describe("guardias estáticas del aislamiento", () => {
         "supabase.auth.mfa.getAuthenticatorAssuranceLevel()",
       ),
     ).toBe(false);
+    // H-004b (C7): llegar a `auth.mfa` desestructurando o con corchetes.
+    for (const violation of [
+      "const { mfa } = supabase.auth; await mfa.unenroll({ factorId })",
+      "const { data, mfa } = await client.auth;",
+      "const { auth: { mfa } } = supabase; await mfa.listFactors()",
+      'await supabase.auth["mfa"].unenroll({ factorId })',
+      "await supabase.auth?.['mfa'].challengeAndVerify(args)",
+    ]) {
+      expect(AUTH_MFA_ESCAPE_PATTERN.test(violation), violation).toBe(true);
+    }
+    for (const harmless of [
+      "const { mfa } = props;",
+      "const { data, auth } = await load();",
+      "const isMfa = true",
+      "const mfaState = supabase.auth.getUser()",
+      "const { admin } = client.auth;",
+    ]) {
+      expect(AUTH_MFA_ESCAPE_PATTERN.test(harmless), harmless).toBe(false);
+    }
     // La API de administración: la detecta aunque venga encadenada, con espacios o saltos de línea; no confunde otras `auth`.
     for (const violation of [
       "await createAdminClient().auth.admin.mfa.deleteFactor({ id, userId })",
@@ -1254,6 +1673,251 @@ describe("guardias estáticas del aislamiento", () => {
     expect(
       Number(/export const maxDuration = (\d+);/.exec("export const maxDuration = 30;")![1]),
     ).toBeLessThan(MIN_SECONDS);
+  });
+
+  it("14j. (H-004b) «pedir la contraseña de nuevo»: el correo sale de la sesión (no del formulario), usa el límite del ingreso, cierra la sesión desechable solo en local, y la acción de activar la pide ANTES de los contadores y del permiso", () => {
+    const reauth = stripComments(read(path.join(ROOT, "src/lib/auth/reauth.ts")));
+    // El correo no puede venir del formulario ni de un parámetro: solo la sesión.
+    expect(reauth).toMatch(/getSessionState\(\)/);
+    expect(/formData|FormData|readText/.test(reauth)).toBe(false);
+    // Ni la llave maestra, ni los factores, ni la API de administración.
+    expect(/admin-client|createAdminClient|auth\s*\.\s*admin|\.mfa\./.test(reauth)).toBe(false);
+    // El límite del ingreso (no un presupuesto de intentos aparte).
+    for (const name of ["isLoginLocked", "recordLoginFailure", "clearLoginFailures"]) {
+      expect(reauth, name).toMatch(new RegExp(`\\b${name}\\(`));
+    }
+    // La sesión desechable: sin cookies ni renovación, y se cierra SIEMPRE con alcance local (nunca global ni «others»).
+    expect(reauth).toMatch(/persistSession:\s*false/);
+    expect(reauth).toMatch(/autoRefreshToken:\s*false/);
+    const signOuts = [...reauth.matchAll(/\.signOut\(([^)]*)\)/g)].map((match) => match[1]);
+    expect(signOuts.length).toBeGreaterThan(0);
+    for (const argument of signOuts) expect(argument).toMatch(/scope:\s*"local"/);
+    // La acción de activar: la contraseña va después de validar la forma y ANTES de todo lo demás.
+    const actions = stripComments(read(path.join(ROOT, "src/lib/auth/second-step-actions.ts")));
+    const body = actions.slice(
+      actions.indexOf("export async function confirmTotpEnrollmentAction"),
+    );
+    expect(passwordBeforeCounters(body)).toBeNull();
+    // Y la guardia muerde: sin la contraseña, o con ella después de los contadores o del permiso, se detecta.
+    expect(
+      passwordBeforeCounters("checkCodeBeforeVerifying(a); permitEnrollment(b);"),
+    ).not.toBeNull();
+    expect(
+      passwordBeforeCounters(
+        "checkCodeBeforeVerifying(a); confirmPassword(u, p, 'enroll'); permitEnrollment(b);",
+      ),
+    ).not.toBeNull();
+    expect(
+      passwordBeforeCounters(
+        "confirmPassword(u, p, 'enroll'); permitEnrollment(b); checkCodeBeforeVerifying(a);",
+      ),
+    ).not.toBeNull();
+    expect(
+      passwordBeforeCounters(
+        "confirmPassword(u, p, 'enroll'); checkCodeBeforeVerifying(a); permitEnrollment(b);",
+      ),
+    ).toBeNull();
+    // El patrón de signInWithPassword también muerde: se ve aunque venga encadenado.
+    expect(
+      SIGN_IN_WITH_PASSWORD_PATTERN.test(
+        "await client.auth.signInWithPassword({ email, password })",
+      ),
+    ).toBe(true);
+    expect(SIGN_IN_WITH_PASSWORD_PATTERN.test("await client.auth.signInWithOtp({ email })")).toBe(
+      false,
+    );
+  });
+
+  it("14k. (H-004b) los códigos de respaldo: solo la pasarela llama a las siete funciones de la base, nadie lee ni escribe la tabla directo, y la pasarela y las piezas de los códigos no registran ni escriben en la consola", () => {
+    // La pasarela existe, nombra las siete funciones y ningún otro archivo de la aplicación nombra ninguna.
+    const gateway = stripComments(read(path.join(ROOT, MFA_RECOVERY_GATEWAY)));
+    const functionNames = [
+      "mfa_recovery_codes_replace",
+      "mfa_recovery_code_claim",
+      "mfa_recovery_code_complete",
+      "mfa_recovery_code_release",
+      "mfa_recovery_codes_acknowledge",
+      "mfa_recovery_codes_status",
+      "mfa_recovery_codes_revoke",
+    ];
+    for (const name of functionNames) {
+      expect(gateway, name).toMatch(new RegExp(`\\.rpc\\(\\s*"${name}"`));
+    }
+    const offenders = sourceFiles
+      .filter((file) => MFA_RECOVERY_FUNCTION_PATTERN.test(stripComments(read(file))))
+      .map(rel)
+      .filter((file) => file !== MFA_RECOVERY_GATEWAY);
+    expect(offenders).toEqual([]);
+    // La pasarela usa la llave maestra (es su razón de ser) pero no la API de cuentas ni los factores: eso es de la otra pasarela.
+    expect(gateway).toMatch(/createAdminClient/);
+    expect(AUTH_ADMIN_PATTERN.test(gateway)).toBe(false);
+    expect(/\.mfa\s*\./.test(gateway)).toBe(false);
+    expect(MFA_RECOVERY_TABLE_PATTERN.test(gateway)).toBe(false);
+    // La huella: solo se calcula en `recovery-code.ts`, con la llave de búsqueda (nada de comparar a mano).
+    const pieces = stripComments(read(path.join(ROOT, "src/lib/auth/recovery-code.ts")));
+    expect(pieces).toMatch(/searchHash\(/);
+    expect(pieces).toMatch(/from "node:crypto"/);
+    expect(/Math\.random/.test(pieces)).toBe(false);
+    for (const file of ["src/lib/auth/recovery-code.ts", MFA_RECOVERY_GATEWAY]) {
+      const text = stripComments(read(path.join(ROOT, file)));
+      expect(/console\./.test(text), `${file}: escribe en la consola`).toBe(false);
+      expect(/\bserverLog\(|\blogAuditEvent\(/.test(text), `${file}: no debe registrar nada`).toBe(
+        false,
+      );
+    }
+    // Y la guardia muerde: cada forma de llamar a una función, o de leer la tabla, fuera de la pasarela se detecta; las demás no.
+    const flagged = (text: string, file: string) =>
+      (MFA_RECOVERY_FUNCTION_PATTERN.test(stripComments(text)) && file !== MFA_RECOVERY_GATEWAY) ||
+      MFA_RECOVERY_TABLE_PATTERN.test(stripComments(text)) ||
+      MFA_RECOVERY_SPLIT_NAME_PATTERN.test(stripComments(text));
+    for (const violation of [
+      'await admin.rpc("mfa_recovery_code_claim", { p_user_id: id, p_code_hash: hash })',
+      "await admin.rpc('mfa_recovery_codes_replace', args)",
+      "await admin.rpc(`mfa_recovery_codes_status`, { p_user_id })",
+      'const name = "mfa_recovery_codes_revoke"; await admin.rpc(name, args)',
+      'await admin.from("mfa_recovery_codes").select("code_hash")',
+      "await admin.from('mfa_recovery_codes').delete().eq('user_id', id)",
+      // H-004b (C7): el nombre armado por partes
+      'await admin.rpc("mfa_recovery_code" + "_claim", args)',
+      'await admin.rpc("mfa_recovery_codes_" + action, args)',
+      "await admin.rpc(`mfa_recovery_code${suffix}`, args)",
+      'await admin.rpc(["mfa_recovery", "code_claim"].join("_"), args)',
+      'const name = prefix + "_revoke"; await admin.rpc(name, args)',
+    ]) {
+      expect(flagged(violation, "src/lib/auth/second-step-manage-actions.ts"), violation).toBe(
+        true,
+      );
+      // En la pasarela solo se permite nombrar las funciones enteras: leer la tabla o armar un nombre por partes se detecta igual.
+      expect(flagged(violation, MFA_RECOVERY_GATEWAY), `${violation} en la pasarela`).toBe(
+        violation.includes(".from(") || MFA_RECOVERY_SPLIT_NAME_PATTERN.test(violation),
+      );
+    }
+    for (const harmless of [
+      'searchHash("mfa_recovery_code", PLATFORM_TENANT_ID, value)',
+      "// admin.rpc('mfa_recovery_code_claim', args)",
+      'const table = "mfa_recovery_codes"',
+      "await claimRecoveryCode(user.id, hash)",
+      'await serverLog("error", "mfa_recovery_claim_failed", { code: "x" })',
+      'const label = "session." + "mfa_recovery_used"',
+      'const id = ["a", "b"].join("_")',
+    ]) {
+      expect(flagged(harmless, "src/lib/auth/second-step-manage-actions.ts"), harmless).toBe(false);
+    }
+  });
+
+  it("14l. (H-004b) entrar con un código de respaldo: sesión a medias primero; el código se toma antes de quitar los factores, las otras sesiones se cierran DESPUÉS de quitarlos, y la redirección es lo último; el código ni su huella llegan a un registro", () => {
+    const text = stripComments(read(path.join(ROOT, RECOVERY_CODE_ACTIONS)));
+    const start = text.indexOf("export async function verifyRecoveryCodeAction");
+    expect(start, "falta verifyRecoveryCodeAction").toBeGreaterThan(-1);
+    const body = text.slice(start);
+    expect(recoveryUseOrderViolation(body)).toBeNull();
+    // Sin llave maestra ni métodos de sesión en el archivo: los factores se quitan por la pasarela.
+    expect(
+      /admin-client|createAdminClient|auth\s*\.\s*admin|\.mfa\s*\.\s*unenroll/.test(text),
+    ).toBe(false);
+    // Y la guardia muerde: el orden roto se detecta.
+    const ordered = [
+      "await requirePendingSecondStep();",
+      "await blockedAttemptState(a);",
+      "await claimRecoveryCode(a);",
+      "await supabase.auth.signOut({ scope: 'others' });",
+      "try { await removeAllFactors(a); } catch (e) {",
+      "if (await factorMayRemain(a)) { await releaseClaimedCode(c); return x; } }",
+      "const sent = await sendRecoveryUsedNotice(a);",
+      "await supabase.auth.signOut({ scope: 'others' });",
+      "await completeRecoveryCode(a);",
+      "redirect(b);",
+    ];
+    expect(recoveryUseOrderViolation(ordered.join("\n"))).toBeNull();
+    for (const swap of [
+      [2, 4], // quitar los factores antes de tomar el código
+      [3, 4], // cerrar las otras sesiones por primera vez después de quitar el factor
+      [0, 1], // contar el intento antes de pedir la sesión a medias
+      [8, 9], // redirigir antes de completar
+      [5, 4], // decidir si el factor sigue puesto antes de intentar quitarlo
+      [4, 6], // el aviso antes de quitar el factor
+    ]) {
+      const broken = [...ordered];
+      [broken[swap[0]], broken[swap[1]]] = [broken[swap[1]], broken[swap[0]]];
+      expect(recoveryUseOrderViolation(broken.join("\n")), swap.join("↔")).not.toBeNull();
+    }
+    // Sin el cierre previo, sin el cierre posterior, o cerrando solo después de completar.
+    expect(recoveryUseOrderViolation(ordered.filter((_, i) => i !== 3).join("\n"))).not.toBeNull();
+    expect(recoveryUseOrderViolation(ordered.filter((_, i) => i !== 7).join("\n"))).not.toBeNull();
+    expect(
+      recoveryUseOrderViolation(ordered.filter((_, i) => i !== 5).join("\n")),
+      "sin volver a preguntar si queda el factor",
+    ).not.toBeNull();
+    expect(recoveryUseOrderViolation(ordered.slice(1).join("\n"))).not.toBeNull();
+    // La respuesta de quitar los factores no se da por perdida sin comprobar: la pasarela ofrece `hasVerifiedFactor`.
+    expect(text).toMatch(/hasVerifiedFactor\(/);
+  });
+
+  it("14m. (H-004b) desactivar la verificación: contraseña antes que el código, el aviso por correo antes de quitar el factor, el factor se quita con la sesión de la persona (no con la llave maestra) y las otras sesiones se cierran al final", () => {
+    const text = stripComments(read(path.join(ROOT, SECOND_STEP_MANAGE_ACTIONS)));
+    const start = text.indexOf("export async function disableSecondStepAction");
+    expect(start, "falta disableSecondStepAction").toBeGreaterThan(-1);
+    const body = text.slice(start);
+    expect(disableOrderViolation(body)).toBeNull();
+    // Sin llave maestra ni la pasarela de factores en el archivo: el factor se quita con la propia sesión.
+    expect(
+      /admin-client|createAdminClient|auth\s*\.\s*admin|mfa-admin-gateway|removeAllFactors/.test(
+        text,
+      ),
+    ).toBe(false);
+    // Y la guardia muerde: cada orden roto o cada atajo se detecta.
+    const ordered = [
+      "await requireUser();",
+      "await getSessionState();",
+      "await confirmPassword(a);",
+      "await blockedAttemptState(a);",
+      "await claimRecoveryCode(a);",
+      "await checkCodeBeforeVerifying(a);",
+      "await supabase.auth.mfa.challengeAndVerify(a);",
+      "const noticeSent = await sendDisabledNotice(a);",
+      "if (!noticeSent) { return b; }",
+      "const r = await supabase.auth.mfa.unenroll(a); if (r.error && await factorMayRemain(a)) { return b; }",
+      "await completeRecoveryCode(a);",
+      "await revokeRecoveryCodes(a);",
+      "await supabase.auth.signOut({ scope: 'others' });",
+      "await logAuditEvent({ action: 'session.mfa_disabled' });",
+      "redirect(b);",
+    ];
+    expect(disableOrderViolation(ordered.join("\n"))).toBeNull();
+    for (const swap of [
+      [2, 3], // el código antes que la contraseña
+      [2, 5], // verificar el código de la aplicación antes que la contraseña
+      [7, 9], // quitar el factor antes del aviso
+      [9, 12], // cerrar las otras sesiones antes de quitar el factor
+      [12, 13], // la auditoría antes de cerrar las otras sesiones
+      [13, 14], // redirigir antes de la auditoría
+    ]) {
+      const broken = [...ordered];
+      [broken[swap[0]], broken[swap[1]]] = [broken[swap[1]], broken[swap[0]]];
+      expect(disableOrderViolation(broken.join("\n")), swap.join("↔")).not.toBeNull();
+    }
+    // Faltar el corte si el aviso no salió, o quitar el factor con otra cosa que la sesión de la persona.
+    expect(
+      disableOrderViolation(
+        ordered.filter((line) => !line.startsWith("if (!noticeSent")).join("\n"),
+      ),
+    ).not.toBeNull();
+    expect(
+      disableOrderViolation(
+        ordered
+          .map((line) =>
+            line.replace("supabase.auth.mfa.unenroll", "admin.auth.admin.mfa.deleteFactor"),
+          )
+          .join("\n"),
+      ),
+    ).not.toBeNull();
+    expect(
+      disableOrderViolation(
+        ordered.map((line) => line.replace("factorMayRemain", "somethingElse")).join("\n"),
+      ),
+      "sin volver a preguntar si el factor sigue puesto",
+    ).not.toBeNull();
+    expect(disableOrderViolation(ordered.slice(1).join("\n"))).not.toBeNull();
   });
 
   it("14g. la guardia 14f detecta de verdad el código del enlace, su huella, la contraseña y el correo; deja pasar un código de error", () => {

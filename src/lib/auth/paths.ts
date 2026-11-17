@@ -29,4 +29,10 @@ export const LOGIN_NOTICES = {
 /** Avisos que puede traer `/cuenta/seguridad?aviso=...`. */
 export const ACCOUNT_SECURITY_NOTICES = {
   enabled: "activada",
+  /** Se crearon códigos de respaldo nuevos desde la pantalla de seguridad (H-004b). */
+  codesCreated: "codigos",
+  /** Se entró con un código de respaldo: la verificación quedó desactivada y hay que activarla de nuevo (H-004b). */
+  recoveryUsed: "respaldo",
+  /** La persona desactivó la verificación en dos pasos desde la pantalla de seguridad (H-004b). */
+  disabled: "desactivada",
 } as const;

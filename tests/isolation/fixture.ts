@@ -171,6 +171,8 @@ export interface IsolationFixture {
   rateLimitKeyHash: string;
   /** Huella del enlace de anulación (`mfa_annul_links`) que monta la fixture: ningún pase debe poder leerla (H-118a). */
   mfaLinkTokenSha: string;
+  /** Huella de un código de respaldo (`mfa_recovery_codes`) que monta la fixture: ningún pase debe poder leerla (H-004b). */
+  mfaRecoveryCodeHash: string;
 }
 
 const SEED_CUSTOMERS = (org: OrgKey, canary: string): CustomerInput[] => [
@@ -538,6 +540,17 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     [mfaAlert.rows[0].id, personas.ana.userId, mfaLinkTokenSha],
   );
 
+  // Un código de respaldo del segundo paso (solo su huella; tabla de la plataforma, solo del servidor; H-004b)
+  const mfaRecoveryCodeHash = [
+    ...randomUUID().replaceAll("-", ""),
+    ...randomUUID().replaceAll("-", ""),
+  ].join("");
+  await db.query(
+    `insert into public.mfa_recovery_codes (user_id, set_id, factor_id, code_hash)
+     values ($1, gen_random_uuid(), gen_random_uuid(), $2)`,
+    [personas.ana.userId, mfaRecoveryCodeHash],
+  );
+
   return {
     runId,
     personas,
@@ -545,6 +558,7 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
     platformAuditId: Number(audit.rows[0].id),
     rateLimitKeyHash,
     mfaLinkTokenSha,
+    mfaRecoveryCodeHash,
   };
 }
 

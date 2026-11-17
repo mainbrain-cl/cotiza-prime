@@ -32,7 +32,8 @@ export default async function SecondStepPage() {
       footer={
         <div className="flex flex-col items-center gap-2">
           <p>
-            Si ya no tienes la aplicación, cierra sesión y pide ayuda al equipo de Cotiza Prime.
+            Si no tienes la aplicación ni tus códigos de respaldo, cierra sesión y pide ayuda al
+            equipo de Cotiza Prime.
           </p>
           <p>
             ¿No activaste tú la verificación? Busca en tu correo el aviso «Se activó la verificación

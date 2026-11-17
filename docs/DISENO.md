@@ -287,6 +287,30 @@ menú flotante. El código QR va en una `<img>` sobre fondo **blanco fijo con re
 texto alternativo, y la clave para escribir a mano en Geist Mono en grupos de 4. Con «reducir movimiento» no cambia nada
 funcional (las animaciones de entrada y los fondos se apagan como en el resto de la aplicación).
 
+## Componente: lista de códigos de respaldo (H-004b)
+
+`src/app/cuenta/seguridad/recovery-codes-screen.tsx`. Se muestra **una sola vez** (al activar la verificación o al crear o generar
+códigos nuevos) y es una pantalla de trabajo: tarjeta de superficie sólida, sin vidrio ni fondos animados.
+
+- Título «Tus códigos de respaldo» (el foco llega a él) y el texto «Solo los verás esta vez. Cada código sirve una sola vez. Si pierdes tu teléfono, entra con uno.»
+- La lista numerada en **Geist Mono**, sobre `--surface-2` con borde: **una columna en teléfono y dos desde 640 px**, sin desplazamiento horizontal a 375 px. Cada código en grupos de 4 con guion (`7KQM-3XHP-W2RT`).
+- «Copiar todos» (uno por línea; cambia a «Copiados» y se anuncia a lectores de pantalla sin mover el foco) y «Descargar (.txt)» (el archivo se arma en el navegador con un `Blob`, **no lleva el correo** ni nada más de la cuenta).
+- La casilla «Guardé estos códigos en un lugar seguro» y el botón «Listo», **deshabilitado hasta marcarla**. Área táctil de 44 × 44 px en la casilla, los botones y el «Listo».
+- Los códigos solo viven en la memoria de la pantalla: nunca van en la dirección, el almacenamiento del navegador ni una cookie, y recargar la página los borra. Si la persona no confirma, `/cuenta/seguridad` lo recuerda («No confirmaste que guardaste tus códigos de respaldo») y ofrece «Generar códigos nuevos».
+
+## Componente: confirmar con contraseña y código (H-004b)
+
+Un patrón, no un archivo: se usa al activar la verificación (`/cuenta/seguridad`), al crear o generar códigos de respaldo y al desactivarla. Siempre sobre superficie sólida.
+
+- **Contraseña.** Etiqueta «Tu contraseña», ayuda «La pedimos de nuevo para confirmar que eres tú.», `type="password"`, `autocomplete="current-password"`, letra de 16 px. Un campo de texto oculto (`sr-only`, `aria-hidden`, `tabindex="-1"`, `autocomplete="username"`, **sin `name`**: no viaja en el envío) lleva el correo para que el gestor de contraseñas complete solo. La contraseña nunca vuelve en el estado del formulario.
+- **Código.** Al activar y al crear códigos, el campo de 6 números de arriba (`CodeField`). Al **desactivar**, un solo campo «Código de tu aplicación o código de respaldo» (`AnyCodeField`, `src/components/auth/any-code-field.tsx`): Geist Mono con espaciado amplio y en mayúsculas, 16 px, `autocomplete="off"`, `autocapitalize="characters"`, sin corrector y **sin `maxlength` corto** (pegar «7KQM-3XHP-W2RT» o «123 456» tiene que funcionar). En el ingreso, el código de respaldo tiene su propio campo (`RecoveryCodeField`).
+- **Errores.** Una contraseña incorrecta se muestra en el campo de la contraseña y el foco vuelve a él; un código incorrecto, bloqueos y fallos del correo, como aviso del formulario. Tras un error el campo del código queda vacío y el foco vuelve a él. Un código de respaldo que no sirve da **siempre el mismo mensaje**, sin revelar si existía o ya se usó.
+- **Botones.** Primario para confirmar; «Cancelar» fantasma, centrado debajo. En teléfono, a todo el ancho y de 44 px.
+
+### El botón de peligro (desactivar la verificación)
+
+«Desactivar la verificación en dos pasos» es un botón `variant="danger"` (`--danger-soft` con texto `--danger`; al pasar el cursor, `--danger` con `--on-accent`), tamaño `lg`, dentro de su propia sección «Desactivar la verificación» (separada por un borde superior) al final de «Seguridad de tu cuenta». **No desactiva nada al pulsarlo**: abre una tarjeta de superficie sólida (`--surface`, borde, `r-md`, relleno de 16 px) con la contraseña y el código, y un botón de confirmar también de peligro («Desactivar la verificación»). En teléfono es la misma tarjeta en la página (no una hoja que sube desde abajo: el proyecto aún no tiene un componente `Sheet`). «Cancelar» la cierra y devuelve el foco al botón que la abrió. Texto de la tarjeta: «Para confirmar que eres tú, escribe tu contraseña y un código. Al desactivarla cerramos tu sesión en tus otros dispositivos y te enviamos un aviso por correo.» Con «reducir movimiento» no cambia nada funcional.
+
 ## Por qué este documento existe
 
 `/auditar` revisa cada pantalla contra este archivo antes de darla por terminada. Si está vacío,

@@ -5,6 +5,9 @@ import { INVITATION_ACCEPT_PATH } from "@/lib/team/accept-model";
 /** Nombre con que la aplicación de códigos de la persona muestra a Cotiza Prime. */
 export const MFA_ISSUER = "Cotiza Prime";
 
+/** Nombre visible del factor en Supabase (H-004b; estaba pendiente desde el punto (d) de H-004a). */
+export const MFA_FACTOR_FRIENDLY_NAME = "Aplicación de códigos";
+
 /** Tipo de verificación que existe hoy (aplicación de códigos). Va en la auditoría. */
 export const MFA_FACTOR_TYPE = "totp";
 

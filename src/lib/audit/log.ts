@@ -21,6 +21,10 @@ export type AuditAction =
   | "session.mfa_verified"
   | "session.mfa_failed"
   | "session.mfa_locked"
+  | "session.reauth_failed"
+  | "session.mfa_recovery_codes_created"
+  | "session.mfa_recovery_used"
+  | "session.mfa_disabled"
   | "tenant.access_denied";
 
 export type AuditResult = "success" | "failure" | "denied";
@@ -34,7 +38,7 @@ export type AuditEvent = {
   tenantId?: string;
   resourceType?: string;
   resourceId?: string;
-  /** Nunca datos personales (correo, nombre, RUT, contraseña) ni, en la verificación en dos pasos, el código, la clave ni el `uri`. */
+  /** Nunca datos personales (correo, nombre, RUT, contraseña) ni, en la verificación en dos pasos, el código, la clave ni el `uri`, ni un código de respaldo, su forma normalizada o su huella. */
   details?: Record<string, string | number | boolean | null>;
 };
 

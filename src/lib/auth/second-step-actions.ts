@@ -4,19 +4,30 @@ import { redirect } from "next/navigation";
 import { logAuditEvent, type AuditAction } from "@/lib/audit/log";
 import {
   AUTH_MESSAGES,
-  MFA_LOCKED_DAY_ENROLLMENT_MESSAGE,
-  MFA_LOCKED_DAY_MESSAGE,
-  MFA_LOCKED_DAY_PASSWORD_MESSAGE,
   MFA_NOTICE_REVERTED_MESSAGE,
   MFA_NOTICE_REVERT_FAILED_MESSAGE,
   MFA_SIGN_IN_FAILED_MESSAGE,
-  classifyAuthError,
 } from "@/lib/auth/errors";
 import type { FormState } from "@/lib/auth/form-state";
 import { activeTenantIdsOf, logTenantLogins } from "@/lib/auth/login-audit";
-import { ACCOUNT_SECURITY_NOTICES, ACCOUNT_SECURITY_PATH } from "@/lib/auth/paths";
-import { fieldErrorsOf, totpCodeSchema } from "@/lib/auth/schemas";
-import { MFA_FACTOR_TYPE, MFA_ISSUER, afterSecondStepPath } from "@/lib/auth/second-step";
+import { ACCOUNT_SECURITY_PATH } from "@/lib/auth/paths";
+import { issueRecoveryCodes, type RecoveryCodesIssued } from "@/lib/auth/recovery-code-issue";
+import { normalizeRecoveryCode } from "@/lib/auth/recovery-code";
+import { confirmPassword } from "@/lib/auth/reauth";
+import { fieldErrorsOf, reauthPasswordSchema, totpCodeSchema } from "@/lib/auth/schemas";
+import {
+  MFA_FACTOR_FRIENDLY_NAME,
+  MFA_FACTOR_TYPE,
+  MFA_ISSUER,
+  afterSecondStepPath,
+} from "@/lib/auth/second-step";
+import {
+  CODE_FIELD,
+  checkCodeBeforeVerifying,
+  errorCodeOf,
+  failedVerification,
+  readText,
+} from "@/lib/auth/second-step-checks";
 import {
   getSessionState,
   hasRecoverySession,
@@ -26,12 +37,7 @@ import {
 import { getRequestContext } from "@/lib/http/request-context";
 import { serverLog } from "@/lib/log/server-log";
 import {
-  RATE_LIMITED_MESSAGE,
-  beginSecondStepAttempt,
   clearSecondStepFailures,
-  consumeTotpCode,
-  isSecondStepIpLocked,
-  recordSecondStepFailure,
   releaseTotpCode,
   type SecondStepContext,
 } from "@/lib/security/login-rate-limit";
@@ -62,120 +68,13 @@ import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
  *   auditoría solo `{reason, stage, factorType}`.
  */
 
-const CODE_FIELD = "code";
+/** Lo que se le dice a quien escribe un código de respaldo donde va el de 6 números de su aplicación. */
+const RECOVERY_CODE_IN_APP_FIELD_MESSAGE =
+  "Ese parece un código de respaldo. Si no tienes tu teléfono, usa el enlace «¿No tienes tu teléfono? Usa un código de respaldo»; si lo tienes, escribe aquí el código de 6 números de tu aplicación.";
+
 const FACTOR_FIELD = "factorId";
+const PASSWORD_FIELD = "password";
 const SVG_DATA_URL_PREFIX = "data:image/svg+xml;utf-8,";
-
-function readText(formData: FormData, name: string): string | undefined {
-  const value = formData.get(name);
-  return typeof value === "string" ? value : undefined;
-}
-
-type AuthErrorLike = { code?: string | null; status?: number | null };
-const errorCodeOf = (error: AuthErrorLike) => error.code ?? String(error.status ?? "");
-
-type CodeCheck = { ok: true; code: string } | { ok: false; state: FormState };
-
-/** Etapa de la verificación, para la auditoría y para el mensaje de «caducó». */
-type Stage = "sign_in" | "enrollment";
-
-/**
- * Lo que va ANTES de pedirle la verificación a Supabase: formato del código, bloqueo (de la IP, del día y de la ventana de
- * 15 minutos) y código ya usado. Los intentos de la ventana se REGISTRAN aquí, antes de verificar, para que los envíos en
- * paralelo no pasen del tope. Devuelve el código limpio o el estado de error que se muestra.
- */
-async function checkCodeBeforeVerifying(
-  formData: FormData,
-  userId: string,
-  clientIp: string | null,
-  stage: Stage,
-  context: SecondStepContext,
-): Promise<CodeCheck> {
-  const parsed = totpCodeSchema.safeParse({ code: readText(formData, CODE_FIELD) });
-  if (!parsed.success) {
-    return { ok: false, state: { status: "error", fieldErrors: fieldErrorsOf(parsed.error) } };
-  }
-  const { code } = parsed.data;
-
-  const blocked = (await isSecondStepIpLocked(clientIp))
-    ? "short"
-    : await beginSecondStepAttempt(userId, context);
-  if (blocked !== "none") {
-    await logAuditEvent({
-      action: "session.mfa_locked",
-      result: "denied",
-      actorUserId: userId,
-      details: { reason: "blocked", stage, factorType: MFA_FACTOR_TYPE },
-    });
-    return {
-      ok: false,
-      state: {
-        status: "error",
-        message: blocked === "day" ? lockedDayMessageFor(context) : RATE_LIMITED_MESSAGE,
-      },
-    };
-  }
-
-  if (!(await consumeTotpCode(userId, code))) {
-    // Un código ya usado NO es un código incorrecto (menor 5 de la revisión de Aarón al PR #44): quien lo escribe en dos
-    // dispositivos dentro de 2 minutos no suma al tope del día ni al de la IP. El intento sí contó en la ventana de 15
-    // minutos al registrarse arriba, y por eso repetirlo igual tiene freno.
-    await auditFailure(userId, stage, "code_reused");
-    return { ok: false, state: { status: "error", message: AUTH_MESSAGES.mfa_code_reused } };
-  }
-  return { ok: true, code };
-}
-
-/**
- * El bloqueo de 24 h con la contraseña orienta a recuperarla; el del enlace del correo no tiene esa salida; el de la
- * activación orienta a revisar la hora del teléfono.
- */
-function lockedDayMessageFor(context: SecondStepContext): string {
-  if (context === "enrollment") return MFA_LOCKED_DAY_ENROLLMENT_MESSAGE;
-  return context === "password" ? MFA_LOCKED_DAY_PASSWORD_MESSAGE : MFA_LOCKED_DAY_MESSAGE;
-}
-
-async function auditFailure(userId: string, stage: Stage, reason: string): Promise<void> {
-  await logAuditEvent({
-    action: "session.mfa_failed",
-    result: "failure",
-    actorUserId: userId,
-    details: { reason, stage, factorType: MFA_FACTOR_TYPE },
-  });
-}
-
-/**
- * Resultado de un `challengeAndVerify` que falló, convertido en el estado que ve la persona. Solo un código incorrecto
- * suma al tope del día y al de la IP. Si Supabase falló por otra cosa (la red, la IP no coincidió, la sesión cambió) o
- * respondió 429, el código NO se juzgó: se libera para poder reintentar con el mismo código correcto. El 429 no suma al tope
- * del día ni al de la IP: no prueba nada contra la persona (puede ser el límite compartido de Supabase por una IP ajena), y
- * el intento ya contó en la ventana de 15 minutos al registrarse antes de llamar a Supabase.
- */
-async function failedVerification(
-  error: AuthErrorLike,
-  userId: string,
-  code: string,
-  clientIp: string | null,
-  stage: Stage,
-  context: SecondStepContext,
-): Promise<FormState> {
-  const kind = classifyAuthError(error);
-  await serverLog("warn", "mfa_verify_failed", { stage, code: errorCodeOf(error) });
-  if (kind === "rate_limited") {
-    await releaseTotpCode(userId, code);
-    return { status: "error", message: RATE_LIMITED_MESSAGE };
-  }
-  if (kind === "mfa_invalid_code") {
-    await recordSecondStepFailure(userId, context, clientIp);
-    await auditFailure(userId, stage, kind);
-    return { status: "error", message: AUTH_MESSAGES[kind] };
-  }
-  await releaseTotpCode(userId, code);
-  await auditFailure(userId, stage, kind);
-  // «La activación caducó» solo tiene sentido al activar; al ingresar, lo que sirve es volver a empezar la sesión.
-  if (stage === "sign_in") return { status: "error", message: MFA_SIGN_IN_FAILED_MESSAGE };
-  return { status: "error", message: AUTH_MESSAGES[kind === "unknown" ? "mfa_unavailable" : kind] };
-}
 
 /**
  * Pantalla del código tras la contraseña: la persona tiene una sesión PARCIAL (pase aal1) y escribe el código de su
@@ -195,6 +94,16 @@ export async function verifySecondStepAction(
   const recovery = await hasRecoverySession();
   const counters: SecondStepContext = recovery ? "recovery" : "password";
   const context = { recovery, invitation: await hasPendingInvitation() };
+
+  // Con la forma de un código de respaldo (12 letras y números) en el campo del código de la aplicación: se orienta hacia el
+  // enlace «¿No tienes tu teléfono?», sin contar el intento ni consultar nada.
+  const typed = readText(formData, CODE_FIELD);
+  if (typeof typed === "string" && normalizeRecoveryCode(typed) !== null) {
+    return {
+      status: "error",
+      fieldErrors: { [CODE_FIELD]: RECOVERY_CODE_IN_APP_FIELD_MESSAGE },
+    };
+  }
 
   const checked = await checkCodeBeforeVerifying(formData, user.id, clientIp, "sign_in", counters);
   if (!checked.ok) return checked.state;
@@ -277,6 +186,7 @@ export async function startTotpEnrollmentAction(): Promise<StartEnrollmentResult
   const { data, error } = await supabase.auth.mfa.enroll({
     factorType: MFA_FACTOR_TYPE,
     issuer: MFA_ISSUER,
+    friendlyName: MFA_FACTOR_FRIENDLY_NAME,
   });
   if (error || !data) {
     await serverLog("error", "mfa_enroll_failed", { code: error ? errorCodeOf(error) : "no_data" });
@@ -294,17 +204,54 @@ export async function startTotpEnrollmentAction(): Promise<StartEnrollmentResult
 }
 
 /**
- * «Activar la verificación en dos pasos», paso 2: la persona escribe el primer código de su aplicación. Con el mismo
- * límite y bloqueo de códigos usados que al ingresar. Al verificarse, Supabase cierra las demás sesiones de la cuenta y
- * esta pasa a completa.
+ * Lo que devuelve la acción de confirmar la activación: el estado de un formulario (errores) o, cuando la verificación quedó
+ * en pie, `enabled` con los códigos de respaldo (ya formateados para mostrarlos) y el identificador del juego, o
+ * `enabled_without_codes` si la verificación quedó activa pero los códigos no se pudieron crear. Los códigos SOLO viajan en
+ * esta respuesta (un POST): nunca en una dirección, una cookie, la auditoría ni un registro.
+ */
+export type ConfirmEnrollmentState =
+  FormState | ({ status: "enabled" } & RecoveryCodesIssued) | { status: "enabled_without_codes" };
+
+/**
+ * «Activar la verificación en dos pasos», paso 2: la persona escribe el primer código de su aplicación Y su contraseña
+ * (H-004b). Con el mismo límite y bloqueo de códigos usados que al ingresar. Al verificarse, Supabase cierra las demás
+ * sesiones de la cuenta y esta pasa a completa.
+ *
+ * Orden (no se puede cambiar): 1) forma de los campos, 2) la CONTRASEÑA, 3) todo lo demás. Una contraseña incorrecta no
+ * toca los contadores del código ni su bloqueo de «ya usado» ni da el permiso de H-118: así, quien tiene la sesión pero no
+ * la contraseña no puede gastar los intentos de la dueña ni activar su propio teléfono. La contraseña nunca vuelve en el
+ * estado que se le devuelve a la pantalla.
  */
 export async function confirmTotpEnrollmentAction(
-  _previous: FormState,
+  _previous: ConfirmEnrollmentState,
   formData: FormData,
-): Promise<FormState> {
+): Promise<ConfirmEnrollmentState> {
   const user = await requireUser();
   const { clientIp } = await getRequestContext();
   const factorId = readText(formData, FACTOR_FIELD) ?? "";
+
+  // 1) La forma de los dos campos, sin consultar nada.
+  const codeFormat = totpCodeSchema.safeParse({ code: readText(formData, CODE_FIELD) });
+  const passwordFormat = reauthPasswordSchema.safeParse({
+    password: readText(formData, PASSWORD_FIELD),
+  });
+  if (!codeFormat.success || !passwordFormat.success) {
+    return {
+      status: "error",
+      fieldErrors: {
+        ...(codeFormat.success ? {} : fieldErrorsOf(codeFormat.error)),
+        ...(passwordFormat.success ? {} : fieldErrorsOf(passwordFormat.error)),
+      },
+    };
+  }
+
+  // 2) La contraseña, ANTES de los contadores del código y del permiso de activación.
+  const reauth = await confirmPassword(user, passwordFormat.data.password, "enroll");
+  if (!reauth.ok) {
+    return reauth.reason === "wrong_password"
+      ? { status: "error", fieldErrors: { password: reauth.message } }
+      : { status: "error", message: reauth.message };
+  }
 
   // Contadores PROPIOS de la activación (menor 4): no comparten tope con el ingreso con contraseña.
   const checked = await checkCodeBeforeVerifying(
@@ -382,7 +329,14 @@ export async function confirmTotpEnrollmentAction(
       details,
     });
   }
-  redirect(`${ACCOUNT_SECURITY_PATH}?aviso=${ACCOUNT_SECURITY_NOTICES.enabled}`);
+
+  // Los códigos de respaldo se crean al FINAL: después de la contraseña, del permiso, de la verificación, del aviso y de la
+  // auditoría. Si algo de lo anterior falló nunca se llega aquí, así que no queda un juego de códigos de una activación
+  // revertida. Si crearlos falla, la verificación SIGUE activa y la pantalla ofrece crearlos ahora.
+  const issued = await issueRecoveryCodes(user.id, factorId, "enrollment");
+  return issued.ok
+    ? { status: "enabled", recoveryCodes: issued.recoveryCodes, setId: issued.setId }
+    : { status: "enabled_without_codes" };
 }
 
 /** Deja el permiso de activación. `false` si la base no lo concede (el factor ya no es un TOTP sin verificar) o falla. */

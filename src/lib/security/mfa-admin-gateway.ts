@@ -42,6 +42,34 @@ export async function deleteMfaFactor(userId: string, factorId: string): Promise
   throw new MfaAdminGatewayError("delete_factor", error.code ?? error.status);
 }
 
+/**
+ * Borra TODOS los factores de la cuenta (verificados o no), SIN tocar la contraseña ni cerrar sesiones (H-004b: entrar con un
+ * código de respaldo). Que un factor ya no exista cuenta como hecho, así que repetirlo no hace daño. Quitar el factor deja la
+ * sesión «a medias» de la persona como completa (`app.second_step_pending()` pasa a falso: comprobado en el paso 0 de H-004b);
+ * cerrar las demás sesiones es cosa de quien llama. Lanza `MfaAdminGatewayError` (solo con un código) si Supabase no pudo
+ * listar o borrar alguno.
+ */
+export async function removeAllFactors(userId: string): Promise<void> {
+  const listed = await createAdminClient().auth.admin.mfa.listFactors({ userId });
+  if (listed.error) {
+    throw new MfaAdminGatewayError("list_factors", listed.error.code ?? listed.error.status);
+  }
+  for (const factor of listed.data.factors) await deleteMfaFactor(userId, factor.id);
+}
+
+/**
+ * ¿Le queda a la cuenta ALGÚN factor verificado (de cualquier tipo)? Es lo mismo que cuenta la base para dejar una sesión «a
+ * medias» (`app.second_step_pending()`). Sirve para saber, cuando `removeAllFactors` lanzó, si el factor SÍ se borró aunque la
+ * respuesta no llegó (H-004b, corrección C1). Lanza `MfaAdminGatewayError` (solo con un código) si no pudo listar.
+ */
+export async function hasVerifiedFactor(userId: string): Promise<boolean> {
+  const listed = await createAdminClient().auth.admin.mfa.listFactors({ userId });
+  if (listed.error) {
+    throw new MfaAdminGatewayError("list_factors", listed.error.code ?? listed.error.status);
+  }
+  return listed.data.factors.some((factor) => factor.status === "verified");
+}
+
 /** Bytes al azar de la contraseña que inutiliza la cuenta (en base64url son 64 caracteres), más un sufijo que cumple cualquier regla de composición. */
 const UNUSABLE_PASSWORD_BYTES = 48;
 const UNUSABLE_PASSWORD_SUFFIX = "Aa1!";
@@ -60,9 +88,5 @@ export async function lockAccountAndRemoveFactors(userId: string): Promise<void>
   if (changed.error) {
     throw new MfaAdminGatewayError("lock_password", changed.error.code ?? changed.error.status);
   }
-  const listed = await admin.auth.admin.mfa.listFactors({ userId });
-  if (listed.error) {
-    throw new MfaAdminGatewayError("list_factors", listed.error.code ?? listed.error.status);
-  }
-  for (const factor of listed.data.factors) await deleteMfaFactor(userId, factor.id);
+  await removeAllFactors(userId);
 }

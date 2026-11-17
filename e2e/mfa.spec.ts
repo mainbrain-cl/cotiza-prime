@@ -12,8 +12,11 @@ import {
   createTenant,
   openVerificationLink,
   signUpAndVerify,
+  finishRecoveryCodes,
+  submitEnrollmentConfirmation,
   uniqueEmail,
   waitForVerificationLink,
+  expectControlsInsideCard,
 } from "./helpers";
 
 // H-004a · Verificación en dos pasos, de punta a punta. En SERIE y solo con cuentas nuevas @ejemplo.test: activar un factor
@@ -54,10 +57,16 @@ async function logIn(page: Page, email: string, password = TEST_PASSWORD) {
   await page.getByRole("button", { name: "Ingresar" }).click();
 }
 
+/** La pantalla del código tras la contraseña (ingresar): solo el código. */
 async function submitCode(page: Page, code: string) {
   const field = page.getByLabel(CODE_LABEL);
   await field.fill(code);
-  await page.getByRole("button", { name: /^Verificar$|^Confirmar y activar$/ }).click();
+  await page.getByRole("button", { name: "Verificar", exact: true }).click();
+}
+
+/** El último paso de ACTIVAR: el código y, desde H-004b, también la contraseña. */
+async function submitEnrollment(page: Page, code: string, password = TEST_PASSWORD) {
+  await submitEnrollmentConfirmation(page, code, password);
 }
 
 /** Cuenta nueva con su organización y la verificación en dos pasos ya activa. La sesión queda completa (aal2). */
@@ -76,8 +85,8 @@ async function createAccountWithSecondStep(page: Page, label: string): Promise<A
   const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
   const { code, step } = await freshTotp(secret);
-  await submitCode(page, code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await submitEnrollment(page, code);
+  await finishRecoveryCodes(page);
   return { email, tenantId, secret, usedStep: step };
 }
 
@@ -161,16 +170,28 @@ test("activar: desde el menú, con el QR y la clave; un código incorrecto no ac
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
   await expect(page.getByLabel(CODE_LABEL)).toBeFocused();
   // Un código incorrecto no activa nada.
-  await submitCode(page, wrongCode(secret));
+  await submitEnrollment(page, wrongCode(secret));
   await expect(page.getByText(/El código no coincide/)).toBeVisible();
   await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
   await expect(page.getByLabel(CODE_LABEL)).toBeFocused();
   await expect(page.getByLabel(CODE_LABEL)).toHaveValue("");
 
-  // Con el código de verdad, se activa.
+  // Una contraseña incorrecta (H-004b) no activa nada ni gasta el código: el MISMO código sirve después con la contraseña buena.
   const { code, step } = await freshTotp(secret);
-  await submitCode(page, code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await submitEnrollment(page, code, "contrasena-equivocada-999");
+  await expect(page.getByText("La contraseña no es correcta.")).toBeVisible();
+  await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
+  const passwordField = page.getByLabel("Tu contraseña");
+  await expect(passwordField).toBeFocused();
+  await expect(passwordField).toHaveValue("");
+  await expect(passwordField).toHaveAttribute("autocomplete", "current-password");
+  // El correo va en un campo oculto para el gestor de contraseñas, sin nombre (no viaja en el envío).
+  await expect(page.locator('input[autocomplete="username"]')).toHaveValue(email);
+  await expect(page.locator('input[autocomplete="username"]')).not.toHaveAttribute("name", /.+/);
+
+  // Con el código de verdad y la contraseña buena, se activa.
+  await submitEnrollment(page, code);
+  await finishRecoveryCodes(page);
   await expect(page.getByTestId("two-step-active")).toBeVisible();
   await expect(page.getByText(/Está activa desde el \d{2}-\d{2}-\d{4}/)).toBeVisible();
 
@@ -357,11 +378,18 @@ test("en el teléfono (375 px, con movimiento reducido): el código y la activac
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow, `${where}: desplazamiento horizontal`).toBeLessThanOrEqual(0);
+    // La tarjeta recorta lo que se sale (`overflow-hidden`): el ancho del documento no lo ve; se compara cada control con ella.
+    await expectControlsInsideCard(page, where);
   };
   const tooSmall = async (where: string) => {
     const small = await page.evaluate(() =>
       [...document.querySelectorAll<HTMLElement>("main button, main a[href], main input")]
-        .filter((el) => el.offsetParent !== null && el.getAttribute("type") !== "hidden")
+        .filter(
+          (el) =>
+            el.offsetParent !== null &&
+            el.getAttribute("type") !== "hidden" &&
+            el.getAttribute("aria-hidden") !== "true",
+        )
         .filter((el) => el.getBoundingClientRect().height < 44)
         .map((el) => el.textContent?.trim() || el.getAttribute("name") || el.tagName),
     );
@@ -388,12 +416,53 @@ test("en el teléfono (375 px, con movimiento reducido): el código y la activac
   expect(
     await field.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
   ).toBeGreaterThanOrEqual(16);
+  const passwordField = page.getByLabel("Tu contraseña");
+  expect(
+    await passwordField.evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
+  ).toBeGreaterThanOrEqual(16);
   await noOverflow("seguridad, confirmar");
   await tooSmall("seguridad, confirmar");
   const { code } = await freshTotp(secret);
-  await submitCode(page, code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await submitEnrollment(page, code);
+  // La pantalla de códigos de respaldo (H-004b): sin desplazamiento horizontal, con los botones y la casilla de 44 px de alto,
+  // y los 10 códigos enteros dentro de la pantalla.
+  await expect(page.getByTestId("recovery-codes-screen")).toBeVisible();
+  await noOverflow("seguridad, códigos de respaldo");
+  const codesTargets = await page.evaluate(() =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-testid="recovery-codes-screen"] button, [data-testid="recovery-codes-screen"] label',
+      ),
+    ].map((el) => ({
+      name: el.textContent?.trim() ?? "",
+      height: el.getBoundingClientRect().height,
+    })),
+  );
+  expect(codesTargets.length).toBeGreaterThanOrEqual(4);
+  for (const target of codesTargets) {
+    expect(target.height, `${target.name}: área táctil menor a 44 px`).toBeGreaterThanOrEqual(44);
+  }
+  const codeBoxes = await page.getByTestId("recovery-code").evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      right: node.getBoundingClientRect().right,
+      width: window.innerWidth,
+    })),
+  );
+  expect(codeBoxes).toHaveLength(10);
+  for (const box of codeBoxes) expect(box.right).toBeLessThanOrEqual(box.width);
+  await finishRecoveryCodes(page);
   await noOverflow("seguridad, activada");
+  // Con los formularios de desactivar y de crear códigos abiertos (el botón de peligro puede pasar a dos líneas).
+  await page.getByRole("button", { name: "Desactivar la verificación en dos pasos" }).click();
+  await expect(page.getByTestId("disable-section").locator("form")).toBeVisible();
+  await noOverflow("seguridad, desactivar");
+  await tooSmall("seguridad, desactivar");
+  await page.getByTestId("disable-section").getByRole("button", { name: "Cancelar" }).click();
+  await noOverflow("seguridad, desactivar cerrado");
+  await page.getByRole("button", { name: "Generar códigos nuevos" }).click();
+  await expect(page.getByTestId("recovery-section").locator("form")).toBeVisible();
+  await noOverflow("seguridad, generar códigos");
+  await tooSmall("seguridad, generar códigos");
 
   // La pantalla del código, con la contraseña sola.
   await page.context().clearCookies();
@@ -528,8 +597,8 @@ test("un Comercial activa la verificación en su propia cuenta (cualquier rol pu
   await page.getByRole("button", { name: "Activar la verificación en dos pasos" }).click();
   const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
-  await submitCode(page, (await freshTotp(secret)).code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await submitEnrollment(page, (await freshTotp(secret)).code);
+  await finishRecoveryCodes(page);
   await expect(page.getByTestId("two-step-active")).toBeVisible();
   // Y la organización del Dueño sigue abierta con sus permisos de Comercial.
   await page.goto(`/o/${owner.tenantId}`);
@@ -584,8 +653,8 @@ test("cancelar la activación quita de Supabase el intento a medias, desde el pa
   await page.getByRole("button", { name: ENABLE_BUTTON }).click();
   const secret = (await page.getByTestId("totp-secret").innerText()).replace(/\s/g, "");
   await page.getByRole("button", { name: "Ya la escaneé" }).click();
-  await submitCode(page, (await freshTotp(secret)).code);
-  await expect(page).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await submitEnrollment(page, (await freshTotp(secret)).code);
+  await finishRecoveryCodes(page);
   expect(await factorStatuses(email)).toEqual(["verified"]);
 });
 
@@ -611,11 +680,11 @@ test("activar desde dos pestañas a la vez: la que se quedó con el intento reem
   const secretB = await startAndScan(tabB);
 
   // La segunda pestaña activa la cuenta.
-  await submitCode(tabB, (await freshTotp(secretB)).code);
-  await expect(tabB).toHaveURL(/\/cuenta\/seguridad\?aviso=activada$/);
+  await submitEnrollment(tabB, (await freshTotp(secretB)).code);
+  await finishRecoveryCodes(tabB);
 
   // La primera todavía muestra su intento (ya reemplazado): al confirmar, ve que la cuenta está activa.
-  await submitCode(page, (await freshTotp(secretA)).code);
+  await submitEnrollment(page, (await freshTotp(secretA)).code);
   await expect(page).toHaveURL(/\/cuenta\/seguridad$/);
   await expect(page.getByTestId("two-step-active")).toBeVisible();
   await expect(page.getByText(/La activación caducó/)).toHaveCount(0);

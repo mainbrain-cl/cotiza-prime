@@ -38,6 +38,23 @@ describe("nombres del registro de actividad", () => {
     expect(isKnownAuditAction("session.mfa_annulled")).toBe(true);
   });
 
+  it("nombra los códigos de respaldo y la desactivación del segundo paso, sin mostrar nunca un código (H-004b)", () => {
+    expect(actionLabel("session.mfa_recovery_codes_created")).toBe(
+      "Creó códigos de respaldo de la verificación en dos pasos",
+    );
+    expect(actionLabel("session.mfa_recovery_used")).toMatch(/Entró con un código de respaldo/);
+    expect(actionLabel("session.mfa_disabled")).toBe("Desactivó la verificación en dos pasos");
+    expect(actionLabel("session.reauth_failed")).toMatch(/No se confirmó la contraseña/);
+    for (const action of [
+      "session.mfa_recovery_codes_created",
+      "session.mfa_recovery_used",
+      "session.mfa_disabled",
+    ]) {
+      expect(isKnownAuditAction(action), action).toBe(true);
+      expect(actionLabel(action)).not.toBe(action);
+    }
+  });
+
   it("nombra los textos guardados y no muestra nunca su contenido (H-048a)", () => {
     expect(actionLabel("text_snippet.created")).toBe("Se creó un texto guardado");
     expect(actionLabel("text_snippet.updated")).toBe("Se cambió un texto guardado");

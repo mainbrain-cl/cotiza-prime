@@ -637,4 +637,15 @@ describe("las tablas del servidor", () => {
       }
     }
   });
+
+  it("mfa_recovery_codes no es legible por nadie con pase (H-004b): ni las huellas de los códigos de respaldo ni los juegos", async () => {
+    const fx = fixture();
+    for (const key of PERSONA_KEYS) {
+      const res = await rest(await tokenOf(key), `mfa_recovery_codes?select=*`, {
+        headers: { Prefer: "count=exact", ...tenantHeader(fx.orgs.A.tenantId) },
+      });
+      expect(res.status, key).toBeGreaterThanOrEqual(400);
+      expect(res.text).not.toContain(fx.mfaRecoveryCodeHash);
+    }
+  });
 });

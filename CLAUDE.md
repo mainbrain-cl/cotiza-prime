@@ -54,7 +54,29 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Traspaso del 2026-11-11 — lo más reciente (léelo antes que el del 2026-11-06)
+### Traspaso del 2026-11-17 — lo más reciente (léelo antes que el del 2026-11-11)
+
+**`main` está en el PR #55 (`ba8e1cc`, 2026-11-16).** Desde el PR #50 (H-118) entraron, todos por José bajo la decisión 020 §5 y **sin revisión previa de Aarón**: #51 (estado), #52 (CI a `--audit-level=high`, decisión 015 superada), #53 (`AGENTS.md` versionado), #54 (ruta HTTP con secreto para la tarea de avisos, decisión #17) y #55 (correo de recuperar la contraseña en español, `supabase/templates/recovery.html`).
+**Abierto: PR #56 (borrador), H-004b**, rama `feat/h-004b-codigos-de-respaldo`. **No se mezcla sin la revisión de Aarón** (historia delicada). Con ella el repositorio pasa a **54 migraciones**; la nueva es `20261116100000_mfa_recovery_codes`.
+
+**H-004b (códigos de respaldo, contraseña de nuevo y desactivar el segundo paso): construida completa** (un PR, tres etapas: A pedir la contraseña, B códigos de respaldo, C desactivar). Diseño y registro de construcción de cada paso, con sus desviaciones: `docs/arquitectura/h-004b-codigos-de-respaldo.md`. Qué hace:
+- **Contraseña de nuevo** al activar, desactivar y generar códigos (`src/lib/auth/reauth.ts`; el correo sale de la sesión, nunca del formulario; mismos contadores del ingreso).
+- **10 códigos de 12 caracteres** (`7KQM-3XHP-W2RT`), un solo uso, mostrados una vez con «Guardé estos códigos»; en la base solo queda su huella (`mfa_recovery_codes`, 7 funciones solo para la llave maestra).
+- **Entrar con un código de respaldo** (`/ingresar/codigo`, por contraseña y por el enlace del correo): quita el factor, cierra las otras sesiones, avisa por correo y manda a activar de nuevo.
+- **Desactivar** con contraseña y un código (de la aplicación o de respaldo); el aviso por correo sale ANTES de quitar el factor y, si no sale, no se desactiva.
+- Revisiones Opus normal y adversarial hechas (sin bloqueantes); sus hallazgos se corrigieron (el importante: si quitar el factor falla «a medias» ahora se vuelve a comprobar y se sigue por el camino de éxito).
+- **Decisiones de José (agencia):** D3 contraseña junto al código, D5 aviso de mejor esfuerzo al usar un código de respaldo, D6 10 códigos de 12 caracteres, D8 un PR con tres etapas.
+- **Le toca decidir a Aarón (se construyó con el supuesto recomendado):** **D1** tabla propia en vez de los códigos experimentales de Supabase (en el Supabase local están apagados); **D2** usar un código quita el factor y la cuenta queda solo con contraseña hasta que reactive; **D4** si el aviso por correo no sale, no se desactiva; **D7** riesgo aceptado hasta H-117: con una sesión completa robada se puede quitar el factor hablando directo con Supabase (comprobado: responde 200), sin contraseña ni aviso. Además, anotadas «Para Aarón» al final del diseño: las huellas usan la misma llave de búsqueda que todo lo demás (`CP_SEARCH_KEY_V1`) con 60 bits por código; el aviso propio de Supabase `mfa_factor_unenrolled` podría mitigar D7 (sin verificar en la CLI 2.119 ni en el alojado); con el plan gratuito de Resend (100 correos al día) un día agotado nadie puede activar ni desactivar; el peor caso de activar (55 s) toca el `maxDuration` de 60 s.
+- **Verde local (2026-11-16, ramas intermedias):** lint y tipos limpios; 2.791 unitarias (1 omitida); `test:isolation` 1.406 (3 pendientes); `test:db` 1.346 de 1.346 sobre base limpia (pasos 0 a 2); `test:db:rollbacks` OK (pasos 0 a 2); e2e `chromium` de los cinco archivos de segundo paso 25 a 32 de 32 según la corrida, **pero sin una corrida única en verde con el código final** (cada prueba pasó al menos una vez; cayeron por plazos de 5 s con el servidor lento). **Falta la verificación completa con el código final** (`db reset` + `test:db` + `test:db:rollbacks` + `chromium` y `isolation` completos): se lanzó el 2026-11-17; el resultado va en el PR #56. **No probado:** iPhone real, Firefox, Safari, lector de pantalla, ni el correo con proveedor real.
+- **Después de correr `E2E_PROD=1` la base local queda con filas viejas** `mfa_annul_ip` y `mfa_annul_token` en `auth_rate_limits` que rompen 30 pruebas de deshacer de `test:db`: correr `test:db` ANTES de los e2e, o `supabase db reset` + `npm run db:seed` entre medio.
+
+**Next 16.4.3 tiene un aviso de seguridad (publicado el 2026-11-16).** `GHSA-mfr8-8qww-v76h`, severidad media: fuga de datos entre parámetros raíz cuando una función con `'use cache'` se llama también a través de `unstable_cache()`. Rango afectado `>=16.3.0 <=16.4.4`; **corregido en 16.4.5** (`npm audit` ofrece 16.4.6). **Este proyecto no usa `'use cache'`, `unstable_cache` ni `cacheComponents`** (y una guardia de `guards.test.ts` los prohíbe), así que no es explotable aquí; igual `next build` aborta la primera vez con `SecurityFatalError` (hay que repetir el comando) y `npm audit` lo cuenta entre los 26 moderados. **Cómo cerrarlo:** subir `next` (y `eslint-config-next` si corresponde) a la 16.4.6 fija en un PR aparte, sin mezclar con H-004b, y correr la suite completa. No se actualizó todavía; el CI usa `--audit-level=high`, así que no lo bloquea.
+
+**Antes del piloto, nuevo por H-004b:** medir el cupo de ingresos por IP de Supabase en producción (`sign_in_sign_ups`), porque pedir la contraseña de nuevo suma ingresos desde la IP del servidor; tener el proveedor de correo de producción listo (sin el aviso nadie puede desactivar); y, si Aarón elige D1 = B, encender los códigos de respaldo en el panel de Supabase. Lista completa en el diseño.
+
+**Pendientes (actualizado):** revisión de Aarón de H-004a, H-118, H-004b (#56) y del ajuste de H-040; luego el orden de abajo (H-004b ya construida; falta mezclarla).
+
+### Traspaso del 2026-11-11 — histórico (lo del 2026-11-17 lo actualiza; léelo antes que el del 2026-11-06)
 
 **`main` está en el PR #50 (H-118, mezclado el 2026-11-16 por José, bajo la decisión 020 §5, SIN revisión previa de Aarón; él debe revisarla). No hay PR abiertos.** 53 migraciones; la última es
 `20261113110000_mfa_annul` (H-004a trajo `20261112100000_mfa_session_gate`; H-118, `20261113100000_mfa_enrollment_alerts` y `20261113110000_mfa_annul`). Desde el traspaso del 2026-11-06 entraron los PR #31 a #38 (#31, #32 y #34 por José bajo
@@ -118,10 +140,10 @@ José y Aarón los ve en pantalla antes de mezclar; **H-042, D10**: ya estaba fi
 va en la próxima versión legal, antes del piloto, junto con el aviso de privacidad al cliente final (H-030, menor 9) y después del abogado (decisión pendiente 9).
 
 **Pendientes:**
-- **Seguimientos del segundo paso (Aarón, 2026-11-12), en este orden:** ~~H-118 (enlace para anular la activación; mezclada 2026-11-16)~~ → pedir la contraseña de nuevo antes
-  de activar (H-004b) → «Cambiar contraseña» dentro de una sesión completa → leer `auth.sessions.aal` → espera creciente en lugar del bloqueo de 24 h (con la opción B,
+- **Seguimientos del segundo paso (Aarón, 2026-11-12), en este orden:** ~~H-118 (enlace para anular la activación; mezclada 2026-11-16)~~ → ~~pedir la contraseña de nuevo antes
+  de activar (H-004b; construida, PR #56 en borrador esperando a Aarón)~~ → «Cambiar contraseña» dentro de una sesión completa → leer `auth.sessions.aal` → espera creciente en lugar del bloqueo de 24 h (con la opción B,
   H-117) → correo de aviso cuando la contraseña es correcta y el código falla (decisión 016). **9 menores de la revisión de Aarón al #44** (en su último comentario) van en un PR aparte.
-- Orden siguiente: H-004b → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el ingreso) → H-004c. **H-117** (hook del segundo paso, decisión 021) se construye antes del lanzamiento; Aarón decide cuándo.
+- Orden siguiente: ~~H-004b~~ (PR #56) → H-041 → H-042 / H-048b → H-116 (después de H-004a/b: ambas tocan el ingreso) → H-004c. **H-117** (hook del segundo paso, decisión 021) se construye antes del lanzamiento; Aarón decide cuándo.
 - La frase de la política de privacidad del #36 (aprobada por Aarón el 2026-11-12) va en la próxima versión legal con el abogado (editar `privacy.md` cambia su huella y exige versión nueva en
   `legal_documents`). Del issue #11, ya decidido por Aarón (arriba) y por implementar: CI a `--audit-level=high` y 015 superada, `AGENTS.md` versionado, ruta de la decisión #17 (construida; ver arriba). Ya hechos: CI a `--audit-level=high` con la 015 superada (PR #52) y `AGENTS.md` versionado (PR #53). El CI sigue apagado.
 - Anotado fuera de alcance: el Dueño ve `audit_log.id` en `select=*`; la secuencia es común a todas las organizaciones y deja ver

@@ -49,6 +49,9 @@ begin
                 and n.nspname in ('public', 'app')) then
     raise exception 'no se puede deshacer 20261116100000_mfa_recovery_codes: otra funcion nombra las funciones o la tabla de los codigos de respaldo (mfa_recovery_code*); desharia o rompe lo que la usa; revise el orden de los deshacer';
   end if;
+  -- Se bloquea la tabla ANTES de mirar sus filas (c, d) y hasta el final de la transacción: así un `replace` o un `claim` no se cuela
+  -- entre revisar y borrar. Va después de (a) y (b) para que, si ya se deshizo (la tabla no existe), el mensaje sea el de (a).
+  lock table public.mfa_recovery_codes in access exclusive mode;
   -- (c) un uso en curso
   if exists (select 1 from public.mfa_recovery_codes c where c.used_at is null and c.claimed_until > now()) then
     raise exception 'no se puede deshacer 20261116100000_mfa_recovery_codes: hay codigos de respaldo tomados ahora mismo (un uso en curso); espere 2 minutos y repita';

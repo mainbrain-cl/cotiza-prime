@@ -223,6 +223,22 @@ describe("confirmPassword", () => {
     expect(await confirmPassword(USER, PASSWORD, "enroll")).toEqual({ ok: true });
   });
 
+  it("el cierre de la sesión desechable espera 3 s y comprobar la contraseña 10 s (peor caso 13 s, no 20 s)", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    await confirmPassword(USER, PASSWORD, "enroll");
+    const options = createClient.mock.calls[0]![2] as {
+      global: { fetch: (input: string | URL, init?: RequestInit) => Promise<Response> };
+    };
+    await options.global.fetch("http://127.0.0.1:56321/auth/v1/token?grant_type=password");
+    await options.global.fetch("http://127.0.0.1:56321/auth/v1/logout?scope=local");
+    await options.global.fetch(new URL("http://127.0.0.1:56321/auth/v1/logout?scope=local"));
+    expect(timeoutSpy.mock.calls.map(([ms]) => ms)).toEqual([10_000, 3_000, 3_000]);
+    vi.unstubAllGlobals();
+    timeoutSpy.mockRestore();
+  });
+
   it("la contraseña ni el correo llegan nunca a serverLog ni a la auditoría (en ningún camino)", async () => {
     signInWithPassword.mockResolvedValue(WRONG);
     await confirmPassword(USER, PASSWORD, "enroll");

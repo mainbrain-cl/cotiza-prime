@@ -46,6 +46,13 @@ export const REAUTH_UNAVAILABLE_MESSAGE =
 
 /** Cuánto se espera, como máximo, la respuesta de Supabase al comprobar la contraseña. */
 const SIGN_IN_TIMEOUT_MS = 10_000;
+/**
+ * Cuánto se espera al cerrar la sesión desechable. Es corto a propósito: ya se juzgó la contraseña y, si el cierre no llega, la
+ * sesión desechable queda sin uso y vence sola. Así el peor caso de `confirmPassword` es 10 s + 3 s = 13 s (no 20 s).
+ */
+const SIGN_OUT_TIMEOUT_MS = 3_000;
+/** La ruta de Supabase Auth que cierra una sesión (`signOut`). */
+const SIGN_OUT_PATH = "/auth/v1/logout";
 
 const fail = (reason: ReauthFailureReason, message: string): ReauthResult => ({
   ok: false,
@@ -69,6 +76,12 @@ async function auditFailure(
 type AuthErrorLike = { code?: string | null; status?: number | null };
 const errorCodeOf = (error: AuthErrorLike) => error.code ?? String(error.status ?? "");
 
+/** La dirección de una petición, sea texto, `URL` o `Request`. */
+function requestUrlOf(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+}
+
 /** Un cliente sin cookies, sin renovación automática y sin leer la dirección: lo único que guarda es la memoria de esta llamada. */
 function createDisposableClient() {
   return createEphemeralClient(
@@ -77,8 +90,11 @@ function createDisposableClient() {
     {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
       global: {
-        fetch: (input, init) =>
-          fetch(input, { ...init, signal: AbortSignal.timeout(SIGN_IN_TIMEOUT_MS) }),
+        fetch: (input, init) => {
+          const isSignOut = requestUrlOf(input).includes(SIGN_OUT_PATH);
+          const timeoutMs = isSignOut ? SIGN_OUT_TIMEOUT_MS : SIGN_IN_TIMEOUT_MS;
+          return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+        },
       },
     },
   );

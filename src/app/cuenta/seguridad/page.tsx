@@ -16,9 +16,9 @@ export const metadata: Metadata = {
 
 /**
  * Tiempo máximo (segundos) de las acciones de servidor de esta pantalla. Peor caso teórico, si TODO se agota a la vez:
- * activar = contraseña de nuevo (hasta 10 s de `confirmPassword`, H-004b) + hasta 3 avisos de la activación de 15 s cada uno
- * (H-118) = 55 s, más las llamadas a Supabase (unas décimas de segundo cada una): toca el tope de 60 s. Desactivar y crear
- * códigos nuevos son menos (10 s + un aviso de 15 s = 25 s). Lo normal es de 1 a 3 s. Mitigación si el plazo se corta: nada
+ * activar = contraseña de nuevo (hasta 13 s de `confirmPassword`: 10 s para comprobarla + 3 s para cerrar la sesión desechable,
+ * H-004b) + hasta 3 avisos de la activación de 15 s cada uno (H-118) = 58 s, más las llamadas a Supabase (unas décimas de segundo
+ * cada una): queda justo bajo el tope de 60 s. Desactivar y crear códigos nuevos son menos (13 s + un aviso de 15 s = 28 s). Lo normal es de 1 a 3 s. Mitigación si el plazo se corta: nada
  * queda a medias sin remedio (la activación se revierte o sus avisos pendientes se reintentan en el próximo ingreso, H-118; un
  * código de respaldo tomado vence solo a los 2 minutos) y la persona ve el error y reintenta. Si el hosting da más plazo, se
  * sube; si da menos de 60 s, hay que bajar el plazo de `confirmPassword` o repartir los avisos (anotado en «Antes del piloto»).

@@ -62,6 +62,9 @@ export function RecoveryCodesScreen({
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // El servidor respondió que no puede confirmar este juego (p. ej. se generaron códigos nuevos en otra pestaña): reintentar no
+  // sirve, así que se ofrece una salida que limpia la pantalla. Un fallo de red NO la ofrece: ahí los códigos siguen valiendo.
+  const [canLeave, setCanLeave] = useState(false);
   const [pending, startTransition] = useTransition();
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -91,7 +94,10 @@ export function RecoveryCodesScreen({
       try {
         const result = await acknowledgeRecoveryCodesAction(setId);
         if (result.status === "ok") onDone();
-        else setError(result.message);
+        else {
+          setError(result.message);
+          setCanLeave(true);
+        }
       } catch {
         setError(OFFLINE_RETRY_MESSAGE);
       }
@@ -166,6 +172,11 @@ export function RecoveryCodesScreen({
           "Listo"
         )}
       </Button>
+      {canLeave ? (
+        <Button type="button" variant="ghost" onClick={onDone} disabled={pending}>
+          Cerrar esta pantalla
+        </Button>
+      ) : null}
     </div>
   );
 }

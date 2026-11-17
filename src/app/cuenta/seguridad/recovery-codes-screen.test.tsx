@@ -110,6 +110,36 @@ describe("RecoveryCodesScreen (Tus códigos de respaldo)", () => {
     expect(buttonByText("Listo").disabled).toBe(false);
   });
 
+  it("si el servidor dice que no puede confirmar este juego, ofrece «Cerrar esta pantalla» y la limpia sin confirmar", async () => {
+    mocks.acknowledgeRecoveryCodesAction.mockResolvedValue({
+      status: "error",
+      message: "No pudimos confirmar tus códigos.",
+    });
+    expect(host.textContent).not.toContain("Cerrar esta pantalla");
+    await act(async () => {
+      checkbox().click();
+    });
+    await act(async () => {
+      buttonByText("Listo").click();
+    });
+    expect(buttonByText("Cerrar esta pantalla")).toBeDefined();
+    await act(async () => {
+      buttonByText("Cerrar esta pantalla").click();
+    });
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("si solo falló la red, NO ofrece cerrar sin confirmar (los códigos siguen valiendo)", async () => {
+    mocks.acknowledgeRecoveryCodesAction.mockRejectedValue(new TypeError("Failed to fetch"));
+    await act(async () => {
+      checkbox().click();
+    });
+    await act(async () => {
+      buttonByText("Listo").click();
+    });
+    expect(host.textContent).not.toContain("Cerrar esta pantalla");
+  });
+
   it("si la red falla al apretar «Listo» (la acción lanza): los códigos NO se pierden, se avisa y se puede reintentar", async () => {
     mocks.acknowledgeRecoveryCodesAction
       .mockRejectedValueOnce(new TypeError("Failed to fetch"))

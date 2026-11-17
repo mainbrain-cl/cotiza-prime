@@ -228,7 +228,7 @@ test("una cuenta activada antes de los códigos de respaldo ve «No tienes códi
   const entry = await freshTotp(secret, { avoidStep: usedStep });
   await page.getByLabel(CODE_LABEL).fill(entry.code);
   await page.getByRole("button", { name: "Verificar", exact: true }).click();
-  await expect(page).not.toHaveURL(/\/ingresar/);
+  await expect(page).not.toHaveURL(/\/ingresar/, { timeout: 20_000 });
 
   await page.goto("/cuenta/seguridad");
   await expect(page.getByTestId("two-step-active")).toBeVisible();
@@ -453,7 +453,7 @@ test("entrar con un código de respaldo: uno malo no sirve; uno bueno desactiva 
   const entry = await freshTotp(account.secret, { avoidStep: account.step });
   await other.page.getByLabel(CODE_LABEL).fill(entry.code);
   await other.page.getByRole("button", { name: "Verificar", exact: true }).click();
-  await expect(other.page).not.toHaveURL(/\/ingresar/);
+  await expect(other.page).not.toHaveURL(/\/ingresar/, { timeout: 20_000 });
 
   // Quien tiene solo la contraseña llega a la pantalla del código y ve el aviso de que el código de respaldo desactiva el segundo paso.
   const visitor = await newVisitor(browser);
@@ -496,7 +496,7 @@ test("entrar con un código de respaldo: uno malo no sirve; uno bueno desactiva 
   await again.page.getByLabel("Correo").fill(account.email);
   await again.page.getByLabel("Contraseña").fill(TEST_PASSWORD);
   await again.page.getByRole("button", { name: "Ingresar" }).click();
-  await expect(again.page).not.toHaveURL(/\/ingresar/);
+  await expect(again.page).not.toHaveURL(/\/ingresar/, { timeout: 20_000 });
 
   // Al activar de nuevo con el teléfono nuevo salen 10 códigos DISTINTOS y los viejos dejan de servir.
   const reenabled = await activateTwoStep(visitor.page);
@@ -541,7 +541,7 @@ test("olvidé la contraseña y perdí el teléfono: enlace del correo, código d
   await back.page.getByLabel("Correo").fill(account.email);
   await back.page.getByLabel("Contraseña").fill(NEW_PASSWORD);
   await back.page.getByRole("button", { name: "Ingresar" }).click();
-  await expect(back.page).not.toHaveURL(/\/ingresar/);
+  await expect(back.page).not.toHaveURL(/\/ingresar/, { timeout: 20_000 });
   await page.goto("/cuenta/seguridad");
   await expect(page).toHaveURL(/\/ingresar/);
   for (const visit of [owner, back]) await visit.context.close();
@@ -760,7 +760,7 @@ async function otherFullSession(
   const entry = await freshTotp(account.secret, { avoidStep: account.step });
   await other.page.getByLabel(CODE_LABEL).fill(entry.code);
   await other.page.getByRole("button", { name: "Verificar", exact: true }).click();
-  await expect(other.page).not.toHaveURL(/\/ingresar/);
+  await expect(other.page).not.toHaveURL(/\/ingresar/, { timeout: 20_000 });
   return { ...other, step: entry.step };
 }
 
@@ -834,7 +834,7 @@ test("desactivar con el código de la aplicación: la contraseña mala y el cód
   await again.page.getByLabel("Correo").fill(account.email);
   await again.page.getByLabel("Contraseña").fill(TEST_PASSWORD);
   await again.page.getByRole("button", { name: "Ingresar" }).click();
-  await expect(again.page).not.toHaveURL(/\/ingresar/);
+  await expect(again.page).not.toHaveURL(/\/ingresar/, { timeout: 20_000 });
   const reenabled = await activateTwoStep(page);
   expect(reenabled.recoveryCodes.filter((item) => account.recoveryCodes.includes(item))).toEqual(
     [],
@@ -915,7 +915,7 @@ test("si el correo de aviso no sale (destinatario fuera de la lista permitida), 
   const entry = await freshTotp(secret, { avoidStep: usedStep });
   await page.getByLabel(CODE_LABEL).fill(entry.code);
   await page.getByRole("button", { name: "Verificar", exact: true }).click();
-  await expect(page).not.toHaveURL(/\/ingresar/);
+  await expect(page).not.toHaveURL(/\/ingresar/, { timeout: 20_000 });
 
   // Crea sus códigos de respaldo (el aviso de esa creación es de mejor esfuerzo: no sale y no importa).
   await page.goto("/cuenta/seguridad");

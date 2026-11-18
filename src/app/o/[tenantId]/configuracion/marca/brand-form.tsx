@@ -118,7 +118,7 @@ function BrandFields({ initial, state }: { initial: BrandFormInitial; state: Bra
                   name="logo"
                   accept={LOGO_ACCEPT}
                   onChange={(event) => onFileChange(event.target.files?.[0])}
-                  className="min-h-11 w-full cursor-pointer rounded-sm border border-border-strong bg-surface text-fg shadow-1 outline-none file:mr-3 file:h-full file:cursor-pointer file:border-0 file:bg-accent-soft file:px-4 file:py-2.5 file:font-semibold file:text-accent focus-visible:border-accent focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-50 aria-invalid:border-danger"
+                  className="min-h-11 w-full cursor-pointer rounded-sm border border-border-strong bg-surface text-fg shadow-1 outline-none file:mr-3 file:h-full file:cursor-pointer file:border-0 file:bg-accent-soft file:px-4 file:py-2 file:font-semibold file:text-accent focus-visible:border-accent focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-50 aria-invalid:border-danger"
                 />
               )}
             </Field>

@@ -115,7 +115,7 @@ export default async function SendQuotePage({
       <header className="flex flex-col gap-3">
         <Link
           href={quotePath}
-          className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
         >
           <ChevronLeft aria-hidden className="size-4" />
           Volver a la cotización

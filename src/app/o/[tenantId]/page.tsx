@@ -26,7 +26,7 @@ export default async function TenantHomePage({ params }: PageProps<"/o/[tenantId
         <EmptyState
           icon={Sparkles}
           title="Tu organización está lista"
-          description="Aquí verás lo que requiere tu atención. Para empezar, configura la marca y los servicios de tu empresa y después crea tu primera cotización. Estos pasos estarán disponibles pronto."
+          description="Aquí verás lo que requiere tu atención. Para empezar, configura tu marca en Configuración, agrega los servicios de tu empresa al catálogo y después crea tu primera cotización."
         />
       ) : (
         <StatusSummary summary={summary} quotesPath={tenantPath(active.tenantId, "cotizaciones")} />

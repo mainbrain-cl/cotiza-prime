@@ -48,7 +48,7 @@ export function LoginForm() {
       <p className="text-center text-sm text-fg-subtle">
         <Link
           href={FORGOT_PASSWORD_PATH}
-          className="font-semibold text-accent underline-offset-4 hover:underline"
+          className="inline-flex min-h-11 items-center font-semibold text-accent underline-offset-4 hover:underline"
         >
           ¿Olvidaste tu contraseña?
         </Link>

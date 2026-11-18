@@ -23,7 +23,7 @@ export function ForgotPasswordForm() {
         <p className="text-fg-muted">{RESET_REQUEST_SENT_MESSAGE}</p>
         <Link
           href={LOGIN_PATH}
-          className="text-sm font-semibold text-accent underline-offset-4 hover:underline"
+          className="inline-flex min-h-11 w-fit items-center text-sm font-semibold text-accent underline-offset-4 hover:underline"
         >
           Volver a ingresar
         </Link>

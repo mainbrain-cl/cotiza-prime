@@ -36,6 +36,48 @@ describe("nombres del registro de actividad · precios bloqueados y descuento m�
     ).toBeNull();
   });
 
+  it("el descuento máximo se dice «Sin tope → 10 %», como la regla de aprobación", () => {
+    const entry = (oldBp: number | null, newBp: number | null) =>
+      describeAuditEntry({
+        action: "tenant.updated",
+        details: { old: { max_discount_bp: oldBp }, new: { max_discount_bp: newBp } },
+      });
+    expect(entry(null, 1_000)).toBe("Descuento máximo: Sin tope → 10 %");
+    expect(entry(1_000, null)).toBe("Descuento máximo: 10 % → Sin tope");
+    expect(entry(1_250, 0)).toBe("Descuento máximo: 12,5 % → 0 %");
+  });
+
+  it("el candado del precio dice «Bloqueó el precio» o «Quitó el bloqueo del precio»", () => {
+    const entry = (locked: boolean) =>
+      describeAuditEntry({
+        action: "catalog_item.updated",
+        details: { old: { price_locked: !locked }, new: { price_locked: locked } },
+      });
+    expect(entry(true)).toBe("Bloqueó el precio");
+    expect(entry(false)).toBe("Quitó el bloqueo del precio");
+  });
+
+  it("si el mismo registro cambia también el precio, lo cuenta además", () => {
+    expect(
+      describeAuditEntry({
+        action: "catalog_item.price_changed",
+        details: {
+          old: { price_locked: false, unit_price_clp: 1_000 },
+          new: { price_locked: true, unit_price_clp: 2_000 },
+        },
+      }),
+    ).toBe("Bloqueó el precio · Cambió: precio");
+  });
+
+  it("un valor ilegible cae en la frase general en vez de romper el registro", () => {
+    expect(
+      describeAuditEntry({
+        action: "tenant.updated",
+        details: { old: { max_discount_bp: "x" }, new: { max_discount_bp: 1_000 } },
+      }),
+    ).toBe("Cambió: descuento máximo");
+  });
+
   it("los campos nuevos tienen nombre en español", () => {
     expect(describeAuditDetails({ changed: ["price_locked"] })).toBe("Cambió: precio bloqueado");
     expect(describeAuditDetails({ changed: ["max_discount_bp"] })).toBe("Cambió: descuento máximo");

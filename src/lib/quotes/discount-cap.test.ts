@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_DISCOUNT_TOO_HIGH_MESSAGE,
   describeMaxDiscount,
+  lockedWithoutCapNotice,
   maxDiscountHint,
   maxDiscountToText,
   parseMaxDiscountText,
+  priceLockHelp,
 } from "./discount-cap";
 
 describe("leer el descuento máximo que escribe la persona", () => {
@@ -61,5 +63,29 @@ describe("las frases", () => {
     expect(maxDiscountHint(null)).toBeNull();
     expect(maxDiscountHint(1_000)).toBe("Máximo 10 %");
     expect(maxDiscountHint(0)).toBe("Tu organización no permite descuentos");
+  });
+});
+
+describe("la ayuda del candado del catálogo", () => {
+  it("dice que el descuento sigue permitido hasta el máximo y cuál es hoy", () => {
+    expect(priceLockHelp(1_000)).toContain("sí darle descuento hasta el descuento máximo");
+    expect(priceLockHelp(1_000)).toContain("(hoy: 10 %)");
+    expect(priceLockHelp(1_250)).toContain("(hoy: 12,5 %)");
+    expect(priceLockHelp(0)).toContain("(hoy: ningún descuento)");
+    expect(priceLockHelp(null)).toContain("(hoy: sin tope)");
+  });
+
+  it("si no se sabe el tope, no afirma ningún valor", () => {
+    expect(priceLockHelp()).not.toContain("hoy:");
+    expect(priceLockHelp()).toContain("descuento máximo de los Comerciales.");
+  });
+
+  it("el aviso de la tarjeta solo sale con servicios bloqueados y sin tope", () => {
+    const notice =
+      "Hay servicios con precio bloqueado y no hay tope: los Comerciales pueden darles cualquier descuento.";
+    expect(lockedWithoutCapNotice(null, 2)).toBe(notice);
+    expect(lockedWithoutCapNotice(null, 0)).toBeNull();
+    expect(lockedWithoutCapNotice(1_000, 2)).toBeNull();
+    expect(lockedWithoutCapNotice(0, 2)).toBeNull();
   });
 });

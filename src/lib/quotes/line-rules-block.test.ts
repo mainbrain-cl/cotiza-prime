@@ -50,7 +50,7 @@ describe("el bloqueo de /enviar por precio y descuento", () => {
   it("un precio bloqueado a otro precio dice qué línea (la 2) y qué hacer", () => {
     const message = block([item(), item({ unit_price_clp: 8_000, gross_clp: 8_000 })]);
     expect(message).toBe(
-      "La línea 2 tiene un precio bloqueado distinto al del catálogo. Vuelve a la cotización y usa el precio del catálogo.",
+      "La línea 2 tiene un precio bloqueado distinto al precio con que se agregó. Vuelve a la cotización y usa ese precio.",
     );
   });
 
@@ -117,7 +117,7 @@ describe("el bloqueo de /enviar por precio y descuento", () => {
 describe("el error de la base al enviar", () => {
   it("lee la lista y habla de cada línea", () => {
     expect(lineRulesPrepareError("line_rules_invalid: price_locked@1")).toBe(
-      "La línea 2 tiene un precio bloqueado distinto al del catálogo. Vuelve a la cotización y usa el precio del catálogo.",
+      "La línea 2 tiene un precio bloqueado distinto al precio con que se agregó. Vuelve a la cotización y usa ese precio.",
     );
     expect(
       lineRulesPrepareError("line_rules_invalid: discount_over_cap@0,global_discount_over_cap"),

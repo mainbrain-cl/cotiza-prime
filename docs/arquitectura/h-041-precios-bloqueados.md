@@ -1,7 +1,7 @@
 ---
 document_id: CP-ARQ-H041
 title: H-041 — Bloquear precios y poner topes de descuento
-status: diseño del planificador (Opus), 2026-11-17, sobre `main` en `30a2a72` (54 migraciones). Etapa A (base de datos) y etapa B (pantallas) construidas el 2026-11-17, sin mezclar
+status: diseño del planificador (Opus), 2026-11-17, sobre `main` en `30a2a72` (54 migraciones). Etapa A (base de datos) y etapa B (pantallas) construidas el 2026-11-17, sin mezclar; arreglos de las revisiones Opus (normal y adversarial) aplicados el 2026-11-17 (ver el último registro)
 ---
 
 # H-041 · Bloquear precios y poner topes de descuento
@@ -31,7 +31,7 @@ No es una historia de seguridad nueva: es control comercial y entra en el criter
 1. `set local lock_timeout = '3s'` y su verificación (guardia 15).
 2. `catalog_items.price_locked boolean not null default false` + `grant insert, update (price_locked)` (la regla por fila ya exige `catalog.manage`; la auditoría `diff` ya existe).
 3. `tenants.max_discount_bp integer check (null or 0..9999)` (puntos base; 1.000 = 10 %). Sin `grant update`; `tenants_audit` ya registra antes y después.
-4. `app.can_quote_catalog_item(uuid) returns boolean` = `select true` (gancho de H-042; su deshacer lo deja así, nunca lo borra).
+4. `app.can_quote_catalog_item(uuid) returns boolean` = `select true` (gancho de H-042). **«Nunca lo borra» vale para el deshacer de H-042** (lo deja en `select true`); **el deshacer de H-041 sí lo borra**, pero solo después de comprobar que sigue siendo `select true` (si H-042 lo reemplazó, se niega a correr).
 5. `app.line_rule_issues(lines jsonb, global jsonb, max_bp int, can_override bool) returns text[]`: pura, `immutable`, sin leer tablas. Gemela de `src/lib/quotes/line-rules.ts`.
 6. `app.quote_line_rules_check(tenant, lines, global) returns jsonb {issues, overrides}`: lee tope y candados siempre por `(tenant, id)`;
    `can_override := p_tenant = app.current_tenant_id() and app.can('catalog.price_lock.override')`.
@@ -88,6 +88,7 @@ Campos: `price_locked@i` → `items.i.price`; `discount_over_cap@i` → `items.i
 | 17 | ¿El tope limita el descuento general? | Sí, medido solo (A): con 10 % se puede llegar a 19 % sumado; la regla de aprobación de H-040 sí lo ve sumado | B: suma de líneas + general sobre lista (+0,5 día) | Aarón |
 | 18 | Líneas libres a mano y nombre de líneas de catálogo | Se dejan como están y se documenta el hueco (A); ya está pendiente de aceptar desde H-040 | B: opción de la organización «solo cotizan desde el catálogo» (+0,75–1 día, mejor como H-041b); con B, H-042 controlaría de verdad | Aarón |
 | 19 | ¿Qué cuenta contra el tope? | Solo los campos de descuento; el precio lo controla el candado | Que bajar el precio de una línea sin candado también cuente, como en H-040 (+0,5 día) | Aarón |
+| 20 | ¿Contra qué precio compara el candado? | Contra el precio **congelado en la línea** al agregarla (el de catálogo de ese momento), no contra el de hoy. Un borrador viejo sale al precio anterior aunque el catálogo suba y se bloquee después (incluso cambiando el cliente) | A: aceptar ambos, el congelado o el de hoy (~0,5 día); B: exigir el de hoy (~0,5 día; obliga a reevaluar borradores viejos y a decidir qué pasa con los ya enviados); C: dejarlo como está, con textos honestos (ya hecho: el botón dice «Usar el precio con que se agregó» y avisa cuando el catálogo hoy dice otra cosa) | Aarón |
 | J1–J9 | Disparador al enviar; `save_quote_draft` a `app.can`; tope por función con `catalog.manage`; comparar con el precio congelado; no copiar el candado a `quote_items`; `@i` desde 0; `readOnly`; dos PR; no tocar la semilla | — | José |
 
 ## 4. Pruebas, pasos y tamaño
@@ -100,7 +101,7 @@ Campos: `price_locked@i` → `items.i.price`; `discount_over_cap@i` → `items.i
 - **Documentos a actualizar:** `modelo-datos.md` §3.4 y §9.4; `cotizaciones-y-calculo.md:304` y `:307`; `sprint-5-equipo-y-permisos.md` (registro); `sprint-5-h-040-aprobaciones.md` §12; `h-042-...md` (convención y que `quotable_catalog_items` devuelva `price_locked`); `HISTORIAS.md` (marcar H-041 como 🔒).
 
 ## 5. Qué NO hacer
-Validar solo en pantalla o en la acción; reescribir `prepare_quote_send`; meter la regla de H-042 en la función de reglas; copiar `price_locked` a `quote_items`; migrar o reevaluar borradores o enviadas; tocar la matriz o usar `has_role`; dar escritura directa a `max_discount_bp`; tomar candado o precio del navegador; decimales flotantes; nombres de línea o datos personales en eventos, auditoría o registros; evaluar la regla en el reenvío o en `confirm_email_dispatch`; editar migraciones aplicadas o borrar el gancho en un deshacer; construir «Solicitar aprobación», excepciones por persona o la regla por margen.
+Validar solo en pantalla o en la acción; reescribir `prepare_quote_send`; meter la regla de H-042 en la función de reglas; copiar `price_locked` a `quote_items`; migrar o reevaluar borradores o enviadas; tocar la matriz o usar `has_role`; dar escritura directa a `max_discount_bp`; tomar candado o precio del navegador; decimales flotantes; nombres de línea o datos personales en eventos, auditoría o registros; evaluar la regla en el reenvío o en `confirm_email_dispatch`; editar migraciones aplicadas; **borrar el gancho en el deshacer de H-042** (el de H-041 sí lo borra, pero solo si sigue siendo `select true`); construir «Solicitar aprobación», excepciones por persona o la regla por margen.
 
 ## 6. Sin verificar
 Orden alfabético de los disparadores (documentación de PostgreSQL; lo fija una prueba); que `app.can` vea la sesión dentro del disparador en todo camino de envío; `scripts/check-rollbacks.mjs` con la lista congelada que cambia; guardado automático (H-072) deja un evento por guardado intermedio con precio bloqueado distinto (aceptado); `convert-lines.ts` y `[quoteId]/page.tsx` (las líneas que propone una solicitud también necesitan `priceLocked`); la «mejora de uso anotada» de `CLAUDE.md` parece hecha en `quote-editor.tsx:500-509` y `613-617` (confirmar).
@@ -181,3 +182,37 @@ Construida el 2026-11-17 sobre la etapa A, misma rama. 🟢 PRUEBAS (Supabase lo
 - **Supuesto por confirmar:** que el Dueño y el Administrador sigan sin tope de descuento (aquí no lo tienen); si se quisiera un tope para ellos, es otra regla.
 - **La tarjeta del tope vive en el Catálogo** (arriba de la lista). Si Aarón la prefiere en Configuración, es mover un componente.
 - **El hueco de la pregunta 18 sigue abierto** (líneas libres, renombrar una línea de catálogo, bajar la cantidad): H-041 no lo cierra; ver `sprint-5-h-040-aprobaciones.md` §12.
+
+## Registro de la ronda de revisiones Opus (normal y adversarial, 2026-11-17)
+
+Arreglos aplicados sobre la misma rama. La migración `20261118100000_price_locks.sql` todavía no está en `main`, así que se editó EN SU LUGAR (no hay otra) junto con su deshacer y la prueba del deshacer. 🟢 PRUEBAS (Supabase local). **No se cambió ninguna regla de negocio:** el candado sigue comparando contra el precio congelado en la línea.
+
+### Qué cambió
+
+1. **Botón del teléfono.** «Usar el precio …» salía de la media columna del precio y desbordaba a 375 px. Ahora va a todo el ancho de la línea, debajo de la grilla (`col-span-2`, alto mínimo de 44 px, el texto puede partirse en dos líneas). El e2e de 375 px suma un caso con el botón visible (una línea bloqueada cuyo precio quedó distinto, dejada así por la base) y comprueba que no hay desplazamiento horizontal, que mide 44 px o más y que cabe en el ancho.
+2. **Textos honestos.** El botón dice «Usar el precio con que se agregó ($10.000)»; si el precio de hoy del catálogo es otro, una frase debajo dice «El catálogo hoy dice $12.000.». El dato de hoy sale de la **misma consulta** del catálogo que `getQuote` ya hacía (se le sumó la columna `unit_price_clp`; ninguna consulta nueva) y llega a la línea como `catalogPriceTodayClp`. Los mensajes de `line-rules.ts` («Usa el precio con que se agregó a la cotización.») y de `line-rules-block.ts` («…distinto al precio con que se agregó. Vuelve a la cotización y usa ese precio.») cambiaron igual.
+3. **Precio bloqueado sin tope.** La ayuda de la casilla dice ahora que los Comerciales sí pueden darle descuento hasta el descuento máximo («hoy: 10 %», «hoy: sin tope», «hoy: ningún descuento»; sin el valor si no se pudo leer). La tarjeta del tope muestra «Hay servicios con precio bloqueado y no hay tope: los Comerciales pueden darles cualquier descuento.» cuando corresponde. Para saberlo, la página del catálogo hace UNA consulta ligera (solo cuenta, `head: true`) y solo cuando no hay tope; si falla, no se muestra el aviso y la página sigue. La ayuda en la ficha del servicio lee el tope con `loadMaxDiscountBp` (solo para quien edita; si falla, la ayuda no afirma el valor).
+4. **Accesibilidad de la casilla.** La ayuda salió de la etiqueta (ya no se leía dos veces) y usa `useId` en lugar del id fijo `price-locked-help`. La caja con borde sigue envolviendo a las dos; la etiqueta (44 px) es solo el cuadro y el título.
+5. **Registro de actividad.** «Descuento máximo: Sin tope → 10 %» y «Bloqueó el precio» / «Quitó el bloqueo del precio» (como H-040), con lo demás que haya cambiado en el mismo registro («· Cambió: precio»). Un valor ilegible cae en la frase general.
+6. **Base de datos.** (a) `set_quote_max_discount` toma la fila de la organización con `for no key update` (no bloquea las llaves foráneas que apuntan a `tenants`). (b) El evento y la auditoría de `locked_price_overridden` guardan el precio nuevo normalizado (`((p_items -> v_idx) ->> 'unit_price_clp')::numeric::bigint`), no el JSON crudo: con `8000.0000` el evento guardaba esos ceros. (c) Nuevo md5 de `save_quote_draft` en el deshacer (`103579dac268fc9032bf33896d36b6a9`); `PL2` lo recalcula del archivo. Pruebas nuevas: precio con ceros decimales (`8000.0000`) y el peor caso de tamaño ahora mide `octet_length(data::text)` con 20 servicios y 20 posiciones distintas (antes `pg_column_size` con un solo servicio, que comprimía y mostraba un número menor al real).
+7. **Mensajes del guardado.** `mapSaveRpcError` elige el mensaje según qué regla se rompió: solo precios bloqueados, solo descuentos sobre el máximo, solo servicios no permitidos (texto genérico propio), varias clases a la vez (aviso neutro «Revisa los precios y descuentos marcados en la cotización.») o un código desconocido (el mensaje de siempre, «Tu organización cambió sus reglas de precio. Recarga para ver las vigentes.»). **Tope ilegible en el editor:** se eligió la opción más simple: la página pasa `maxDiscountUnknown` y el editor dice, junto al descuento general, «No pudimos leer el descuento máximo de tu organización. Lo revisamos igual al guardar.» en vez de callar como si no hubiera tope (no se muestra ningún «Máximo»; la base y el servidor siguen decidiendo).
+8. **Repetición.** `percentText` desaparece (usa `formatPercentBp`); el catálogo usa `loadMaxDiscountBp` en lugar de su consulta propia; el editor no lee el tope para quien se salta la regla (Dueño y Administrador); `/enviar` ya no vuelve a leer los candados: usa los de `getQuote` (que ahora también devuelve `catalogStatesUnreadable`, `true` si no pudo leer el catálogo, y `/enviar` NO deja enviar con eso: el comportamiento ante fallos no cambió). `loadLockedCatalogIds` se eliminó.
+9. **Ícono.** El candado se queda como está (Lucide, 16 px); `DISENO.md` anota la desviación de la norma de íconos (18 px en escritorio, 20 a 24 en móvil) y por qué.
+
+### Riesgos aceptados nuevos
+
+- **Desbloquear, cambiar el precio y volver a bloquear.** Un Administrador puede quitar el candado de un servicio, cambiar el precio y volver a bloquearlo sin que quede un evento en ninguna cotización (los eventos solo se escriben cuando alguien guarda una cotización con un precio bloqueado distinto). Queda solo en la auditoría del catálogo («Quitó el bloqueo del precio», «Cambió el precio de un servicio», «Bloqueó el precio»). Es coherente con que el Administrador puede cambiar precios y datos bancarios sin aviso al Dueño hasta los correos de aviso (decisión nº 17 y proveedor de correo, decisión 016).
+- **El disparador de envío no toma el candado de la organización como el de H-040.** Si se cambia el tope en el mismo instante en que alguien envía, hay una ventana de milisegundos en que el envío puede pasar con el tope anterior. H-040 la cierra tomando el candado de la organización antes de decidir; aquí se dejó sin él para no serializar todos los envíos de una organización por una regla que cambia rara vez. El efecto es acotado: el paquete que sale cumplía el tope vigente un instante antes.
+
+### Pregunta 20 para Aarón: ¿contra qué precio compara el candado?
+
+**Cómo está hoy (supuesto con que se construyó):** compara el precio de la línea contra el **precio de catálogo congelado en la línea** al agregarla, no contra el de hoy. Consecuencia: un borrador viejo sale al precio anterior aunque el catálogo suba y el servicio se bloquee después, y aunque la persona cambie el cliente; y al revés, si el catálogo baja, la línea vieja exige el precio más alto con que se agregó (el botón lo dice con honestidad desde esta ronda).
+
+| Opción | Qué hace | Costo |
+|---|---|---|
+| **A** | Aceptar ambos: vale el precio congelado **o** el de hoy | ~0,5 día |
+| **B** | Exigir siempre el precio de hoy del catálogo | ~0,5 día, más decidir qué pasa con los borradores viejos |
+| **C** | Dejarlo como está, con los textos honestos (hecho en esta ronda) | 0 |
+
+**Supuesto vigente:** C. Si Aarón prefiere que nadie pueda vender a un precio distinto del de hoy, B. Aplica al guardado y al envío de borradores.
+

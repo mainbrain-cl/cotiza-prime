@@ -20,7 +20,16 @@ export type EditableItem = {
   priceLocked: string;
 };
 
-export function EditCatalogItemForm({ tenantId, item }: { tenantId: string; item: EditableItem }) {
+export function EditCatalogItemForm({
+  tenantId,
+  item,
+  maxDiscountBp,
+}: {
+  tenantId: string;
+  item: EditableItem;
+  /** El descuento máximo de los Comerciales hoy, para la ayuda del candado (`undefined` si no se pudo leer). */
+  maxDiscountBp?: number | null;
+}) {
   const [state, formAction] = useActionState(
     (previous: FormState, formData: FormData) =>
       updateCatalogItemAction(tenantId, item.id, previous, formData),
@@ -36,7 +45,7 @@ export function EditCatalogItemForm({ tenantId, item }: { tenantId: string; item
       <OfflineNotice />
       {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
 
-      <CatalogFields errors={errors} values={values} />
+      <CatalogFields errors={errors} values={values} maxDiscountBp={maxDiscountBp} />
 
       <SubmitButton pendingLabel="Guardando…">Guardar cambios</SubmitButton>
     </form>

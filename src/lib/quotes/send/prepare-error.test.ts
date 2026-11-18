@@ -17,7 +17,7 @@ describe("los errores al preparar el envío", () => {
     expect(
       prepareErrorMessage({ code: "CP422", message: "line_rules_invalid: price_locked@1" }),
     ).toBe(
-      "La línea 2 tiene un precio bloqueado distinto al del catálogo. Vuelve a la cotización y usa el precio del catálogo.",
+      "La línea 2 tiene un precio bloqueado distinto al precio con que se agregó. Vuelve a la cotización y usa ese precio.",
     );
     expect(prepareErrorMessage({ code: "CP422", message: "line_rules_invalid: nuevo@3" })).toBe(
       LINE_RULES_GENERIC_MESSAGE,

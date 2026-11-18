@@ -15,7 +15,7 @@ import { can } from "@/lib/permissions/matrix";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
-import { isValidMaxDiscountBp } from "@/lib/quotes/line-rules";
+import { loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
 import { CatalogForm } from "./catalog-form";
 import { DiscountCapForm } from "./discount-cap-form";
 
@@ -62,14 +62,17 @@ export default async function CatalogPage({
   const { data, error } = await query;
   const items = (data ?? []) as CatalogRow[];
   // El descuento máximo de los Comerciales (H-041): lo lee cualquier miembro. Si no se puede leer, la tarjeta no se muestra.
-  const { data: tenantRow, error: capError } = await active.supabase
-    .from("tenants")
-    .select("max_discount_bp")
-    .eq("tenant_id", active.tenantId)
-    .maybeSingle();
-  const maxDiscountBp = (tenantRow as { max_discount_bp: number | null } | null)?.max_discount_bp;
-  const capReadable = !capError && tenantRow && isValidMaxDiscountBp(maxDiscountBp ?? null);
+  const cap = await loadMaxDiscountBp(active);
   const canEdit = can(active.role, "catalog.manage");
+  // ¿Hay servicios con el precio bloqueado y no hay tope? Una sola consulta ligera (solo cuenta); si falla, no se muestra el aviso.
+  let lockedServices = 0;
+  if (cap !== null && cap.maxDiscountBp === null) {
+    const { count, error: lockedError } = await active.supabase
+      .from("catalog_items")
+      .select("id", { count: "exact", head: true })
+      .eq("price_locked", true);
+    if (!lockedError) lockedServices = count ?? 0;
+  }
   const hasNoFilters = search === "" && status === "activos";
   // Catálogo realmente vacío: sin servicios de ningún tipo (ni siquiera desactivados).
   let isCatalogEmpty = false;
@@ -108,11 +111,12 @@ export default async function CatalogPage({
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_24rem] 2xl:grid-cols-[minmax(0,1fr)_28rem]">
         <div className="flex min-w-0 flex-col gap-6">
-          {capReadable ? (
+          {cap !== null ? (
             <DiscountCapForm
               tenantId={active.tenantId}
-              initialBp={maxDiscountBp ?? null}
+              initialBp={cap.maxDiscountBp}
               editable={canEdit}
+              lockedServices={lockedServices}
             />
           ) : (
             <p
@@ -269,7 +273,10 @@ export default async function CatalogPage({
             <h2 id="agregar-titulo" className="text-lg">
               Agregar un servicio
             </h2>
-            <CatalogForm tenantId={active.tenantId} />
+            <CatalogForm
+              tenantId={active.tenantId}
+              maxDiscountBp={cap === null ? undefined : cap.maxDiscountBp}
+            />
           </aside>
         ) : null}
       </div>

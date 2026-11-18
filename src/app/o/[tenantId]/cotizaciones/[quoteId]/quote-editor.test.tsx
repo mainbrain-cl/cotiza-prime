@@ -31,7 +31,7 @@ const CATALOG_ID = "33333333-3333-4333-8333-333333333333";
 let host: HTMLDivElement;
 let root: Root;
 
-function lockedLine(price = "10000"): EditorLine {
+function lockedLine(price = "10000", catalogPriceTodayClp?: number): EditorLine {
   return {
     ...newCatalogLine("line-1", {
       id: CATALOG_ID,
@@ -43,6 +43,7 @@ function lockedLine(price = "10000"): EditorLine {
       priceLocked: true,
     }),
     price,
+    ...(catalogPriceTodayClp === undefined ? {} : { catalogPriceTodayClp }),
   };
 }
 const stateWith = (lines: EditorLine[]): EditorState => ({
@@ -59,7 +60,7 @@ const stateWith = (lines: EditorLine[]): EditorState => ({
 
 async function mount(
   lines: EditorLine[],
-  rules: { maxDiscountBp: number | null; canOverride: boolean },
+  rules: { maxDiscountBp: number | null; canOverride: boolean; maxDiscountUnknown?: boolean },
 ) {
   await act(async () => {
     root.render(
@@ -118,16 +119,48 @@ describe("el precio bloqueado en el editor", () => {
     expect(testId("use-catalog-price")).toBeNull();
   });
 
-  it("si el precio guardado difiere, ofrece «Usar el precio del catálogo» y lo restaura", async () => {
+  it("si el precio guardado difiere, ofrece «Usar el precio con que se agregó» y lo restaura", async () => {
     await mount([lockedLine("8000")], { maxDiscountBp: 1_000, canOverride: false });
     const button = testId("use-catalog-price") as HTMLButtonElement;
-    expect(button.textContent).toBe("Usar el precio del catálogo ($10.000)");
+    expect(button.textContent).toBe("Usar el precio con que se agregó ($10.000)");
+    // Sin precio de hoy distinto, no se dice nada del catálogo de hoy.
+    expect(testId("catalog-price-today")).toBeNull();
     // El precio de otro valor no se cuela: el servidor lo rechazaría, y la pantalla ya lo marca.
     expect(host.textContent).toContain("El precio de este servicio está bloqueado");
     await act(async () => button.click());
     expect(byId("line-1-price").value).toBe("10000");
     expect(testId("use-catalog-price")).toBeNull();
     expect(host.textContent).not.toContain("El precio de este servicio está bloqueado");
+  });
+
+  it("el botón va a todo el ancho debajo de la grilla, no dentro de la columna del precio", async () => {
+    await mount([lockedLine("8000")], { maxDiscountBp: 1_000, canOverride: false });
+    const button = testId("use-catalog-price") as HTMLButtonElement;
+    const priceCell = byId("line-1-price").closest("div.flex-col")!;
+    expect(priceCell.contains(button)).toBe(false);
+    expect(button.parentElement!.className).toContain("col-span-2");
+    expect(button.className).toContain("w-full");
+    expect(button.className).toContain("min-h-11");
+  });
+
+  it("si el catálogo hoy dice otro precio, lo dice junto al botón", async () => {
+    await mount([lockedLine("8000", 12_000)], { maxDiscountBp: 1_000, canOverride: false });
+    expect(testId("use-catalog-price")!.textContent).toBe(
+      "Usar el precio con que se agregó ($10.000)",
+    );
+    expect(testId("catalog-price-today")!.textContent).toBe("El catálogo hoy dice $12.000.");
+  });
+
+  it("si no se pudo leer el tope, lo avisa en vez de callar como «sin tope»", async () => {
+    await mount([lockedLine()], {
+      maxDiscountBp: null,
+      canOverride: false,
+      maxDiscountUnknown: true,
+    });
+    expect(testId("discount-cap-hint")).toBeNull();
+    expect(testId("discount-cap-unknown")!.textContent).toBe(
+      "No pudimos leer el descuento máximo de tu organización. Lo revisamos igual al guardar.",
+    );
   });
 
   it("el Dueño y el Administrador lo editan, con la ayuda de que queda registrado", async () => {
@@ -211,7 +244,8 @@ describe("errores por línea que manda el servidor", () => {
       status: "invalid",
       message: "Tu organización cambió sus reglas de precio. Recarga para ver las vigentes.",
       fieldErrors: {
-        "items.0.price": "El precio de este servicio está bloqueado. Usa el precio del catálogo.",
+        "items.0.price":
+          "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.",
       },
     });
     await mount([{ ...newFreeLine("line-1"), name: "Algo", price: "5000" }], {

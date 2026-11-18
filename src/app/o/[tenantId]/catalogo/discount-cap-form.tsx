@@ -8,6 +8,7 @@ import { OfflineNotice } from "@/components/ui/offline-notice";
 import { saveDiscountCapAction } from "@/lib/catalog/discount-cap-actions";
 import {
   describeMaxDiscount,
+  lockedWithoutCapNotice,
   maxDiscountToText,
   parseMaxDiscountText,
 } from "@/lib/quotes/discount-cap";
@@ -24,10 +25,13 @@ export function DiscountCapForm({
   tenantId,
   initialBp,
   editable,
+  lockedServices = 0,
 }: {
   tenantId: string;
   initialBp: number | null;
   editable: boolean;
+  /** Cuántos servicios tienen hoy el precio bloqueado (solo se cuentan si no hay tope; sirve para el aviso). */
+  lockedServices?: number;
 }) {
   const [savedBp, setSavedBp] = useState(initialBp);
   const [text, setText] = useState(maxDiscountToText(initialBp));
@@ -39,6 +43,7 @@ export function DiscountCapForm({
   const parsed = parseMaxDiscountText(text);
   const dirty = !parsed.ok || parsed.value !== savedBp;
   const preview = parsed.ok ? describeMaxDiscount(parsed.value) : null;
+  const notice = lockedWithoutCapNotice(savedBp, lockedServices);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -128,6 +133,14 @@ export function DiscountCapForm({
             </div>
           )}
         </Field>
+        {notice ? (
+          <p
+            data-testid="discount-cap-locked-notice"
+            className="rounded-sm bg-warning-soft px-3 py-2 text-sm text-warning"
+          >
+            {notice}
+          </p>
+        ) : null}
         <p
           aria-live="polite"
           data-testid="discount-cap-preview"

@@ -174,7 +174,7 @@ begin
     raise exception 'invalid_max_discount' using errcode = 'CP422';
   end if;
   -- 4. la fila de la organización queda tomada: dos cambios a la vez no se pisan
-  select t.max_discount_bp into v_cur from public.tenants t where t.tenant_id = v_tenant for update;
+  select t.max_discount_bp into v_cur from public.tenants t where t.tenant_id = v_tenant for no key update;
   if not found then
     raise exception 'not_found' using errcode = 'CP404';
   end if;
@@ -565,7 +565,8 @@ begin
         'position', v_idx + 1,
         'catalog_item_id', (v_rows -> v_idx) ->> 'catalog_item_id',
         'old_price_clp', v_prev -> v_idx,
-        'new_price_clp', (p_items -> v_idx) -> 'unit_price_clp');
+        -- normalizado a entero: el JSON crudo podría traer ceros decimales (8000.0000) y desviar la medida del evento
+        'new_price_clp', ((p_items -> v_idx) ->> 'unit_price_clp')::numeric::bigint);
     end if;
   end loop;
   if jsonb_array_length(v_changes) > 0 then

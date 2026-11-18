@@ -23,6 +23,7 @@
  */
 import { roundHalfUpDiv } from "@/lib/money/rounding";
 import type { Discount } from "@/lib/quotes/calc";
+import { formatPercentBp } from "@/lib/quotes/format";
 
 /** Tope más alto que se puede fijar, en centésimas de punto: 99,99 % (igual al de la base, `tenants_max_discount_bp_range`). */
 export const MAX_DISCOUNT_BP_LIMIT = 9_999;
@@ -157,20 +158,12 @@ export type LineRuleMessageOptions = {
   maxDiscountBp?: number | null;
 };
 
-const percentText = (bp: number) => {
-  const integer = Math.floor(bp / 100);
-  const fraction = String(bp % 100)
-    .padStart(2, "0")
-    .replace(/0+$/, "");
-  return fraction === "" ? `${integer} %` : `${integer},${fraction} %`;
-};
-
 function capText(options: LineRuleMessageOptions): string {
   const bp = options.maxDiscountBp;
   if (bp === null || bp === undefined)
     return "El descuento pasa del máximo que permite tu organización.";
   if (bp === 0) return "Tu organización no permite descuentos.";
-  return `El descuento pasa del máximo que permite tu organización (${percentText(bp)}).`;
+  return `El descuento pasa del máximo que permite tu organización (${formatPercentBp(bp)} %).`;
 }
 
 /**
@@ -188,7 +181,7 @@ export function lineRuleFieldErrors(
       case "price_locked":
         if (index !== null && index >= 0) {
           errors[`items.${index}.price`] =
-            "El precio de este servicio está bloqueado. Usa el precio del catálogo.";
+            "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.";
           continue;
         }
         break;

@@ -33,7 +33,7 @@ declare
 begin
   -- (a) guardar el borrador es el de esta migración
   if not exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.save_quote_draft(uuid, integer, uuid, jsonb, jsonb, jsonb)')::oid
-                    and md5(p.prosrc) = '4e784cd901edcc67a189e8e975e1f8c2') then
+                    and md5(p.prosrc) = '103579dac268fc9032bf33896d36b6a9') then
     raise exception 'no se puede deshacer 20261118100000_price_locks: la funcion public.save_quote_draft vigente ya no es la de esta migracion: otra migracion la redefinio o ya se deshizo; revise el orden de los deshacer';
   end if;
   -- (b) el gancho de H-042 sigue siendo el de esta migración

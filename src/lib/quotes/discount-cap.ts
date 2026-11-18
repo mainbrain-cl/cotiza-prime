@@ -41,3 +41,28 @@ export function maxDiscountHint(bp: number | null): string | null {
   if (bp === 0) return "Tu organización no permite descuentos";
   return `Máximo ${formatPercentBp(bp)} %`;
 }
+
+/**
+ * La ayuda de la casilla «Bloquear el precio» del catálogo. Dice con honestidad qué pasa con el descuento: el candado fija el PRECIO,
+ * pero los Comerciales siguen pudiendo dar descuento hasta el máximo de la organización. `maxDiscountBp` `undefined` = no se sabe
+ * el tope aquí (no se afirma nada del valor de hoy); `null` = sin tope.
+ */
+export function priceLockHelp(maxDiscountBp?: number | null): string {
+  let today = "";
+  if (maxDiscountBp === null) today = " (hoy: sin tope)";
+  else if (maxDiscountBp === 0) today = " (hoy: ningún descuento)";
+  else if (maxDiscountBp !== undefined) today = ` (hoy: ${formatPercentBp(maxDiscountBp)} %)`;
+  return `Al cotizar, los Comerciales no podrán cambiar este precio, pero sí darle descuento hasta el descuento máximo de los Comerciales${today}. El Dueño y los Administradores sí pueden cambiar el precio, y queda registrado.`;
+}
+
+/**
+ * El aviso de la tarjeta del tope cuando hay servicios con el precio bloqueado y no hay tope: ahí el candado no limita el descuento.
+ * `null` si no hace falta decir nada.
+ */
+export function lockedWithoutCapNotice(
+  maxDiscountBp: number | null,
+  lockedServices: number,
+): string | null {
+  if (maxDiscountBp !== null || lockedServices <= 0) return null;
+  return "Hay servicios con precio bloqueado y no hay tope: los Comerciales pueden darles cualquier descuento.";
+}

@@ -56,7 +56,7 @@ function describeIssue(issue: LineRuleIssue, maxDiscountBp: number | null): stri
   const line = (issue.lineIndex ?? 0) + 1;
   switch (issue.code) {
     case "price_locked":
-      return `La línea ${line} tiene un precio bloqueado distinto al del catálogo. Vuelve a la cotización y usa el precio del catálogo.`;
+      return `La línea ${line} tiene un precio bloqueado distinto al precio con que se agregó. Vuelve a la cotización y usa ese precio.`;
     case "discount_over_cap":
       return `El descuento de la línea ${line} pasa del máximo que permite tu organización.${capSuffix(maxDiscountBp)}`;
     case "global_discount_over_cap":

@@ -39,7 +39,11 @@ async function submit() {
     form().dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
 }
-async function mount(props: { initialBp: number | null; editable: boolean }) {
+async function mount(props: {
+  initialBp: number | null;
+  editable: boolean;
+  lockedServices?: number;
+}) {
   await act(async () => {
     root.render(createElement(DiscountCapForm, { tenantId: TENANT_ID, ...props }));
   });
@@ -58,6 +62,22 @@ afterEach(() => {
 });
 
 describe("DiscountCapForm (H-041)", () => {
+  it("avisa cuando hay servicios bloqueados y no hay tope", async () => {
+    await mount({ initialBp: null, editable: true, lockedServices: 2 });
+    expect(host.querySelector('[data-testid="discount-cap-locked-notice"]')!.textContent).toBe(
+      "Hay servicios con precio bloqueado y no hay tope: los Comerciales pueden darles cualquier descuento.",
+    );
+  });
+
+  it("no avisa con tope fijado o sin servicios bloqueados", async () => {
+    await mount({ initialBp: 1_000, editable: true, lockedServices: 2 });
+    expect(host.querySelector('[data-testid="discount-cap-locked-notice"]')).toBeNull();
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await mount({ initialBp: null, editable: true, lockedServices: 0 });
+    expect(host.querySelector('[data-testid="discount-cap-locked-notice"]')).toBeNull();
+  });
+
   it("parte con el valor guardado, la frase en vivo y el botón apagado (nada que guardar)", async () => {
     await mount({ initialBp: 1_000, editable: true });
     expect(input().value).toBe("10");

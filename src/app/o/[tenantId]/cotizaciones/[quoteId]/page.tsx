@@ -52,7 +52,8 @@ export default async function QuotePage({
   const active = await requireActiveTenant(tenantId);
   const detail = await getQuote(active, quoteId);
   if (detail === null) notFound();
-  const { quote, items, authorName, inactiveCatalogIds, lockedCatalogIds } = detail;
+  const { quote, items, authorName, inactiveCatalogIds, lockedCatalogIds, catalogPricesToday } =
+    detail;
 
   const customer = await getCustomer(active, quote.customer_id);
   const customerName =
@@ -120,6 +121,7 @@ export default async function QuotePage({
         item,
         item.catalog_item_id !== null && inactive.has(item.catalog_item_id),
         item.catalog_item_id !== null && locked.has(item.catalog_item_id),
+        item.catalog_item_id === null ? null : (catalogPricesToday[item.catalog_item_id] ?? null),
       ),
     ),
     globalDiscountKind: quote.global_discount_kind,
@@ -134,12 +136,15 @@ export default async function QuotePage({
     conditions: quote.conditions ?? "",
   };
   const initialCatalog = editable ? await listQuotableCatalogItems(active, "") : [];
-  // Las reglas de precio y descuento (H-041): el descuento máximo de la organización y si esta persona se salta el candado. Si
-  // no se puede leer el tope, la pantalla no marca nada: el servidor y la base rechazan igual lo que no corresponda.
-  const maxDiscount = editable ? await loadMaxDiscountBp(active) : null;
+  // Las reglas de precio y descuento (H-041): el descuento máximo de la organización y si esta persona se salta el candado. Quien
+  // se las salta (Dueño, Administrador) no necesita el tope: no se lee. Si no se puede leer, la pantalla no marca ningún máximo y
+  // lo dice (`maxDiscountUnknown`); el servidor y la base rechazan igual lo que no corresponda al guardar.
+  const canOverride = can(active.role, "catalog.price_lock.override");
+  const maxDiscount = editable && !canOverride ? await loadMaxDiscountBp(active) : null;
   const rules = {
     maxDiscountBp: maxDiscount?.maxDiscountBp ?? null,
-    canOverride: can(active.role, "catalog.price_lock.override"),
+    canOverride,
+    maxDiscountUnknown: editable && !canOverride && maxDiscount === null,
   };
   // «Solicitud original» (H-090): solo si la cotización nació de una solicitud del formulario público.
   const sourcePanel = await loadSourceRequestPanel(

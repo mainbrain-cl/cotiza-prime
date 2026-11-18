@@ -4,8 +4,8 @@ import { serverLog } from "@/lib/log/server-log";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
 
 /**
- * Lo que `/enviar` necesita saber, de HOY, para calcular el bloqueo por las reglas de precio y descuento (H-041): el descuento
- * máximo de la organización y qué servicios del catálogo tienen el precio bloqueado. Se lee con el pase de la persona y la
+ * Lo que `/enviar` y el editor necesitan saber, de HOY, para las reglas de precio y descuento (H-041): el descuento
+ * máximo de la organización (los servicios con el precio bloqueado los lee `getQuote`, en la misma consulta del catálogo). Se lee con el pase de la persona y la
  * organización activa (nunca con la llave maestra). `null` si no se pudo leer: quien llama lo trata como un fallo (no se deja
  * enviar), no como «sin tope» ni «sin candados».
  */
@@ -28,24 +28,4 @@ export async function loadMaxDiscountBp(
     return null;
   }
   return { maxDiscountBp: value };
-}
-
-/** Los servicios con el precio bloqueado hoy, entre los dados (aunque estén desactivados: el candado sigue valiendo). */
-export async function loadLockedCatalogIds(
-  active: ActiveTenant,
-  catalogItemIds: readonly string[],
-): Promise<Set<string> | null> {
-  const ids = [...new Set(catalogItemIds)];
-  if (ids.length === 0) return new Set();
-  const { data, error } = await active.supabase
-    .from("catalog_items")
-    .select("id")
-    .eq("tenant_id", active.tenantId)
-    .eq("price_locked", true)
-    .in("id", ids);
-  if (error || !data) {
-    await serverLog("error", "catalog_locks_read_failed", { code: error?.code });
-    return null;
-  }
-  return new Set((data as { id: string }[]).map((row) => row.id));
 }

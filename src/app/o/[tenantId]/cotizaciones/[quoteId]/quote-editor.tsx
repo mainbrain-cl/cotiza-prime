@@ -17,6 +17,7 @@ import { QUOTE_MAX_LINES } from "@/lib/quotes/calc";
 import { maxDiscountHint } from "@/lib/quotes/discount-cap";
 import {
   catalogPriceToRestore,
+  catalogPriceTodayIfDifferent,
   contentKey,
   evaluateEditor,
   moveLine,
@@ -398,6 +399,8 @@ export function QuoteEditor({
                 const lockedForMe = line.priceLocked && !rules.canOverride;
                 const lockedEditable = line.priceLocked && rules.canOverride;
                 const restorePrice = lockedForMe ? catalogPriceToRestore(line) : null;
+                const catalogToday =
+                  restorePrice !== null ? catalogPriceTodayIfDifferent(line) : null;
                 const idFor = (field: string) => `${line.id}-${field}`;
                 return (
                   <li
@@ -551,25 +554,6 @@ export function QuoteEditor({
                             Precio bloqueado en el catálogo. Puedes cambiarlo; quedará registrado.
                           </p>
                         ) : null}
-                        {restorePrice !== null ? (
-                          <div>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              data-testid="use-catalog-price"
-                              disabled={blocked}
-                              onClick={() => {
-                                updateLine(index, { price: String(restorePrice) });
-                                setAnnouncement(
-                                  `La línea ${index + 1} volvió al precio del catálogo.`,
-                                );
-                              }}
-                            >
-                              Usar el precio del catálogo ({formatClp(restorePrice)})
-                            </Button>
-                          </div>
-                        ) : null}
                         {belowCatalogPrice !== null ? (
                           <p
                             id={idFor("price-below-catalog")}
@@ -631,6 +615,30 @@ export function QuoteEditor({
                           </Select>
                         )}
                       </div>
+                      {restorePrice !== null ? (
+                        <div className="col-span-2 flex flex-col gap-1.5 md:col-span-4">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            data-testid="use-catalog-price"
+                            disabled={blocked}
+                            className="h-auto min-h-11 w-full justify-center py-2 text-center whitespace-normal md:h-auto md:min-h-9"
+                            onClick={() => {
+                              updateLine(index, { price: String(restorePrice) });
+                              setAnnouncement(
+                                `La línea ${index + 1} volvió al precio con que se agregó.`,
+                              );
+                            }}
+                          >
+                            Usar el precio con que se agregó ({formatClp(restorePrice)})
+                          </Button>
+                          {catalogToday !== null ? (
+                            <p data-testid="catalog-price-today" className="text-xs text-fg-muted">
+                              El catálogo hoy dice {formatClp(catalogToday)}.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="grid grid-cols-2 gap-3 md:grid-cols-[1fr_1fr_1fr]">
@@ -900,6 +908,12 @@ export function QuoteEditor({
                   className="text-xs text-fg-muted"
                 >
                   {capHint}
+                </p>
+              ) : null}
+              {rules.maxDiscountUnknown ? (
+                <p data-testid="discount-cap-unknown" className="text-xs text-fg-muted">
+                  No pudimos leer el descuento máximo de tu organización. Lo revisamos igual al
+                  guardar.
                 </p>
               ) : null}
               <FieldError id="global-discount-error" message={errors.globalDiscount} />

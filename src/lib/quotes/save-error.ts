@@ -1,4 +1,4 @@
-import { lineRuleFieldErrors, parseLineRulesError } from "./line-rules";
+import { lineRuleFieldErrors, parseLineRulesError, type LineRuleIssue } from "./line-rules";
 
 /**
  * Cómo se lee un error de `save_quote_draft` (H-026, H-041). Vive aparte de las acciones porque un archivo `use server` solo
@@ -18,9 +18,40 @@ export type SaveQuoteResult =
 export const SAVE_FAILED = "No pudimos guardar los cambios. Intenta de nuevo en unos minutos.";
 export const SAVE_CONFLICT_MESSAGE =
   "Esta cotización cambió en otra pestaña. Recarga para ver la última versión.";
-/** Las reglas de precio y descuento cambiaron entre que se abrió la cotización y se guardó (H-041). */
+/**
+ * Las reglas de precio y descuento no se cumplen (H-041). Este mensaje solo se usa cuando no se puede decir más (un código que esta
+ * versión no conoce): no afirma qué pasó, solo que hay que recargar.
+ */
 export const LINE_RULES_CHANGED_MESSAGE =
   "Tu organización cambió sus reglas de precio. Recarga para ver las vigentes.";
+export const LINE_RULES_PRICE_LOCKED_MESSAGE =
+  "Hay servicios con el precio bloqueado a otro precio. Revisa las líneas marcadas.";
+export const LINE_RULES_DISCOUNT_MESSAGE =
+  "Hay descuentos que pasan del máximo que permite tu organización. Revisa los descuentos marcados.";
+export const LINE_RULES_NOT_ALLOWED_MESSAGE =
+  "Hay servicios que no puedes cotizar. Quítalos o cámbialos por otros.";
+export const LINE_RULES_MIXED_MESSAGE =
+  "Revisa los precios y descuentos marcados en la cotización.";
+
+/** El mensaje general según qué reglas se rompieron: una sola clase de problema dice cuál; varias, un aviso neutro; un código desconocido, el de «recarga». */
+export function lineRulesSaveMessage(issues: readonly LineRuleIssue[]): string {
+  if (issues.length === 0 || issues.some((issue) => issue.code === "unknown")) {
+    return LINE_RULES_CHANGED_MESSAGE;
+  }
+  const kinds = new Set(
+    issues.map((issue) =>
+      issue.code === "price_locked"
+        ? "price"
+        : issue.code === "catalog_item_not_allowed"
+          ? "allowed"
+          : "discount",
+    ),
+  );
+  if (kinds.size > 1) return LINE_RULES_MIXED_MESSAGE;
+  if (kinds.has("price")) return LINE_RULES_PRICE_LOCKED_MESSAGE;
+  if (kinds.has("allowed")) return LINE_RULES_NOT_ALLOWED_MESSAGE;
+  return LINE_RULES_DISCOUNT_MESSAGE;
+}
 
 const SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
 const SQLSTATE_NOT_FOUND = "CP404";
@@ -71,7 +102,7 @@ export function mapSaveRpcError(error: { code?: string; message?: string }): {
         return {
           result: {
             status: "invalid",
-            message: LINE_RULES_CHANGED_MESSAGE,
+            message: lineRulesSaveMessage(ruleIssues),
             fieldErrors: lineRuleFieldErrors(ruleIssues),
           },
         };

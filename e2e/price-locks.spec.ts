@@ -20,9 +20,11 @@ const MOBILE = { width: 375, height: 812 };
 const TOUCH_MIN_PX = 44;
 const LOCKED_NAME = `Flete con candado ${randomUUID().slice(0, 6)}`;
 const FREE_NAME = `Servicio sin candado ${randomUUID().slice(0, 6)}`;
-const LOCKED_PRICE_ERROR = "El precio de este servicio está bloqueado. Usa el precio del catálogo.";
+const LOCKED_PRICE_ERROR =
+  "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.";
 const CAP_ERROR = "El descuento pasa del máximo que permite tu organización (10 %).";
-const RULES_CHANGED = "Tu organización cambió sus reglas de precio. Recarga para ver las vigentes.";
+// Un precio bloqueado y un descuento sobre el máximo a la vez: el aviso general es neutro (no afirma que las reglas cambiaron).
+const RULES_CHANGED = "Revisa los precios y descuentos marcados en la cotización.";
 
 const ctx = {} as {
   tenantId: string;
@@ -380,7 +382,10 @@ test.describe("H-041 · precios bloqueados y descuento máximo", () => {
     await expect(override).toHaveCount(1);
     await expect(override).toContainText("Cambió: línea 1: $10.000 → $8.000");
     await expect(
-      page.getByTestId("audit-row").filter({ hasText: "descuento máximo" }).first(),
+      page
+        .getByTestId("audit-row")
+        .filter({ hasText: "Descuento máximo: Sin tope → 10 %" })
+        .first(),
     ).toBeVisible();
   });
 
@@ -401,10 +406,15 @@ test.describe("H-041 · precios bloqueados y descuento máximo", () => {
     await ctx.ana.page.getByRole("button", { name: "Guardar cambios" }).click();
     await savedToast(ctx.ana.page, "Guardamos los cambios del servicio.");
     expect(await dbLocked(ctx.freeId)).toBe(true);
+    // El registro de actividad lo cuenta con la frase de H-040: «Bloqueó el precio».
+    await ctx.ana.page.goto(`/o/${ctx.tenantId}/configuracion/actividad`);
+    await expect(
+      ctx.ana.page.getByTestId("audit-row").filter({ hasText: "Bloqueó el precio" }).first(),
+    ).toBeVisible();
 
     await page.goto(sendUrl);
     await expect(blocker).toContainText(
-      "La línea 2 tiene un precio bloqueado distinto al del catálogo. Vuelve a la cotización y usa el precio del catálogo.",
+      "La línea 2 tiene un precio bloqueado distinto al precio con que se agregó. Vuelve a la cotización y usa ese precio.",
     );
 
     // Y baja el tope a 5 %: el descuento de 10 % de la línea 1 tampoco sale.
@@ -415,7 +425,7 @@ test.describe("H-041 · precios bloqueados y descuento máximo", () => {
     );
     await expect(blocker).toContainText("La línea 2 tiene un precio bloqueado");
 
-    // Carla lo arregla en la cotización: «Usar el precio del catálogo» y el descuento en 5 %.
+    // Carla lo arregla en la cotización: «Usar el precio con que se agregó» y el descuento en 5 %.
     await page.goto(ctx.carlaQuoteUrl);
     const second = lines(page).nth(1);
     await expect(second.getByLabel("Precio unitario (neto)")).toHaveAttribute("readonly", "");
@@ -447,6 +457,31 @@ test.describe("H-041 · precios bloqueados y descuento máximo", () => {
     expect(await heightOf(lines(page).nth(0).getByLabel("Porcentaje"))).toBeGreaterThanOrEqual(
       TOUCH_MIN_PX,
     );
+
+    // Con el botón «Usar el precio con que se agregó» a la vista: un borrador viejo cuya línea bloqueada quedó a otro precio (se
+    // deja así por la base, como si la línea viniera de antes del candado). El botón va a todo el ancho, debajo de la grilla.
+    const quoteId = ctx.carlaQuoteUrl.split("/").pop();
+    const setLinePrice = (clp: number) =>
+      withDb((db) =>
+        db.query(
+          "update public.quote_items set unit_price_clp = $2 where quote_id = $1 and position = 2",
+          [quoteId, clp],
+        ),
+      );
+    await setLinePrice(15_000);
+    try {
+      await page.goto(ctx.carlaQuoteUrl);
+      const button = lines(page).nth(1).getByTestId("use-catalog-price");
+      await expect(button).toBeVisible();
+      await expect(button).toContainText("Usar el precio con que se agregó ($20.000)");
+      await expectNoHorizontalScroll(page);
+      expect(await heightOf(button)).toBeGreaterThanOrEqual(TOUCH_MIN_PX);
+      const box = (await button.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(MOBILE.width);
+    } finally {
+      await setLinePrice(20_000);
+    }
 
     // El catálogo en el teléfono, con la tarjeta del tope y la casilla (Ana).
     await ctx.ana.page.setViewportSize(MOBILE);

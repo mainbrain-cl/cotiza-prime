@@ -42,6 +42,11 @@ export type EditorLine = {
    */
   catalogPriceClp: number | null;
   /**
+   * Precio de hoy del servicio en el catálogo, si se conoce (H-041; se lee al abrir la cotización, sin consulta aparte). Solo sirve
+   * para decir, junto al precio bloqueado, que el catálogo hoy dice otra cosa que el precio con que se agregó la línea.
+   */
+  catalogPriceTodayClp?: number | null;
+  /**
    * El servicio del catálogo de esta línea tiene hoy el precio bloqueado (H-041; `false` en las líneas libres). Se lee del
    * catálogo al abrir la cotización, no de la línea: quien se salta el candado (Dueño, Administrador) la edita igual. La que
    * decide es la base de datos; esto solo dice a la pantalla qué mostrar y qué avisar.
@@ -90,6 +95,11 @@ export type EditorRules = {
   /** Descuento máximo en centésimas de punto (1.000 = 10 %); `null` = sin tope. */
   maxDiscountBp: number | null;
   canOverride: boolean;
+  /**
+   * No se pudo leer el tope de la organización: la pantalla no puede decir «Máximo X %» y lo avisa en vez de dar a entender que
+   * no hay tope. La base lo hace cumplir igual al guardar.
+   */
+  maxDiscountUnknown?: boolean;
 };
 
 /** Contenido que se guarda (sin la revisión ni la clave del guardado, que pone quien guarda). */
@@ -339,12 +349,14 @@ export function lineFromSaved(
   },
   catalogInactive: boolean,
   priceLocked = false,
+  catalogPriceToday: number | null = null,
 ): EditorLine {
   return {
     id: row.id,
     catalogItemId: row.catalog_item_id,
     catalogInactive,
     catalogPriceClp: row.catalog_item_id === null ? null : row.catalog_unit_price_clp,
+    catalogPriceTodayClp: row.catalog_item_id === null ? null : catalogPriceToday,
     priceLocked: row.catalog_item_id !== null && priceLocked,
     name: row.name,
     description: row.description ?? "",
@@ -376,8 +388,9 @@ export function priceBelowCatalog(
 }
 
 /**
- * El precio de catálogo al que se puede volver cuando la línea tiene el precio bloqueado y está a otro precio (H-041); `null` si no
- * hay a qué volver: línea libre, sin candado, o ya está al precio de catálogo que la línea congeló al agregarse.
+ * El precio al que se puede volver cuando la línea tiene el precio bloqueado y está a otro precio (H-041): el precio de catálogo que
+ * la línea congeló AL AGREGARSE (el que compara la regla, no el de hoy del catálogo); `null` si no hay a qué volver: línea libre,
+ * sin candado, o ya está a ese precio.
  */
 export function catalogPriceToRestore(
   line: Pick<EditorLine, "priceLocked" | "catalogPriceClp" | "price">,
@@ -385,6 +398,18 @@ export function catalogPriceToRestore(
   if (!line.priceLocked || line.catalogPriceClp === null) return null;
   const typed = parseMoney(line.price);
   return typed.ok && typed.value === line.catalogPriceClp ? null : line.catalogPriceClp;
+}
+
+/**
+ * El precio de HOY del servicio en el catálogo cuando es otro que el precio con que se agregó la línea; `null` si no se conoce o
+ * es el mismo. Se usa para no dejar creer que «volver al precio con que se agregó» es lo mismo que el precio actual del catálogo.
+ */
+export function catalogPriceTodayIfDifferent(
+  line: Pick<EditorLine, "catalogPriceClp" | "catalogPriceTodayClp">,
+): number | null {
+  const today = line.catalogPriceTodayClp;
+  if (today === undefined || today === null || line.catalogPriceClp === null) return null;
+  return today === line.catalogPriceClp ? null : today;
 }
 
 /** Mueve una línea una posición (-1 arriba, +1 abajo). Devuelve el mismo arreglo si no se puede. */

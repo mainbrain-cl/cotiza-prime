@@ -8,6 +8,7 @@ import {
   newCatalogLine,
   newFreeLine,
   catalogPriceToRestore,
+  catalogPriceTodayIfDifferent,
   priceBelowCatalog,
   type EditorLine,
   type EditorState,
@@ -335,7 +336,8 @@ describe("las reglas de precio y descuento en el editor (H-041)", () => {
   it("un Comercial con el precio bloqueado a otro precio: error junto a la línea, no se guarda y los totales se ven", () => {
     const view = withRules([line("x"), locked("a", { price: "8000" })], COMERCIAL);
     expect(view.errors).toEqual({
-      "items.1.price": "El precio de este servicio está bloqueado. Usa el precio del catálogo.",
+      "items.1.price":
+        "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.",
     });
     expect(view.content).toBeNull();
     expect(view.totals?.subtotalClp).toBe(18_000);
@@ -461,6 +463,14 @@ describe("el candado en las líneas (H-041)", () => {
     expect(newFreeLine("z").priceLocked).toBe(false);
   });
 
+  it("`lineFromSaved` guarda el precio de hoy del catálogo solo en líneas de catálogo", () => {
+    const fromCatalog = { ...row, catalog_item_id: "cat-1", catalog_unit_price_clp: 10_000 };
+    expect(lineFromSaved(fromCatalog, false, true, 12_000).catalogPriceTodayClp).toBe(12_000);
+    expect(lineFromSaved(fromCatalog, false, true).catalogPriceTodayClp).toBeNull();
+    const free = { ...row, catalog_item_id: null, catalog_unit_price_clp: null };
+    expect(lineFromSaved(free, false, false, 12_000).catalogPriceTodayClp).toBeNull();
+  });
+
   it("`newCatalogLine` trae el candado del servicio", () => {
     const item = {
       id: "cat-1",
@@ -472,6 +482,22 @@ describe("el candado en las líneas (H-041)", () => {
     };
     expect(newCatalogLine("x", { ...item, priceLocked: true }).priceLocked).toBe(true);
     expect(newCatalogLine("x", { ...item, priceLocked: false }).priceLocked).toBe(false);
+  });
+
+  it("`catalogPriceTodayIfDifferent` solo habla del catálogo de hoy si es otro que el de la línea", () => {
+    expect(
+      catalogPriceTodayIfDifferent({ catalogPriceClp: 10_000, catalogPriceTodayClp: 12_000 }),
+    ).toBe(12_000);
+    expect(
+      catalogPriceTodayIfDifferent({ catalogPriceClp: 10_000, catalogPriceTodayClp: 10_000 }),
+    ).toBeNull();
+    expect(
+      catalogPriceTodayIfDifferent({ catalogPriceClp: 10_000, catalogPriceTodayClp: null }),
+    ).toBeNull();
+    expect(catalogPriceTodayIfDifferent({ catalogPriceClp: 10_000 })).toBeNull();
+    expect(
+      catalogPriceTodayIfDifferent({ catalogPriceClp: null, catalogPriceTodayClp: 5_000 }),
+    ).toBeNull();
   });
 
   it("`catalogPriceToRestore` ofrece volver solo si hay candado y el precio es otro", () => {

@@ -18,7 +18,7 @@ import {
   LINE_RULES_UNAVAILABLE_MESSAGE,
   lineRulesBlockMessage,
 } from "@/lib/quotes/line-rules-block";
-import { loadLockedCatalogIds, loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
+import { loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
 import { getQuote } from "@/lib/quotes/queries";
 import { defaultEmailBody, defaultEmailSubject } from "@/lib/quotes/send/content";
 import { loadSendContext } from "@/lib/quotes/send/context";
@@ -65,20 +65,16 @@ export default async function SendQuotePage({
   let lineRulesBlock: string | null = null;
   let lineRulesUnreadable = false;
   if (!can(active.role, "catalog.price_lock.override")) {
-    const [cap, locked] = await Promise.all([
-      loadMaxDiscountBp(active),
-      loadLockedCatalogIds(
-        active,
-        items.flatMap((item) => (item.catalog_item_id ? [item.catalog_item_id] : [])),
-      ),
-    ]);
-    if (cap === null || locked === null) {
+    // Los candados vienen de `getQuote` (ya los leyó del catálogo de hoy, con el pase de la persona); si esa lectura falló, no se
+    // deja enviar: no se trata como «sin candados».
+    const cap = await loadMaxDiscountBp(active);
+    if (cap === null || detail.catalogStatesUnreadable) {
       lineRulesUnreadable = true;
     } else {
       lineRulesBlock = lineRulesBlockMessage({
         items,
         quote,
-        lockedCatalogIds: locked,
+        lockedCatalogIds: new Set(detail.lockedCatalogIds),
         maxDiscountBp: cap.maxDiscountBp,
         canOverride: false,
       });

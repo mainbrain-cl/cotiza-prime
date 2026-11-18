@@ -595,32 +595,72 @@ describe("Dueño y Administrador cambian un precio bloqueado", () => {
       expect(await auditCount(quoteId)).toBe(1);
     }));
 
-  it("el peor caso de tamaño (20 líneas con montos de 12 cifras) cabe en el límite del evento (4.096 bytes)", () =>
+  it("el peor caso de tamaño (20 servicios distintos, 20 posiciones, montos de 12 cifras) cabe en el límite del evento (4.096 bytes)", () =>
     withTx(db, async () => {
-      const service = await addCatalogItem(db, w.tenantA, 999_999_999_999);
-      await lockService(service);
+      // 20 servicios DISTINTOS (20 identificadores distintos: nada que comprimir) y 20 posiciones distintas
+      const services: string[] = [];
+      for (let n = 0; n < 20; n += 1) {
+        const service = await addCatalogItem(db, w.tenantA, 999_999_999_999);
+        await lockService(service);
+        services.push(service);
+      }
       const quoteId = await newQuote(w.owner);
       // dos guardados: el primero deja precios altos; el segundo los cambia a otros altos (old y new de 12 cifras)
-      const ids = Array.from({ length: 20 }, () => randomUUID());
+      const ids = services.map(() => randomUUID());
       await save(
         w.owner,
         quoteId,
-        ids.map((id) => ({ id, catalogItemId: service, price: 999_999_999_998, qtyMilli: 1 })),
+        ids.map((id, n) => ({
+          id,
+          catalogItemId: services[n],
+          price: 999_999_999_998,
+          qtyMilli: 1,
+        })),
       );
       await save(
         w.owner,
         quoteId,
-        ids.map((id) => ({ id, catalogItemId: service, price: 999_999_999_997, qtyMilli: 1 })),
+        ids.map((id, n) => ({
+          id,
+          catalogItemId: services[n],
+          price: 999_999_999_997,
+          qtyMilli: 1,
+        })),
       );
       const evs = await events(quoteId);
       expect(evs).toHaveLength(2);
       expect((evs[1].lines as unknown[]).length).toBe(20);
       await actAsPostgres(db);
+      // el largo del texto (sin compresión) es la medida honesta; la restricción mide `pg_column_size`, que es menor o igual
       const { rows } = await db.query<{ size: number }>(
-        "select max(pg_column_size(data)) as size from public.quote_events where quote_id = $1",
+        "select max(octet_length(data::text)) as size from public.quote_events where quote_id = $1",
         [quoteId],
       );
       expect(rows[0].size).toBeLessThanOrEqual(4096);
+    }));
+
+  it("el evento y la auditoría guardan el precio como entero aunque llegue con ceros decimales (8000.0000)", () =>
+    withTx(db, async () => {
+      const service = await addCatalogItem(db, w.tenantA, CATALOG);
+      await lockService(service);
+      const quoteId = await newQuote(w.owner);
+      const p = payload([{ catalogItemId: service, price: 8_000 }]);
+      const lines = p.lines.replace(/"unit_price_clp":8000(?=[,}])/, '"unit_price_clp":8000.0000');
+      expect(lines).not.toBe(p.lines);
+      const revision = await revisionOf(quoteId);
+      await asUser(db, w.owner, w.tenantA);
+      await db.query(SAVE, [quoteId, revision, randomUUID(), p.header, lines, p.totals]);
+      await actAsPostgres(db);
+      const { rows } = await db.query<{ e: string; a: string }>(
+        `select (select data::text from public.quote_events where quote_id = $1 and type = 'locked_price_overridden') as e,
+                (select details::text from public.audit_log
+                  where resource_id = $1 and action = 'quote.locked_price_overridden') as a`,
+        [quoteId],
+      );
+      for (const text of [rows[0].e, rows[0].a]) {
+        expect(text).toContain('"new_price_clp": 8000,');
+        expect(text).not.toContain("8000.0000");
+      }
     }));
 
   it("Dueño y Administrador se saltan el tope (con tope 0 guardan descuento) y eso no deja evento", () =>

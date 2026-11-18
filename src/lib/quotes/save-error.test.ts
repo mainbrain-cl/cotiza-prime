@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   LINE_RULES_CHANGED_MESSAGE,
+  LINE_RULES_DISCOUNT_MESSAGE,
+  LINE_RULES_MIXED_MESSAGE,
+  LINE_RULES_NOT_ALLOWED_MESSAGE,
+  LINE_RULES_PRICE_LOCKED_MESSAGE,
   SAVE_CONFLICT_MESSAGE,
   SAVE_FAILED,
   mapSaveRpcError,
 } from "./save-error";
 
 describe("los errores del guardado", () => {
-  it("las reglas de precio dan el mensaje de «cambió sus reglas» y un error por línea", () => {
+  it("varias clases de problema dan un aviso neutro y un error por línea", () => {
     const { result, log } = mapSaveRpcError({
       code: "CP422",
       message: "line_rules_invalid: price_locked@0,discount_over_cap@2,global_discount_over_cap",
@@ -15,13 +19,34 @@ describe("los errores del guardado", () => {
     expect(log).toBeUndefined();
     expect(result).toEqual({
       status: "invalid",
-      message: LINE_RULES_CHANGED_MESSAGE,
+      message: LINE_RULES_MIXED_MESSAGE,
       fieldErrors: {
-        "items.0.price": "El precio de este servicio está bloqueado. Usa el precio del catálogo.",
+        "items.0.price":
+          "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.",
         "items.2.discount": "El descuento pasa del máximo que permite tu organización.",
         globalDiscount: "El descuento pasa del máximo que permite tu organización.",
       },
     });
+  });
+
+  it("el mensaje general depende de qué regla se rompió", () => {
+    const message = (list: string) =>
+      (
+        mapSaveRpcError({ code: "CP422", message: `line_rules_invalid: ${list}` }).result as {
+          message: string;
+        }
+      ).message;
+    expect(message("price_locked@0,price_locked@3")).toBe(LINE_RULES_PRICE_LOCKED_MESSAGE);
+    expect(message("discount_over_cap@1")).toBe(LINE_RULES_DISCOUNT_MESSAGE);
+    expect(message("discount_over_cap@1,global_discount_over_cap")).toBe(
+      LINE_RULES_DISCOUNT_MESSAGE,
+    );
+    expect(message("global_discount_over_cap")).toBe(LINE_RULES_DISCOUNT_MESSAGE);
+    expect(message("catalog_item_not_allowed@2")).toBe(LINE_RULES_NOT_ALLOWED_MESSAGE);
+    expect(message("price_locked@0,catalog_item_not_allowed@2")).toBe(LINE_RULES_MIXED_MESSAGE);
+    // Un código que esta versión no conoce: el mensaje de siempre.
+    expect(message("nuevo@3")).toBe(LINE_RULES_CHANGED_MESSAGE);
+    expect(message("price_locked@0,nuevo@3")).toBe(LINE_RULES_CHANGED_MESSAGE);
     expect(LINE_RULES_CHANGED_MESSAGE).toBe(
       "Tu organización cambió sus reglas de precio. Recarga para ver las vigentes.",
     );
@@ -34,6 +59,7 @@ describe("los errores del guardado", () => {
     });
     expect(result).toMatchObject({
       status: "invalid",
+      message: LINE_RULES_NOT_ALLOWED_MESSAGE,
       fieldErrors: { "items.1.name": "No tienes permiso para cotizar este servicio." },
     });
   });

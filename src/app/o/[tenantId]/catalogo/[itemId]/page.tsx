@@ -6,6 +6,7 @@ import { FormAlert } from "@/components/ui/form-controls";
 import { unitLabel } from "@/lib/catalog/schemas";
 import { formatClp } from "@/lib/money/clp";
 import { can } from "@/lib/permissions/matrix";
+import { loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { EditCatalogItemForm, ToggleActiveForm } from "./edit-forms";
@@ -41,6 +42,8 @@ export default async function CatalogItemPage({
   if (!data) notFound();
   const item = data as ItemRow;
   const canEdit = can(active.role, "catalog.manage");
+  // Para la ayuda del candado («hoy: 10 %»): una lectura ligera, y solo a quien edita. Si falla, la ayuda no afirma el valor.
+  const cap = canEdit ? await loadMaxDiscountBp(active) : null;
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">
@@ -82,6 +85,7 @@ export default async function CatalogItemPage({
                 taxTreatment: item.tax_treatment,
                 priceLocked: item.price_locked ? "1" : "",
               }}
+              maxDiscountBp={cap === null ? undefined : cap.maxDiscountBp}
             />
           </section>
           <section

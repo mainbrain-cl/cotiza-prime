@@ -1,0 +1,20 @@
+"use client";
+
+import { Component, type ReactNode } from "react";
+
+/**
+ * Límite de errores para adornos (fondos animados, efectos): si fallan —por ejemplo, el trozo de código se
+ * descarga justo cuando se corta la red—, no se dibuja nada y el resto de la pantalla sigue como estaba.
+ * Sin él, un fallo del adorno reemplazaba toda la pantalla por la de error.
+ */
+export class SilentBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}

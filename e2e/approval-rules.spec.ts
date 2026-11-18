@@ -611,7 +611,7 @@ test("sin conexión: aviso claro, lo escrito se conserva y al volver se guarda",
     await page.getByTestId("approval-save").click();
     await expect(page.getByText(/No pudimos conectar con el servidor/)).toBeVisible();
     // La pantalla de error de la organización no apareció y lo escrito sigue ahí.
-    await expect(page.getByText("Algo salió mal")).toHaveCount(0);
+    await expect(page.getByTestId("error-screen")).toHaveCount(0);
     await expect(page.getByTestId("approval-amount")).toHaveValue("9.000");
   } finally {
     await ownerContext.setOffline(false);

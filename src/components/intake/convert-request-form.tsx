@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, FormAlert, Input } from "@/components/ui/form-controls";
-import { OfflineNotice } from "@/components/ui/offline-notice";
+import { OFFLINE_MESSAGE, OfflineNotice, blockIfOffline } from "@/components/ui/offline-notice";
+import { isNetworkError } from "@/lib/network-error";
 import {
   CUSTOMER_ADDRESS_MAX_LENGTH,
   CUSTOMER_KINDS,
@@ -53,10 +54,20 @@ export function ConvertRequestForm({
   const [pending, startTransition] = useTransition();
 
   function run(input: Parameters<typeof convertIntakeRequestAction>[2]) {
+    // Sin red no se envía: lo escrito sigue en pantalla (el aviso breve lo explica).
+    if (blockIfOffline()) return;
     setMessage(null);
     setFieldErrors({});
     startTransition(async () => {
-      const result = await convertIntakeRequestAction(tenantId, requestId, input);
+      let result: Awaited<ReturnType<typeof convertIntakeRequestAction>>;
+      try {
+        result = await convertIntakeRequestAction(tenantId, requestId, input);
+      } catch (error) {
+        // Se cayó la red a mitad del envío: solo ese caso se atrapa; cualquier otro error sigue su camino.
+        if (!isNetworkError(error)) throw error;
+        setMessage(OFFLINE_MESSAGE);
+        return;
+      }
       // Si salió bien, la acción abre la cotización y no llega aquí.
       if (result?.status !== "error") return;
       setMessage(result.message);

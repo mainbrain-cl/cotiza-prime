@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { FormAlert, SubmitButton } from "@/components/ui/form-controls";
-import { OfflineNotice } from "@/components/ui/offline-notice";
+import { OfflineNotice, blockIfOffline } from "@/components/ui/offline-notice";
 import { acceptInvitationAction, leaveInvitationAction } from "@/lib/team/accept-actions";
 import {
   INITIAL_ACCEPT_STATE,
@@ -78,6 +78,8 @@ export function LeaveInvitationButton({
     <form
       action={async () => {
         setError(null);
+        // Sin red avisa igual que «Unirme» (aviso breve) y no sale de la pantalla.
+        if (blockIfOffline()) return;
         try {
           await leaveInvitationAction();
         } catch {

@@ -46,7 +46,7 @@ export default async function CatalogItemPage({
       <header className="flex flex-col gap-2">
         <Link
           href={tenantPath(active.tenantId, "catalogo")}
-          className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
         >
           <ChevronLeft aria-hidden className="size-4" />
           Catálogo

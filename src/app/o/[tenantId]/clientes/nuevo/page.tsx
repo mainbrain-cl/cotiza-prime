@@ -21,7 +21,7 @@ export default async function NewCustomerPage({
       <header className="flex flex-col gap-2">
         <Link
           href={tenantPath(active.tenantId, "clientes")}
-          className="inline-flex items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
         >
           <ChevronLeft aria-hidden className="size-4" />
           Clientes

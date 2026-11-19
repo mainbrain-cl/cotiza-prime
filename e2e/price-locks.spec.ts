@@ -21,7 +21,7 @@ const TOUCH_MIN_PX = 44;
 const LOCKED_NAME = `Flete con candado ${randomUUID().slice(0, 6)}`;
 const FREE_NAME = `Servicio sin candado ${randomUUID().slice(0, 6)}`;
 const LOCKED_PRICE_ERROR =
-  "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.";
+  "El precio de este servicio cambió o se bloqueó en el catálogo. Actualiza la línea para usar el precio de hoy.";
 const CAP_ERROR = "El descuento pasa del máximo que permite tu organización (10 %).";
 // Un precio bloqueado y un descuento sobre el máximo a la vez: el aviso general es neutro (no afirma que las reglas cambiaron).
 const RULES_CHANGED = "Revisa los precios y descuentos marcados en la cotización.";
@@ -443,6 +443,97 @@ test.describe("H-041 · precios bloqueados y descuento máximo", () => {
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Enviar");
     await expect(blocker).toHaveCount(0);
     await setCap(1_000);
+  });
+
+  test("el catálogo cambió con la cotización abierta: el servidor lo rechaza, la línea se actualiza al precio de hoy y guarda (sin recargar)", async () => {
+    test.setTimeout(300_000);
+    const { page } = ctx.carla;
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const quoteId = (url: string) => url.split("/").pop();
+    const unitPriceOf = (id: string | undefined) =>
+      withDb(async (db) => {
+        const { rows } = await db.query<{ unit_price_clp: number }>(
+          "select unit_price_clp from public.quote_items where quote_id = $1 order by position limit 1",
+          [id],
+        );
+        return rows[0] ? Number(rows[0].unit_price_clp) : undefined;
+      });
+    const staleName = `Servicio que sube ${randomUUID().slice(0, 6)}`;
+    const staleId = await withDb(
+      async (db) =>
+        (
+          await db.query<{ id: string }>(
+            `insert into public.catalog_items (tenant_id, name, unit, unit_price_clp, tax_treatment, price_locked)
+             values ($1, $2, 'service', 10000, 'taxable', true) returning id`,
+            [ctx.tenantId, staleName],
+          )
+        ).rows[0].id,
+    );
+
+    // Caso 1 (el que quedaba sin salida): Carla abre la cotización con el catálogo a $10.000 y, antes de agregar la línea, Ana
+    // sube el servicio a $12.000. La línea nace a $10.000 (lo que mostraba el buscador) y el servidor pide $12.000.
+    const url = await newQuote(page);
+    await expect(
+      page.getByRole("button", { name: `Agregar ${staleName}`, exact: true }),
+    ).toBeVisible();
+    await withDb((db) =>
+      db.query("update public.catalog_items set unit_price_clp = 12000 where id = $1", [staleId]),
+    );
+    await addFromCatalog(page, staleName);
+    const line = lines(page).nth(0);
+    await expect(line.getByLabel("Precio unitario (neto)")).toHaveValue("10000");
+    await page.getByTestId("save-quote").click();
+    await expect(line.getByText(LOCKED_PRICE_ERROR)).toBeVisible();
+    await expect(page.getByTestId("save-status")).toHaveText(
+      "Corrige los datos marcados para poder guardar.",
+    );
+    // Restaurar daría los mismos $10.000: no se ofrece; sí se ofrece actualizar.
+    await expect(line.getByTestId("use-catalog-price")).toHaveCount(0);
+    await expect(line.getByTestId("refresh-catalog-price")).toHaveText(
+      "Actualizar al precio de hoy",
+    );
+    expect(await unitPriceOf(quoteId(url))).toBeUndefined();
+
+    await line.getByTestId("refresh-catalog-price").click();
+    const fresh = lines(page).nth(0);
+    await expect(fresh.getByLabel("Precio unitario (neto)")).toHaveValue("12000");
+    await expect(fresh.getByLabel("Precio unitario (neto)")).toHaveAttribute("readonly", "");
+    await expect(fresh.getByText(LOCKED_PRICE_ERROR)).toHaveCount(0);
+    await expect(fresh.getByTestId("refresh-catalog-price")).toHaveCount(0);
+    await save(page);
+    expect(await unitPriceOf(quoteId(url))).toBe(12_000);
+
+    // Caso 2: el servicio se bloquea DESPUÉS de abrir la cotización. Carla (que lo veía libre) cambia el precio; el servidor lo rechaza
+    // y la línea se actualiza: pasa a estar bloqueada, con el precio del catálogo.
+    const freeName = `Servicio que se bloquea ${randomUUID().slice(0, 6)}`;
+    const freeId2 = await withDb(
+      async (db) =>
+        (
+          await db.query<{ id: string }>(
+            `insert into public.catalog_items (tenant_id, name, unit, unit_price_clp, tax_treatment)
+             values ($1, $2, 'service', 10000, 'taxable') returning id`,
+            [ctx.tenantId, freeName],
+          )
+        ).rows[0].id,
+    );
+    const url2 = await newQuote(page);
+    await addFromCatalog(page, freeName);
+    await save(page);
+    await withDb((db) =>
+      db.query("update public.catalog_items set price_locked = true where id = $1", [freeId2]),
+    );
+    const open = lines(page).nth(0);
+    await expect(open.getByLabel("Precio unitario (neto)")).not.toHaveAttribute("readonly", "");
+    await open.getByLabel("Precio unitario (neto)").fill("7000");
+    await page.getByTestId("save-quote").click();
+    await expect(open.getByText(LOCKED_PRICE_ERROR)).toBeVisible();
+    await open.getByTestId("refresh-catalog-price").click();
+    const updated = lines(page).nth(0);
+    await expect(updated.getByLabel("Precio unitario (neto)")).toHaveValue("10000");
+    await expect(updated.getByLabel("Precio unitario (neto)")).toHaveAttribute("readonly", "");
+    await expect(updated.getByText("Precio bloqueado por tu organización")).toBeVisible();
+    await save(page);
+    expect(await unitPriceOf(quoteId(url2))).toBe(10_000);
   });
 
   test("en el teléfono (375 px): sin desborde y con áreas táctiles de 44 px", async () => {

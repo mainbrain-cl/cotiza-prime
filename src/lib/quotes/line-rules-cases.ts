@@ -259,34 +259,35 @@ export const LINE_RULE_CASES: readonly LineRuleCase[] = [
     overrides: [0, 2],
   },
   {
-    name: "montos enormes (cantidad × precio sobre 2^53): el tope en pesos no pierde exactitud",
+    name: "montos enormes (monto × tope sobre 2^53): un descuento justo en el borde del tope pasa",
     input: input({
       lines: [
         ruleLine({
           unitPriceClp: 999_999_999_999,
           catalogUnitPriceClp: 999_999_999_999,
           grossClp: 999_999_999_999,
-          discount: { kind: "amount", clp: 99_990_000_000 },
+          discount: { kind: "amount", clp: 999_899_999_999 },
         }),
       ],
-      maxDiscountBp: 1_000,
+      maxDiscountBp: 9_999,
     }),
-    // 10 % de 999.999.999.999 = 99.999.999.999,9 → 100.000.000.000 (mitad hacia arriba)
+    // monto × tope = 999.999.999.999 × 9.999 = 9.998.999.999.990.001, MÁS que 2^53 (≈ 9,007 × 10^15): con números comunes
+    // perdería exactitud. 99,99 % de 999.999.999.999 = 999.899.999.999,0001 → 999.899.999.999: justo en el borde, pasa.
     issues: [],
     overrides: [],
   },
   {
-    name: "montos enormes: un peso sobre el tope se rechaza",
+    name: "montos enormes (monto × tope sobre 2^53): un peso sobre el borde del tope se rechaza",
     input: input({
       lines: [
         ruleLine({
           unitPriceClp: 999_999_999_999,
           catalogUnitPriceClp: 999_999_999_999,
           grossClp: 999_999_999_999,
-          discount: { kind: "amount", clp: 100_000_000_001 },
+          discount: { kind: "amount", clp: 999_900_000_000 },
         }),
       ],
-      maxDiscountBp: 1_000,
+      maxDiscountBp: 9_999,
     }),
     issues: ["discount_over_cap@0"],
     overrides: [],

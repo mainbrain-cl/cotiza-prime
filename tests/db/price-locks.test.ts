@@ -12,6 +12,13 @@ import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { calculateQuote, type Discount } from "../../src/lib/quotes/calc";
+import {
+  lineRulesBlockMessage,
+  lineRulesPrepareError,
+  type SavedLineForRules,
+  type SavedQuoteForRules,
+} from "../../src/lib/quotes/line-rules-block";
+import { formatLineRuleIssue, parseLineRulesError } from "../../src/lib/quotes/line-rules";
 import { actAsPostgres, connect, expectSqlError, withTx, type TestUser } from "./helpers";
 import {
   PREPARE_SQL,
@@ -1225,5 +1232,134 @@ describe("`save_quote_draft` conserva sus otras reglas", () => {
         JSON.stringify({ ...JSON.parse(p.totals), totalClp: 1 }),
       ]);
       expect(error.code).toBe("CP500");
+    }));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Paridad con lo GUARDADO de verdad (no con casos abstractos): la base guarda y envía con `save_quote_draft` y el disparador del envío;
+// la aplicación lee esas mismas filas y arma el aviso de `/enviar`. Las dos tienen que decir lo mismo: los mismos problemas, y el
+// mismo texto (incluido «no permite descuentos» con el tope en 0).
+// ---------------------------------------------------------------------------------------------------------------------------
+describe("paridad con lo guardado de verdad: la base y el aviso de /enviar dicen lo mismo", () => {
+  /** Las filas guardadas de la cotización, tal como las lee la pantalla de envío, y los candados y el tope de HOY. */
+  async function readSaved(quoteId: string, tenant: string) {
+    await actAsPostgres(db);
+    const items = await db.query<SavedLineForRules>(
+      `select catalog_item_id, catalog_unit_price_clp::int as catalog_unit_price_clp, unit_price_clp::int as unit_price_clp,
+              discount_kind, discount_value::int as discount_value, gross_clp::int as gross_clp
+         from public.quote_items where quote_id = $1 order by position`,
+      [quoteId],
+    );
+    const quote = await db.query<SavedQuoteForRules>(
+      `select global_discount_kind, global_discount_value::int as global_discount_value, subtotal_clp::int as subtotal_clp
+         from public.quotes where id = $1`,
+      [quoteId],
+    );
+    const locked = await db.query<{ id: string }>(
+      "select id from public.catalog_items where tenant_id = $1 and price_locked",
+      [tenant],
+    );
+    const cap = await db.query<{ max_discount_bp: number | null }>(
+      "select max_discount_bp from public.tenants where tenant_id = $1",
+      [tenant],
+    );
+    return {
+      items: items.rows,
+      quote: quote.rows[0],
+      lockedCatalogIds: new Set(locked.rows.map((r) => r.id)),
+      maxDiscountBp: cap.rows[0].max_discount_bp,
+    };
+  }
+
+  /** Envía como el Comercial: devuelve el error de la base (o `null` si salió) y el aviso que la aplicación daría con las mismas filas. */
+  async function sendAndCompare(quoteId: string) {
+    const saved = await readSaved(quoteId, w.tenantA);
+    const expected = lineRulesBlockMessage({ ...saved, canOverride: false });
+    const revision = await revisionOf(quoteId);
+    const ids = prepareIds();
+    await asUser(db, w.sales, w.tenantA);
+    let error: { code?: string; message: string } | null = null;
+    try {
+      await db.query("savepoint parity_send");
+      await db.query(PREPARE_SQL, prepareArgs(quoteId, revision, ids));
+      await db.query("release savepoint parity_send");
+    } catch (e) {
+      await db.query("rollback to savepoint parity_send");
+      error = e as { code?: string; message: string };
+    }
+    await actAsPostgres(db);
+    return { error, expected, saved };
+  }
+
+  it("tope bajado después de guardar: la base rechaza y el aviso dice lo mismo", () =>
+    withTx(db, async () => {
+      const service = await addCatalogItem(db, w.tenantA, CATALOG);
+      await setCap(w.tenantA, 1_000);
+      const quoteId = await newQuote(w.sales);
+      await save(w.sales, quoteId, [
+        { catalogItemId: service, price: CATALOG, discount: { kind: "percent", bp: 1_000 } },
+      ]);
+      await setCap(w.tenantA, 500);
+      const { error, expected, saved } = await sendAndCompare(quoteId);
+      expect(error?.code).toBe("CP422");
+      expect(error?.message).toBe(`${RULES_PREFIX}discount_over_cap@0`);
+      expect(expected).not.toBeNull();
+      expect(lineRulesPrepareError(error!.message, saved.maxDiscountBp)).toBe(expected);
+      expect(expected).toContain("5 %");
+    }));
+
+  it("candado puesto después de guardar: la base rechaza y el aviso dice lo mismo", () =>
+    withTx(db, async () => {
+      const service = await addCatalogItem(db, w.tenantA, CATALOG);
+      const quoteId = await newQuote(w.sales);
+      await save(w.sales, quoteId, [{ catalogItemId: service, price: 8_000 }]);
+      await lockService(service);
+      const { error, expected, saved } = await sendAndCompare(quoteId);
+      expect(error?.message).toBe(`${RULES_PREFIX}price_locked@0`);
+      expect(lineRulesPrepareError(error!.message, saved.maxDiscountBp)).toBe(expected);
+    }));
+
+  it("tres problemas a la vez con el tope en 0: los mismos problemas, el mismo orden y «no permite descuentos»", () =>
+    withTx(db, async () => {
+      const locked = await addCatalogItem(db, w.tenantA, CATALOG);
+      const other = await addCatalogItem(db, w.tenantA, CATALOG);
+      await setCap(w.tenantA, 1_000);
+      const quoteId = await newQuote(w.sales);
+      await save(
+        w.sales,
+        quoteId,
+        [
+          { catalogItemId: locked, price: 8_000 },
+          { catalogItemId: other, price: CATALOG, discount: { kind: "percent", bp: 1_000 } },
+        ],
+        { global: { kind: "percent", bp: 500 } },
+      );
+      await lockService(locked);
+      await setCap(w.tenantA, 0);
+      const { error, expected, saved } = await sendAndCompare(quoteId);
+      expect(error?.message).toBe(
+        `${RULES_PREFIX}price_locked@0,discount_over_cap@1,global_discount_over_cap`,
+      );
+      // los problemas que la base informa son los de la lista de la aplicación
+      expect(parseLineRulesError(error!.message)!.map(formatLineRuleIssue)).toEqual([
+        "price_locked@0",
+        "discount_over_cap@1",
+        "global_discount_over_cap",
+      ]);
+      expect(lineRulesPrepareError(error!.message, saved.maxDiscountBp)).toBe(expected);
+      expect(expected).toContain("no permite descuentos");
+    }));
+
+  it("sin problema: la base deja enviar y el aviso no bloquea", () =>
+    withTx(db, async () => {
+      const service = await addCatalogItem(db, w.tenantA, CATALOG);
+      await setCap(w.tenantA, 1_000);
+      const quoteId = await newQuote(w.sales);
+      await save(w.sales, quoteId, [
+        { catalogItemId: service, price: CATALOG, discount: { kind: "percent", bp: 1_000 } },
+      ]);
+      const { error, expected } = await sendAndCompare(quoteId);
+      expect(error).toBeNull();
+      expect(expected).toBeNull();
     }));
 });

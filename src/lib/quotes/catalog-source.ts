@@ -66,3 +66,38 @@ export async function listQuotableCatalogItems(
     priceLocked: row.price_locked,
   }));
 }
+
+function toQuotable(row: CatalogRow): QuotableCatalogItem {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    unit: row.unit,
+    unitPriceClp: row.unit_price_clp,
+    taxTreatment: row.tax_treatment,
+    priceLocked: row.price_locked,
+  };
+}
+
+/**
+ * Un servicio activo de la organización activa por su identificador, tal como está HOY en el catálogo (precio y candado
+ * vigentes). Sirve para poner al día una línea cuando el precio o el candado cambiaron con la cotización abierta (H-041).
+ * `null` si no existe, está desactivado o es de otra organización.
+ */
+export async function getQuotableCatalogItem(
+  active: ActiveTenant,
+  itemId: string,
+): Promise<QuotableCatalogItem | null> {
+  const { data, error } = await active.supabase
+    .from("catalog_items")
+    .select("id, name, description, unit, unit_price_clp, tax_treatment, price_locked")
+    .eq("tenant_id", active.tenantId)
+    .eq("id", itemId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (error) {
+    await serverLog("error", "quote_catalog_item_failed", { code: error.code });
+    return null;
+  }
+  return data ? toQuotable(data as CatalogRow) : null;
+}

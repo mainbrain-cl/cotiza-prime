@@ -108,9 +108,12 @@ export function lineRulesBlockMessage(input: {
  * El mensaje cuando la base rechaza `prepare_quote_send` con `line_rules_invalid`. Llega con el código CP422 y la lista de
  * problemas en el mensaje del error (`line_rules_invalid: price_locked@1,discount_over_cap@0`). `null` si el error no es de esta regla.
  */
-export function lineRulesPrepareError(reason: string): string | null {
+export function lineRulesPrepareError(
+  reason: string,
+  /** El tope de hoy si se pudo leer: no viaja en el error de la base; sin él se dice lo que pasó sin la cifra. */
+  maxDiscountBp: number | null = null,
+): string | null {
   const issues = parseLineRulesError(reason);
   if (issues === null) return null;
-  // El tope no viaja en el error: se dice lo que pasó sin la cifra (la pantalla de la cotización la muestra).
-  return issues.length === 0 ? LINE_RULES_GENERIC_MESSAGE : describeIssues(issues, null);
+  return issues.length === 0 ? LINE_RULES_GENERIC_MESSAGE : describeIssues(issues, maxDiscountBp);
 }

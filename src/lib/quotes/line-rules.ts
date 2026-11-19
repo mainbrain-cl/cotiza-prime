@@ -153,9 +153,21 @@ export function parseLineRulesError(message: string | null | undefined): LineRul
   return issues;
 }
 
+/** El error de la línea en la pantalla: su precio no coincide con el de la línea (se arregla volviendo al precio con que se agregó). */
+export const PRICE_LOCKED_LINE_MESSAGE =
+  "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.";
+/**
+ * El error de la línea cuando lo manda el servidor: el catálogo cambió (el precio o el candado) con la cotización abierta, así que
+ * «volver al precio con que se agregó» no lo arregla; se actualiza la línea con el catálogo de hoy.
+ */
+export const PRICE_LOCKED_STALE_LINE_MESSAGE =
+  "El precio de este servicio cambió o se bloqueó en el catálogo. Actualiza la línea para usar el precio de hoy.";
+
 export type LineRuleMessageOptions = {
-  /** El tope vigente, para decir «máximo 10 %». */
+  /** El tope vigente, para decir «máximo 10 %» o «no permite descuentos» (0). */
   maxDiscountBp?: number | null;
+  /** El texto del precio bloqueado; el de la pantalla por defecto. */
+  priceLockedMessage?: string;
 };
 
 function capText(options: LineRuleMessageOptions): string {
@@ -180,8 +192,7 @@ export function lineRuleFieldErrors(
     switch (issue.code) {
       case "price_locked":
         if (index !== null && index >= 0) {
-          errors[`items.${index}.price`] =
-            "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.";
+          errors[`items.${index}.price`] = options.priceLockedMessage ?? PRICE_LOCKED_LINE_MESSAGE;
           continue;
         }
         break;

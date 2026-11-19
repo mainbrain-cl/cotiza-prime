@@ -40,7 +40,11 @@ export function isExpectedPrepareError(error: PrepareSupabaseError): boolean {
   );
 }
 
-export function prepareErrorMessage(error: PrepareSupabaseError): string {
+export function prepareErrorMessage(
+  error: PrepareSupabaseError,
+  /** El descuento máximo de hoy, si se pudo leer (la base no lo manda en el error). */
+  maxDiscountBp: number | null = null,
+): string {
   const message = error.message ?? "";
   switch (error.code) {
     case SQLSTATE_FORBIDDEN:
@@ -56,7 +60,7 @@ export function prepareErrorMessage(error: PrepareSupabaseError): string {
     case SQLSTATE_INVALID:
       // Las reglas de precio y descuento (H-041) rechazan con CP422 y la lista de problemas en el mensaje.
       if (message.startsWith("line_rules_invalid")) {
-        return lineRulesPrepareError(message) ?? MSG_UNEXPECTED;
+        return lineRulesPrepareError(message, maxDiscountBp) ?? MSG_UNEXPECTED;
       }
       if (message.startsWith("no_lines")) return MSG_NO_LINES;
       if (message.startsWith("customer_anonymized")) return MSG_ANONYMIZED;

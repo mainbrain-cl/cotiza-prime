@@ -3,6 +3,7 @@ import {
   LINE_RULES_CHANGED_MESSAGE,
   LINE_RULES_DISCOUNT_MESSAGE,
   LINE_RULES_MIXED_MESSAGE,
+  LINE_RULES_NO_DISCOUNTS_MESSAGE,
   LINE_RULES_NOT_ALLOWED_MESSAGE,
   LINE_RULES_PRICE_LOCKED_MESSAGE,
   SAVE_CONFLICT_MESSAGE,
@@ -22,7 +23,7 @@ describe("los errores del guardado", () => {
       message: LINE_RULES_MIXED_MESSAGE,
       fieldErrors: {
         "items.0.price":
-          "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.",
+          "El precio de este servicio cambió o se bloqueó en el catálogo. Actualiza la línea para usar el precio de hoy.",
         "items.2.discount": "El descuento pasa del máximo que permite tu organización.",
         globalDiscount: "El descuento pasa del máximo que permite tu organización.",
       },
@@ -49,6 +50,44 @@ describe("los errores del guardado", () => {
     expect(message("price_locked@0,nuevo@3")).toBe(LINE_RULES_CHANGED_MESSAGE);
     expect(LINE_RULES_CHANGED_MESSAGE).toBe(
       "Tu organización cambió sus reglas de precio. Recarga para ver las vigentes.",
+    );
+  });
+
+  it("con el tope en 0 dice que la organización no permite descuentos, en el aviso general y en cada campo", () => {
+    const { result } = mapSaveRpcError(
+      {
+        code: "CP422",
+        message: "line_rules_invalid: discount_over_cap@1,global_discount_over_cap",
+      },
+      { maxDiscountBp: 0 },
+    );
+    expect(result).toEqual({
+      status: "invalid",
+      message: LINE_RULES_NO_DISCOUNTS_MESSAGE,
+      fieldErrors: {
+        "items.1.discount": "Tu organización no permite descuentos.",
+        globalDiscount: "Tu organización no permite descuentos.",
+      },
+    });
+    expect(LINE_RULES_NO_DISCOUNTS_MESSAGE).toBe(
+      "Tu organización no permite descuentos. Quita los descuentos marcados.",
+    );
+  });
+
+  it("con un tope mayor que 0 dice la cifra; sin tope conocido, el mensaje de siempre", () => {
+    const fieldError = (options?: { maxDiscountBp: number | null }) =>
+      (
+        mapSaveRpcError(
+          { code: "CP422", message: "line_rules_invalid: discount_over_cap@0" },
+          options,
+        ).result as { fieldErrors: Record<string, string> }
+      ).fieldErrors["items.0.discount"];
+    expect(fieldError({ maxDiscountBp: 1_000 })).toBe(
+      "El descuento pasa del máximo que permite tu organización (10 %).",
+    );
+    expect(fieldError()).toBe("El descuento pasa del máximo que permite tu organización.");
+    expect(fieldError({ maxDiscountBp: null })).toBe(
+      "El descuento pasa del máximo que permite tu organización.",
     );
   });
 

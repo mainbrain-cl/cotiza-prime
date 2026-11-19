@@ -36,6 +36,7 @@ import {
   SQLSTATE_NOT_FOUND,
   isExpectedPrepareError,
 } from "@/lib/quotes/send/prepare-error";
+import { loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
 import { getQuote } from "@/lib/quotes/queries";
 import {
   consumePdfQuota,
@@ -344,7 +345,13 @@ export async function sendQuoteAction(
     if (!isExpectedPrepareError(prepareError)) {
       await serverLog("warn", "quote_send_prepare_failed", { code: prepareError.code });
     }
-    return failure(prepareErrorMessage(prepareError));
+    // El tope no viaja en el error de la base: se lee de hoy solo si el error es de las reglas de precio y descuento.
+    const cap =
+      prepareError.code === SQLSTATE_INVALID &&
+      (prepareError.message ?? "").startsWith("line_rules_invalid")
+        ? await loadMaxDiscountBp(active)
+        : null;
+    return failure(prepareErrorMessage(prepareError, cap?.maxDiscountBp ?? null));
   }
   const result = prepared as {
     status: "prepared" | "in_progress" | "already_sent";

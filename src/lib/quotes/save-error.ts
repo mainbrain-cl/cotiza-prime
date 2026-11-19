@@ -1,4 +1,10 @@
-import { lineRuleFieldErrors, parseLineRulesError, type LineRuleIssue } from "./line-rules";
+import {
+  lineRuleFieldErrors,
+  parseLineRulesError,
+  PRICE_LOCKED_STALE_LINE_MESSAGE,
+  type LineRuleIssue,
+  type LineRuleMessageOptions,
+} from "./line-rules";
 
 /**
  * Cómo se lee un error de `save_quote_draft` (H-026, H-041). Vive aparte de las acciones porque un archivo `use server` solo
@@ -28,13 +34,18 @@ export const LINE_RULES_PRICE_LOCKED_MESSAGE =
   "Hay servicios con el precio bloqueado a otro precio. Revisa las líneas marcadas.";
 export const LINE_RULES_DISCOUNT_MESSAGE =
   "Hay descuentos que pasan del máximo que permite tu organización. Revisa los descuentos marcados.";
+export const LINE_RULES_NO_DISCOUNTS_MESSAGE =
+  "Tu organización no permite descuentos. Quita los descuentos marcados.";
 export const LINE_RULES_NOT_ALLOWED_MESSAGE =
   "Hay servicios que no puedes cotizar. Quítalos o cámbialos por otros.";
 export const LINE_RULES_MIXED_MESSAGE =
   "Revisa los precios y descuentos marcados en la cotización.";
 
 /** El mensaje general según qué reglas se rompieron: una sola clase de problema dice cuál; varias, un aviso neutro; un código desconocido, el de «recarga». */
-export function lineRulesSaveMessage(issues: readonly LineRuleIssue[]): string {
+export function lineRulesSaveMessage(
+  issues: readonly LineRuleIssue[],
+  options: LineRuleMessageOptions = {},
+): string {
   if (issues.length === 0 || issues.some((issue) => issue.code === "unknown")) {
     return LINE_RULES_CHANGED_MESSAGE;
   }
@@ -50,7 +61,9 @@ export function lineRulesSaveMessage(issues: readonly LineRuleIssue[]): string {
   if (kinds.size > 1) return LINE_RULES_MIXED_MESSAGE;
   if (kinds.has("price")) return LINE_RULES_PRICE_LOCKED_MESSAGE;
   if (kinds.has("allowed")) return LINE_RULES_NOT_ALLOWED_MESSAGE;
-  return LINE_RULES_DISCOUNT_MESSAGE;
+  return options.maxDiscountBp === 0
+    ? LINE_RULES_NO_DISCOUNTS_MESSAGE
+    : LINE_RULES_DISCOUNT_MESSAGE;
 }
 
 const SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
@@ -76,7 +89,11 @@ function invalidMessage(rpcMessage: string): string {
   return "Revisa los datos de la cotización e intenta de nuevo.";
 }
 
-export function mapSaveRpcError(error: { code?: string; message?: string }): {
+export function mapSaveRpcError(
+  error: { code?: string; message?: string },
+  /** El descuento máximo de hoy, si se pudo leer: la base no lo manda en el error y sin él no se puede decir «no permite descuentos». */
+  options: Pick<LineRuleMessageOptions, "maxDiscountBp"> = {},
+): {
   result: SaveQuoteResult;
   /** El evento que hay que registrar (solo con el código del error), o `undefined` si es un error esperado. */
   log?: "quote_calc_mismatch" | "quote_save_failed";
@@ -102,8 +119,11 @@ export function mapSaveRpcError(error: { code?: string; message?: string }): {
         return {
           result: {
             status: "invalid",
-            message: lineRulesSaveMessage(ruleIssues),
-            fieldErrors: lineRuleFieldErrors(ruleIssues),
+            message: lineRulesSaveMessage(ruleIssues, options),
+            fieldErrors: lineRuleFieldErrors(ruleIssues, {
+              ...options,
+              priceLockedMessage: PRICE_LOCKED_STALE_LINE_MESSAGE,
+            }),
           },
         };
       }

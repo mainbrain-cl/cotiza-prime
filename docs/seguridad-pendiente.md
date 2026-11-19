@@ -9,7 +9,7 @@
 > Lo básico no se recorta: una organización nunca ve datos de otra, los permisos por rol, la contraseña y el segundo paso, y no
 > exponer datos personales.
 
-Origen: revisión de Aarón al PR #56 (H-004b), 2026-11-17. Los números (I-1, M-1…) son los de esa revisión.
+Origen: revisión de Aarón al PR #56 (H-004b), 2026-11-17 (los números I-1, M-1… son los de esa revisión), y al PR #58 (H-041), 2026-11-18 (los de H-041 llevan el prefijo «H-041»).
 
 ## Riesgos aceptados hasta H-117
 
@@ -28,6 +28,15 @@ Origen: revisión de Aarón al PR #56 (H-004b), 2026-11-17. Los números (I-1, M
 - `recovery-code-actions.ts` (rama de `removeAllFactors` + `hasVerifiedFactor` fallando seguidos): el factor pudo quitarse sin aviso. Mandar el aviso igual en esa rama.
 - `mfa_recovery_code_release` no revisa `claimed_until` ni toma el candado por cuenta. Hoy no se puede alcanzar.
 - La limpieza de juegos huérfanos puede hacer que `complete` responda `invalid` a mitad de un ingreso con código. No hace daño; tenerlo presente al leer `mfa_recovery_complete_not_applied`.
+
+## De H-041 (precios bloqueados y tope de descuento), revisión de Aarón del 2026-11-18
+
+Sin trabajo ahora; se cierran con la lista antes del primer cliente real.
+
+- **H-041-1:** cuando un Dueño o un Administrador da un descuento **sobre el tope**, no queda evento ni auditoría: `locked_price_overridden` solo cubre el precio bloqueado. Posible evento `discount_cap_overridden` (mismo patrón, a lo más 20 líneas, sin nombres de línea).
+- **H-041-2:** el tope mide el descuento de cada línea y el general **por separado**; con un tope de 10 % se llega a 19 % efectivo sumando los dos (supuesto 17, aprobado). Si algún día se quiere cerrar, medir el descuento total (línea + general) contra el subtotal bruto: sería parte de H-041b.
+- **H-041-3 (para H-042):** el permiso por servicio solo se revisa al guardar una línea **nueva**, no al enviar. Además, si H-042 reemplaza `app.can_quote_catalog_item` con `create or replace` sin repetir `security definer set search_path = ''`, el gancho pierde esa protección: la prueba de contrato (`tests/db/save-quote-draft-contract.test.ts`) tiene que verificar también `prosecdef` y `proconfig` del gancho.
+- **H-041-4:** con la opción C de la pregunta 20 (aprobada), un Comercial puede agregar servicios a varios borradores antes de una subida de precio y enviarlos después al precio anterior. Aceptado.
 
 ## Antes del piloto (de H-004b, sin trabajo ahora)
 

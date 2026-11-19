@@ -10,6 +10,7 @@ import {
   catalogPriceToRestore,
   catalogPriceTodayIfDifferent,
   priceBelowCatalog,
+  refreshedCatalogLine,
   type EditorLine,
   type EditorState,
 } from "./editor-model";
@@ -511,5 +512,61 @@ describe("el candado en las líneas (H-041)", () => {
     expect(
       catalogPriceToRestore({ priceLocked: true, catalogPriceClp: null, price: "1" }),
     ).toBeNull();
+  });
+});
+
+describe("refreshedCatalogLine (H-041: poner al día una línea cuando el catálogo cambió con la cotización abierta)", () => {
+  const stale = line("vieja", {
+    catalogItemId: "22222222-2222-4222-8222-222222222222",
+    catalogPriceClp: 10_000,
+    catalogPriceTodayClp: 10_000,
+    priceLocked: true,
+    name: "Flete a mi manera",
+    description: "Nota de la persona",
+    quantity: "3",
+    price: "10000",
+    discountKind: "percent",
+    discount: "5",
+  });
+  const today = {
+    id: "22222222-2222-4222-8222-222222222222",
+    unit: "service",
+    unitPriceClp: 12_000,
+    taxTreatment: "taxable" as const,
+    priceLocked: true,
+  };
+
+  it("trae el precio y el candado de hoy, con otro identificador, y conserva lo que la persona escribió", () => {
+    const next = refreshedCatalogLine(stale, today, "nueva");
+    expect(next.id).toBe("nueva");
+    expect(next.price).toBe("12000");
+    expect(next.catalogPriceClp).toBe(12_000);
+    expect(next.catalogPriceTodayClp).toBe(12_000);
+    expect(next.priceLocked).toBe(true);
+    // lo de la persona
+    expect(next.name).toBe("Flete a mi manera");
+    expect(next.description).toBe("Nota de la persona");
+    expect(next.quantity).toBe("3");
+    expect(next.discountKind).toBe("percent");
+    expect(next.discount).toBe("5");
+  });
+
+  it("si el servicio se bloqueó después de abrir la cotización, la línea pasa a estar bloqueada", () => {
+    const open = line("abierta", { ...stale, priceLocked: false, price: "8000" });
+    const next = refreshedCatalogLine(open, today, "nueva");
+    expect(next.priceLocked).toBe(true);
+    expect(next.price).toBe("12000");
+  });
+
+  it("después de ponerla al día, ya no hay nada que restaurar ni un precio de hoy distinto", () => {
+    const next = refreshedCatalogLine(stale, today, "nueva");
+    expect(catalogPriceToRestore(next)).toBeNull();
+    expect(catalogPriceTodayIfDifferent(next)).toBeNull();
+  });
+
+  it("no cambia la línea original", () => {
+    refreshedCatalogLine(stale, today, "nueva");
+    expect(stale.id).toBe("vieja");
+    expect(stale.price).toBe("10000");
   });
 });

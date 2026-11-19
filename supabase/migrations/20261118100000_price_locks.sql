@@ -32,9 +32,10 @@
 -- HUECO CONOCIDO (pregunta 18, riesgo aceptado): la regla mira líneas del catálogo. Una línea libre escrita a mano, cambiarle el
 -- nombre a un servicio del catálogo o bajar la cantidad siguen siendo posibles; los cierra una historia posterior (H-041b).
 --
--- Bloqueos: los `alter table` van al final para que el bloqueo exclusivo sobre `catalog_items` y `tenants` dure lo mínimo; el
--- disparador toma un bloqueo sobre `quote_packages` hasta el final de la transacción. Aplicar sobre la base vacía o en una ventana
--- tranquila (docs/arquitectura/modelo-datos.md §9.4).
+-- Bloqueos: los `alter table` van al final para que el bloqueo exclusivo sobre `catalog_items` y `tenants` dure lo mínimo, y el
+-- disparador (que toma un bloqueo sobre `quote_packages` hasta el final de la transacción) va DESPUÉS de ellos: el orden es siempre
+-- `tenants` y luego `quote_packages`, el mismo de `prepare_quote_send`, para no cruzarse con un envío en curso. Aplicar sobre la base
+-- vacía o en una ventana tranquila (docs/arquitectura/modelo-datos.md §9.4).
 --
 -- Guardia 15 (tests/db/schema-guards.test.ts): primera sentencia `set local lock_timeout = '3s'` y, justo después, la
 -- verificación de que el valor quedó puesto (si la herramienta que aplica el archivo no lo respetara, se detiene).
@@ -619,10 +620,6 @@ begin
   return new;
 end $$;
 revoke all on function app.quote_packages_line_rules_gate() from public, anon, authenticated;
--- El nombre empieza con «a_» a propósito: PostgreSQL dispara los disparadores del mismo momento en orden alfabético, y este tiene
--- que ir ANTES de `quote_packages_approval_gate` (primero el tope duro; después, si hace falta, la aprobación).
-create trigger quote_packages_a_line_rules_gate before insert on public.quote_packages
-  for each row execute function app.quote_packages_line_rules_gate();
 
 -- 7. Las columnas (al final, para que el bloqueo dure lo mínimo) -------------------------------------
 alter table public.catalog_items add column price_locked boolean not null default false;
@@ -633,3 +630,11 @@ alter table public.tenants add column max_discount_bp integer;
 alter table public.tenants add constraint tenants_max_discount_bp_range
   check (max_discount_bp is null or max_discount_bp between 0 and 9999);
 -- Sin `grant update`: solo `public.set_quote_max_discount` lo escribe. Todo miembro lo lee (el `select` de `tenants` es de toda la tabla).
+
+-- 8. El disparador, AL FINAL: después de `tenants` y con el mismo orden de bloqueos que `prepare_quote_send` (primero `tenants`, después
+-- `quote_packages`). Crear el disparador toma un bloqueo sobre `quote_packages` hasta el final de la transacción; tomarlo antes que el de
+-- `tenants` cruzaba el orden con un envío en curso (cada uno esperando lo que tiene el otro, hasta que `lock_timeout` corta a uno).
+-- El nombre empieza con «a_» a propósito: PostgreSQL dispara los disparadores del mismo momento en orden alfabético, y este tiene
+-- que ir ANTES de `quote_packages_approval_gate` (primero el tope duro; después, si hace falta, la aprobación).
+create trigger quote_packages_a_line_rules_gate before insert on public.quote_packages
+  for each row execute function app.quote_packages_line_rules_gate();

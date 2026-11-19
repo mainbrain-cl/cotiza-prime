@@ -412,6 +412,38 @@ export function catalogPriceTodayIfDifferent(
   return today === line.catalogPriceClp ? null : today;
 }
 
+/**
+ * La línea puesta al día con el servicio del catálogo tal como está HOY (H-041): el precio, el candado, la unidad y el trato
+ * tributario vigentes. Es una línea NUEVA (otro `id`): para la base, una línea que aún no se guardó se compara con el catálogo de
+ * hoy, y una guardada con el precio con que se agregó, así que reemplazarla por una nueva sirve en los dos casos (se subió el
+ * precio con la línea sin guardar; se bloqueó el servicio después de abrir la cotización). Conserva el nombre y la descripción que
+ * la persona dejó, la cantidad y el descuento. Un precio de más de lo que ya había en la línea nunca viaja: sale del catálogo.
+ */
+export function refreshedCatalogLine(
+  line: EditorLine,
+  item: {
+    id: string;
+    unit: string;
+    unitPriceClp: number;
+    taxTreatment: TaxTreatment;
+    priceLocked: boolean;
+  },
+  newId: string,
+): EditorLine {
+  return {
+    ...line,
+    id: newId,
+    catalogItemId: item.id,
+    catalogInactive: false,
+    catalogPriceClp: item.unitPriceClp,
+    catalogPriceTodayClp: item.unitPriceClp,
+    priceLocked: item.priceLocked,
+    unit: item.unit,
+    taxTreatment: item.taxTreatment,
+    price: String(item.unitPriceClp),
+  };
+}
+
 /** Mueve una línea una posición (-1 arriba, +1 abajo). Devuelve el mismo arreglo si no se puede. */
 export function moveLine(lines: EditorLine[], index: number, direction: -1 | 1): EditorLine[] {
   const target = index + direction;

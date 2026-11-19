@@ -4,10 +4,11 @@ import { ChevronDown, ChevronUp, Loader2, Lock, Plus, Save, Search, Trash2 } fro
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FormAlert, Input, Select, Textarea } from "@/components/ui/form-controls";
-import { OfflineNotice } from "@/components/ui/offline-notice";
+import { OFFLINE_MESSAGE, OfflineNotice, blockIfOffline } from "@/components/ui/offline-notice";
 import { TAX_TREATMENTS, unitLabel } from "@/lib/catalog/schemas";
 import { formatClp } from "@/lib/money/clp";
 import {
+  getQuoteCatalogItemAction,
   saveQuoteDraftAction,
   searchQuoteCatalogAction,
   type SaveQuoteResult,
@@ -24,6 +25,7 @@ import {
   newCatalogLine,
   newFreeLine,
   priceBelowCatalog,
+  refreshedCatalogLine,
   type DiscountKind,
   type EditorLine,
   type EditorRules,
@@ -136,6 +138,9 @@ export function QuoteEditor({
   const [catalog, setCatalog] = useState<QuotableCatalogItem[]>(initialCatalog);
   const [catalogTerm, setCatalogTerm] = useState("");
   const [announcement, setAnnouncement] = useState("");
+  // Poner al día una línea con el catálogo de hoy (H-041): cuál línea está consultando y por qué una no se pudo.
+  const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState<Record<string, string>>({});
   const searchTimer = useRef<number | undefined>(undefined);
   const pendingFocus = useRef<string | null>(null);
 
@@ -219,6 +224,47 @@ export function QuoteEditor({
         // Sin conexión: se queda la lista anterior.
       }
     }, SEARCH_DELAY_MS);
+  }
+
+  /**
+   * El precio o el candado del servicio cambiaron en el catálogo con la cotización abierta: se lee el servicio de nuevo y la línea
+   * se reemplaza por una con el precio y el candado de hoy (conserva cantidad, descuento y lo que la persona escribió). Sin esto,
+   * quien no puede cambiar un precio bloqueado quedaba sin salida: el servidor pedía el precio de hoy y la pantalla solo
+   * ofrecía volver al anterior.
+   */
+  async function refreshLine(index: number) {
+    const line = state.lines[index];
+    if (!line || line.catalogItemId === null || refreshing !== null) return;
+    if (blockIfOffline()) return;
+    setRefreshing(line.id);
+    setRefreshFailed((current) => {
+      const next = { ...current };
+      delete next[line.id];
+      return next;
+    });
+    try {
+      const item = await getQuoteCatalogItemAction(tenantId, line.catalogItemId);
+      if (item === null) {
+        setRefreshFailed((current) => ({
+          ...current,
+          [line.id]:
+            "No pudimos leer este servicio del catálogo: ya no está disponible o no tienes permiso. Quita la línea o usa una línea libre.",
+        }));
+        return;
+      }
+      const fresh = refreshedCatalogLine(line, item, crypto.randomUUID());
+      setState((current) => ({
+        ...current,
+        lines: current.lines.map((candidate) => (candidate.id === line.id ? fresh : candidate)),
+      }));
+      setAnnouncement(
+        `La línea ${index + 1} se actualizó al precio de hoy: ${formatClp(item.unitPriceClp)}.`,
+      );
+    } catch {
+      setRefreshFailed((current) => ({ ...current, [line.id]: OFFLINE_MESSAGE }));
+    } finally {
+      setRefreshing(null);
+    }
   }
 
   function removeLine(index: number) {
@@ -399,8 +445,13 @@ export function QuoteEditor({
                 const lockedForMe = line.priceLocked && !rules.canOverride;
                 const lockedEditable = line.priceLocked && rules.canOverride;
                 const restorePrice = lockedForMe ? catalogPriceToRestore(line) : null;
-                const catalogToday =
-                  restorePrice !== null ? catalogPriceTodayIfDifferent(line) : null;
+                // El precio de hoy del catálogo, cuando es otro que el de la línea: se dice siempre en una línea bloqueada, también
+                // cuando la línea aún tiene el precio con que se agregó (si el catálogo bajó, la persona queda obligada al anterior).
+                const catalogToday = lockedForMe ? catalogPriceTodayIfDifferent(line) : null;
+                // El servidor dijo que el precio no cuadra con el catálogo de hoy (cambió o se bloqueó con la cotización abierta).
+                const staleCatalogPrice =
+                  fromCatalog && serverErrors[`items.${index}.price`] !== undefined;
+                const canRefresh = fromCatalog && (catalogToday !== null || staleCatalogPrice);
                 const idFor = (field: string) => `${line.id}-${field}`;
                 return (
                   <li
@@ -615,26 +666,56 @@ export function QuoteEditor({
                           </Select>
                         )}
                       </div>
-                      {restorePrice !== null ? (
+                      {restorePrice !== null || canRefresh ? (
                         <div className="col-span-2 flex flex-col gap-1.5 md:col-span-4">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            data-testid="use-catalog-price"
-                            disabled={blocked}
-                            className="h-auto min-h-11 w-full justify-center py-2 text-center whitespace-normal md:h-auto md:min-h-9"
-                            onClick={() => {
-                              updateLine(index, { price: String(restorePrice) });
-                              setAnnouncement(
-                                `La línea ${index + 1} volvió al precio con que se agregó.`,
-                              );
-                            }}
-                          >
-                            Usar el precio con que se agregó ({formatClp(restorePrice)})
-                          </Button>
+                          {restorePrice !== null ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              data-testid="use-catalog-price"
+                              disabled={blocked}
+                              className="h-auto min-h-11 w-full justify-center py-2 text-center whitespace-normal md:h-auto md:min-h-9"
+                              onClick={() => {
+                                updateLine(index, { price: String(restorePrice) });
+                                setAnnouncement(
+                                  `La línea ${index + 1} volvió al precio con que se agregó.`,
+                                );
+                              }}
+                            >
+                              Usar el precio con que se agregó ({formatClp(restorePrice)})
+                            </Button>
+                          ) : null}
                           {catalogToday !== null ? (
                             <p data-testid="catalog-price-today" className="text-xs text-fg-muted">
                               El catálogo hoy dice {formatClp(catalogToday)}.
+                            </p>
+                          ) : null}
+                          {canRefresh ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              data-testid="refresh-catalog-price"
+                              disabled={blocked || refreshing !== null}
+                              className="h-auto min-h-11 w-full justify-center py-2 text-center whitespace-normal md:h-auto md:min-h-9"
+                              onClick={() => refreshLine(index)}
+                            >
+                              {refreshing === line.id ? (
+                                <>
+                                  <Loader2 aria-hidden className="animate-spin" />
+                                  Actualizando…
+                                </>
+                              ) : (
+                                "Actualizar al precio de hoy"
+                              )}
+                            </Button>
+                          ) : null}
+                          {refreshFailed[line.id] ? (
+                            <p
+                              role="alert"
+                              data-testid="refresh-catalog-price-error"
+                              className="text-xs text-danger"
+                            >
+                              {refreshFailed[line.id]}
                             </p>
                           ) : null}
                         </div>

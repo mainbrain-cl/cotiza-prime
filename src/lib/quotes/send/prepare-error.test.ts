@@ -26,6 +26,18 @@ describe("los errores al preparar el envío", () => {
 
   it("los demás errores de datos y de permiso siguen como antes", () => {
     expect(prepareErrorMessage({ code: "42501" })).toBe(MSG_FORBIDDEN_SEND);
+    // Con el tope de hoy conocido, el aviso lo dice (y con tope 0, que no se permiten descuentos).
+    expect(
+      prepareErrorMessage({ code: "CP422", message: "line_rules_invalid: discount_over_cap@0" }, 0),
+    ).toBe(
+      "El descuento de la línea 1 pasa del máximo que permite tu organización. Tu organización no permite descuentos.",
+    );
+    expect(
+      prepareErrorMessage(
+        { code: "CP422", message: "line_rules_invalid: discount_over_cap@0" },
+        1_000,
+      ),
+    ).toContain("10 %");
     expect(prepareErrorMessage({ code: "CP404" })).toBe(MSG_NOT_FOUND);
     expect(prepareErrorMessage({ code: "CP409", message: "send_in_progress" })).toBe(
       MSG_IN_PROGRESS_OTHER,

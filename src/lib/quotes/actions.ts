@@ -13,11 +13,14 @@ import { requireActiveTenant, type ActiveTenant } from "@/lib/tenant/active-tena
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { calculateQuote } from "./calc";
 import {
+  getQuotableCatalogItem,
   listQuotableCatalogItems,
   QUOTABLE_SEARCH_MAX_LENGTH,
   type QuotableCatalogItem,
 } from "./catalog-source";
 import { toCustomerChoices, type CustomerChoice } from "./customer-choice";
+import { parseLineRulesError } from "./line-rules";
+import { loadMaxDiscountBp } from "./line-rules-queries";
 import { calcIssueFieldErrors, toCalcInput, toSaveRpcArgs } from "./payload";
 import { payloadFieldErrors, saveQuotePayloadSchema } from "./schemas";
 import { mapSaveRpcError, SAVE_FAILED, type SaveQuoteResult } from "./save-error";
@@ -35,8 +38,16 @@ const CREATE_FAILED = "No pudimos crear la cotización. Intenta de nuevo en unos
 
 export type { SaveQuoteResult };
 
-async function mapSaveError(error: { code?: string; message?: string }): Promise<SaveQuoteResult> {
-  const mapped = mapSaveRpcError(error);
+async function mapSaveError(
+  active: ActiveTenant,
+  error: { code?: string; message?: string },
+): Promise<SaveQuoteResult> {
+  // El tope no viaja en el error de la base: solo se lee si el error es de las reglas de descuento (para decir el máximo, o que no se
+  // permiten descuentos). Si no se puede leer, el mensaje sale sin la cifra.
+  const isRuleError =
+    error.code === SQLSTATE_INVALID && parseLineRulesError(error.message) !== null;
+  const cap = isRuleError ? await loadMaxDiscountBp(active) : null;
+  const mapped = mapSaveRpcError(error, cap ? { maxDiscountBp: cap.maxDiscountBp } : {});
   if (mapped.log) await serverLog("error", mapped.log, { code: error.code });
   return mapped.result;
 }
@@ -96,7 +107,7 @@ export async function saveQuoteDraftAction(
     "save_quote_draft",
     toSaveRpcArgs(quoteId, parsed.data, calc.totals),
   );
-  if (error) return mapSaveError(error);
+  if (error) return mapSaveError(active, error);
   const revision = (data as { revision?: number } | null)?.revision;
   if (typeof revision !== "number") {
     await serverLog("error", "quote_save_bad_response");
@@ -257,4 +268,18 @@ export async function searchQuoteCatalogAction(
   const active = await requireActiveTenant(tenantId);
   if (requirePermission(active, "quote.edit")) return [];
   return listQuotableCatalogItems(active, typeof term === "string" ? term : "");
+}
+
+/**
+ * El servicio del catálogo tal como está HOY (precio y candado vigentes), para poner al día una línea cuando cambiaron con la
+ * cotización abierta (H-041). `null` si no se puede (sin permiso, identificador inválido, desactivado o de otra organización).
+ */
+export async function getQuoteCatalogItemAction(
+  tenantId: string,
+  itemId: string,
+): Promise<QuotableCatalogItem | null> {
+  const active = await requireActiveTenant(tenantId);
+  if (requirePermission(active, "quote.edit")) return null;
+  if (typeof itemId !== "string" || !isUuid(itemId)) return null;
+  return getQuotableCatalogItem(active, itemId);
 }

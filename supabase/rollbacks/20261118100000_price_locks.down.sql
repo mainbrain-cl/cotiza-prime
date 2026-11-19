@@ -51,6 +51,13 @@ begin
   end if;
 end $$;
 
+-- El disparador va AL PRINCIPIO, antes de tocar `tenants` (al revés que la migración): `drop trigger` pide el bloqueo más fuerte sobre
+-- `quote_packages`, y un envío en curso ya la tiene leída (`prepare_quote_send` la lee primero y después `tenants`). Pedir
+-- `quote_packages` antes de `tenants` es el mismo orden que el del envío, así no se traban entre sí. (La migración, que solo pide
+-- `create trigger`, va al revés: `tenants` y después `quote_packages`.)
+drop trigger quote_packages_a_line_rules_gate on public.quote_packages;
+drop function app.quote_packages_line_rules_gate();
+
 -- La versión anterior de guardar el borrador (20261005130000_brand_server_only_logo.sql), tal cual; los permisos de la función se conservan.
 create or replace function public.save_quote_draft(
   p_quote_id uuid, p_expected_revision integer, p_save_id uuid,
@@ -393,8 +400,3 @@ drop function app.can_quote_catalog_item(uuid);
 alter table public.tenants drop constraint tenants_max_discount_bp_range;
 alter table public.tenants drop column max_discount_bp;
 alter table public.catalog_items drop column price_locked;
-
--- El disparador, AL FINAL y después de `tenants`: el orden de bloqueos es el de la migración y el de `prepare_quote_send` (primero
--- `tenants`, después `quote_packages`), así no se cruza con un envío en curso.
-drop trigger quote_packages_a_line_rules_gate on public.quote_packages;
-drop function app.quote_packages_line_rules_gate();

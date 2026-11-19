@@ -498,6 +498,8 @@ test.describe("H-041 · precios bloqueados y descuento máximo", () => {
     const fresh = lines(page).nth(0);
     await expect(fresh.getByLabel("Precio unitario (neto)")).toHaveValue("12000");
     await expect(fresh.getByLabel("Precio unitario (neto)")).toHaveAttribute("readonly", "");
+    // La línea nueva reemplaza a la vieja (con su botón): el foco pasa a su precio, no cae al inicio de la página.
+    await expect(fresh.getByLabel("Precio unitario (neto)")).toBeFocused();
     await expect(fresh.getByText(LOCKED_PRICE_ERROR)).toHaveCount(0);
     await expect(fresh.getByTestId("refresh-catalog-price")).toHaveCount(0);
     await save(page);

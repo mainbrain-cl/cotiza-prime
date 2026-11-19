@@ -16,6 +16,7 @@ import {
   getQuotableCatalogItem,
   listQuotableCatalogItems,
   QUOTABLE_SEARCH_MAX_LENGTH,
+  type CatalogItemLookup,
   type QuotableCatalogItem,
 } from "./catalog-source";
 import { toCustomerChoices, type CustomerChoice } from "./customer-choice";
@@ -272,14 +273,15 @@ export async function searchQuoteCatalogAction(
 
 /**
  * El servicio del catálogo tal como está HOY (precio y candado vigentes), para poner al día una línea cuando cambiaron con la
- * cotización abierta (H-041). `null` si no se puede (sin permiso, identificador inválido, desactivado o de otra organización).
+ * cotización abierta (H-041). `missing` si no se puede ver (sin permiso, identificador inválido, desactivado o de otra
+ * organización: todo da lo mismo) y `failed` si no se pudo leer.
  */
 export async function getQuoteCatalogItemAction(
   tenantId: string,
   itemId: string,
-): Promise<QuotableCatalogItem | null> {
+): Promise<CatalogItemLookup> {
   const active = await requireActiveTenant(tenantId);
-  if (requirePermission(active, "quote.edit")) return null;
-  if (typeof itemId !== "string" || !isUuid(itemId)) return null;
+  if (requirePermission(active, "quote.edit")) return { status: "missing" };
+  if (typeof itemId !== "string" || !isUuid(itemId)) return { status: "missing" };
   return getQuotableCatalogItem(active, itemId);
 }

@@ -16,6 +16,7 @@ import {
 import type { QuotableCatalogItem } from "@/lib/quotes/catalog-source";
 import { QUOTE_MAX_LINES } from "@/lib/quotes/calc";
 import { maxDiscountHint } from "@/lib/quotes/discount-cap";
+import { PRICE_LOCKED_STALE_LINE_MESSAGE } from "@/lib/quotes/line-rules";
 import {
   catalogPriceToRestore,
   catalogPriceTodayIfDifferent,
@@ -236,6 +237,7 @@ export function QuoteEditor({
     const line = state.lines[index];
     if (!line || line.catalogItemId === null || refreshing !== null) return;
     if (blockIfOffline()) return;
+    const newId = crypto.randomUUID();
     setRefreshing(line.id);
     setRefreshFailed((current) => {
       const next = { ...current };
@@ -243,20 +245,27 @@ export function QuoteEditor({
       return next;
     });
     try {
-      const item = await getQuoteCatalogItemAction(tenantId, line.catalogItemId);
-      if (item === null) {
+      const result = await getQuoteCatalogItemAction(tenantId, line.catalogItemId);
+      if (result.status !== "found") {
         setRefreshFailed((current) => ({
           ...current,
           [line.id]:
-            "No pudimos leer este servicio del catálogo: ya no está disponible o no tienes permiso. Quita la línea o usa una línea libre.",
+            result.status === "missing"
+              ? "Este servicio ya no está disponible en el catálogo. Quita la línea para seguir."
+              : "No pudimos leer el catálogo. Intenta de nuevo en unos minutos.",
         }));
         return;
       }
-      const fresh = refreshedCatalogLine(line, item, crypto.randomUUID());
+      const item = result.item;
+      // La línea nueva se arma sobre la que está AHORA (si la persona cambió la cantidad o el descuento mientras se consultaba, no se pierde).
       setState((current) => ({
         ...current,
-        lines: current.lines.map((candidate) => (candidate.id === line.id ? fresh : candidate)),
+        lines: current.lines.map((candidate) =>
+          candidate.id === line.id ? refreshedCatalogLine(candidate, item, newId) : candidate,
+        ),
       }));
+      // La línea nueva trae otro `id`: la vieja (y su botón) desaparece, así que el foco pasa al precio de la nueva.
+      pendingFocus.current = `${newId}-price`;
       setAnnouncement(
         `La línea ${index + 1} se actualizó al precio de hoy: ${formatClp(item.unitPriceClp)}.`,
       );
@@ -450,8 +459,12 @@ export function QuoteEditor({
                 const catalogToday = lockedForMe ? catalogPriceTodayIfDifferent(line) : null;
                 // El servidor dijo que el precio no cuadra con el catálogo de hoy (cambió o se bloqueó con la cotización abierta).
                 const staleCatalogPrice =
-                  fromCatalog && serverErrors[`items.${index}.price`] !== undefined;
-                const canRefresh = fromCatalog && (catalogToday !== null || staleCatalogPrice);
+                  serverErrors[`items.${index}.price`] === PRICE_LOCKED_STALE_LINE_MESSAGE;
+                // Un servicio desactivado no se puede leer de nuevo (la línea guardada sigue valiendo con el precio con que se agregó).
+                const canRefresh =
+                  fromCatalog &&
+                  !line.catalogInactive &&
+                  (catalogToday !== null || staleCatalogPrice);
                 const idFor = (field: string) => `${line.id}-${field}`;
                 return (
                   <li
@@ -1009,8 +1022,8 @@ export function QuoteEditor({
             type="button"
             size="lg"
             data-testid="save-quote"
-            disabled={saver.saving || blocked || view.content === null}
-            aria-disabled={saver.saving || blocked || view.content === null}
+            disabled={saver.saving || blocked || view.content === null || refreshing !== null}
+            aria-disabled={saver.saving || blocked || view.content === null || refreshing !== null}
             onClick={() => {
               if (view.content) void saver.run(view.content);
             }}

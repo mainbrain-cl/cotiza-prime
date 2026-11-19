@@ -288,7 +288,7 @@ describe("poner al día una línea cuando el catálogo cambió con la cotizació
 
   it("el caso sin salida: el servidor rechaza el precio y la línea se actualiza al de hoy sin perder lo demás", async () => {
     mocks.saveQuoteDraftAction.mockResolvedValue(staleSaveError);
-    mocks.getQuoteCatalogItemAction.mockResolvedValue(todayItem(12_000));
+    mocks.getQuoteCatalogItemAction.mockResolvedValue({ status: "found", item: todayItem(12_000) });
     await mount([{ ...lockedLine(), quantity: "3" }], { maxDiscountBp: 1_000, canOverride: false });
     // Antes de guardar no hay nada que actualizar: el catálogo no se sabe distinto.
     expect(testId("refresh-catalog-price")).toBeNull();
@@ -313,7 +313,7 @@ describe("poner al día una línea cuando el catálogo cambió con la cotizació
   });
 
   it("si el catálogo bajó, lo dice aunque la línea siga con su precio, y se puede actualizar", async () => {
-    mocks.getQuoteCatalogItemAction.mockResolvedValue(todayItem(8_000));
+    mocks.getQuoteCatalogItemAction.mockResolvedValue({ status: "found", item: todayItem(8_000) });
     await mount([lockedLine("10000", 8_000)], { maxDiscountBp: 1_000, canOverride: false });
     expect(testId("catalog-price-today")!.textContent).toBe("El catálogo hoy dice $8.000.");
     expect(testId("use-catalog-price")).toBeNull();
@@ -324,7 +324,7 @@ describe("poner al día una línea cuando el catálogo cambió con la cotizació
 
   it("si el servicio se bloqueó después de abrir, la línea pasa a estar bloqueada", async () => {
     mocks.saveQuoteDraftAction.mockResolvedValue(staleSaveError);
-    mocks.getQuoteCatalogItemAction.mockResolvedValue(todayItem(10_000));
+    mocks.getQuoteCatalogItemAction.mockResolvedValue({ status: "found", item: todayItem(10_000) });
     const open = { ...lockedLine("8000"), priceLocked: false };
     await mount([open], { maxDiscountBp: 1_000, canOverride: false });
     expect(byId("line-1-price").readOnly).toBe(false);
@@ -348,10 +348,12 @@ describe("poner al día una línea cuando el catálogo cambió con la cotizació
   });
 
   it("si el servicio ya no está disponible lo dice y la línea no cambia", async () => {
-    mocks.getQuoteCatalogItemAction.mockResolvedValue(null);
+    mocks.getQuoteCatalogItemAction.mockResolvedValue({ status: "missing" });
     await mount([lockedLine("10000", 8_000)], { maxDiscountBp: 1_000, canOverride: false });
     await act(async () => testId("refresh-catalog-price")!.click());
     expect(testId("refresh-catalog-price-error")!.textContent).toContain("ya no está disponible");
+    // No sugiere una línea libre (el hueco aceptado de la pregunta 18).
+    expect(testId("refresh-catalog-price-error")!.textContent).not.toContain("línea libre");
     expect(byId("line-1-price").value).toBe("10000");
   });
 
@@ -361,5 +363,45 @@ describe("poner al día una línea cuando el catálogo cambió con la cotizació
     await act(async () => testId("refresh-catalog-price")!.click());
     expect(testId("refresh-catalog-price-error")!.textContent).toContain("Sin conexión");
     expect(byId("line-1-price").value).toBe("10000");
+  });
+
+  it("si la base no pudo leer el catálogo lo dice distinto a «no está disponible»", async () => {
+    mocks.getQuoteCatalogItemAction.mockResolvedValue({ status: "failed" });
+    await mount([lockedLine("10000", 8_000)], { maxDiscountBp: 1_000, canOverride: false });
+    await act(async () => testId("refresh-catalog-price")!.click());
+    const text = testId("refresh-catalog-price-error")!.textContent!;
+    expect(text).toContain("No pudimos leer el catálogo");
+    expect(text).not.toContain("ya no está disponible");
+  });
+
+  it("una línea de un servicio desactivado no ofrece actualizar", async () => {
+    await mount([{ ...lockedLine("10000", 8_000), catalogInactive: true }], {
+      maxDiscountBp: 1_000,
+      canOverride: false,
+    });
+    expect(testId("refresh-catalog-price")).toBeNull();
+  });
+
+  it("después de actualizar, el foco pasa al precio de la línea nueva", async () => {
+    mocks.getQuoteCatalogItemAction.mockResolvedValue({ status: "found", item: todayItem(8_000) });
+    await mount([lockedLine("10000", 8_000)], { maxDiscountBp: 1_000, canOverride: false });
+    await act(async () => testId("refresh-catalog-price")!.click());
+    const price = host.querySelector<HTMLInputElement>('input[id$="-price"]')!;
+    expect(price.id).not.toBe("line-1-price");
+    expect(document.activeElement).toBe(price);
+  });
+
+  it("no se pierde lo que la persona escribió mientras se consulta el catálogo", async () => {
+    let resolve!: (value: unknown) => void;
+    mocks.getQuoteCatalogItemAction.mockReturnValue(new Promise((r) => (resolve = r)));
+    await mount([lockedLine("10000", 8_000)], { maxDiscountBp: 1_000, canOverride: false });
+    await act(async () => testId("refresh-catalog-price")!.click());
+    // mientras la consulta sigue en curso, guardar no se ofrece
+    expect((testId("save-quote") as HTMLButtonElement).disabled).toBe(true);
+    await type(byId("line-1-quantity"), "5");
+    await act(async () => resolve({ status: "found", item: todayItem(8_000) }));
+    expect(host.querySelector<HTMLInputElement>('input[id$="-quantity"]')!.value).toBe("5");
+    expect(host.querySelector<HTMLInputElement>('input[id$="-price"]')!.value).toBe("8000");
+    expect((testId("save-quote") as HTMLButtonElement).disabled).toBe(false);
   });
 });

@@ -259,32 +259,32 @@ export const LINE_RULE_CASES: readonly LineRuleCase[] = [
     overrides: [0, 2],
   },
   {
-    name: "montos enormes (monto × tope sobre 2^53): un descuento justo en el borde del tope pasa",
+    name: "montos enormes (monto × tope sobre 2^53): un descuento justo en el borde exacto del tope pasa",
     input: input({
       lines: [
         ruleLine({
-          unitPriceClp: 999_999_999_999,
-          catalogUnitPriceClp: 999_999_999_999,
-          grossClp: 999_999_999_999,
-          discount: { kind: "amount", clp: 999_899_999_999 },
+          unitPriceClp: 999_999_995_001,
+          catalogUnitPriceClp: 999_999_995_001,
+          grossClp: 999_999_995_001,
+          discount: { kind: "amount", clp: 999_899_995_001 },
         }),
       ],
       maxDiscountBp: 9_999,
     }),
-    // monto × tope = 999.999.999.999 × 9.999 = 9.998.999.999.990.001, MÁS que 2^53 (≈ 9,007 × 10^15): con números comunes
-    // perdería exactitud. 99,99 % de 999.999.999.999 = 999.899.999.999,0001 → 999.899.999.999: justo en el borde, pasa.
+    // monto × tope = 999.999.995.001 × 9.999 = 9.998.999.950.014.999, MÁS que 2^53 (≈ 9,007 × 10^15). El tope exacto (mitad hacia
+    // arriba) es 999.899.995.001. Con números comunes saldría 999.899.995.002, un peso de más.
     issues: [],
     overrides: [],
   },
   {
-    name: "montos enormes (monto × tope sobre 2^53): un peso sobre el borde del tope se rechaza",
+    name: "montos enormes (monto × tope sobre 2^53): un peso sobre el borde exacto se rechaza (con números comunes pasaría)",
     input: input({
       lines: [
         ruleLine({
-          unitPriceClp: 999_999_999_999,
-          catalogUnitPriceClp: 999_999_999_999,
-          grossClp: 999_999_999_999,
-          discount: { kind: "amount", clp: 999_900_000_000 },
+          unitPriceClp: 999_999_995_001,
+          catalogUnitPriceClp: 999_999_995_001,
+          grossClp: 999_999_995_001,
+          discount: { kind: "amount", clp: 999_899_995_002 },
         }),
       ],
       maxDiscountBp: 9_999,

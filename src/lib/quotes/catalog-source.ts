@@ -79,15 +79,23 @@ function toQuotable(row: CatalogRow): QuotableCatalogItem {
   };
 }
 
+/** Lo que responde la lectura de UN servicio: lo encontró, no existe para esta persona, o no se pudo leer (distintos mensajes). */
+export type CatalogItemLookup =
+  { status: "found"; item: QuotableCatalogItem } | { status: "missing" } | { status: "failed" };
+
 /**
  * Un servicio activo de la organización activa por su identificador, tal como está HOY en el catálogo (precio y candado
- * vigentes). Sirve para poner al día una línea cuando el precio o el candado cambiaron con la cotización abierta (H-041).
- * `null` si no existe, está desactivado o es de otra organización.
+ * vigentes). Sirve para poner al día una línea cuando el precio o el candado cambiaron con la cotización abierta (H-041). Un
+ * servicio que no existe, está desactivado o es de otra organización da `missing` (todos lo mismo: no se revela cuál); un fallo de la
+ * base, `failed`.
+ *
+ * H-042 (servicios por comercial): esta función y `listQuotableCatalogItems` filtran por separado; las DOS tienen que dejar de
+ * ofrecer lo que la persona no puede cotizar. Actualizar una línea la reemplaza por una NUEVA, y el gancho se aplica a las nuevas.
  */
 export async function getQuotableCatalogItem(
   active: ActiveTenant,
   itemId: string,
-): Promise<QuotableCatalogItem | null> {
+): Promise<CatalogItemLookup> {
   const { data, error } = await active.supabase
     .from("catalog_items")
     .select("id, name, description, unit, unit_price_clp, tax_treatment, price_locked")
@@ -97,7 +105,7 @@ export async function getQuotableCatalogItem(
     .maybeSingle();
   if (error) {
     await serverLog("error", "quote_catalog_item_failed", { code: error.code });
-    return null;
+    return { status: "failed" };
   }
-  return data ? toQuotable(data as CatalogRow) : null;
+  return data ? { status: "found", item: toQuotable(data as CatalogRow) } : { status: "missing" };
 }

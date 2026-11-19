@@ -45,6 +45,8 @@ es `save_quote_draft`, que H-041 también reescribe (§12).
 
 **Ya no hace falta:** la pregunta 18 (H-041b) se resolvió el 2026-11-19 con la opción A (no se hace ahora), así que la reescritura de H-048b no tiene que pasarle el nombre de la línea a la regla.
 
+**Defecto anterior de la plantilla 1, para el PR del PDF de H-048b** (revisión del `revisor` al #62, 2026-11-19): un **título de las notas puede quedar solo al pie de una página** (con 20 líneas en carta, «OBSERVACIONES» queda al pie de la página 2 y su texto empieza en la 3). El comentario «El título nunca queda solo al pie de una página» hoy no es cierto: `minPresenceAhead` no actúa en el motor de cortes que usa la plantilla porque cada título es el primer hijo de su bloque. H-048b agrega dos bloques más (EXCLUSIONES y NOTAS), así que el riesgo crece. **Arreglo:** poner los títulos y los textos de las notas como hermanos directos dentro de `summaryStacked`, después de `totalsRight`, sin la vista `noteBlock`; **no** usar `wrap={false}` en el bloque de nota (una nota de más de una hoja se cortaría). Con prueba que recorra de 1 a 45 líneas. Aparte, el **PDF sin total con textos largos** ya se corrigió en el PR #62.
+
 **Tamaño:** ≈ 4,5 días (igual que antes).
 
 **Sin verificar** (dicho por el `planificador`): cómo pagina el PDF con cinco textos largos.

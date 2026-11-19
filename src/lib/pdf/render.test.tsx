@@ -126,6 +126,39 @@ describe("renderQuotePdf (plantilla 1)", () => {
     expect(read.text).toContain(TOTAL_4_LINES);
   }, 30_000);
 
+  it("con textos largos el total, el neto y el IVA nunca se pierden, sea cual sea el largo de la tabla", async () => {
+    // Con observaciones y condiciones largas los totales pasan encima de las notas (modo «apilado»). Según dónde caía el corte de página,
+    // el bloque de totales se dibujaba a medias y el PDF salía SIN total, neto ni IVA (solo quedaba «Subtotal»). Se recorren largos de
+    // tabla alrededor de los cortes de página.
+    const long = Array.from(
+      { length: 4 },
+      () =>
+        "La tarifa considera carga y descarga a pie de camión, un máximo de 2 horas de espera sin costo y rutas pavimentadas. Los valores se mantienen por la vigencia de la cotización; sobre ese plazo se reajustan según la variación del diésel.",
+    ).join(" ");
+    const failures: string[] = [];
+    for (const lineCount of [4, 8, 9, 10, 11, 12, 22, 23, 24, 25, 26, 38, 39, 40, 41]) {
+      const input = sampleInput({ lineCount });
+      input.quote = {
+        ...sampleQuoteRow({}, input.items),
+        observations: long,
+        conditions: long,
+      } as typeof input.quote;
+      const data = buildQuoteDocumentData({ ...input, paper: "letter" });
+      const text = (await readPdf(await renderQuotePdf(data))).text;
+      const count = (pattern: RegExp) => (text.match(pattern) ?? []).length;
+      const once = [
+        ["Subtotal", count(/Subtotal/g)],
+        ["Neto afecto", count(/Neto afecto/g)],
+        ["IVA 19%", count(/IVA 19%/g)],
+        ["Valores en pesos chilenos", count(/Valores en pesos chilenos/g)],
+        [data.totals.total, count(new RegExp(data.totals.total.replace(/[$.]/g, "\\$&"), "g"))],
+      ] as const;
+      for (const [label, n] of once)
+        if (n !== 1) failures.push(`${lineCount} líneas: «${label}» ×${n}`);
+    }
+    expect(failures).toEqual([]);
+  }, 60_000);
+
   it("observaciones de 4.000 caracteres seguidos aparecen completas", async () => {
     const words = Array.from({ length: 500 }, (_, i) => `P${String(i).padStart(3, "0")}xx`);
     const data = sampleDocument({

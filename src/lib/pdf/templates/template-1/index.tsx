@@ -364,9 +364,11 @@ function Summary({ data }: { data: QuoteDocumentData }) {
   }
   // Notas largas: los totales primero (a la derecha) y las notas debajo, a todo el ancho, que
   // pueden continuar en la página siguiente sin perder ni una línea.
+  // `wrap={false}` también en el contenedor de los totales (no solo en `Totals`): sin él, según dónde cayera el corte de página, el
+  // bloque se dibujaba a medias y el PDF salía SIN neto, IVA ni total (solo quedaba «Subtotal»).
   return (
     <View style={s.summaryStacked}>
-      <View style={s.totalsRight}>
+      <View wrap={false} style={s.totalsRight}>
         <Totals data={data} />
       </View>
       <View style={s.notesFull}>

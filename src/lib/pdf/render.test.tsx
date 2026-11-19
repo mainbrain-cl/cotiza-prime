@@ -128,21 +128,17 @@ describe("renderQuotePdf (plantilla 1)", () => {
 
   it("con textos largos el total, el neto y el IVA nunca se pierden, sea cual sea el largo de la tabla", async () => {
     // Con observaciones y condiciones largas los totales pasan encima de las notas (modo «apilado»). Según dónde caía el corte de página,
-    // el bloque de totales se dibujaba a medias y el PDF salía SIN total, neto ni IVA (solo quedaba «Subtotal»). Se recorren largos de
-    // tabla alrededor de los cortes de página.
+    // el bloque de totales se dibujaba a medias y el PDF salía SIN total, neto ni IVA (solo quedaba «Subtotal»). Se recorren de 1 a 45
+    // líneas, así que la prueba sigue cubriendo los cortes aunque cambien márgenes o tipografías.
     const long = Array.from(
       { length: 4 },
       () =>
         "La tarifa considera carga y descarga a pie de camión, un máximo de 2 horas de espera sin costo y rutas pavimentadas. Los valores se mantienen por la vigencia de la cotización; sobre ese plazo se reajustan según la variación del diésel.",
     ).join(" ");
     const failures: string[] = [];
-    for (const lineCount of [4, 8, 9, 10, 11, 12, 22, 23, 24, 25, 26, 38, 39, 40, 41]) {
+    for (let lineCount = 1; lineCount <= 45; lineCount += 1) {
       const input = sampleInput({ lineCount });
-      input.quote = {
-        ...sampleQuoteRow({}, input.items),
-        observations: long,
-        conditions: long,
-      } as typeof input.quote;
+      input.quote = sampleQuoteRow({ observations: long, conditions: long }, input.items);
       const data = buildQuoteDocumentData({ ...input, paper: "letter" });
       const text = (await readPdf(await renderQuotePdf(data))).text;
       const count = (pattern: RegExp) => (text.match(pattern) ?? []).length;

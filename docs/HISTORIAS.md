@@ -764,7 +764,31 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-021, H-026
 **Datos personales:** no
-**Notas técnicas:** 🔒 delicada (reescribe `save_quote_draft`, agrega un control al envío y hace cumplir un permiso en la base); no se mezcla sin Aarón (decisión 020 §5). **Estado (2026-11-17): construida completa, sin mezclar.** Etapa A (base de datos, migración `20261118100000_price_locks`, reglas SQL y `src/lib/quotes/line-rules.ts`) y etapa B (catálogo, editor, `/enviar`, línea de tiempo y actividad, pruebas); pendientes las revisiones Opus y la prueba de Aarón en pantalla. Diseño y registro de construcción de las dos etapas: `docs/arquitectura/h-041-precios-bloqueados.md`. El servidor rechaza el cambio aunque llegue sin pasar por la pantalla. Debe dejar el gancho `app.can_quote_catalog_item` (por ahora siempre responde «sí») llamado desde `save_quote_draft` para H-042, más el test que lo vigila: dentro de una transacción, reemplaza el gancho por uno que responde «no» y espera `CP422` desde `save_quote_draft`. Ver `docs/arquitectura/h-042-servicios-por-comercial.md` §3.
+**Notas técnicas:** 🔒 delicada (reescribe `save_quote_draft`, agrega un control al envío y hace cumplir un permiso en la base); no se mezcla sin Aarón (decisión 020 §5). **Estado (2026-11-19): ✅ mezclada (PR #58, `main` en `d1aab2d`).** Etapa A (base de datos, migración `20261118100000_price_locks`, reglas SQL y `src/lib/quotes/line-rules.ts`) y etapa B (catálogo, editor, `/enviar`, línea de tiempo y actividad, pruebas). Aarón la revisó el 2026-11-18 (sin bloqueantes), aprobó las decisiones 16 a 20 (20 = C) y pidió un arreglo obligatorio —el editor quedaba sin salida si el catálogo cambiaba con la cotización abierta— y cinco menores, todo hecho (botón «Actualizar al precio de hoy»; ver «Registro de la revisión de Aarón» en su diseño). El hueco de la pregunta 18 (líneas escritas a mano) sigue abierto: lo cierra H-041b si Aarón la pide. Diseño y registro de construcción de las dos etapas: `docs/arquitectura/h-041-precios-bloqueados.md`. El servidor rechaza el cambio aunque llegue sin pasar por la pantalla. Debe dejar el gancho `app.can_quote_catalog_item` (por ahora siempre responde «sí») llamado desde `save_quote_draft` para H-042, más el test que lo vigila: dentro de una transacción, reemplaza el gancho por uno que responde «no» y espera `CP422` desde `save_quote_draft`. Ver `docs/arquitectura/h-042-servicios-por-comercial.md` §3.
+
+---
+
+### H-041b · Que el Comercial solo cotice desde el catálogo · M04
+
+> **Propuesta, pendiente de la decisión de Aarón** (pregunta 18 de H-041; `PROYECTO.md` §16.2). No se construye hasta que la decida.
+
+**Como** Administrador
+**quiero** poder exigir que mi equipo comercial cotice solo servicios del catálogo, con su nombre y su precio fijados
+**para** que nadie baje un precio escribiendo el servicio a mano o cambiándole el nombre a otro más barato.
+
+**Criterios de aceptación**
+- [ ] Hay una opción de la organización «Los Comerciales solo cotizan desde el catálogo», apagada por defecto
+- [ ] Con la opción encendida, un Comercial no puede agregar una línea libre ni escribir el precio de una línea a mano, ni en la pantalla ni hablando directo con la base de datos
+- [ ] El nombre de una línea del catálogo queda fijo: no se puede cambiar el nombre de un servicio barato por el de uno caro. La descripción y la cantidad siguen siendo editables
+- [ ] Dueño y Administrador no tienen la restricción
+- [ ] Las cotizaciones ya guardadas no cambian; si una no cumple al enviarla, se explica qué corregir
+- [ ] Cuando alguien con permiso se salta la regla, queda en la línea de tiempo y en el registro de actividad
+
+**Prioridad:** usable
+**Tamaño:** chico (0,75 a 1 día; 1,25 si se suma el ajuste de H-042)
+**Depende de:** H-041 (mezclada); conviene después de H-048b (las dos reescriben `save_quote_draft`)
+**Datos personales:** no
+**Notas técnicas:** 🔒 delicada (reescribe `save_quote_draft` y el control del envío). Cierra el hueco que H-040 (`sprint-5-h-040-aprobaciones.md` §12, punto 2) y H-041 dejaron aceptado. Opciones para Aarón: **A** no hacerla (H-042 solo ordena la lista del Comercial); **B sin nombre fijo** (~0,75 día), que **no cierra** el hueco: un Comercial agrega un servicio permitido y le cambia el nombre; **B con nombre fijo** (~1 día, más 0,25 en H-042). Recomendada, si se hace: con nombre fijo, y que la reescritura de H-048b ya le pase el nombre de la línea a la regla (+0,1 día) para no reescribir `save_quote_draft` otra vez. Ver `docs/arquitectura/h-041-precios-bloqueados.md` (supuesto 18) y `docs/arquitectura/h-042-servicios-por-comercial.md` (puesta al día del 2026-11-19).
 
 ---
 
@@ -783,7 +807,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-010, H-020, H-041
 **Datos personales:** no
-**Notas técnicas:** 🔒 delicada (permisos por persona y una función con permisos elevados); no se mezcla sin Aarón (decisión 020 §5). Unos 3,75 días en dos PR. D2: ordena (cada Comercial ve una lista más corta) y no controla (las líneas escritas a mano no se limitan). Diseño en `docs/arquitectura/h-042-servicios-por-comercial.md`.
+**Notas técnicas:** 🔒 delicada (permisos por persona y una función con permisos elevados); no se mezcla sin Aarón (decisión 020 §5). Unos 3,75 días en dos PR. D2: ordena (cada Comercial ve una lista más corta) y no controla (las líneas escritas a mano no se limitan). Diseño en `docs/arquitectura/h-042-servicios-por-comercial.md`. **Puesta al día del 2026-11-19 (con H-041 en `main`):** H-042 solo reemplaza el gancho `app.can_quote_catalog_item` y **no reescribe `save_quote_draft`**; se construye **después de H-048b** (que sí la reescribe); ≈3,5 días (+0,25 si la pregunta 18 sale B). Detalle y riesgos nuevos en la sección «Puesta al día» del diseño.
 
 ---
 
@@ -923,7 +947,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** grande
 **Depende de:** H-048a, H-041
 **Datos personales:** no
-**Notas técnicas:** 🔒 reescribe `save_quote_draft` y cambia lo que ve el cliente final (PDF y página del enlace); no se mezcla sin Aarón (decisión 020 §5). Se construye después de H-041 y nunca en paralelo con ella, porque las dos reescriben `save_quote_draft` y git no avisa si una migración pisa a la otra. Los campos nuevos se congelan en la copia sellada del documento, sin tocar `prepare_quote_send`. Unos 4,5 días. Ver `sprint-5-h-048-textos.md` §3 a §5 y §12.
+**Notas técnicas:** 🔒 reescribe `save_quote_draft` y cambia lo que ve el cliente final (PDF y página del enlace); no se mezcla sin Aarón (decisión 020 §5). Se construye después de H-041 y nunca en paralelo con ella, porque las dos reescriben `save_quote_draft` y git no avisa si una migración pisa a la otra. Los campos nuevos se congelan en la copia sellada del documento, sin tocar `prepare_quote_send`. Unos 4,5 días. Ver `sprint-5-h-048-textos.md` §3 a §5 y §12. **Puesta al día del 2026-11-19 (con H-041 en `main`):** parte de la `save_quote_draft` de H-041 (huella md5 `103579dac268fc9032bf33896d36b6a9`), con `app.can('quote.edit', true)` y no `has_role`; su deshacer debe reponer esa función idéntica y negarse si no calza; **va antes que H-042** y no depende de ninguna respuesta de Aarón. Detalle en la sección «Puesta al día» del diseño.
 
 ---
 
@@ -2005,7 +2029,7 @@ antes del piloto, porque la aceptación de términos es prueba de consentimiento
 `DISENO.md`: Motion, Sonner, cmdk, Embla. Se repite como pasada de pulido al final de cada sprint
 sobre las pantallas nuevas. Pendiente de la revisión de H-028: si la generación del PDF falla, la
 pestaña nueva que abre el botón hoy muestra un texto plano ("No pudimos generar el PDF."); debe
-mostrar una página amable, con la marca de la aplicación y un botón para reintentar o volver.
+mostrar una página amable, con la marca de la aplicación y un botón para reintentar o volver. **Segunda pasada de pulido (2026-11-19):** 17 pantallas auditadas en escritorio y móvil, claro y oscuro, más 100 vistas de la segunda tanda; sin bloqueantes. Arreglado en el #59 (áreas táctiles de 44 px, letra del campo del logo, texto del inicio según el rol) y en el #60 (enviar sin conexión, errores en español). **Queda por auditar:** esqueletos y estados de carga, errores reales del servidor, el enlace del cliente ya aceptado o pagado, y —ahora que H-041 está en `main`— el editor de cotización y `/enviar`; además iPhone real y lector de pantalla.
 
 ---
 
@@ -2064,9 +2088,50 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 
 ---
 
+### H-119 · Que los formularios no pierdan lo escrito cuando la conexión falla · M19
+
+**Como** persona que usa Cotiza Prime desde el teléfono, en un camión o con una red inestable
+**quiero** que, si se corta la conexión (o llega a medias) cuando envío un formulario, lo que escribí siga en pantalla y pueda reintentar
+**para** no tener que escribirlo todo de nuevo.
+
+**Criterios de aceptación**
+- [ ] Si la petición no llega al servidor —sin red, o con una red que no responde aunque el teléfono crea que hay internet—, la pantalla sigue donde estaba, con lo escrito, y un aviso dice «No pudimos conectarnos…»
+- [ ] Pasa en el ingreso, el registro, recuperar la contraseña y los formularios de la organización (clientes, catálogo, configuración, textos listos, reglas de aprobación)
+- [ ] Al volver la red, el mismo botón envía, sin duplicar nada (un reintento no crea dos registros)
+- [ ] Nunca se muestra la pantalla de error genérica ni detalle técnico por una falla de red
+- [ ] Hay una prueba que corta la red a mitad del envío (no solo antes de empezar)
+
+**Prioridad:** usable
+**Tamaño:** mediano (1,5 a 2 días)
+**Depende de:** H-115 (pulido); el PR #60 ya deja el caso «sin red desde antes»
+**Datos personales:** sí (lo escrito solo vive en la pantalla; **no se guarda en el almacenamiento del navegador**)
+**Notas técnicas:** nace de la auditoría del 2026-11-19. El PR #60 hizo que el botón compartido `SubmitButton` no envíe cuando `navigator.onLine` es falso, agregó `error.tsx` y `global-error.tsx` en español, un límite silencioso para los adornos y `isNetworkError`. **Queda el caso «red falsa»:** Wi-Fi sin internet, servidor caído o red a medias, con `navigator.onLine` verdadero; los 18 formularios con `useActionState` pierden lo escrito porque la acción rechazada llega al límite de errores. Camino: un hook compartido que envuelva la acción, atrape el fallo de red y devuelva el estado con los valores y el mensaje (el mismo patrón que ya usan el formulario de la invitación y `ConfirmAction`). Toca el ingreso y el segundo paso: es superficie pública, así que va con revisión del `revisor`; **no agrega controles de seguridad nuevos** (criterio de Aarón del 2026-11-17). No incluye el editor de cotizaciones (lo cubre H-072, guardado automático).
+
+---
+
+### H-120 · Pantallas de error amables en lo que ve el cliente final · M19, M10
+
+**Como** cliente final que abre el enlace de una cotización, el formulario público o una invitación
+**quiero** que, si algo falla o se corta la conexión, la pantalla me diga qué pasó y me deje reintentar
+**para** no pensar que la empresa tiene un problema, cuando solo se me cayó el internet.
+
+**Criterios de aceptación**
+- [ ] Si falla la conexión, el enlace del cliente, el formulario público y la invitación dicen «No pudimos conectarnos» y ofrecen reintentar; si falla algo del servidor, dicen que es un problema de nuestro lado, sin detalle técnico
+- [ ] El enlace del cliente y el formulario público llevan la marca de la organización, no la de Cotiza Prime
+- [ ] El formulario público conserva lo que la persona escribió al reintentar (con H-119)
+- [ ] Si falla la generación del PDF, la pestaña nueva muestra una página amable con un botón para reintentar o volver (pendiente de la revisión de H-028)
+
+**Prioridad:** usable
+**Tamaño:** chico (0,5 a 1 día)
+**Depende de:** H-119; H-115
+**Datos personales:** no (lo escrito en el formulario público no se guarda)
+**Notas técnicas:** hoy `src/app/c/[token]`, `src/app/f/[publicId]` (y `incrustar`) e `src/app/invitacion` tienen su propio `error.tsx` y dicen «problema de nuestro lado» también cuando falla la red; el PR #60 dejó `ErrorScreen` e `isNetworkError` listos para reutilizar. Superficie pública: revisión normal del `revisor`.
+
+---
+
 # Índice por prioridad
 
-> H-004 y H-048 se partieron el 2026-11-02 (H-004a, H-004b y H-004c; H-048a y H-048b). Los conteos de abajo y las «92 historias» se mantienen con la numeración original. **H-117 y H-118 (2026-11-12, del segundo paso) son núcleo y no están contadas.**
+> H-004 y H-048 se partieron el 2026-11-02 (H-004a, H-004b y H-004c; H-048a y H-048b). Los conteos de abajo y las «92 historias» se mantienen con la numeración original. **H-117 y H-118 (2026-11-12, del segundo paso) son núcleo y no están contadas; tampoco H-041b, H-119 y H-120 (2026-11-19), que son usables.**
 
 **Núcleo — sin esto el producto no tiene sentido (44)**
 H-001 · H-002 · H-003 · H-004 · H-005 · H-006 · H-007 · H-008 · H-009 · H-010 · H-011 · H-012 ·
@@ -2079,6 +2144,7 @@ H-035 · H-042 · H-048 · H-055 · H-060 · H-061 · H-062 · H-063 · H-064 ·
 H-068 · H-069 · H-070 · H-071 · H-072 · H-073 · H-074 · H-075 · H-076 · H-080 · H-081 · H-082 ·
 H-083 · H-084 · H-085 · H-086 · H-087 · H-088 · H-089 · H-090 · H-091 · H-092 · H-100 · H-101 ·
 H-102 · H-103 · H-104 · H-106 · H-107 · H-108 · H-109 · H-111 · H-112 · H-113 · H-114 · H-115
+(más H-041b, H-119 y H-120, no contadas)
 
 **Extra — suma valor pero no es esencial (1)**
 H-105

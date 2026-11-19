@@ -423,7 +423,7 @@ test("sin conexión se avisa en la pantalla y lo escrito no se pierde", async ()
       "No pudimos conectar con el servidor",
     );
     // La pantalla de error de la organización no apareció y lo escrito sigue ahí.
-    await expect(page.getByText("Algo salió mal")).toHaveCount(0);
+    await expect(page.getByTestId("error-screen")).toHaveCount(0);
     await expect(page.getByTestId("snippet-name")).toHaveValue("Nota sin conexión");
     await expect(page.getByTestId("snippet-body")).toHaveValue(
       "Esta nota se escribe sin internet.",

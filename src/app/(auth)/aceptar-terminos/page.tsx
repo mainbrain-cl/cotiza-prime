@@ -25,7 +25,7 @@ export default async function AcceptTermsPage({ searchParams }: PageProps<"/acep
           <Link
             href={TERMS_PATH}
             target="_blank"
-            className="font-semibold text-accent underline-offset-4 hover:underline"
+            className="inline-flex min-h-11 items-center font-semibold text-accent underline-offset-4 hover:underline"
           >
             Términos y condiciones
           </Link>
@@ -34,7 +34,7 @@ export default async function AcceptTermsPage({ searchParams }: PageProps<"/acep
           <Link
             href={PRIVACY_PATH}
             target="_blank"
-            className="font-semibold text-accent underline-offset-4 hover:underline"
+            className="inline-flex min-h-11 items-center font-semibold text-accent underline-offset-4 hover:underline"
           >
             Política de privacidad
           </Link>

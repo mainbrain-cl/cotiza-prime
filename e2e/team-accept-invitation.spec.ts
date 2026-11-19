@@ -697,7 +697,7 @@ test("«Seguir sin unirme» borra el código y vuelve al inicio", async ({ brows
   }
 });
 
-test("sin conexión: «Unirme» y «Seguir sin unirme» avisan en la misma pantalla y, al volver la red, funcionan", async ({
+test("sin conexión: «Unirme» y «Seguir sin unirme» avisan igual, sin salir de la pantalla, y al volver la red funcionan", async ({
   browser,
   baseURL,
 }) => {
@@ -713,19 +713,36 @@ test("sin conexión: «Unirme» y «Seguir sin unirme» avisan en la misma panta
     await page.goto(link);
     await expect(page.getByTestId("invitation-ready")).toBeVisible();
 
+    // Sin red, los dos botones avisan con el mismo aviso breve (Sonner no apila avisos con el mismo id) y no envían nada.
     await context.setOffline(true);
-    const offlineMessage = page
-      .getByRole("alert")
-      .filter({ hasText: "No pudimos comunicarnos con el servidor" });
+    const offlineToast = page.locator("[data-sonner-toast]").filter({ hasText: "Sin conexión" });
     await page.getByRole("button", { name: "Unirme", exact: true }).click();
-    await expect(offlineMessage).toHaveCount(1);
+    await expect(offlineToast).toHaveCount(1);
     // La persona sigue viendo su invitación: no cae a la pantalla de error de «problema de nuestro lado».
     await expect(page.getByTestId("invitation-ready")).toBeVisible();
     await expect(page.getByText("Tuvimos un problema de nuestro lado")).toHaveCount(0);
+    await expect(page.getByTestId("error-screen")).toHaveCount(0);
 
+    await page.getByRole("button", { name: "Seguir sin unirme" }).click();
+    await expect(offlineToast).toHaveCount(1);
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
+
+    // El navegador cree que hay red pero la petición no llega (Wi-Fi sin internet, servidor caído): el mensaje
+    // vive en el formulario y la pantalla sigue ahí.
+    await context.setOffline(false);
+    const offlineMessage = page
+      .getByRole("alert")
+      .filter({ hasText: "No pudimos comunicarnos con el servidor" });
+    await page.route("**/*", (route) =>
+      route.request().headers()["next-action"] ? route.abort("failed") : route.continue(),
+    );
+    await page.getByRole("button", { name: "Unirme", exact: true }).click();
+    await expect(offlineMessage).toHaveCount(1);
+    await expect(page.getByTestId("invitation-ready")).toBeVisible();
     await page.getByRole("button", { name: "Seguir sin unirme" }).click();
     await expect(offlineMessage).toHaveCount(2);
     await expect(page.getByTestId("invitation-ready")).toBeVisible();
+    await page.unroute("**/*");
 
     await context.setOffline(false);
     await page.getByRole("button", { name: "Unirme", exact: true }).click();

@@ -18,7 +18,7 @@ export default async function ForgotPasswordPage() {
       footer={
         <Link
           href={LOGIN_PATH}
-          className="font-semibold text-accent underline-offset-4 hover:underline"
+          className="inline-flex min-h-11 items-center font-semibold text-accent underline-offset-4 hover:underline"
         >
           Volver a ingresar
         </Link>

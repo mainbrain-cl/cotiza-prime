@@ -29,7 +29,7 @@ export default async function EditCustomerPage({
       <header className="flex flex-col gap-2">
         <Link
           href={detailPath}
-          className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
+          className="inline-flex min-h-11 w-fit items-center gap-1 text-sm font-semibold text-fg-muted hover:text-fg"
         >
           <ChevronLeft aria-hidden className="size-4" />
           {customer === "unreadable" ? "Cliente" : customer.displayName}

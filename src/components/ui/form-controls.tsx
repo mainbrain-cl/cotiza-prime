@@ -4,6 +4,7 @@ import { useId, type ComponentProps, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { blockIfOffline } from "@/components/ui/offline-notice";
 import { cn } from "@/lib/utils";
 
 const CONTROL_CLASS =
@@ -107,11 +108,24 @@ export function FormAlert({
 export function SubmitButton({
   children,
   pendingLabel,
+  onClick,
   ...props
 }: ComponentProps<typeof Button> & { pendingLabel: string }) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" size="lg" disabled={pending} aria-disabled={pending} {...props}>
+    <Button
+      type="submit"
+      size="lg"
+      disabled={pending}
+      aria-disabled={pending}
+      {...props}
+      // Sin red no se envía (así no se pierde lo escrito): Enter en un campo también pasa por este clic.
+      onClick={(event) => {
+        onClick?.(event);
+        // `nativeEvent` también ve si otro manejador frenó el evento sin pasar por React.
+        if (!event.nativeEvent.defaultPrevented) blockIfOffline(event);
+      }}
+    >
       {pending ? (
         <>
           <Loader2 aria-hidden className="animate-spin" />

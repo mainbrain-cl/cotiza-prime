@@ -770,7 +770,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 
 ### H-041b · Que el Comercial solo cotice desde el catálogo · M04
 
-> **Propuesta, pendiente de la decisión de Aarón** (pregunta 18 de H-041; `PROYECTO.md` §16.2). No se construye hasta que la decida.
+> **Pospuesta (decisión de Aarón, 2026-11-19, opción A): no se hace ahora.** Es coherente con lo decidido el 2026-11-05 para H-042 (ordena, no controla). Queda anotada como posible para más adelante, si un cliente la pide. **No condiciona el orden de nada.** (Pregunta 18 de H-041; `PROYECTO.md` §16.2.)
 
 **Como** Administrador
 **quiero** poder exigir que mi equipo comercial cotice solo servicios del catálogo, con su nombre y su precio fijados
@@ -807,7 +807,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-010, H-020, H-041
 **Datos personales:** no
-**Notas técnicas:** 🔒 delicada (permisos por persona y una función con permisos elevados); no se mezcla sin Aarón (decisión 020 §5). Unos 3,75 días en dos PR. D2: ordena (cada Comercial ve una lista más corta) y no controla (las líneas escritas a mano no se limitan). Diseño en `docs/arquitectura/h-042-servicios-por-comercial.md`. **Puesta al día del 2026-11-19 (con H-041 en `main`):** H-042 solo reemplaza el gancho `app.can_quote_catalog_item` y **no reescribe `save_quote_draft`**; se construye **después de H-048b** (que sí la reescribe); ≈3,5 días (+0,25 si la pregunta 18 sale B). Detalle y riesgos nuevos en la sección «Puesta al día» del diseño.
+**Notas técnicas:** 🔒 delicada (permisos por persona y una función con permisos elevados); no se mezcla sin Aarón (decisión 020 §5). Unos 3,75 días en dos PR. D2: ordena (cada Comercial ve una lista más corta) y no controla (las líneas escritas a mano no se limitan). Diseño en `docs/arquitectura/h-042-servicios-por-comercial.md`. **Puesta al día del 2026-11-19 (con H-041 en `main`):** H-042 solo reemplaza el gancho `app.can_quote_catalog_item` y **no reescribe `save_quote_draft`**; se construye **después de H-048b** (que sí la reescribe); ≈3,5 días (la pregunta 18 se resolvió el 2026-11-19 con la opción A: H-042 solo ordena). Detalle y riesgos nuevos en la sección «Puesta al día» del diseño.
 
 ---
 
@@ -947,7 +947,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** grande
 **Depende de:** H-048a, H-041
 **Datos personales:** no
-**Notas técnicas:** 🔒 reescribe `save_quote_draft` y cambia lo que ve el cliente final (PDF y página del enlace); no se mezcla sin Aarón (decisión 020 §5). Se construye después de H-041 y nunca en paralelo con ella, porque las dos reescriben `save_quote_draft` y git no avisa si una migración pisa a la otra. Los campos nuevos se congelan en la copia sellada del documento, sin tocar `prepare_quote_send`. Unos 4,5 días. Ver `sprint-5-h-048-textos.md` §3 a §5 y §12. **Puesta al día del 2026-11-19 (con H-041 en `main`):** parte de la `save_quote_draft` de H-041 (huella md5 `103579dac268fc9032bf33896d36b6a9`), con `app.can('quote.edit', true)` y no `has_role`; su deshacer debe reponer esa función idéntica y negarse si no calza; **va antes que H-042** y no depende de ninguna respuesta de Aarón. Detalle en la sección «Puesta al día» del diseño.
+**Notas técnicas:** 🔒 reescribe `save_quote_draft` y cambia lo que ve el cliente final (PDF y página del enlace); no se mezcla sin Aarón (decisión 020 §5). Se construye después de H-041 y nunca en paralelo con ella, porque las dos reescriben `save_quote_draft` y git no avisa si una migración pisa a la otra. Los campos nuevos se congelan en la copia sellada del documento, sin tocar `prepare_quote_send`. Unos 4,5 días. Ver `sprint-5-h-048-textos.md` §3 a §5 y §12. **Puesta al día del 2026-11-19 (con H-041 en `main`):** parte de la `save_quote_draft` de H-041 (huella md5 `103579dac268fc9032bf33896d36b6a9`), con `app.can('quote.edit', true)` y no `has_role`; su deshacer debe reponer esa función idéntica y negarse si no calza; **va antes que H-042**. **Empieza cuando Aarón apruebe la muestra del PDF con «EXCLUSIONES» y «NOTAS»** (decisión del 2026-11-19). Detalle en la sección «Puesta al día» del diseño.
 
 ---
 
@@ -2033,6 +2033,31 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 
 ---
 
+### H-116 · Que nadie pueda adueñarse de una cuenta registrándose antes con su correo · M01, M18
+
+**Como** persona que se registra en Cotiza Prime
+**quiero** que mi cuenta solo se pueda terminar de crear desde el enlace que llega a MI correo
+**para** que nadie pueda registrarse antes con mi correo y dejar una contraseña suya que siga sirviendo cuando yo verifique.
+
+**Criterios de aceptación**
+- [ ] Al registrarme pongo solo mi correo y recibo un enlace; la contraseña, el nombre y la aceptación de términos y privacidad se piden **después** de abrir el enlace
+- [ ] Si alguien registra mi correo con una contraseña suya antes que yo, esa contraseña no sirve cuando yo verifico mi cuenta
+- [ ] Una cuenta que aún no se terminó no puede crear organizaciones, aceptar invitaciones ni leer o cambiar datos de la organización
+- [ ] Una cuenta solo se termina desde la sesión que nació del enlace del correo, y con el mismo correo con que se creó
+- [ ] Un pase de una sesión ya cerrada deja de servir en la base de datos en el acto, sin esperar los 15 minutos de su vencimiento
+- [ ] Hasta que exista H-109, la base no deja cambiar el correo de una cuenta
+- [ ] Los textos del registro y de terminar la cuenta están en español de Chile, y Aarón los aprobó en pantalla
+- [ ] Una prueba reproduce el ataque completo (registro previo con correo ajeno) y el atacante queda fuera
+- [ ] Antes del piloto, una lista de ajustes del Supabase de producción (17) se comprueba con un guion y a mano
+
+**Prioridad:** núcleo (bloquea el piloto)
+**Tamaño:** grande (entre 6,25 y 8 días, con la prueba exploratoria de medio día; se parte en etapas)
+**Depende de:** H-001, H-004a (mezclada), H-009 (mezclada), H-118 (mezclada); la entrada de H-001 cambia
+**Datos personales:** sí (correo, nombre y consentimiento de quien se registra)
+**Notas técnicas:** 🔒 delicada (es la puerta de entrada y toca `auth`); no se mezcla sin revisión adversarial (decisión 020 §5). Nace del hallazgo B1 de la revisión adversarial de H-009 (2026-11-03). Diseño del `planificador` con las decisiones de Aarón del 2026-11-05: `docs/arquitectura/h-116-registro-seguro.md` (opción (i): apagar el registro público de Supabase y crear la cuenta solo desde nuestro servidor, sin contraseña; segunda defensa en la base con `app.session_alive()`). **Decisión de Aarón (2026-11-19): cuenta como seguridad básica, así que sí se hace;** se toma **después de H-048b y H-042**, antes de H-119. Cierra la salvedad de H-118 (el pase de acceso del atacante vale hasta 15 minutos). Ficha agregada el 2026-11-19: hasta entonces estaba solo como historia propuesta en el diseño.
+
+---
+
 ### H-117 · Verificar el segundo paso con nuestro propio control de intentos · M01, M18
 
 **Como** Dueño de una organización
@@ -2090,6 +2115,8 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 
 ### H-119 · Que los formularios no pierdan lo escrito cuando la conexión falla · M19
 
+> **Aprobada por Aarón (Compuerta 2, 2026-11-19).** Toca el ingreso: **lleva revisión Opus antes de mezclar.** Orden: después de H-116.
+
 **Como** persona que usa Cotiza Prime desde el teléfono, en un camión o con una red inestable
 **quiero** que, si se corta la conexión (o llega a medias) cuando envío un formulario, lo que escribí siga en pantalla y pueda reintentar
 **para** no tener que escribirlo todo de nuevo.
@@ -2111,6 +2138,8 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 
 ### H-120 · Pantallas de error amables en lo que ve el cliente final · M19, M10
 
+> **Aprobada por Aarón (Compuerta 2, 2026-11-19).** Orden: la última de la cola, después de H-119.
+
 **Como** cliente final que abre el enlace de una cotización, el formulario público o una invitación
 **quiero** que, si algo falla o se corta la conexión, la pantalla me diga qué pasó y me deje reintentar
 **para** no pensar que la empresa tiene un problema, cuando solo se me cayó el internet.
@@ -2131,7 +2160,7 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 
 # Índice por prioridad
 
-> H-004 y H-048 se partieron el 2026-11-02 (H-004a, H-004b y H-004c; H-048a y H-048b). Los conteos de abajo y las «92 historias» se mantienen con la numeración original. **H-117 y H-118 (2026-11-12, del segundo paso) son núcleo y no están contadas; tampoco H-041b, H-119 y H-120 (2026-11-19), que son usables.**
+> H-004 y H-048 se partieron el 2026-11-02 (H-004a, H-004b y H-004c; H-048a y H-048b). Los conteos de abajo y las «92 historias» se mantienen con la numeración original. **H-116 (registro seguro, ficha agregada el 2026-11-19), H-117 y H-118 (2026-11-12, del segundo paso) son núcleo y no están contadas; tampoco H-041b (pospuesta), H-119 y H-120 (aprobadas el 2026-11-19), que son usables.**
 
 **Núcleo — sin esto el producto no tiene sentido (44)**
 H-001 · H-002 · H-003 · H-004 · H-005 · H-006 · H-007 · H-008 · H-009 · H-010 · H-011 · H-012 ·

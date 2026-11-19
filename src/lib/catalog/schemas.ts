@@ -66,6 +66,11 @@ export const createCatalogItemSchema = z.object({
     return result.value;
   }),
   taxTreatment: z.enum(taxValues, { error: "Indica si lleva IVA o es exento." }),
+  /** La casilla «Bloquear el precio» (H-041): llega como `"1"` (marcada) o vacía (sin marcar). */
+  priceLocked: z
+    .enum(["", "1"], { error: "No entendimos si el precio va bloqueado." })
+    .default("")
+    .transform((value) => value === "1"),
 });
 
 export type CreateCatalogItemInput = z.infer<typeof createCatalogItemSchema>;

@@ -792,6 +792,9 @@ export const RPC_CASES: Record<string, RpcCase> = {
     },
     writesActiveTenant: true,
   },
+  // Sprint 5 · el tope de descuento de quien vende (H-041). El valor del ataque (1) no es el que fija la fixture en B (4.321): si algún
+  // día una llamada ajena lo cambia, se nota.
+  set_quote_max_discount: { args: { p_max_bp: 1 }, writesActiveTenant: true },
   // Sprint 5 · aceptar una invitación (H-009). Corren con sesión y SIN organización activa (la persona todavía no es
   // miembro; la organización la define la invitación y la decide la base), por eso no exigen una propia.
   invitation_preview: { args: { p_token_sha256: "a".repeat(64) }, writesActiveTenant: false },

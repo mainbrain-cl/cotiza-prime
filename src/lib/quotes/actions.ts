@@ -13,89 +13,44 @@ import { requireActiveTenant, type ActiveTenant } from "@/lib/tenant/active-tena
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { calculateQuote } from "./calc";
 import {
+  getQuotableCatalogItem,
   listQuotableCatalogItems,
   QUOTABLE_SEARCH_MAX_LENGTH,
+  type CatalogItemLookup,
   type QuotableCatalogItem,
 } from "./catalog-source";
 import { toCustomerChoices, type CustomerChoice } from "./customer-choice";
+import { parseLineRulesError } from "./line-rules";
+import { loadMaxDiscountBp } from "./line-rules-queries";
 import { calcIssueFieldErrors, toCalcInput, toSaveRpcArgs } from "./payload";
 import { payloadFieldErrors, saveQuotePayloadSchema } from "./schemas";
+import { mapSaveRpcError, SAVE_FAILED, type SaveQuoteResult } from "./save-error";
 
 const SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
 const SQLSTATE_NOT_FOUND = "CP404";
-const SQLSTATE_REVISION_CONFLICT = "CP409";
 const SQLSTATE_INVALID = "CP422";
-const SQLSTATE_NOT_EDITABLE = "CP423";
-const SQLSTATE_CALC_MISMATCH = "CP500";
 
 const NO_PERMISSION_CREATE = NO_PERMISSION_MESSAGE;
 const CREATE_FAILED = "No pudimos crear la cotización. Intenta de nuevo en unos minutos.";
-const CONFLICT_MESSAGE =
-  "Esta cotización cambió en otra pestaña. Recarga para ver la última versión.";
 
 // ---------------------------------------------------------------------------------------------
 // Guardar el borrador (H-026)
 // ---------------------------------------------------------------------------------------------
 
-export type SaveQuoteResult =
-  | { status: "saved"; revision: number }
-  | { status: "conflict"; message: string }
-  | { status: "not_editable"; message: string }
-  | { status: "forbidden"; message: string }
-  | { status: "not_found"; message: string }
-  | { status: "invalid"; message: string; fieldErrors: Record<string, string> }
-  | { status: "error"; message: string };
+export type { SaveQuoteResult };
 
-const SAVE_FAILED = "No pudimos guardar los cambios. Intenta de nuevo en unos minutos.";
-
-function invalidMessage(rpcMessage: string): string {
-  if (rpcMessage.startsWith("catalog_item_unavailable")) {
-    return "Un servicio de la cotización ya no está disponible en el catálogo. Quítalo o usa una línea libre.";
-  }
-  if (rpcMessage.startsWith("catalog_item_changed")) {
-    return "El servicio cambió en el catálogo; vuelve a agregarlo.";
-  }
-  if (rpcMessage.startsWith("validity_in_past")) {
-    return "La fecha de vigencia no puede estar en el pasado.";
-  }
-  if (rpcMessage.startsWith("customer_not_found") || rpcMessage.startsWith("invalid_customer")) {
-    return "El cliente ya no está disponible. Elige otro.";
-  }
-  return "Revisa los datos de la cotización e intenta de nuevo.";
-}
-
-async function mapSaveError(error: { code?: string; message?: string }): Promise<SaveQuoteResult> {
-  switch (error.code) {
-    case SQLSTATE_REVISION_CONFLICT:
-      return { status: "conflict", message: CONFLICT_MESSAGE };
-    case SQLSTATE_NOT_EDITABLE:
-      return { status: "not_editable", message: "Esta cotización ya no se puede editar." };
-    case SQLSTATE_INSUFFICIENT_PRIVILEGE:
-      return { status: "forbidden", message: "Solo quien creó este borrador puede editarlo." };
-    case SQLSTATE_NOT_FOUND:
-      return { status: "not_found", message: "No encontramos esta cotización." };
-    case SQLSTATE_INVALID: {
-      const message = error.message ?? "";
-      return {
-        status: "invalid",
-        message: invalidMessage(message),
-        fieldErrors: message.startsWith("validity_in_past")
-          ? { validity: "La fecha de vigencia no puede estar en el pasado." }
-          : {},
-      };
-    }
-    case SQLSTATE_CALC_MISMATCH:
-      // El cálculo de la aplicación y el de la base no coinciden: error grave, sin datos personales.
-      await serverLog("error", "quote_calc_mismatch", { code: error.code });
-      return {
-        status: "error",
-        message:
-          "No pudimos confirmar los totales de esta cotización, así que no se guardó nada. Ya avisamos al equipo.",
-      };
-    default:
-      await serverLog("error", "quote_save_failed", { code: error.code });
-      return { status: "error", message: SAVE_FAILED };
-  }
+async function mapSaveError(
+  active: ActiveTenant,
+  error: { code?: string; message?: string },
+): Promise<SaveQuoteResult> {
+  // El tope no viaja en el error de la base: solo se lee si el error es de las reglas de descuento (para decir el máximo, o que no se
+  // permiten descuentos). Si no se puede leer, el mensaje sale sin la cifra.
+  const isRuleError =
+    error.code === SQLSTATE_INVALID && parseLineRulesError(error.message) !== null;
+  const cap = isRuleError ? await loadMaxDiscountBp(active) : null;
+  const mapped = mapSaveRpcError(error, cap ? { maxDiscountBp: cap.maxDiscountBp } : {});
+  if (mapped.log) await serverLog("error", mapped.log, { code: error.code });
+  return mapped.result;
 }
 
 /**
@@ -153,7 +108,7 @@ export async function saveQuoteDraftAction(
     "save_quote_draft",
     toSaveRpcArgs(quoteId, parsed.data, calc.totals),
   );
-  if (error) return mapSaveError(error);
+  if (error) return mapSaveError(active, error);
   const revision = (data as { revision?: number } | null)?.revision;
   if (typeof revision !== "number") {
     await serverLog("error", "quote_save_bad_response");
@@ -314,4 +269,19 @@ export async function searchQuoteCatalogAction(
   const active = await requireActiveTenant(tenantId);
   if (requirePermission(active, "quote.edit")) return [];
   return listQuotableCatalogItems(active, typeof term === "string" ? term : "");
+}
+
+/**
+ * El servicio del catálogo tal como está HOY (precio y candado vigentes), para poner al día una línea cuando cambiaron con la
+ * cotización abierta (H-041). `missing` si no se puede ver (sin permiso, identificador inválido, desactivado o de otra
+ * organización: todo da lo mismo) y `failed` si no se pudo leer.
+ */
+export async function getQuoteCatalogItemAction(
+  tenantId: string,
+  itemId: string,
+): Promise<CatalogItemLookup> {
+  const active = await requireActiveTenant(tenantId);
+  if (requirePermission(active, "quote.edit")) return { status: "missing" };
+  if (typeof itemId !== "string" || !isUuid(itemId)) return { status: "missing" };
+  return getQuotableCatalogItem(active, itemId);
 }

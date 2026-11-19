@@ -8,7 +8,14 @@ import { INITIAL_FORM_STATE, type FormState } from "@/lib/auth/form-state";
 import { createCatalogItemAction } from "@/lib/catalog/actions";
 import { CatalogFields } from "./catalog-fields";
 
-export function CatalogForm({ tenantId }: { tenantId: string }) {
+export function CatalogForm({
+  tenantId,
+  maxDiscountBp,
+}: {
+  tenantId: string;
+  /** El descuento máximo de los Comerciales hoy, para la ayuda del candado (`undefined` si no se pudo leer). */
+  maxDiscountBp?: number | null;
+}) {
   const [state, formAction] = useActionState(
     (previous: FormState, formData: FormData) =>
       createCatalogItemAction(tenantId, previous, formData),
@@ -25,7 +32,7 @@ export function CatalogForm({ tenantId }: { tenantId: string }) {
       <OfflineNotice />
       {state.status === "error" && state.message ? <FormAlert>{state.message}</FormAlert> : null}
 
-      <CatalogFields errors={errors} values={values} />
+      <CatalogFields errors={errors} values={values} maxDiscountBp={maxDiscountBp} />
 
       <SubmitButton pendingLabel="Guardando…">Agregar al catálogo</SubmitButton>
     </form>

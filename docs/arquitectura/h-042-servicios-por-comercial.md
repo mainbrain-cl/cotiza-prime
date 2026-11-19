@@ -166,7 +166,7 @@ if not app.can_quote_catalog_item(v_cat_id) then
 end if;
 ```
 
-El número de línea `<n>` usa la misma convención que defina H-041 para `price_locked@n`.
+El número de línea `<n>` usa la convención que dejó H-041 (**confirmada en su etapa A**): `@i` con `i` desde 0, igual que la calculadora (`price_locked@0` es la primera línea). El error completo es `CP422` con el mensaje `line_rules_invalid: catalog_item_not_allowed@1` (varios problemas van separados por coma) y lo lee `parseLineRulesError` de `src/lib/quotes/line-rules.ts`; la pantalla ya lo pone junto al nombre de la línea (`items.<i>.name`: «No tienes permiso para cotizar este servicio.»). `mapSaveRpcError` (`src/lib/quotes/save-error.ts`) lo reconoce sin cambios: H-042 no toca el editor para eso.
 
 - **Líneas existentes** (mismo id ya guardado en esa cotización): no se revisan. Así un borrador con un servicio que después salió de
   la lista se sigue guardando y enviando (criterio 3).
@@ -216,7 +216,7 @@ El diseño del sprint decía «se engancha en la función de H-041», y no convi
 - **`public.my_catalog_scope()`** devuelve solo dos datos sobre quien llama: si tiene límite y cuántos servicios tiene permitidos.
   **La cuenta incluye solo servicios activos** (uno desactivado en la lista no cuenta), para que «sin servicios permitidos» del editor
   sea verdad. Sirve para el aviso del editor.
-- **Cambia `catalog-source.ts`**: llama a `quotable_catalog_items` en vez de leer `catalog_items` directo.
+- **Cambia `catalog-source.ts`**: llama a `quotable_catalog_items` en vez de leer `catalog_items` directo. **`quotable_catalog_items` debe devolver también `price_locked`** (H-041 etapa B: `QuotableCatalogItem.priceLocked` y `CatalogRow.price_locked`; el editor lo usa para mostrar el candado al agregar la línea y `newCatalogLine` lo copia a `EditorLine.priceLocked`). `convert-lines.ts` (`loadActiveCatalog` → `CatalogSnapshot.priceLocked`) lo necesita igual: si la función nueva no lo devuelve, el candado no aparece hasta recargar la cotización (la base lo hace cumplir igual).
 - **Cambia `convert-lines.ts`**: `loadActiveCatalog` usa la misma función con `p_ids`. Un servicio no permitido queda en «no se cargó»,
   en vez de hacer fallar el guardado entero y dejar la cotización vacía. Esto cubre también las líneas que el panel «Solicitud
   original» ofrece cargar.
@@ -497,8 +497,7 @@ recomendaba. H-042 solo agrega su sección.
 
 ## 12. Lo que no se pudo verificar
 
-- **H-041 no está construida.** No se sabe si aceptará el gancho, qué convención de número de línea usará (`@n`) ni el formato de error
-  por línea que espera el editor. El Camino A depende de eso.
+- ~~**H-041 no está construida.**~~ **H-041 quedó construida (2026-11-17, sin mezclar):** aceptó el gancho `app.can_quote_catalog_item`, usa `@i` desde 0 y el formato `line_rules_invalid: <lista>`, y el editor ya pone cada error por línea (`items.<i>.name` para el gancho). Sigue valiendo la nota de arriba: hay que confirmarlo contra lo que quede en `main`.
 - **H-010 está construida pero no mezclada** (PR #28 abierto): si cambia antes de mezclarse (dirección de la ficha, forma de
   `list_members`, o si `change_member_role` o `remove_member` tocan datos de otras tablas), hay que revisar este diseño. Aquí se leyó
   la rama, no `main`.

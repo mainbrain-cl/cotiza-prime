@@ -11,6 +11,79 @@ import {
   resourceLabel,
 } from "./labels";
 
+describe("nombres del registro de actividad · precios bloqueados y descuento máximo (H-041)", () => {
+  it("nombra la acción nueva y la puede elegir el filtro", () => {
+    expect(actionLabel("quote.locked_price_overridden")).toBe(
+      "Se cambió un precio bloqueado en una cotización",
+    );
+    expect(isKnownAuditAction("quote.locked_price_overridden")).toBe(true);
+  });
+
+  it("el detalle cuenta las líneas y los precios, sin nombres de línea", () => {
+    const text = describeAuditEntry({
+      action: "quote.locked_price_overridden",
+      details: {
+        count: 1,
+        lines: [{ position: 2, catalog_item_id: "x", old_price_clp: 10_000, new_price_clp: 8_000 }],
+      },
+    });
+    expect(text).toBe("Cambió: línea 2: $10.000 → $8.000");
+  });
+
+  it("un detalle ilegible no rompe el registro", () => {
+    expect(
+      describeAuditEntry({ action: "quote.locked_price_overridden", details: { count: 1 } }),
+    ).toBeNull();
+  });
+
+  it("el descuento máximo se dice «Sin tope → 10 %», como la regla de aprobación", () => {
+    const entry = (oldBp: number | null, newBp: number | null) =>
+      describeAuditEntry({
+        action: "tenant.updated",
+        details: { old: { max_discount_bp: oldBp }, new: { max_discount_bp: newBp } },
+      });
+    expect(entry(null, 1_000)).toBe("Descuento máximo: Sin tope → 10 %");
+    expect(entry(1_000, null)).toBe("Descuento máximo: 10 % → Sin tope");
+    expect(entry(1_250, 0)).toBe("Descuento máximo: 12,5 % → 0 %");
+  });
+
+  it("el candado del precio dice «Bloqueó el precio» o «Quitó el bloqueo del precio»", () => {
+    const entry = (locked: boolean) =>
+      describeAuditEntry({
+        action: "catalog_item.updated",
+        details: { old: { price_locked: !locked }, new: { price_locked: locked } },
+      });
+    expect(entry(true)).toBe("Bloqueó el precio");
+    expect(entry(false)).toBe("Quitó el bloqueo del precio");
+  });
+
+  it("si el mismo registro cambia también el precio, lo cuenta además", () => {
+    expect(
+      describeAuditEntry({
+        action: "catalog_item.price_changed",
+        details: {
+          old: { price_locked: false, unit_price_clp: 1_000 },
+          new: { price_locked: true, unit_price_clp: 2_000 },
+        },
+      }),
+    ).toBe("Bloqueó el precio · Cambió: precio");
+  });
+
+  it("un valor ilegible cae en la frase general en vez de romper el registro", () => {
+    expect(
+      describeAuditEntry({
+        action: "tenant.updated",
+        details: { old: { max_discount_bp: "x" }, new: { max_discount_bp: 1_000 } },
+      }),
+    ).toBe("Cambió: descuento máximo");
+  });
+
+  it("los campos nuevos tienen nombre en español", () => {
+    expect(describeAuditDetails({ changed: ["price_locked"] })).toBe("Cambió: precio bloqueado");
+    expect(describeAuditDetails({ changed: ["max_discount_bp"] })).toBe("Cambió: descuento máximo");
+  });
+});
+
 describe("nombres del registro de actividad", () => {
   it("cada acción conocida tiene nombre en español; las nuevas se muestran con su código", () => {
     expect(actionLabel("session.login")).toBe("Ingresó a la plataforma");

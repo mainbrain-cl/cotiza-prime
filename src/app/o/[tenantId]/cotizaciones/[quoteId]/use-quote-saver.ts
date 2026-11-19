@@ -34,6 +34,8 @@ export function useQuoteSaver({
 }) {
   const [state, setState] = useState<SaverState>({ status: "idle" });
   const [savedKey, setSavedKey] = useState(initialSavedKey);
+  // La clave del contenido que el servidor rechazó: sus errores por campo valen solo mientras no se cambie nada (H-041).
+  const [failedKey, setFailedKey] = useState<string | null>(null);
   const revision = useRef(initialRevision);
   const inFlight = useRef(false);
   const queued = useRef<DraftContent | null>(null);
@@ -67,6 +69,7 @@ export function useQuoteSaver({
           // falso aviso de "cambió en otra pestaña". Al recibir un conflicto, comparar el contenido
           // guardado con el propio antes de avisar.
           if (result.status !== "saved") {
+            setFailedKey(key);
             setState(result);
             queued.current = null;
             return;
@@ -74,6 +77,7 @@ export function useQuoteSaver({
           revision.current = result.revision;
           lastAttempt.current = null;
           setSavedKey(key);
+          setFailedKey(null);
           setState({ status: "saved" });
           current = queued.current;
           queued.current = null;
@@ -85,5 +89,5 @@ export function useQuoteSaver({
     [save],
   );
 
-  return { state, savedKey, saving: state.status === "saving", run };
+  return { state, savedKey, failedKey, saving: state.status === "saving", run };
 }

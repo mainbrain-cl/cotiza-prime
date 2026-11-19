@@ -35,6 +35,7 @@ export async function createCatalogItemAction(
     unit: readText(formData, "unit"),
     unitPriceClp: readText(formData, "unitPriceClp"),
     taxTreatment: readText(formData, "taxTreatment"),
+    priceLocked: readText(formData, "priceLocked"),
   };
 
   const denied = requirePermission(active, "catalog.manage");
@@ -51,6 +52,7 @@ export async function createCatalogItemAction(
     unit: parsed.data.unit,
     unit_price_clp: parsed.data.unitPriceClp,
     tax_treatment: parsed.data.taxTreatment,
+    price_locked: parsed.data.priceLocked,
   });
 
   if (error) {
@@ -99,6 +101,7 @@ export async function updateCatalogItemAction(
     unit: readText(formData, "unit"),
     unitPriceClp: readText(formData, "unitPriceClp"),
     taxTreatment: readText(formData, "taxTreatment"),
+    priceLocked: readText(formData, "priceLocked"),
   };
 
   const denied = requirePermission(active, "catalog.manage");
@@ -120,6 +123,7 @@ export async function updateCatalogItemAction(
       unit: parsed.data.unit,
       unit_price_clp: parsed.data.unitPriceClp,
       tax_treatment: parsed.data.taxTreatment,
+      price_locked: parsed.data.priceLocked,
     })
     .eq("id", itemId)
     .select("id");

@@ -1,4 +1,5 @@
 import { reasonTeamText } from "@/lib/share/respond";
+import { describeLockedPriceOverride } from "./locked-price-text";
 
 /** Texto, en español de Chile, de cada tipo de evento de la línea de tiempo de una cotización. */
 const EVENT_TEXTS: Record<string, string> = {
@@ -13,6 +14,7 @@ const EVENT_TEXTS: Record<string, string> = {
   expired: "La cotización venció",
   link_revoked: "Se revocó el enlace del cliente",
   email_bounced: "El correo rebotó: no llegó al cliente",
+  locked_price_overridden: "Se cambió un precio bloqueado",
 };
 
 export const UNKNOWN_EVENT_TEXT = "Cambio registrado";
@@ -22,6 +24,8 @@ export const UNKNOWN_EVENT_TEXT = "Cambio registrado";
  * sin datos personales); el detalle escrito por el cliente queda cifrado y no sale aquí.
  */
 export function describeQuoteEvent(type: string, data?: unknown): string {
+  // Un precio bloqueado que alguien con permiso cambió (H-041): dice qué líneas y de cuánto a cuánto, sin nombres de línea.
+  if (type === "locked_price_overridden") return describeLockedPriceOverride(data);
   const base = EVENT_TEXTS[type] ?? UNKNOWN_EVENT_TEXT;
   if (type !== "rejected_by_customer" || !data || typeof data !== "object") return base;
   const code = (data as { reason_code?: unknown }).reason_code;

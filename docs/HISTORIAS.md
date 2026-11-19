@@ -764,7 +764,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-021, H-026
 **Datos personales:** no
-**Notas técnicas:** el servidor rechaza el cambio aunque llegue sin pasar por la pantalla. Debe dejar el gancho `app.can_quote_catalog_item` (por ahora siempre responde «sí») llamado desde `save_quote_draft` para H-042, más el test que lo vigila: dentro de una transacción, reemplaza el gancho por uno que responde «no» y espera `CP422` desde `save_quote_draft`. Ver `docs/arquitectura/h-042-servicios-por-comercial.md` §3.
+**Notas técnicas:** 🔒 delicada (reescribe `save_quote_draft`, agrega un control al envío y hace cumplir un permiso en la base); no se mezcla sin Aarón (decisión 020 §5). **Estado (2026-11-17): construida completa, sin mezclar.** Etapa A (base de datos, migración `20261118100000_price_locks`, reglas SQL y `src/lib/quotes/line-rules.ts`) y etapa B (catálogo, editor, `/enviar`, línea de tiempo y actividad, pruebas); pendientes las revisiones Opus y la prueba de Aarón en pantalla. Diseño y registro de construcción de las dos etapas: `docs/arquitectura/h-041-precios-bloqueados.md`. El servidor rechaza el cambio aunque llegue sin pasar por la pantalla. Debe dejar el gancho `app.can_quote_catalog_item` (por ahora siempre responde «sí») llamado desde `save_quote_draft` para H-042, más el test que lo vigila: dentro de una transacción, reemplaza el gancho por uno que responde «no» y espera `CP422` desde `save_quote_draft`. Ver `docs/arquitectura/h-042-servicios-por-comercial.md` §3.
 
 ---
 

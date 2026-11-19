@@ -7,7 +7,10 @@ import {
   moveLine,
   newCatalogLine,
   newFreeLine,
+  catalogPriceToRestore,
+  catalogPriceTodayIfDifferent,
   priceBelowCatalog,
+  refreshedCatalogLine,
   type EditorLine,
   type EditorState,
 } from "./editor-model";
@@ -146,6 +149,7 @@ describe("líneas", () => {
       unit: "km",
       unitPriceClp: 15_000,
       taxTreatment: "exempt",
+      priceLocked: false,
     });
     expect(created).toMatchObject({
       catalogItemId: "cat-1",
@@ -309,5 +313,260 @@ describe("evaluateEditor · vigencia, observaciones y condiciones (H-027)", () =
     );
     expect(view.errors.globalDiscount).toMatch(/mayor que el subtotal/);
     expect(view.content).toBeNull();
+  });
+});
+
+describe("las reglas de precio y descuento en el editor (H-041)", () => {
+  // Una línea del catálogo de $10.000 con el precio bloqueado, como la deja `lineFromSaved` o `newCatalogLine`.
+  const locked = (id: string, over: Partial<EditorLine> = {}) =>
+    line(id, { catalogItemId: "cat-1", catalogPriceClp: 10_000, priceLocked: true, ...over });
+  const withRules = (
+    lines: EditorLine[],
+    rules: { maxDiscountBp: number | null; canOverride: boolean },
+    over: Partial<EditorState> = {},
+  ) => evaluateEditor(state(lines, over), 1900, { ...CONTEXT, rules });
+  const COMERCIAL = { maxDiscountBp: 1_000, canOverride: false };
+  const DUENO = { maxDiscountBp: 1_000, canOverride: true };
+
+  it("sin reglas (no se pudieron leer) no marca nada y los totales salen igual", () => {
+    const view = evaluateEditor(state([locked("a", { price: "8000" })]), 1900, CONTEXT);
+    expect(view.errors).toEqual({});
+    expect(view.content).not.toBeNull();
+  });
+
+  it("un Comercial con el precio bloqueado a otro precio: error junto a la línea, no se guarda y los totales se ven", () => {
+    const view = withRules([line("x"), locked("a", { price: "8000" })], COMERCIAL);
+    expect(view.errors).toEqual({
+      "items.1.price":
+        "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.",
+    });
+    expect(view.content).toBeNull();
+    expect(view.totals?.subtotalClp).toBe(18_000);
+  });
+
+  it("subir el precio bloqueado tampoco vale; el precio igual al de catálogo sí", () => {
+    expect(withRules([locked("a", { price: "12000" })], COMERCIAL).errors).toHaveProperty(
+      "items.0.price",
+    );
+    expect(withRules([locked("a")], COMERCIAL).errors).toEqual({});
+  });
+
+  it("el Dueño y el Administrador se saltan el candado y el tope", () => {
+    const view = withRules(
+      [locked("a", { price: "8000", discountKind: "percent", discount: "50" })],
+      DUENO,
+      { globalDiscountKind: "percent", globalDiscount: "90" },
+    );
+    expect(view.errors).toEqual({});
+    expect(view.content).not.toBeNull();
+  });
+
+  it("el descuento de línea: 10 % pasa, 10,01 % y 15 % no", () => {
+    const at = (discount: string) =>
+      withRules([line("a", { discountKind: "percent", discount })], COMERCIAL);
+    expect(at("10").errors).toEqual({});
+    expect(at("10").content).not.toBeNull();
+    expect(at("10,01").errors["items.0.discount"]).toMatch(
+      /máximo que permite tu organización \(10 %\)/,
+    );
+    expect(at("15").content).toBeNull();
+  });
+
+  it("el descuento en pesos se mide contra el bruto de la línea (cantidad × precio)", () => {
+    const at = (discount: string) =>
+      withRules(
+        [line("a", { quantity: "3", price: "10000", discountKind: "amount", discount })],
+        COMERCIAL,
+      );
+    expect(at("3000").errors).toEqual({});
+    expect(at("3001").errors).toHaveProperty("items.0.discount");
+  });
+
+  it("el descuento general se mide solo, sobre el subtotal ya con los descuentos de línea", () => {
+    const withGlobal = (globalDiscount: string, lineDiscount = "50") =>
+      withRules(
+        [line("a", { discountKind: "percent", discount: lineDiscount })],
+        { maxDiscountBp: 6_000, canOverride: false },
+        { globalDiscountKind: "amount", globalDiscount },
+      );
+    // Línea de $10.000 con 50 % de descuento: el subtotal es $5.000 y el tope del 60 % da $3.000.
+    expect(withGlobal("3000").errors).toEqual({});
+    expect(withGlobal("3001").errors.globalDiscount).toMatch(/\(60 %\)/);
+  });
+
+  it("con tope 0 ningún descuento pasa, y el mensaje lo dice", () => {
+    const view = withRules([line("a", { discountKind: "percent", discount: "1" })], {
+      maxDiscountBp: 0,
+      canOverride: false,
+    });
+    expect(view.errors["items.0.discount"]).toBe("Tu organización no permite descuentos.");
+  });
+
+  it("sin tope (vacío) no hay límite de descuento", () => {
+    const view = withRules([line("a", { discountKind: "percent", discount: "90" })], {
+      maxDiscountBp: null,
+      canOverride: false,
+    });
+    expect(view.errors).toEqual({});
+  });
+
+  it("un precio bloqueado admite descuento hasta el tope", () => {
+    expect(
+      withRules([locked("a", { discountKind: "percent", discount: "10" })], COMERCIAL).errors,
+    ).toEqual({});
+  });
+
+  it("los errores de la regla se suman a los de los campos: un número ilegible manda y no se evalúa la regla", () => {
+    const view = withRules([locked("a", { price: "ocho mil" })], COMERCIAL);
+    expect(Object.keys(view.errors)).toEqual(["items.0.price"]);
+    expect(view.errors["items.0.price"]).not.toMatch(/bloqueado/);
+  });
+
+  it("una línea libre no tiene candado aunque `priceLocked` venga encendido", () => {
+    const free = line("a", { priceLocked: true, catalogPriceClp: null, price: "1" });
+    expect(withRules([free], COMERCIAL).errors).toEqual({});
+  });
+
+  it("varios problemas a la vez salen todos", () => {
+    const view = withRules(
+      [locked("a", { price: "9000" }), line("b", { discountKind: "percent", discount: "20" })],
+      COMERCIAL,
+      { globalDiscountKind: "percent", globalDiscount: "30" },
+    );
+    expect(Object.keys(view.errors).sort()).toEqual([
+      "globalDiscount",
+      "items.0.price",
+      "items.1.discount",
+    ]);
+  });
+});
+
+describe("el candado en las líneas (H-041)", () => {
+  const row = {
+    id: "a",
+    name: "Servicio",
+    description: null,
+    unit: "service",
+    tax_treatment: "taxable" as const,
+    quantity_milli: 1000,
+    unit_price_clp: 8_000,
+    discount_kind: "none" as const,
+    discount_value: 0,
+  };
+
+  it("`lineFromSaved` toma el candado del catálogo de hoy, y una línea libre nunca lo tiene", () => {
+    const fromCatalog = { ...row, catalog_item_id: "cat-1", catalog_unit_price_clp: 10_000 };
+    expect(lineFromSaved(fromCatalog, false, true).priceLocked).toBe(true);
+    expect(lineFromSaved(fromCatalog, false, false).priceLocked).toBe(false);
+    expect(lineFromSaved(fromCatalog, false).priceLocked).toBe(false);
+    const free = { ...row, catalog_item_id: null, catalog_unit_price_clp: null };
+    expect(lineFromSaved(free, false, true).priceLocked).toBe(false);
+    expect(newFreeLine("z").priceLocked).toBe(false);
+  });
+
+  it("`lineFromSaved` guarda el precio de hoy del catálogo solo en líneas de catálogo", () => {
+    const fromCatalog = { ...row, catalog_item_id: "cat-1", catalog_unit_price_clp: 10_000 };
+    expect(lineFromSaved(fromCatalog, false, true, 12_000).catalogPriceTodayClp).toBe(12_000);
+    expect(lineFromSaved(fromCatalog, false, true).catalogPriceTodayClp).toBeNull();
+    const free = { ...row, catalog_item_id: null, catalog_unit_price_clp: null };
+    expect(lineFromSaved(free, false, false, 12_000).catalogPriceTodayClp).toBeNull();
+  });
+
+  it("`newCatalogLine` trae el candado del servicio", () => {
+    const item = {
+      id: "cat-1",
+      name: "Flete",
+      description: null,
+      unit: "km",
+      unitPriceClp: 10_000,
+      taxTreatment: "taxable" as const,
+    };
+    expect(newCatalogLine("x", { ...item, priceLocked: true }).priceLocked).toBe(true);
+    expect(newCatalogLine("x", { ...item, priceLocked: false }).priceLocked).toBe(false);
+  });
+
+  it("`catalogPriceTodayIfDifferent` solo habla del catálogo de hoy si es otro que el de la línea", () => {
+    expect(
+      catalogPriceTodayIfDifferent({ catalogPriceClp: 10_000, catalogPriceTodayClp: 12_000 }),
+    ).toBe(12_000);
+    expect(
+      catalogPriceTodayIfDifferent({ catalogPriceClp: 10_000, catalogPriceTodayClp: 10_000 }),
+    ).toBeNull();
+    expect(
+      catalogPriceTodayIfDifferent({ catalogPriceClp: 10_000, catalogPriceTodayClp: null }),
+    ).toBeNull();
+    expect(catalogPriceTodayIfDifferent({ catalogPriceClp: 10_000 })).toBeNull();
+    expect(
+      catalogPriceTodayIfDifferent({ catalogPriceClp: null, catalogPriceTodayClp: 5_000 }),
+    ).toBeNull();
+  });
+
+  it("`catalogPriceToRestore` ofrece volver solo si hay candado y el precio es otro", () => {
+    const base = { priceLocked: true, catalogPriceClp: 10_000 };
+    expect(catalogPriceToRestore({ ...base, price: "8000" })).toBe(10_000);
+    expect(catalogPriceToRestore({ ...base, price: "12.000" })).toBe(10_000);
+    expect(catalogPriceToRestore({ ...base, price: "abc" })).toBe(10_000);
+    expect(catalogPriceToRestore({ ...base, price: "10000" })).toBeNull();
+    expect(catalogPriceToRestore({ ...base, price: "10.000" })).toBeNull();
+    expect(catalogPriceToRestore({ ...base, priceLocked: false, price: "8000" })).toBeNull();
+    expect(
+      catalogPriceToRestore({ priceLocked: true, catalogPriceClp: null, price: "1" }),
+    ).toBeNull();
+  });
+});
+
+describe("refreshedCatalogLine (H-041: poner al día una línea cuando el catálogo cambió con la cotización abierta)", () => {
+  const stale = line("vieja", {
+    catalogItemId: "22222222-2222-4222-8222-222222222222",
+    catalogPriceClp: 10_000,
+    catalogPriceTodayClp: 10_000,
+    priceLocked: true,
+    name: "Flete a mi manera",
+    description: "Nota de la persona",
+    quantity: "3",
+    price: "10000",
+    discountKind: "percent",
+    discount: "5",
+  });
+  const today = {
+    id: "22222222-2222-4222-8222-222222222222",
+    unit: "service",
+    unitPriceClp: 12_000,
+    taxTreatment: "taxable" as const,
+    priceLocked: true,
+  };
+
+  it("trae el precio y el candado de hoy, con otro identificador, y conserva lo que la persona escribió", () => {
+    const next = refreshedCatalogLine(stale, today, "nueva");
+    expect(next.id).toBe("nueva");
+    expect(next.price).toBe("12000");
+    expect(next.catalogPriceClp).toBe(12_000);
+    expect(next.catalogPriceTodayClp).toBe(12_000);
+    expect(next.priceLocked).toBe(true);
+    // lo de la persona
+    expect(next.name).toBe("Flete a mi manera");
+    expect(next.description).toBe("Nota de la persona");
+    expect(next.quantity).toBe("3");
+    expect(next.discountKind).toBe("percent");
+    expect(next.discount).toBe("5");
+  });
+
+  it("si el servicio se bloqueó después de abrir la cotización, la línea pasa a estar bloqueada", () => {
+    const open = line("abierta", { ...stale, priceLocked: false, price: "8000" });
+    const next = refreshedCatalogLine(open, today, "nueva");
+    expect(next.priceLocked).toBe(true);
+    expect(next.price).toBe("12000");
+  });
+
+  it("después de ponerla al día, ya no hay nada que restaurar ni un precio de hoy distinto", () => {
+    const next = refreshedCatalogLine(stale, today, "nueva");
+    expect(catalogPriceToRestore(next)).toBeNull();
+    expect(catalogPriceTodayIfDifferent(next)).toBeNull();
+  });
+
+  it("no cambia la línea original", () => {
+    refreshedCatalogLine(stale, today, "nueva");
+    expect(stale.id).toBe("vieja");
+    expect(stale.price).toBe("10000");
   });
 });

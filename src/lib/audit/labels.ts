@@ -6,6 +6,8 @@
 import { describeApprovalRule } from "@/lib/approvals/describe";
 import { isApprovalMode, type ApprovalRule } from "@/lib/approvals/rule";
 import { roleLabel } from "@/lib/permissions/matrix";
+import { formatPercentBp } from "@/lib/quotes/format";
+import { describeLockedPriceChanges } from "@/lib/quotes/locked-price-text";
 
 /** Acciones que el registro de la organización sabe nombrar, en el orden del selector. */
 export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
@@ -44,6 +46,7 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "quote.send_failed": "No se pudo enviar una cotización",
   "quote.accepted": "El cliente aceptó una cotización",
   "quote.rejected": "El cliente rechazó una cotización",
+  "quote.locked_price_overridden": "Se cambió un precio bloqueado en una cotización",
   "share_link.revoked": "Se revocó el enlace de una cotización",
   "invitation.created": "Se invitó a una persona al equipo",
   "invitation.updated": "Cambió una invitación",
@@ -102,6 +105,8 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   resent_by: "quién la reenvió",
   body: "texto",
   is_default: "predeterminado",
+  price_locked: "precio bloqueado",
+  max_discount_bp: "descuento máximo",
 };
 
 /** Quién hizo algo cuando la fila no lo identifica: una persona con cuenta que no es ni fue de esta organización. */
@@ -204,6 +209,43 @@ function approvalRuleOf(value: unknown): ApprovalRule | null {
   return { mode: value.mode, amountThresholdClp: amount, discountThresholdBp: discount };
 }
 
+/** El descuento máximo como se dice en el registro: «Sin tope» o «10 %»; `null` si el valor no es de este tipo. */
+function maxDiscountValueText(value: unknown): string | null {
+  if (value === null) return "Sin tope";
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
+  return `${formatPercentBp(value)} %`;
+}
+
+/**
+ * Los cambios del descuento máximo (organización) y del candado de un precio (servicio del catálogo) dicho como en H-040
+ * («Descuento máximo: Sin tope → 10 %», «Bloqueó el precio»), más «Cambió: …» con lo demás que haya cambiado en el mismo registro.
+ * `null` si el registro no toca ninguno de los dos campos o no se puede leer.
+ */
+function describePriceRuleChange(details: unknown): string | null {
+  if (!isRecord(details) || !isRecord(details.new)) return null;
+  const oldValues = isRecord(details.old) ? details.old : {};
+  const parts: string[] = [];
+  if ("max_discount_bp" in details.new) {
+    const before = maxDiscountValueText(oldValues.max_discount_bp ?? null);
+    const after = maxDiscountValueText(details.new.max_discount_bp);
+    if (before === null || after === null) return null;
+    parts.push(`Descuento máximo: ${before} → ${after}`);
+  }
+  if ("price_locked" in details.new) {
+    if (typeof details.new.price_locked !== "boolean") return null;
+    parts.push(details.new.price_locked ? "Bloqueó el precio" : "Quitó el bloqueo del precio");
+  }
+  if (parts.length === 0) return null;
+  const rest = Object.keys(details.new).filter(
+    (key) => key !== "max_discount_bp" && key !== "price_locked",
+  );
+  if (rest.length > 0) {
+    const other = describeAuditDetails({ changed: rest });
+    if (other) parts.push(other);
+  }
+  return parts.join(" · ");
+}
+
 /**
  * La frase del detalle de un registro. Para cambiar el rol de un miembro o quitarlo dice **a quién** afectó
  * («Quitó a María Pérez del equipo»): con la decisión de no mandar correos, el registro es lo único que se lo
@@ -238,6 +280,19 @@ export function describeAuditEntry(entry: {
     if (before && after) {
       return `Antes: ${describeApprovalRule(before)} Ahora: ${describeApprovalRule(after)}`;
     }
+  }
+  if (
+    entry.action === "tenant.updated" ||
+    entry.action === "catalog_item.updated" ||
+    entry.action === "catalog_item.price_changed"
+  ) {
+    const change = describePriceRuleChange(entry.details);
+    if (change) return change;
+  }
+  if (entry.action === "quote.locked_price_overridden") {
+    // Qué líneas y de cuánto a cuánto; nunca nombres de línea (el registro no los guarda).
+    const changes = describeLockedPriceChanges(entry.details);
+    if (changes) return `Cambió: ${changes}`;
   }
   return describeAuditDetails(entry.details);
 }

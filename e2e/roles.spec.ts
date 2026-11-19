@@ -129,6 +129,20 @@ const CONTROLS: readonly Control[] = [
     who: MANAGERS,
   },
   {
+    // H-041: el descuento máximo de los Comerciales lo cambian el Dueño y los Administradores; el resto solo lo lee.
+    page: "/o/[tenantId]/catalogo",
+    label: "Guardar el descuento máximo de los Comerciales",
+    find: (page) => page.getByTestId("discount-cap-save"),
+    who: MANAGERS,
+  },
+  {
+    // H-041: la casilla «Bloquear el precio» del servicio nuevo, solo para quien maneja el catálogo.
+    page: "/o/[tenantId]/catalogo",
+    label: "Bloquear el precio (servicio nuevo)",
+    find: (page) => page.getByRole("checkbox", { name: /Bloquear el precio/ }),
+    who: MANAGERS,
+  },
+  {
     page: "/o/[tenantId]/catalogo/[itemId]",
     label: "Guardar cambios del servicio",
     find: (page) => page.getByRole("button", { name: "Guardar cambios" }),

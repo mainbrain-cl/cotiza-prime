@@ -25,6 +25,7 @@ const catalog = (id: string, price = 10_000): CatalogSnapshot => ({
   unit: "km",
   unitPriceClp: price,
   taxTreatment: "taxable",
+  priceLocked: false,
 });
 
 describe("parseRequestedServices", () => {

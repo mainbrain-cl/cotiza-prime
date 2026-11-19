@@ -1,4 +1,4 @@
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Lock } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -6,6 +6,7 @@ import { FormAlert } from "@/components/ui/form-controls";
 import { unitLabel } from "@/lib/catalog/schemas";
 import { formatClp } from "@/lib/money/clp";
 import { can } from "@/lib/permissions/matrix";
+import { loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { EditCatalogItemForm, ToggleActiveForm } from "./edit-forms";
@@ -22,6 +23,7 @@ type ItemRow = {
   unit_price_clp: number;
   tax_treatment: "taxable" | "exempt";
   is_active: boolean;
+  price_locked: boolean;
 };
 
 export default async function CatalogItemPage({
@@ -34,12 +36,14 @@ export default async function CatalogItemPage({
   // El filtro por organización lo pone la base (RLS); un servicio de otra organización no aparece.
   const { data } = await active.supabase
     .from("catalog_items")
-    .select("id, name, description, unit, unit_price_clp, tax_treatment, is_active")
+    .select("id, name, description, unit, unit_price_clp, tax_treatment, is_active, price_locked")
     .eq("id", itemId)
     .maybeSingle();
   if (!data) notFound();
   const item = data as ItemRow;
   const canEdit = can(active.role, "catalog.manage");
+  // Para la ayuda del candado («hoy: 10 %»): una lectura ligera, y solo a quien edita. Si falla, la ayuda no afirma el valor.
+  const cap = canEdit ? await loadMaxDiscountBp(active) : null;
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">
@@ -79,7 +83,9 @@ export default async function CatalogItemPage({
                 unit: item.unit,
                 unitPriceClp: String(item.unit_price_clp),
                 taxTreatment: item.tax_treatment,
+                priceLocked: item.price_locked ? "1" : "",
               }}
+              maxDiscountBp={cap === null ? undefined : cap.maxDiscountBp}
             />
           </section>
           <section
@@ -110,7 +116,15 @@ export default async function CatalogItemPage({
             </div>
             <div>
               <dt className="text-sm text-fg-muted">Precio neto</dt>
-              <dd className="font-semibold tabular-nums">{formatClp(item.unit_price_clp)}</dd>
+              <dd className="flex items-center gap-1.5 font-semibold tabular-nums">
+                {formatClp(item.unit_price_clp)}
+                {item.price_locked ? (
+                  <>
+                    <Lock aria-hidden className="size-4 text-fg-muted" />
+                    <span className="sr-only">Precio bloqueado</span>
+                  </>
+                ) : null}
+              </dd>
             </div>
             <div>
               <dt className="text-sm text-fg-muted">IVA</dt>

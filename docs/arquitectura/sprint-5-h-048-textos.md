@@ -30,7 +30,7 @@ es `save_quote_draft`, que H-041 también reescribe (§12).
 
 ## Puesta al día del 2026-11-19 (con H-041 en `main`, PR #58)
 
-> Este bloque **manda sobre lo anterior** donde lo contradiga. Salió de la lectura del `planificador` (Opus) del código de H-041 ya mezclado. H-048b **no depende de ninguna respuesta de Aarón** y va **antes de H-042**.
+> Este bloque **manda sobre lo anterior** donde lo contradiga. Salió de la lectura del `planificador` (Opus) del código de H-041 ya mezclado. H-048b va **antes de H-042** y **empieza cuando Aarón apruebe la muestra del PDF** con «EXCLUSIONES» y «NOTAS» (decisión del 2026-11-19).
 
 | Sigue igual | Cambia |
 |---|---|
@@ -43,7 +43,9 @@ es `save_quote_draft`, que H-041 también reescribe (§12).
 
 **Choques con H-042 (archivos de la aplicación, no la función de la base):** `quote-editor.tsx`, la página de la cotización, `queries.ts` (`getQuote`), `convert-lines.ts` (H-042 cambia la lectura del catálogo y H-048b agrega `exclusions` y `footerNote` en `null`), `save-error.ts`, la prueba trampa, el registro de aislamiento y `labels.ts`. Ninguno queda oculto: git los muestra.
 
-**Opcional (+0,1 día):** si la pregunta 18 (H-041b) sigue sin respuesta al empezar, que la reescritura de H-048b ya le pase el nombre de la línea a la regla; así H-041b no reescribe `save_quote_draft` otra vez.
+**Ya no hace falta:** la pregunta 18 (H-041b) se resolvió el 2026-11-19 con la opción A (no se hace ahora), así que la reescritura de H-048b no tiene que pasarle el nombre de la línea a la regla.
+
+**Defecto anterior de la plantilla 1, para el PR del PDF de H-048b** (revisión del `revisor` al #62, 2026-11-19): un **título de las notas puede quedar solo al pie de una página** (con 20 líneas en carta, «OBSERVACIONES» queda al pie de la página 2 y su texto empieza en la 3). El comentario «El título nunca queda solo al pie de una página» hoy no es cierto: `minPresenceAhead` no actúa en el motor de cortes que usa la plantilla porque cada título es el primer hijo de su bloque. H-048b agrega dos bloques más (EXCLUSIONES y NOTAS), así que el riesgo crece. **Arreglo:** poner los títulos y los textos de las notas como hermanos directos dentro de `summaryStacked`, después de `totalsRight`, sin la vista `noteBlock`; **no** usar `wrap={false}` en el bloque de nota (una nota de más de una hoja se cortaría). Con prueba que recorra de 1 a 45 líneas. Aparte, el **PDF sin total con textos largos** ya se corrigió en el PR #62.
 
 **Tamaño:** ≈ 4,5 días (igual que antes).
 

@@ -9,6 +9,7 @@ describe("isNetworkError", () => {
     "network error",
     "Network request failed",
     "The network connection was lost.",
+    "The Internet connection appears to be offline.",
   ])("reconoce el mensaje del navegador: %s", (message) => {
     expect(isNetworkError(new TypeError(message))).toBe(true);
   });

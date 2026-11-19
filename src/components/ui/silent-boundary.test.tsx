@@ -43,6 +43,15 @@ describe("SilentBoundary", () => {
     expect(host.textContent).toBe("Ingresa a tu cuenta");
   });
 
+  it("deja un aviso en la consola, sin tragarse el error en silencio", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await act(async () => {
+      root.render(createElement(SilentBoundary, null, createElement(Boom)));
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0].join(" ")).toContain("no se pudo descargar");
+  });
+
   it("si no falla, muestra el contenido", async () => {
     await act(async () => {
       root.render(createElement(SilentBoundary, null, createElement("span", null, "fondo")));

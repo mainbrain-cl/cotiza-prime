@@ -28,6 +28,29 @@ es `save_quote_draft`, que H-041 también reescribe (§12).
 
 ---
 
+## Puesta al día del 2026-11-19 (con H-041 en `main`, PR #58)
+
+> Este bloque **manda sobre lo anterior** donde lo contradiga. Salió de la lectura del `planificador` (Opus) del código de H-041 ya mezclado. H-048b **no depende de ninguna respuesta de Aarón** y va **antes de H-042**.
+
+| Sigue igual | Cambia |
+|---|---|
+| Las dos columnas nuevas, `app.quote_text_max_length()`, la copia del documento (opción A), el PDF y la página del cliente (`/c/[token]`) con los campos opcionales | Hay que partir de la versión de `save_quote_draft` **de H-041** (huella md5 `103579dac268fc9032bf33896d36b6a9`), no de `20261005130000`. El permiso ahora es `app.can('quote.edit', true)`, no `has_role` (la guardia 12 de `tests/db/schema-guards.test.ts` falla si vuelve) |
+| | La fecha de la migración debe ser posterior a `20261118100000`; la reserva `20261104130000` ya no sirve |
+| | **El deshacer** debe reponer la función de H-041 **idéntica, letra por letra**, y negarse a correr si la huella no calza (mismo patrón que el de H-041), con una prueba de que, tras deshacer, queda la huella de H-041. Si no, el deshacer de H-041 se niega en `test:db:rollbacks` |
+| | La prueba trampa ya existe (`tests/db/save-quote-draft-contract.test.ts`): H-048b solo le suma las claves `exclusions` y `footer_note` |
+| | La traducción de errores va en `src/lib/quotes/save-error.ts` (`invalidMessage` y errores por campo); en el editor, los errores por campo usan el mecanismo de H-041 (`failedKey` de `use-quote-saver.ts`) |
+| Lo pendiente sobre H-040 de §3.5 | Queda resuelto: ninguna migración desde `20261110` lee `document_snapshot` (comprobado con `grep`) |
+
+**Choques con H-042 (archivos de la aplicación, no la función de la base):** `quote-editor.tsx`, la página de la cotización, `queries.ts` (`getQuote`), `convert-lines.ts` (H-042 cambia la lectura del catálogo y H-048b agrega `exclusions` y `footerNote` en `null`), `save-error.ts`, la prueba trampa, el registro de aislamiento y `labels.ts`. Ninguno queda oculto: git los muestra.
+
+**Opcional (+0,1 día):** si la pregunta 18 (H-041b) sigue sin respuesta al empezar, que la reescritura de H-048b ya le pase el nombre de la línea a la regla; así H-041b no reescribe `save_quote_draft` otra vez.
+
+**Tamaño:** ≈ 4,5 días (igual que antes).
+
+**Sin verificar** (dicho por el `planificador`): cómo pagina el PDF con cinco textos largos.
+
+---
+
 ## 1. Qué existe hoy
 
 - **No hay tabla de textos.** El texto inicial del correo está escrito en el código (`defaultEmailBody()` en

@@ -27,6 +27,34 @@
 
 ---
 
+## Puesta al día del 2026-11-19 (con H-041 en `main`, PR #58)
+
+> Este bloque **manda sobre lo anterior** donde lo contradiga. Salió de la lectura del `planificador` (Opus) del código de H-041 ya mezclado y de la revisión de Aarón del 2026-11-18. Lo que el `planificador` no pudo comprobar sigue marcado «no verificado».
+
+**Lo principal: H-042 ya no reescribe `save_quote_draft`.** H-041 dejó el gancho conectado: `app.can_quote_catalog_item(p_catalog_item_id uuid) returns boolean`, `language sql stable security definer set search_path = ''`, hoy `select true` y sin permiso de ejecución para `authenticated`. Se consulta solo para una línea **nueva** del catálogo, después de comprobar que el servicio es de la organización y está activo (migración `20261118100000_price_locks.sql`). **H-042 solo reemplaza esa función**; el «Camino B» y la decisión D1 ya no aplican. Solo la reescribirán H-048b y, si Aarón la pide, H-041b.
+
+| Tema | Sigue igual | Cambia |
+|---|---|---|
+| Gancho | La regla se hace cumplir al guardar líneas nuevas; D5 (un borrador viejo se puede enviar) se cumple sola porque el control del envío no consulta el gancho | El reemplazo debe **mantener el nombre del parámetro** (`p_catalog_item_id`; no verificado que PostgreSQL lo impida). Su deshacer debe dejar el cuerpo **exactamente `select true`**: el deshacer de H-041 lo compara (`btrim(prosrc) = 'select true'`) y se niega si no |
+| Error | `CP422` al guardar | El fragmento `raise exception 'catalog_item_not_allowed@%'` de §3 quedó obsoleto: hoy todo sale junto como `line_rules_invalid: …,catalog_item_not_allowed@i` (índice desde 0, al final de la lista). Su texto vive en `src/lib/quotes/save-error.ts` y marca el campo `items.i.name`; H-042 solo ajusta el texto y vuelve a pedir el catálogo |
+| Prueba trampa | `tests/db/save-quote-draft-contract.test.ts` existe | Su primer caso espera «sí» para un id al azar: H-042 tiene que cambiarlo |
+| `quotable_catalog_items` | Diseño de §3 | Debe devolver también `price_locked` (ya lo leen `catalog-source.ts` y `convert-lines.ts`) |
+| Ficha del miembro, tablas, permisos por fila, D2 a D13 | Siguen | La ficha ya está en `main` (`equipo/[memberId]`) |
+
+**Riesgos nuevos que el diseño no cubría**
+1. **Permiso del gancho.** `quotable_catalog_items` corre con los permisos de quien la usa, pero no puede llamar al gancho: H-041 se lo quitó a `authenticated`, y `tests/db/price-locks.test.ts` exige que siga así. **Recomendado (a):** dar el permiso y actualizar esa prueba (la API solo expone `public`, `config.toml`, y el gancho solo responde sobre quien pregunta); el deshacer de H-042 vuelve a quitarlo. Alternativa (b): que `quotable_catalog_items` corra con permisos elevados y filtre a mano por organización (se pierde la RLS como segunda capa).
+2. **Ante la duda, «no».** Sin membresía activa en la organización activa el gancho responde «no»; nunca toma la organización de un parámetro.
+3. **Reemplazarlo con `create or replace` sin repetir `security definer set search_path = ''` le quita esa protección** (pedido de Aarón, 2026-11-18): la prueba de contrato debe verificar también `prosecdef` y `proconfig` del gancho.
+4. **Hay tres lectores del catálogo, no dos.** Además de `listQuotableCatalogItems` y `loadActiveCatalog` (`src/lib/intake/convert-lines.ts`), H-041 agregó `getQuotableCatalogItem` (`catalog-source.ts`), que usa «Actualizar al precio de hoy». Si H-042 no filtra las tres, un Comercial limitado podría volver a poner un servicio no permitido. Si `loadActiveCatalog` no se cambia, un servicio no permitido hace fallar todo el guardado y la cotización de una solicitud queda vacía.
+5. **El permiso por servicio solo se revisa al guardar una línea nueva, no al enviar** (`docs/seguridad-pendiente.md`, H-041-3).
+6. **Deshacer en cadena.** El de H-041 se niega si otra función nombra `can_quote_catalog_item` o `price_locked`: funciona en orden inverso siempre que el deshacer de H-042 borre `quotable_catalog_items`.
+
+**Orden, tamaño y decisiones.** Se construye **después de H-048b** (que reescribe `save_quote_draft`); hacerlo antes cuesta unos 0,25 día más si la pregunta 18 sale B. ≈ **3,5 días** (PR 1: 1,5; PR 2: 2). Lo que **se puede construir ya**: el PR 1 completo. Lo que **depende de la pregunta 18** (H-041b): los textos de la ficha y del editor, y la prueba «línea a mano aceptada». Aarón, además, tiene que ver la muestra del PDF de H-048b (con «EXCLUSIONES» y «NOTAS»). **José puede aplicar con la opción recomendada:** el permiso del gancho (a), el orden H-048b antes que H-042, y actualizar el primer caso de la prueba trampa y `quotable_catalog_items` con `price_locked`.
+
+**Sin verificar** (dicho por el `planificador`): que PostgreSQL impida renombrar el parámetro del gancho al reemplazarlo.
+
+---
+
 ## 1. Qué existe hoy
 
 **Verificado en el código:**

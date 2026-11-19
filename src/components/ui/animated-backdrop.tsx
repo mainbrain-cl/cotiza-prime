@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { AuroraBackground } from "@/components/ui/aurora-background";
+import { SilentBoundary } from "@/components/ui/silent-boundary";
 
 // Las líneas onduladas (React Bits, ver decisión 018) se descargan solo si se van a mostrar.
 const Waves = dynamic(() => import("@/components/react-bits/waves"), { ssr: false });
@@ -49,7 +50,10 @@ export function AnimatedBackdrop({ className }: { className?: string }) {
       <AuroraBackground className={className} />
       {waves ? (
         <div aria-hidden className="pointer-events-none absolute inset-0 text-accent opacity-20">
-          <Waves />
+          {/* Si el trozo de código de las líneas no se descarga (se cortó la red), solo se pierde el adorno. */}
+          <SilentBoundary>
+            <Waves />
+          </SilentBoundary>
         </div>
       ) : null}
     </>

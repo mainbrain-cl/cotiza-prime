@@ -56,7 +56,7 @@ la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con
 
 ### Traspaso del 2026-11-23 — lo más reciente (léelo antes que el del 2026-11-19)
 
-**`main` está en `ef772d0` (PR #65, la muestra del PDF), sobre `2f3cbdb` (#66, pulido del enlace del cliente). 56 migraciones con la de H-048b (rama abierta). PR abierto: el de H-048b (`feat/h-048b-textos-en-la-cotizacion`), esperando a Aarón.**
+**`main` está en `ef772d0` (PR #65, la muestra del PDF), sobre `2f3cbdb` (#66, pulido del enlace del cliente). 56 migraciones con la de H-048b (rama abierta). PR abierto: el #67 (H-048b, `feat/h-048b-textos-en-la-cotizacion`), esperando a Aarón.**
 
 - **Aarón aprobó la muestra del PDF de H-048b «tal cual» (2026-11-23)** y autorizó el orden **H-048b → H-042 → H-116 → H-119 → H-120**. Desde el traspaso del 19-11 entraron #62 (el PDF sin total), #63 (decisiones de Aarón), #64 (menores del #60), #65 (muestra) y #66 (encabezado del enlace del cliente); los mezcló José bajo la decisión 020 §5.
 - **H-048b: construida, con revisión Opus (0 bloqueantes; sus 2 importantes y los menores, corregidos).** Exclusiones y notas al pie como campos propios de la cotización (migración `20261123100000_quote_text_fields`), «Insertar texto guardado» en el editor, el correo de `/enviar` con el texto inicial y las variables completas, y los dos textos en el PDF y en la página del cliente. **Delicada: no se mezcla sin Aarón.** Registro de construcción, desviaciones y verificación: `docs/arquitectura/sprint-5-h-048-textos.md` («Registro de construcción — H-048b»). Componentes nuevos: `docs/DISENO.md`.

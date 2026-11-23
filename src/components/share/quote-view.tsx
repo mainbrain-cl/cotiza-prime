@@ -94,7 +94,8 @@ export function QuoteView({
               ) : null}
               <h1 className="min-w-0 text-lg font-semibold break-words">{organization.name}</h1>
             </div>
-            <div className="text-right">
+            {/* En el teléfono el número baja a la segunda fila, a la izquierda: «Cotización» queda alineada con él; desde 640 px va a la derecha. */}
+            <div className="text-left sm:text-right">
               <p className="text-xs tracking-[0.08em] uppercase opacity-90">Cotización</p>
               <p data-testid="share-quote-number" className="font-mono text-lg font-semibold">
                 {quote.number}

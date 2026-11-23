@@ -73,7 +73,29 @@ const SQLSTATE_INVALID = "CP422";
 const SQLSTATE_NOT_EDITABLE = "CP423";
 const SQLSTATE_CALC_MISMATCH = "CP500";
 
+/** Los textos de H-048b que la base rechazó: el campo y lo que se le dice a la persona (la pantalla ya revisa el largo; esto cubre lo que se le escapó). */
+const TEXT_FIELD_ERRORS: ReadonlyArray<{ code: string; field: string; message: string }> = [
+  {
+    code: "invalid_exclusions",
+    field: "exclusions",
+    message:
+      "Las exclusiones no se pueden guardar: son muy largas o tienen caracteres no permitidos.",
+  },
+  {
+    code: "invalid_footer_note",
+    field: "footerNote",
+    message: "Las notas no se pueden guardar: son muy largas o tienen caracteres no permitidos.",
+  },
+];
+
+function textFieldErrors(rpcMessage: string): Record<string, string> {
+  const entry = TEXT_FIELD_ERRORS.find((candidate) => rpcMessage.startsWith(candidate.code));
+  return entry ? { [entry.field]: entry.message } : {};
+}
+
 function invalidMessage(rpcMessage: string): string {
+  const textField = TEXT_FIELD_ERRORS.find((entry) => rpcMessage.startsWith(entry.code));
+  if (textField) return textField.message;
   if (rpcMessage.startsWith("catalog_item_unavailable")) {
     return "Un servicio de la cotización ya no está disponible en el catálogo. Quítalo o usa una línea libre.";
   }
@@ -133,7 +155,7 @@ export function mapSaveRpcError(
           message: invalidMessage(message),
           fieldErrors: message.startsWith("validity_in_past")
             ? { validity: "La fecha de vigencia no puede estar en el pasado." }
-            : {},
+            : textFieldErrors(message),
         },
       };
     }

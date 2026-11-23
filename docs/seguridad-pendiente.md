@@ -38,6 +38,8 @@ Sin trabajo ahora; se cierran con la lista antes del primer cliente real.
 - **H-041-3 (para H-042):** el permiso por servicio solo se revisa al guardar una línea **nueva**, no al enviar. Además, si H-042 reemplaza `app.can_quote_catalog_item` con `create or replace` sin repetir `security definer set search_path = ''`, el gancho pierde esa protección: la prueba de contrato (`tests/db/save-quote-draft-contract.test.ts`) tiene que verificar también `prosecdef` y `proconfig` del gancho.
 - **H-041-4:** con la opción C de la pregunta 20 (aprobada), un Comercial puede agregar servicios a varios borradores antes de una subida de precio y enviarlos después al precio anterior. Aceptado.
 
+- **H-048b-1** (revisión Opus, 2026-11-23): la página del cliente (`src/lib/share/read-model.ts`) acepta hasta 5.000 caracteres por texto, y la base acepta 4.000 *caracteres* (un emoji cuenta como 2 en el navegador, así que la pantalla frena antes). Un Comercial que llame a `save_quote_draft` directo con su sesión podría guardar unos 2.600 emoji en un campo y enviar; entonces la página del cliente de **su propia** cotización daría error (`gateway.ts` lanza «shape»). No cruza organizaciones y pasa igual hoy con observaciones y condiciones. Cierre: validar los textos con `quoteTextSchema` antes de armar la copia al enviar, o subir el límite de la página del cliente.
+
 ## Antes del piloto (de H-004b, sin trabajo ahora)
 
 - Medir el cupo de Resend (plan gratuito: 100 correos al día; con el día agotado nadie puede activar ni desactivar, D4 = A).

@@ -22,6 +22,12 @@ import { loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
 import { getQuote } from "@/lib/quotes/queries";
 import { defaultEmailBody, defaultEmailSubject } from "@/lib/quotes/send/content";
 import { loadSendContext } from "@/lib/quotes/send/context";
+import {
+  emailSnippetOptions,
+  emailVariableValues,
+  initialEmailBody,
+} from "@/lib/snippets/email-body";
+import { loadSnippets } from "@/lib/snippets/queries";
 import { can } from "@/lib/permissions/matrix";
 import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
@@ -139,8 +145,27 @@ export default async function SendQuotePage({
     blocker = "No pudimos cargar los datos de tu organización. Intenta de nuevo en unos minutos.";
   }
 
+  const defaultBody = context
+    ? defaultEmailBody({ customerName, authorName, organizationName: context.organizationName })
+    : "";
   const brand = context ? resolvePdfBrand(context.brandPrimary, context.brandSecondary) : null;
   const number = formatQuoteNumber(quote.number_display, quote.version);
+  // Los textos de correo guardados (H-048b), ya con las variables completadas con los datos de ESTA cotización. Solo se leen si se puede
+  // enviar. Si no se pudieron leer, el correo parte con el texto de siempre y el selector lo dice.
+  const snippetList = !blocker && context ? await loadSnippets(active) : null;
+  const snippetOptions =
+    snippetList?.ok && context
+      ? emailSnippetOptions(
+          snippetList.groups.flatMap((group) => group.rows),
+          emailVariableValues({
+            customerName,
+            quoteNumber: number,
+            // `getQuote` devuelve «—» si no pudo leer el nombre: no se escribe en el correo (igual que en el texto de siempre).
+            senderName: authorName === "—" ? "" : authorName,
+            organizationName: context.organizationName,
+          }),
+        )
+      : [];
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-3">
@@ -184,11 +209,10 @@ export default async function SendQuotePage({
           expectedRevision={quote.revision}
           quotePath={quotePath}
           initialSubject={defaultEmailSubject(quote.number_display, context.organizationName)}
-          initialBody={defaultEmailBody({
-            customerName,
-            authorName,
-            organizationName: context.organizationName,
-          })}
+          initialBody={initialEmailBody(snippetOptions, defaultBody)}
+          defaultText={defaultBody}
+          snippetOptions={snippetOptions}
+          snippetsUnavailable={snippetList !== null && !snippetList.ok}
           organizationName={context.organizationName}
           brandPrimary={brand.primary}
           brandOnPrimary={brand.onPrimary}

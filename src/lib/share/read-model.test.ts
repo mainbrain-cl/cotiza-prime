@@ -72,6 +72,37 @@ describe("lo que devuelve share_link_read", () => {
     expect(shareReadSchema.safeParse({ state: "otro" }).success).toBe(false);
   });
 
+  it("una cotización enviada ANTES de H-048b (sin exclusiones ni notas en la copia) sigue abriendo, con los dos campos vacíos", () => {
+    // `snapshot` no trae las claves nuevas: es exactamente lo que guardaron los envíos antiguos.
+    expect(snapshot).not.toHaveProperty("exclusions");
+    expect(snapshot).not.toHaveProperty("footerNote");
+    const parsed = shareReadSchema.parse(available);
+    if (parsed.state !== "ok") throw new Error("debía estar disponible");
+    expect(parsed.document_snapshot.exclusions).toBeNull();
+    expect(parsed.document_snapshot.footerNote).toBeNull();
+  });
+
+  it("una copia nueva trae sus exclusiones y notas; nulas o con texto valen; pasar de 5.000 caracteres se rechaza", () => {
+    const parse = (extra: Record<string, unknown>) =>
+      shareReadSchema.safeParse({
+        ...available,
+        document_snapshot: { ...snapshot, ...extra },
+      });
+    const withTexts = parse({ exclusions: "No incluye embalaje.", footerNote: "Valores en CLP." });
+    expect(withTexts.success).toBe(true);
+    const data = withTexts.data;
+    if (data?.state !== "ok") throw new Error("debía estar disponible");
+    expect(data.document_snapshot).toMatchObject({
+      exclusions: "No incluye embalaje.",
+      footerNote: "Valores en CLP.",
+    });
+    expect(parse({ exclusions: null, footerNote: null }).success).toBe(true);
+    expect(parse({ exclusions: "x".repeat(5_000) }).success).toBe(true);
+    expect(parse({ exclusions: "x".repeat(5_001) }).success).toBe(false);
+    expect(parse({ footerNote: "x".repeat(5_001) }).success).toBe(false);
+    expect(parse({ exclusions: 5 }).success).toBe(false);
+  });
+
   it("un enlace vencido, revocado o reemplazado no trae la cotización", () => {
     const parsed = shareReadSchema.parse({
       state: "expired",

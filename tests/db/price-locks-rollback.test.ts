@@ -22,6 +22,9 @@ const NAME = "20261118100000_price_locks";
 const up = read("migrations", `${NAME}.sql`);
 const down = read("rollbacks", `${NAME}.down.sql`);
 const previous = read("migrations", "20261005130000_brand_server_only_logo.sql");
+// H-048b (20261123100000) redefinió `save_quote_draft` encima de la de esta migración: su deshacer va PRIMERO (orden inverso), y deja la
+// función exactamente como la dejó esta migración. Cada prueba de aquí lo corre al empezar, dentro de su transacción.
+const later = read("rollbacks", "20261123100000_quote_text_fields.down.sql");
 const md5 = (text: string) => createHash("md5").update(text).digest("hex");
 const code = (sql: string) =>
   sql
@@ -107,16 +110,19 @@ describe("la migración price_locks y su deshacer", () => {
     expect(code(up)).not.toMatch(/grant[^;]*\bto\b[^;]*\b(anon|public)\b/i);
   });
 
-  it("PL2 · los md5 que exige el deshacer son los del cuerpo de la migración y coinciden con la base", async () => {
-    const body = functionBodyIn(up, "public.save_quote_draft");
-    expect(code(down)).toContain(`md5(p.prosrc) = '${md5(body)}'`);
-    await actAsPostgres(db);
-    expect((await saveDefinition()).src).toBe(body);
-  });
+  it("PL2 · los md5 que exige el deshacer son los del cuerpo de la migración y coinciden con la base (una vez deshecha H-048b)", () =>
+    withTx(db, async () => {
+      const body = functionBodyIn(up, "public.save_quote_draft");
+      expect(code(down)).toContain(`md5(p.prosrc) = '${md5(body)}'`);
+      await actAsPostgres(db);
+      await db.query(later);
+      expect((await saveDefinition()).src).toBe(body);
+    }));
 
   it("PL3 · el deshacer quita el disparador, las ocho funciones y las dos columnas; `save_quote_draft` queda EXACTAMENTE como antes, con sus atributos y permisos", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(later);
       const current = await saveDefinition();
       expect(current.auth).toBe(true);
       expect(await triggerExists()).toBe(true);
@@ -148,6 +154,7 @@ describe("la migración price_locks y su deshacer", () => {
   it("PL4 · el deshacer se NIEGA a correr dos veces y no cambia nada", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(later);
       await db.query(down);
       const error = await expectSqlError(db, down);
       expect(error.message).toMatch(/ya no es la de esta migracion/);
@@ -178,6 +185,7 @@ describe("la migración price_locks y su deshacer", () => {
   it("PL6 · si H-042 reemplazó el gancho (ya no es `select true`), se NIEGA: nunca se borra a ciegas", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(later);
       await db.query(`create or replace function app.can_quote_catalog_item(p_catalog_item_id uuid) returns boolean
         language sql stable security definer set search_path = '' as $f$ select false $f$`);
       const error = await expectSqlError(db, down);
@@ -190,6 +198,7 @@ describe("la migración price_locks y su deshacer", () => {
   it("PL7 · si OTRA función nombra lo que se quita (la regla, el gancho o las columnas), se NIEGA", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(later);
       for (const name of [
         "line_rule_issues",
         "quote_line_rules_check",
@@ -213,6 +222,7 @@ describe("la migración price_locks y su deshacer", () => {
   it("PL8 · el deshacer pierde solo la configuración: el evento y la auditoría de un precio bloqueado cambiado se conservan, y guardar vuelve a ser sin regla", () =>
     withTx(db, async () => {
       await actAsPostgres(db);
+      await db.query(later);
       const service = await addCatalogItem(db, w.tenantA, 10_000);
       await db.query("update public.catalog_items set price_locked = true where id = $1", [
         service,

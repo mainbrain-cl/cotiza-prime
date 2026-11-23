@@ -72,6 +72,26 @@ describe("buildQuoteDocumentData: lee lo guardado, no recalcula", () => {
   });
 });
 
+describe("buildQuoteDocumentData: exclusiones y notas (H-048b)", () => {
+  it("las toma de lo guardado, sin espacios a los lados; vacío o solo espacios es nulo", () => {
+    const data = buildQuoteDocumentData(
+      sampleInput({
+        quote: sampleQuoteRow({
+          exclusions: "  No incluye embalaje.  ",
+          footer_note: "Valores en CLP.",
+        }),
+      }),
+    );
+    expect(data.exclusions).toBe("No incluye embalaje.");
+    expect(data.footerNote).toBe("Valores en CLP.");
+    const empty = buildQuoteDocumentData(
+      sampleInput({ quote: sampleQuoteRow({ exclusions: "   \n ", footer_note: null }) }),
+    );
+    expect(empty.exclusions).toBeNull();
+    expect(empty.footerNote).toBeNull();
+  });
+});
+
 describe("validityOf", () => {
   it("con fecha, la usa", () => {
     expect(validityOf(sampleQuoteRow({ valid_until: "2026-10-20" }), "2026-10-05")).toEqual({

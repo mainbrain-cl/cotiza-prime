@@ -24,6 +24,8 @@ import { needsAttention } from "@/lib/quotes/delivery-model";
 import { canRevokeLinks } from "@/lib/quotes/link-rules";
 import { hasActiveShareLink } from "@/lib/quotes/links";
 import { loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
+import { loadSnippets } from "@/lib/snippets/queries";
+import { quoteFieldSnippets } from "@/lib/snippets/quote-fields";
 import { getQuote, isActiveMember } from "@/lib/quotes/queries";
 import { readOnlyReason } from "@/lib/quotes/read-only-reason";
 import { getQuoteResponse } from "@/lib/quotes/response";
@@ -134,6 +136,8 @@ export default async function QuotePage({
     ...editorValidity(quote, organizationDays),
     observations: quote.observations ?? "",
     conditions: quote.conditions ?? "",
+    exclusions: quote.exclusions ?? "",
+    footerNote: quote.footer_note ?? "",
   };
   const initialCatalog = editable ? await listQuotableCatalogItems(active, "") : [];
   // Las reglas de precio y descuento (H-041): el descuento máximo de la organización y si esta persona se salta el candado. Quien
@@ -146,6 +150,13 @@ export default async function QuotePage({
     canOverride,
     maxDiscountUnknown: editable && !canOverride && maxDiscount === null,
   };
+  // Los textos guardados que ofrece «Insertar texto guardado» (H-048b): los lee cualquier miembro, con su propio pase. Solo se leen si se
+  // puede editar. Quien puede administrarlos ve además el enlace a Configuración.
+  const snippetList = editable ? await loadSnippets(active) : null;
+  const snippets = quoteFieldSnippets(snippetList?.ok ? snippetList.groups : null);
+  const manageSnippetsHref = can(active.role, "settings.manage")
+    ? tenantPath(active.tenantId, "configuracion/textos")
+    : null;
   // «Solicitud original» (H-090): solo si la cotización nació de una solicitud del formulario público.
   const sourcePanel = await loadSourceRequestPanel(
     active,
@@ -253,6 +264,8 @@ export default async function QuotePage({
           initialCatalog={initialCatalog}
           requestSeedLines={sourcePanel?.seedLines ?? []}
           rules={rules}
+          snippets={snippets}
+          manageSnippetsHref={manageSnippetsHref}
         />
       ) : (
         <QuoteReadOnly

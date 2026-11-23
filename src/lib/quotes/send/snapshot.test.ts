@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sampleDocument } from "@/lib/pdf/sample-data";
+import { sampleDocument, sampleQuoteRow } from "@/lib/pdf/sample-data";
 import { buildCustomerSnapshot, buildDocumentSnapshot, contentSha256 } from "./snapshot";
 
 describe("copia congelada del envío", () => {
@@ -22,6 +22,30 @@ describe("copia congelada del envío", () => {
     expect(snapshot.totals).toEqual(document.totals);
     expect(snapshot.lines).toEqual(document.lines);
     expect(snapshot.organization.name).toBe(document.organization.name);
+  });
+
+  it("la copia lleva las exclusiones y las notas (H-048b), y el sello cambia si cambian", () => {
+    const withTexts = sampleDocument({
+      quote: sampleQuoteRow({ exclusions: "No incluye embalaje.", footer_note: "Valores en CLP." }),
+    });
+    const snapshot = buildDocumentSnapshot(withTexts);
+    expect(snapshot).toMatchObject({
+      exclusions: "No incluye embalaje.",
+      footerNote: "Valores en CLP.",
+    });
+    expect(buildDocumentSnapshot(document)).toMatchObject({ exclusions: null, footerNote: null });
+    const base = {
+      subject: "Asunto",
+      body: "Texto",
+      issueDate: "2026-10-06",
+      validUntil: "2026-10-21",
+      pdfSha256: "a".repeat(64),
+    };
+    const sha = contentSha256({ ...base, snapshot });
+    expect(contentSha256({ ...base, snapshot: { ...snapshot, exclusions: "Otra." } })).not.toBe(
+      sha,
+    );
+    expect(contentSha256({ ...base, snapshot: { ...snapshot, footerNote: null } })).not.toBe(sha);
   });
 
   it("cabe en el tope de la base de datos (256 kB) incluso con 200 líneas", () => {

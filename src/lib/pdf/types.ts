@@ -79,5 +79,9 @@ export type QuoteDocumentData = {
   totals: PdfTotals;
   observations: string | null;
   conditions: string | null;
+  /** H-048b: lo que NO incluye la cotización. Texto simple, opcional. */
+  exclusions: string | null;
+  /** H-048b: notas al final del documento (no el pie fijo de cada página). Texto simple, opcional. */
+  footerNote: string | null;
   paymentTerms: string | null;
 };

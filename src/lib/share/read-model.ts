@@ -56,6 +56,10 @@ export const documentSnapshotSchema = z.object({
   totals: totalsSchema,
   observations: nullableText,
   conditions: nullableText,
+  // H-048b: opcionales. Una cotización enviada ANTES de H-048b no trae estas claves y tiene que seguir abriendo para su cliente
+  // (si fueran obligatorias, toda copia antigua dejaría de pasar la validación). Faltan = vacíos.
+  exclusions: nullableText.optional().default(null),
+  footerNote: nullableText.optional().default(null),
   paymentTerms: nullableText,
 });
 

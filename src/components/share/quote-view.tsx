@@ -69,7 +69,9 @@ export function QuoteView({
   const notes = [
     { title: "Observaciones", text: doc.observations },
     { title: "Condiciones", text: doc.conditions },
+    { title: "Exclusiones", text: doc.exclusions },
     { title: "Forma de pago", text: doc.paymentTerms },
+    { title: "Notas", text: doc.footerNote },
   ].filter((note): note is { title: string; text: string } => Boolean(note.text));
 
   return (

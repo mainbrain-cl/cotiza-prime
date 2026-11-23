@@ -2,10 +2,10 @@
 
 import { ExternalLink, Loader2, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Field, FormAlert, Input, Textarea } from "@/components/ui/form-controls";
+import { Field, FormAlert, Input, Select, Textarea } from "@/components/ui/form-controls";
 import {
   BASIC_FORMAT_ERROR_MESSAGES,
   MAX_BODY_LENGTH,
@@ -13,6 +13,8 @@ import {
 } from "@/lib/email/basic-format";
 import { BUTTON_LABEL, MAX_SUBJECT_LENGTH } from "@/lib/email/quote-email";
 import { sendQuoteAction } from "@/lib/quotes/send/actions";
+import { isEmailBodyEdited, type EmailSnippetOption } from "@/lib/snippets/email-body";
+import { hasUnresolvedVariables } from "@/lib/snippets/model";
 import { cn } from "@/lib/utils";
 
 // Si la respuesta no llegó, el correo pudo haber salido. Repetir con la misma clave de envío es
@@ -25,6 +27,10 @@ const BODY_INPUT_SLACK = 500;
 const IN_PROGRESS_MESSAGE =
   "Tu envío sigue en curso. Espera unos segundos y revisa el estado de la cotización.";
 const SENT_MESSAGE = "Cotización enviada.";
+const UNRESOLVED_VARIABLES_MESSAGE =
+  "El texto todavía tiene una variable sin completar ({{ }}). Escribe el dato en su lugar o elige el texto guardado de nuevo.";
+const SNIPPETS_UNAVAILABLE_MESSAGE =
+  "No pudimos cargar tus textos guardados. Puedes escribir el correo a mano o recargar la página.";
 const FORMAT_HELP =
   "Puedes usar **negrita**, listas con «- » al inicio de la línea y enlaces como [texto](https://...).";
 
@@ -43,7 +49,16 @@ type Props = {
   maskedRecipient: string;
   replyTo: string | null;
   pdfSrc: string;
+  /** Los textos de correo guardados, ya con las variables completadas con los datos de esta cotización (H-048b). */
+  snippetOptions: EmailSnippetOption[];
+  /** `true` si no se pudieron leer los textos guardados. */
+  snippetsUnavailable: boolean;
+  /** El texto de siempre (el de partida cuando la organización no tiene un texto inicial): se puede volver a él. */
+  defaultText: string;
 };
+
+const DEFAULT_CHOICE_ID = "__texto-de-siempre__";
+const DEFAULT_CHOICE_NAME = "Texto de siempre";
 
 // Ancho desde el que el PDF se muestra incrustado (el `md` de Tailwind).
 const FRAME_MIN_WIDTH_QUERY = "(min-width: 768px)";
@@ -69,6 +84,31 @@ export function SendQuoteForm(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  // Lo último que se puso en el cuadro desde un texto guardado (o el de partida): si la persona lo cambió, reemplazarlo pide confirmar.
+  const [appliedText, setAppliedText] = useState(props.initialBody);
+  const [pendingSnippet, setPendingSnippet] = useState<EmailSnippetOption | null>(null);
+  const [snippetNotice, setSnippetNotice] = useState("");
+  // El texto elegido en la lista, todavía sin aplicar: elegir en la lista no cambia el correo, lo cambia «Usar este texto» (con el teclado,
+  // las flechas recorren la lista sin disparar nada).
+  const [selectedId, setSelectedId] = useState("");
+  const selectRef = useRef<HTMLSelectElement>(null);
+  const replaceRef = useRef<HTMLButtonElement>(null);
+  const choices = useMemo<EmailSnippetOption[]>(
+    () => [
+      {
+        id: DEFAULT_CHOICE_ID,
+        name: DEFAULT_CHOICE_NAME,
+        text: props.defaultText,
+        isDefault: false,
+      },
+      ...props.snippetOptions,
+    ],
+    [props.defaultText, props.snippetOptions],
+  );
+  // La confirmación se anuncia a quien usa lector de pantalla: el foco pasa a «Reemplazar el texto».
+  useEffect(() => {
+    if (pendingSnippet) replaceRef.current?.focus();
+  }, [pendingSnippet]);
   // La misma clave en todos los intentos de este envío: un doble clic no duplica el correo.
   const sendKey = useRef(crypto.randomUUID());
   const busy = useRef(false);
@@ -79,7 +119,29 @@ export function SendQuoteForm(props: Props) {
   );
   const bodyError = formatted.ok ? undefined : BASIC_FORMAT_ERROR_MESSAGES[formatted.code];
   const subjectEmpty = subject.trim() === "";
-  const canSend = !pending && formatted.ok && !subjectEmpty;
+  const unresolved = hasUnresolvedVariables(body);
+  const canSend = !pending && formatted.ok && !subjectEmpty && !unresolved;
+
+  function applySnippet(option: EmailSnippetOption) {
+    setBody(option.text);
+    setAppliedText(option.text);
+    setPendingSnippet(null);
+    setSelectedId("");
+    // Se quita el error del texto que había (no se deja vacío: un texto vacío taparía el error de formato en vivo).
+    setFieldErrors((current) => {
+      const next = { ...current };
+      delete next.body;
+      return next;
+    });
+    setSnippetNotice(`Texto «${option.name}» puesto en el correo.`);
+  }
+  function useSelectedSnippet() {
+    const option = choices.find((candidate) => candidate.id === selectedId);
+    if (!option) return;
+    // Si la persona escribió o cambió el texto, no se pierde en silencio: se pide confirmar.
+    if (isEmailBodyEdited(body, appliedText)) setPendingSnippet(option);
+    else applySnippet(option);
+  }
 
   async function submit() {
     if (busy.current || !canSend) return;
@@ -144,6 +206,82 @@ export function SendQuoteForm(props: Props) {
             />
           )}
         </Field>
+        {props.snippetsUnavailable ? (
+          <FormAlert tone="warning">{SNIPPETS_UNAVAILABLE_MESSAGE}</FormAlert>
+        ) : props.snippetOptions.length > 0 ? (
+          <Field label="Usar un texto guardado">
+            {(control) => (
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Select
+                  {...control}
+                  ref={selectRef}
+                  name="snippet"
+                  value={selectedId}
+                  onChange={(event) => setSelectedId(event.target.value)}
+                  disabled={pending}
+                  className="sm:flex-1"
+                  data-testid="send-snippet-select"
+                >
+                  <option value="">Elige un texto guardado…</option>
+                  {choices.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                      {option.isDefault ? " (texto inicial)" : ""}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={pending || selectedId === ""}
+                  onClick={useSelectedSnippet}
+                  data-testid="send-snippet-use"
+                >
+                  Usar este texto
+                </Button>
+              </div>
+            )}
+          </Field>
+        ) : null}
+        {pendingSnippet ? (
+          <div
+            role="alertdialog"
+            aria-label="Reemplazar el texto del correo"
+            data-testid="send-snippet-confirm"
+            className="flex flex-col gap-3 rounded-md border border-warning bg-warning-soft p-3 text-sm text-fg"
+          >
+            <p>
+              Cambiaste el texto del correo. Si eliges «{pendingSnippet.name}», se reemplaza lo que
+              escribiste.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                ref={replaceRef}
+                type="button"
+                size="sm"
+                onClick={() => applySnippet(pendingSnippet)}
+                data-testid="send-snippet-replace"
+              >
+                Reemplazar el texto
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setPendingSnippet(null);
+                  selectRef.current?.focus();
+                }}
+                data-testid="send-snippet-keep"
+              >
+                Mantener lo que escribí
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        <p role="status" aria-live="polite" className="sr-only">
+          {snippetNotice}
+        </p>
         <Field label="Texto del correo" hint={FORMAT_HELP} error={fieldErrors.body ?? bodyError}>
           {(control) => (
             <Textarea
@@ -158,6 +296,11 @@ export function SendQuoteForm(props: Props) {
             />
           )}
         </Field>
+        {unresolved ? (
+          <div data-testid="send-unresolved-variables">
+            <FormAlert tone="warning">{UNRESOLVED_VARIABLES_MESSAGE}</FormAlert>
+          </div>
+        ) : null}
         {error ? <FormAlert>{error}</FormAlert> : null}
         {notice ? <FormAlert tone="warning">{notice}</FormAlert> : null}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">

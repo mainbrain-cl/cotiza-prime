@@ -76,6 +76,8 @@ export type EditorState = {
   validityDate: string;
   observations: string;
   conditions: string;
+  exclusions: string;
+  footerNote: string;
 };
 
 /** Contexto de las reglas que dependen de la fecha de hoy. */
@@ -110,6 +112,8 @@ export type DraftContent = {
   /** `null` cuando está vacío. */
   observations: string | null;
   conditions: string | null;
+  exclusions: string | null;
+  footerNote: string | null;
   items: QuoteItemPayload[];
 };
 
@@ -219,14 +223,30 @@ export function evaluateEditor(
   }
   const observations = state.observations.trim();
   const conditions = state.conditions.trim();
+  const exclusions = state.exclusions.trim();
+  const footerNote = state.footerNote.trim();
   if (observations.length > QUOTE_TEXT_MAX_LENGTH) {
     errors.observations = "Las observaciones son demasiado largas (máximo 4.000 caracteres).";
   }
   if (conditions.length > QUOTE_TEXT_MAX_LENGTH) {
     errors.conditions = "Las condiciones son demasiado largas (máximo 4.000 caracteres).";
   }
+  if (exclusions.length > QUOTE_TEXT_MAX_LENGTH) {
+    errors.exclusions = "Las exclusiones son demasiado largas (máximo 4.000 caracteres).";
+  }
+  if (footerNote.length > QUOTE_TEXT_MAX_LENGTH) {
+    errors.footerNote = "Las notas son demasiado largas (máximo 4.000 caracteres).";
+  }
 
-  if (!allLinesOk || !global.ok || validity === null || errors.observations || errors.conditions) {
+  if (
+    !allLinesOk ||
+    !global.ok ||
+    validity === null ||
+    errors.observations ||
+    errors.conditions ||
+    errors.exclusions ||
+    errors.footerNote
+  ) {
     return { errors, content: null, totals: null };
   }
 
@@ -272,6 +292,8 @@ export function evaluateEditor(
       validity,
       observations: observations === "" ? null : observations,
       conditions: conditions === "" ? null : conditions,
+      exclusions: exclusions === "" ? null : exclusions,
+      footerNote: footerNote === "" ? null : footerNote,
       items,
     },
     totals: calc.totals,

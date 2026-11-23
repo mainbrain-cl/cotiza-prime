@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { Document, Image, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 import { PDF_MONO, PDF_SANS } from "../../fonts";
 import type { PdfLine, QuoteDocumentData } from "../../types";
@@ -168,8 +169,11 @@ const s = StyleSheet.create({
   },
   summaryStacked: { marginTop: 17 },
   totalsRight: { flexDirection: "row", justifyContent: "flex-end" },
-  notesFull: { marginTop: 16, fontSize: 8.5, lineHeight: BODY_LINE_HEIGHT, color: MUTED },
   noteBlock: { marginBottom: 10 },
+  // Notas largas: el texto de cada bloque, suelto (sin `View` alrededor) para que `minPresenceAhead` del título lo vea como hermano.
+  // SIN margen inferior: el motor de cortes cuenta el margen como parte de lo que tiene que caber, y un texto que cabe pero cuyo margen no
+  // se pasaba entero a la página siguiente, dejando su título solo al pie. El espacio entre bloques va en el `marginTop` del título.
+  noteText: { fontSize: 8.5, lineHeight: BODY_LINE_HEIGHT, color: MUTED },
   noteTitle: { fontSize: 7.5, fontWeight: 600, letterSpacing: 1.05, marginBottom: 3 },
   totals: { width: TOTALS_WIDTH, fontSize: 9.5, lineHeight: BODY_LINE_HEIGHT },
   totalRow: {
@@ -339,13 +343,40 @@ function Notes({ blocks, color }: { blocks: NoteBlock[]; color: string }) {
   ));
 }
 
+/**
+ * Las notas en el modo largo (debajo de los totales, a todo el ancho). Cada título y su texto son HERMANOS directos del contenedor, no
+ * hijos de una vista por bloque: así `minPresenceAhead` del título sí actúa y nunca queda solo al pie de una página con su texto en la
+ * siguiente (con una vista por bloque, cada título era el primer hijo de su bloque y la regla no hacía nada). Sin `wrap={false}`: una
+ * nota de más de una hoja tiene que poder cortarse.
+ */
+function StackedNotes({ blocks, color }: { blocks: NoteBlock[]; color: string }) {
+  return blocks.map((block, index) => (
+    <Fragment key={block.title}>
+      <Text
+        minPresenceAhead={TITLE_MIN_PRESENCE_AHEAD}
+        // `lineHeight` como el del resto de las notas (antes lo heredaba del contenedor): así el título queda a la misma distancia de su texto que en la muestra aprobada.
+        style={[
+          s.noteTitle,
+          { color, lineHeight: BODY_LINE_HEIGHT, marginTop: index === 0 ? 16 : 10 },
+        ]}
+      >
+        {block.title}
+      </Text>
+      <Text style={s.noteText}>{block.text}</Text>
+    </Fragment>
+  ));
+}
+
 type NoteBlock = { title: string; text: string };
 
 function Summary({ data }: { data: QuoteDocumentData }) {
   const blocks: NoteBlock[] = [];
   if (data.observations) blocks.push({ title: "OBSERVACIONES", text: data.observations });
   if (data.conditions) blocks.push({ title: "CONDICIONES", text: data.conditions });
+  if (data.exclusions) blocks.push({ title: "EXCLUSIONES", text: data.exclusions });
   if (data.paymentTerms) blocks.push({ title: "FORMA DE PAGO", text: data.paymentTerms });
+  // Las notas van al FINAL de la lista de bloques, no en el pie fijo de cada página (alto fijo, se repite en todas las hojas).
+  if (data.footerNote) blocks.push({ title: "NOTAS", text: data.footerNote });
   const noteLines = blocks.reduce(
     (sum, block) => sum + 2 + estimateLines(block.text, NOTES_CHARS_PER_LINE),
     0,
@@ -371,9 +402,7 @@ function Summary({ data }: { data: QuoteDocumentData }) {
       <View wrap={false} style={s.totalsRight}>
         <Totals data={data} />
       </View>
-      <View style={s.notesFull}>
-        <Notes blocks={blocks} color={data.brand.primaryText} />
-      </View>
+      <StackedNotes blocks={blocks} color={data.brand.primaryText} />
     </View>
   );
 }

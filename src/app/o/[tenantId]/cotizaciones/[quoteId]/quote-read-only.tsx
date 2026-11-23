@@ -96,6 +96,18 @@ export function QuoteReadOnly({
             <p className="whitespace-pre-wrap text-fg-muted">{quote.conditions}</p>
           </div>
         ) : null}
+        {quote.exclusions ? (
+          <div className="flex flex-col gap-1">
+            <h3 className="text-sm font-semibold text-fg">Exclusiones</h3>
+            <p className="whitespace-pre-wrap text-fg-muted">{quote.exclusions}</p>
+          </div>
+        ) : null}
+        {quote.footer_note ? (
+          <div className="flex flex-col gap-1">
+            <h3 className="text-sm font-semibold text-fg">Notas al pie</h3>
+            <p className="whitespace-pre-wrap text-fg-muted">{quote.footer_note}</p>
+          </div>
+        ) : null}
       </section>
       <aside className="flex flex-col gap-4 lg:sticky lg:top-6 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start">
         <TotalsPanel

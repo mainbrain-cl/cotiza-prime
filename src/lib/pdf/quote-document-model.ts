@@ -173,6 +173,8 @@ export function buildQuoteDocumentData(input: QuoteDocumentInput): QuoteDocument
     totals: totalsOf(quote),
     observations: textOrNull(quote.observations),
     conditions: textOrNull(quote.conditions),
+    exclusions: textOrNull(quote.exclusions),
+    footerNote: textOrNull(quote.footer_note),
     paymentTerms: paymentTermsText(quote.payment_terms),
   };
 }

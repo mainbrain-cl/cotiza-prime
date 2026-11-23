@@ -106,6 +106,8 @@ export async function saveRequestLines(
     validity: { mode: "days", days: row.validity_days ?? 15 },
     observations: null,
     conditions: null,
+    exclusions: null,
+    footerNote: null,
     items: plan.lines.map(({ catalog, quantityMilli }) => ({
       id: randomUUID(),
       catalogItemId: catalog.id,

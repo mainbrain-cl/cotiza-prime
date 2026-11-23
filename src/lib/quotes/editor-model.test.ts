@@ -31,6 +31,8 @@ const state = (lines: EditorLine[], over: Partial<EditorState> = {}): EditorStat
   validityDate: "",
   observations: "",
   conditions: "",
+  exclusions: "",
+  footerNote: "",
   ...over,
 });
 
@@ -247,6 +249,8 @@ describe("evaluateEditor · vigencia, observaciones y condiciones (H-027)", () =
     expect(view.content?.validity).toEqual({ mode: "days", days: 15 });
     expect(view.content?.observations).toBeNull();
     expect(view.content?.conditions).toBeNull();
+    expect(view.content?.exclusions).toBeNull();
+    expect(view.content?.footerNote).toBeNull();
   });
 
   it.each([
@@ -295,6 +299,25 @@ describe("evaluateEditor · vigencia, observaciones y condiciones (H-027)", () =
     expect(eval1({ observations: "x".repeat(4000) }).errors).toEqual({});
     expect(eval1({ observations: "x".repeat(4001) }).errors.observations).toBeTruthy();
     expect(eval1({ conditions: "x".repeat(4001) }).errors.conditions).toBeTruthy();
+  });
+
+  it("exclusiones y notas al pie: se recortan, vacío es null y pasan de 4.000 caracteres se rechazan con su propio mensaje", () => {
+    const ok = eval1({ exclusions: "  No incluye embalaje  ", footerNote: "Valores en CLP" });
+    expect(ok.content?.exclusions).toBe("No incluye embalaje");
+    expect(ok.content?.footerNote).toBe("Valores en CLP");
+    expect(eval1({ exclusions: "   ", footerNote: "\n" }).content).toMatchObject({
+      exclusions: null,
+      footerNote: null,
+    });
+    expect(eval1({ exclusions: "x".repeat(4000), footerNote: "x".repeat(4000) }).errors).toEqual(
+      {},
+    );
+    const longExclusions = eval1({ exclusions: "x".repeat(4001) });
+    expect(longExclusions.errors.exclusions).toMatch(/exclusiones/i);
+    expect(longExclusions.content).toBeNull();
+    const longNote = eval1({ footerNote: "x".repeat(4001) });
+    expect(longNote.errors.footerNote).toMatch(/notas/i);
+    expect(longNote.content).toBeNull();
   });
 
   it("el HTML se trata como texto: no se interpreta ni se altera", () => {

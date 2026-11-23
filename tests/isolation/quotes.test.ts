@@ -85,6 +85,52 @@ describe("cotizaciones · escritura por las funciones", () => {
     expect(await bQuoteFingerprints()).toEqual(before);
   });
 
+  it("Ana y Mixta no pueden escribir exclusiones ni notas al pie en la cotización de B (B idéntica y sin filtrar su texto)", async () => {
+    const fx = fixture();
+    const before = await bQuoteFingerprints();
+    const stored = await db.query<{ exclusions: string; footer_note: string }>(
+      "select exclusions, footer_note from public.quotes where id = $1",
+      [fx.orgs.B.quoteIds[0]],
+    );
+    // la fixture las dejó con el canario de B: hay algo que proteger
+    expect(stored.rows[0].exclusions).toContain(fx.orgs.B.canary);
+    expect(stored.rows[0].footer_note).toContain(fx.orgs.B.canary);
+    const draft = {
+      ...emptyDraft(fx.orgs.A.customerIds[0]),
+      p_header: {
+        customer_id: fx.orgs.A.customerIds[0],
+        global_discount: { kind: "none", value: 0 },
+        exclusions: "TEXTO-DE-ANA",
+        footer_note: null,
+      },
+    };
+    const attempts: Array<["ana" | "mixta", string | undefined]> = [
+      ["ana", fx.orgs.A.tenantId],
+      ["ana", fx.orgs.B.tenantId],
+      ["ana", undefined],
+      ["mixta", fx.orgs.A.tenantId],
+    ];
+    for (const [persona, header] of attempts) {
+      const res = await rpc(
+        await tokenOf(persona),
+        "save_quote_draft",
+        { p_quote_id: fx.orgs.B.quoteIds[0], ...draft },
+        tenantHeader(header),
+      );
+      expect(
+        res.status,
+        `${persona} ${header ?? "sin cabecera"}: ${res.text}`,
+      ).toBeGreaterThanOrEqual(400);
+      expect(res.text).not.toContain(fx.orgs.B.canary);
+    }
+    const after = await db.query<{ exclusions: string; footer_note: string }>(
+      "select exclusions, footer_note from public.quotes where id = $1",
+      [fx.orgs.B.quoteIds[0]],
+    );
+    expect(after.rows[0]).toEqual(stored.rows[0]);
+    expect(await bQuoteFingerprints()).toEqual(before);
+  });
+
   it("Ana no puede crear una cotización con un cliente de B ni guardar la suya con un cliente de B", async () => {
     const fx = fixture();
     const token = await tokenOf("ana");

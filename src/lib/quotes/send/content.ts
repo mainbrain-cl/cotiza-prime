@@ -2,6 +2,7 @@ import { z } from "zod";
 import { MAX_BODY_LENGTH } from "@/lib/email/basic-format";
 import { MAX_SENDER_NAME_LENGTH, MAX_SUBJECT_LENGTH } from "@/lib/email/quote-email";
 import { HEADER_UNSAFE } from "@/lib/email/unsafe-characters";
+import { hasUnresolvedVariables } from "@/lib/snippets/model";
 
 /**
  * Textos y validación del envío de una cotización (H-029). Sin dependencias del servidor: los usa la
@@ -47,6 +48,8 @@ export const SEND_SUBJECT_REQUIRED = "Escribe el asunto del correo.";
 export const SEND_SUBJECT_TOO_LONG = `El asunto no puede pasar de ${MAX_SUBJECT_LENGTH} caracteres.`;
 export const SEND_SUBJECT_INVALID = "El asunto tiene caracteres que no se pueden enviar.";
 export const SEND_BODY_REQUIRED = "Escribe el texto del correo.";
+export const SEND_BODY_HAS_VARIABLES =
+  "El texto del correo todavía tiene una variable sin completar ({{ }}). Escribe el dato o elige el texto de nuevo.";
 
 export const sendQuoteInputSchema = z.object({
   subject: z
@@ -55,7 +58,12 @@ export const sendQuoteInputSchema = z.object({
     .min(1, SEND_SUBJECT_REQUIRED)
     .max(MAX_SUBJECT_LENGTH, SEND_SUBJECT_TOO_LONG)
     .refine((value) => !HEADER_UNSAFE.test(value), SEND_SUBJECT_INVALID),
-  body: z.string().min(1, SEND_BODY_REQUIRED).max(MAX_BODY_LENGTH),
+  body: z
+    .string()
+    .min(1, SEND_BODY_REQUIRED)
+    .max(MAX_BODY_LENGTH)
+    // Un correo con `{{cliente}}` escrito nunca sale (H-048b): las variables se completan al elegir el texto.
+    .refine((value) => !hasUnresolvedVariables(value), SEND_BODY_HAS_VARIABLES),
   expectedRevision: z.number().int().min(1),
   /** Clave de este envío: un doble clic repite la misma y no duplica el correo. */
   sendKey: z.uuid(),

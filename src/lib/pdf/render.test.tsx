@@ -20,6 +20,22 @@ const MAX_SECONDS_40_LINES = 2;
 const TOTAL_4_LINES = formatClp(sampleTotals(sampleItems(4)).totalClp);
 const TOTAL_40_LINES = formatClp(sampleTotals(sampleItems(40)).totalClp);
 
+const TITLES = ["OBSERVACIONES", "CONDICIONES", "EXCLUSIONES", "FORMA DE PAGO", "NOTAS"];
+// Los títulos llevan espaciado entre letras: el lector de PDF los entrega con espacios («O B S E R V…»), así que se comparan sin ellos.
+const squashed = (value: string) => value.replace(/\s+/g, "");
+const TITLES_SQUASHED = new Map(TITLES.map((title) => [squashed(title), title]));
+/** La altura (en puntos, desde abajo) bajo la cual está el pie fijo de cada página (su texto está en y = 26). */
+const FOOTER_TOP_Y = 40;
+/** Los títulos de bloque que hay en el PDF, en orden de lectura, con su página (desde 0) y su altura. */
+function titlesOf(read: Awaited<ReturnType<typeof readPdf>>) {
+  return read.pages.flatMap((page, pageIndex) =>
+    page.items.flatMap((item) => {
+      const title = TITLES_SQUASHED.get(squashed(item.text));
+      return title ? [{ title, page: pageIndex, y: item.y }] : [];
+    }),
+  );
+}
+
 describe("renderQuotePdf (plantilla 1)", () => {
   it("genera un PDF con número, cliente, totales exactos, IVA y el aviso tributario; sin Cotiza Prime", async () => {
     const pdf = await renderQuotePdf(sampleDocument());
@@ -154,6 +170,98 @@ describe("renderQuotePdf (plantilla 1)", () => {
     }
     expect(failures).toEqual([]);
   }, 60_000);
+
+  it("los cinco bloques de texto salen en el orden del diseño y las notas van al final de la lista (H-048b)", async () => {
+    const data = sampleDocument({
+      quote: sampleQuoteRow({
+        observations: "OBS-texto",
+        conditions: "CON-texto",
+        exclusions: "EXC-texto",
+        footer_note: "NOT-texto",
+        payment_terms: "split_50_50",
+      }),
+    });
+    expect(data.exclusions).toBe("EXC-texto");
+    expect(data.footerNote).toBe("NOT-texto");
+    const text = (await readPdf(await renderQuotePdf(data))).text;
+    const order = ["OBS-texto", "CON-texto", "EXC-texto", "50%", "NOT-texto"].map((marker) =>
+      text.indexOf(marker),
+    );
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // los títulos, en mayúscula y una sola vez cada uno
+    const titles = titlesOf(await readPdf(await renderQuotePdf(data)));
+    expect(titles.map((entry) => entry.title)).toEqual(TITLES);
+  }, 30_000);
+
+  it("sin exclusiones ni notas no aparece ninguno de los dos títulos, y la cotización queda como antes (H-048b)", async () => {
+    const data = sampleDocument({
+      quote: sampleQuoteRow({
+        observations: "OBS-texto",
+        conditions: null,
+        exclusions: null,
+        footer_note: "   ",
+      }),
+    });
+    expect(data.exclusions).toBeNull();
+    expect(data.footerNote).toBeNull();
+    const titles = titlesOf(await readPdf(await renderQuotePdf(data))).map((entry) => entry.title);
+    expect(titles).toEqual(["OBSERVACIONES"]);
+  }, 30_000);
+
+  it("con los cinco textos largos: el total sale una vez, ningún título queda solo al pie y no se pierde texto, de 1 a 45 líneas (H-048b)", async () => {
+    // Cada bloque lleva un marcador propio al principio y otro al final para comprobar que el texto sale completo aunque se corte
+    // entre páginas. Los títulos y su texto son hermanos del contenedor: si no, un título podía quedar solo al pie de una página.
+    const sentence =
+      "La tarifa considera carga y descarga a pie de camión, un máximo de 2 horas de espera sin costo y rutas pavimentadas. Los valores se mantienen por la vigencia de la cotización; sobre ese plazo se reajustan según la variación del diésel.";
+    const block = (tag: string) =>
+      `${tag}INICIO ${Array.from({ length: 4 }, () => sentence).join(" ")} ${tag}FIN`;
+    const texts = { OBS: block("OBS"), CON: block("CON"), EXC: block("EXC"), NOT: block("NOT") };
+    const failures: string[] = [];
+    for (let lineCount = 1; lineCount <= 45; lineCount += 1) {
+      const input = sampleInput({ lineCount });
+      input.quote = sampleQuoteRow(
+        {
+          observations: texts.OBS,
+          conditions: texts.CON,
+          exclusions: texts.EXC,
+          footer_note: texts.NOT,
+          payment_terms: "split_50_50",
+        },
+        input.items,
+      );
+      const data = buildQuoteDocumentData({ ...input, paper: "letter" });
+      const read = await readPdf(await renderQuotePdf(data));
+      const squash = (value: string) => value.replace(/\s+/g, "");
+      const flat = squash(read.text);
+      const count = (pattern: RegExp) => (read.text.match(pattern) ?? []).length;
+      for (const [label, n] of [
+        ["Subtotal", count(/Subtotal/g)],
+        ["Neto afecto", count(/Neto afecto/g)],
+        ["IVA 19%", count(/IVA 19%/g)],
+        [data.totals.total, count(new RegExp(data.totals.total.replace(/[$.]/g, "\\$&"), "g"))],
+      ] as const)
+        if (n !== 1) failures.push(`${lineCount} líneas: «${label}» ×${n}`);
+      for (const tag of ["OBS", "CON", "EXC", "NOT"])
+        for (const edge of ["INICIO", "FIN"])
+          if (!flat.includes(`${tag}${edge}`))
+            failures.push(`${lineCount} líneas: falta ${tag}${edge}`);
+      const titles = titlesOf(read);
+      if (titles.map((entry) => entry.title).join() !== TITLES.join())
+        failures.push(
+          `${lineCount} líneas: títulos ${titles.map((entry) => entry.title).join("/")}`,
+        );
+      for (const entry of titles) {
+        const page = read.pages[entry.page];
+        const below = page.items.filter((item) => item.y < entry.y - 1 && item.y > FOOTER_TOP_Y);
+        if (below.length === 0)
+          failures.push(
+            `${lineCount} líneas: «${entry.title}» queda solo al pie de la página ${entry.page + 1}`,
+          );
+      }
+    }
+    expect(failures).toEqual([]);
+  }, 180_000);
 
   it("observaciones de 4.000 caracteres seguidos aparecen completas", async () => {
     const words = Array.from({ length: 500 }, (_, i) => `P${String(i).padStart(3, "0")}xx`);

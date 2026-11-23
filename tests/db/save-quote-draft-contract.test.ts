@@ -1,9 +1,9 @@
 // 🟢 PRUEBAS · Supabase local, datos ficticios.
 // Sprint 5 · H-041 · el CONTRATO de `public.save_quote_draft` con quienes la extienden después (H-042 servicios por comercial, H-048b
-// textos al cotizar). Es una prueba trampa: dentro de una transacción que se deshace, reemplaza el gancho `app.can_quote_catalog_item`
+// textos al cotizar, ya construida). Es una prueba trampa: dentro de una transacción que se deshace, reemplaza el gancho `app.can_quote_catalog_item`
 // por uno que dice «no» y comprueba que `save_quote_draft` de verdad lo consulta, solo para líneas NUEVAS del catálogo, con el mismo
 // formato de error de las demás reglas. Si alguien reescribe `save_quote_draft` y deja el gancho desconectado, esta prueba cae.
-// También vigila que sigan vivas las tres reglas de H-041. H-048b le suma sus casos.
+// También vigila que sigan vivas las tres reglas de H-041. H-048b le sumó sus casos (abajo).
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -114,6 +114,11 @@ describe("el gancho de servicios por comercial (H-042)", () => {
     expect(rows[0].src).toContain("app.can_quote_catalog_item(");
     expect(rows[0].src).toContain("app.quote_line_rules_check(");
     expect(rows[0].src).toContain("app.can('quote.edit', true)");
+    // y los dos textos de H-048b (exclusiones y notas al pie), con el tope de la base
+    expect(rows[0].src).toContain("'exclusions', 'footer_note'");
+    expect(rows[0].src).toContain("v_excl");
+    expect(rows[0].src).toContain("v_note");
+    expect(rows[0].src).toContain("app.quote_text_max_length()");
   });
 
   it("con el gancho en «no», una línea NUEVA del catálogo se rechaza: CP422 `catalog_item_not_allowed@0` y no se guarda nada", () =>
@@ -253,5 +258,75 @@ describe("las tres reglas de H-041 siguen vivas dentro de `save_quote_draft`", (
         JSON.stringify(calc.totals),
       ]);
       expect(globalError.message).toBe("line_rules_invalid: global_discount_over_cap");
+    }));
+});
+
+describe("los textos de H-048b siguen vivos junto a las reglas de H-041 y el gancho de H-042", () => {
+  it("un guardado con exclusiones y notas pasa por la regla de precios y por el gancho, y los escribe", () =>
+    withTx(db, async () => {
+      const service = await addCatalogItem(db, w.tenantA, PRICE);
+      await actAsPostgres(db);
+      await db.query("update public.catalog_items set price_locked = true where id = $1", [
+        service,
+      ]);
+      const quoteId = await newQuote(w.sales);
+      const withTexts = (lines: L[]) => {
+        const [header, items, totals] = body(lines);
+        return [
+          JSON.stringify({
+            ...JSON.parse(header),
+            exclusions: "No incluye embalaje.",
+            footer_note: "Valores en pesos chilenos.",
+          }),
+          items,
+          totals,
+        ];
+      };
+      // la regla de precio bloqueado sigue mirando: un precio distinto se rechaza y NO se guarda ningún texto
+      const rev = await revision(quoteId);
+      await asUser(db, w.sales, w.tenantA);
+      const blocked = await expectSqlError(db, SAVE, [
+        quoteId,
+        rev,
+        randomUUID(),
+        ...withTexts([{ id: randomUUID(), catalogItemId: service, price: 1 }]),
+      ]);
+      expect(blocked.message).toBe("line_rules_invalid: price_locked@0");
+      await actAsPostgres(db);
+      expect(
+        (
+          await db.query("select exclusions, footer_note from public.quotes where id = $1", [
+            quoteId,
+          ])
+        ).rows[0],
+      ).toEqual({ exclusions: null, footer_note: null });
+      // el gancho sigue mirando: con «no», una línea nueva del catálogo se rechaza aunque traiga textos
+      await replaceHook("select false");
+      await asUser(db, w.sales, w.tenantA);
+      const denied = await expectSqlError(db, SAVE, [
+        quoteId,
+        rev,
+        randomUUID(),
+        ...withTexts([{ id: randomUUID(), catalogItemId: service }]),
+      ]);
+      expect(denied.message).toBe("line_rules_invalid: catalog_item_not_allowed@0");
+      // con todo en regla, se guardan los textos
+      await actAsPostgres(db);
+      await replaceHook("select true");
+      await asUser(db, w.sales, w.tenantA);
+      await db.query(SAVE, [
+        quoteId,
+        rev,
+        randomUUID(),
+        ...withTexts([{ id: randomUUID(), catalogItemId: service }]),
+      ]);
+      await actAsPostgres(db);
+      expect(
+        (
+          await db.query("select exclusions, footer_note from public.quotes where id = $1", [
+            quoteId,
+          ])
+        ).rows[0],
+      ).toEqual({ exclusions: "No incluye embalaje.", footer_note: "Valores en pesos chilenos." });
     }));
 });

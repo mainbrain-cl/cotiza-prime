@@ -101,6 +101,9 @@ export const saveQuotePayloadSchema = z
     validity: validitySchema,
     observations: quoteTextSchema,
     conditions: quoteTextSchema,
+    // H-048b: obligatorios (pueden ser nulos), para que el compilador obligue a cada llamada a decidir qué manda.
+    exclusions: quoteTextSchema,
+    footerNote: quoteTextSchema,
     items: z.array(quoteItemSchema).max(QUOTE_MAX_LINES, "Una cotización admite hasta 200 líneas."),
   })
   .strict();

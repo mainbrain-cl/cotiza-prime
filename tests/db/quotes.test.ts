@@ -1102,6 +1102,114 @@ describe("save_quote_draft · línea libre y datos de H-027 (migración 18)", ()
     });
   });
 
+  it("exclusiones y notas al pie (H-048b): se guardan, sin la clave no cambian, vacío y null las borran, y pasar de 4.000 o un carácter de control se rechaza", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      // una cotización nueva las tiene vacías
+      expect(await quoteRow(q.id)).toMatchObject({ exclusions: null, footer_note: null });
+      await save(
+        sales,
+        q.id,
+        1,
+        [],
+        withHeader({
+          exclusions: "  No incluye embalaje.\nNo incluye peajes.  ",
+          footer_note: "x".repeat(4000),
+        }),
+      );
+      expect(await quoteRow(q.id)).toMatchObject({
+        exclusions: "No incluye embalaje.\nNo incluye peajes.",
+        footer_note: "x".repeat(4000),
+      });
+      // sin las claves (una llamada anterior a H-048b), no cambian
+      await save(sales, q.id, 2, [], header());
+      expect(await quoteRow(q.id)).toMatchObject({
+        exclusions: "No incluye embalaje.\nNo incluye peajes.",
+        footer_note: "x".repeat(4000),
+      });
+      // guardar solo una de las dos no toca la otra
+      await save(sales, q.id, 3, [], withHeader({ exclusions: "Solo esto." }));
+      expect(await quoteRow(q.id)).toMatchObject({
+        exclusions: "Solo esto.",
+        footer_note: "x".repeat(4000),
+      });
+      // vacío y null los borran
+      await save(sales, q.id, 4, [], withHeader({ exclusions: "   ", footer_note: null }));
+      expect(await quoteRow(q.id)).toMatchObject({ exclusions: null, footer_note: null });
+      for (const [bad, code] of [
+        [{ exclusions: "x".repeat(4001) }, "invalid_exclusions"],
+        [{ footer_note: "x".repeat(4001) }, "invalid_footer_note"],
+        [{ exclusions: 5 }, "invalid_exclusions"],
+        [{ footer_note: { a: 1 } }, "invalid_footer_note"],
+        [{ exclusions: "a\u0007b" }, "invalid_exclusions"],
+        [{ footer_note: "a\u001fb" }, "invalid_footer_note"],
+      ] as const) {
+        const error = await saveError(sales, q.id, 5, [], withHeader(bad), {
+          totals: expectedTotals([], NONE),
+        });
+        expect(error.code).toBe("CP422");
+        expect(error.message).toBe(code);
+      }
+      // tabulación, salto de línea y retorno de carro sí valen
+      await save(sales, q.id, 5, [], withHeader({ footer_note: "a\tb\r\nc" }));
+      expect((await quoteRow(q.id)).footer_note).toBe("a\tb\r\nc");
+      expect((await quoteRow(q.id)).revision).toBe(6);
+    });
+  });
+
+  it("exclusiones y notas al pie: el texto con HTML se guarda tal cual y solo el autor las cambia", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      const html = '<script>alert("x")</script><b>negrita</b>';
+      await save(sales, q.id, 1, [], withHeader({ exclusions: html, footer_note: html }));
+      expect(await quoteRow(q.id)).toMatchObject({ exclusions: html, footer_note: html });
+      // otro Comercial, un Administrador y el Dueño no son el autor (decisión 009): no las cambian
+      for (const user of [sales2, admin, owner]) {
+        const error = await saveError(user, q.id, 2, [], withHeader({ exclusions: "cambiada" }), {
+          totals: expectedTotals([], NONE),
+        });
+        expect(error.code, user.email).toBe(INSUFFICIENT_PRIVILEGE);
+      }
+      // el Aprobador y el Observador no arman cotizaciones
+      for (const user of [approver, viewer]) {
+        const error = await saveError(user, q.id, 2, [], withHeader({ footer_note: "cambiada" }), {
+          totals: expectedTotals([], NONE),
+        });
+        expect(error.code, user.email).toBe(INSUFFICIENT_PRIVILEGE);
+      }
+      expect(await quoteRow(q.id)).toMatchObject({ exclusions: html, footer_note: html });
+    });
+  });
+
+  it("exclusiones y notas al pie: nadie las escribe directo (ni Dueño, Administrador ni Comercial, columna por columna) y la base impide pasar de 4.000", async () => {
+    await withTx(db, async () => {
+      const q = await createQuote();
+      for (const user of [owner, admin, sales]) {
+        await asUser(user);
+        for (const sql of [
+          "update public.quotes set exclusions = 'directo' where id = $1",
+          "update public.quotes set footer_note = 'directo' where id = $1",
+        ]) {
+          expect((await expectSqlError(db, sql, [q.id])).code, user.email).toBe(
+            INSUFFICIENT_PRIVILEGE,
+          );
+        }
+        await actAsPostgres(db);
+      }
+      for (const sql of [
+        "update public.quotes set exclusions = repeat('x', 4001) where id = $1",
+        "update public.quotes set footer_note = repeat('x', 4001) where id = $1",
+      ]) {
+        expect((await expectSqlError(db, sql, [q.id])).code).toBe(CHECK_VIOLATION);
+      }
+      const { rows } = await db.query<{ ok: boolean }>(
+        "update public.quotes set exclusions = repeat('x', 4000), footer_note = repeat('y', 4000) where id = $1 returning true as ok",
+        [q.id],
+      );
+      expect(rows).toHaveLength(1);
+    });
+  });
+
   it("el texto con HTML se guarda tal cual (se escapa al mostrarlo, nunca se interpreta)", async () => {
     await withTx(db, async () => {
       const q = await createQuote();

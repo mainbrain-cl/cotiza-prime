@@ -125,6 +125,19 @@ describe("los errores del guardado", () => {
     });
   });
 
+  it("exclusiones o notas rechazadas por la base: el mensaje cae en el campo correcto", () => {
+    expect(mapSaveRpcError({ code: "CP422", message: "invalid_exclusions" }).result).toEqual({
+      status: "invalid",
+      message: expect.stringMatching(/exclusiones/),
+      fieldErrors: { exclusions: expect.stringMatching(/exclusiones/) },
+    });
+    expect(mapSaveRpcError({ code: "CP422", message: "invalid_footer_note" }).result).toEqual({
+      status: "invalid",
+      message: expect.stringMatching(/notas/),
+      fieldErrors: { footerNote: expect.stringMatching(/notas/) },
+    });
+  });
+
   it("conflicto, no editable, sin permiso y no encontrada", () => {
     expect(mapSaveRpcError({ code: "CP409" }).result).toEqual({
       status: "conflict",

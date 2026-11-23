@@ -28,6 +28,8 @@ export function buildDocumentSnapshot(data: QuoteDocumentData): DocumentSnapshot
     totals: data.totals,
     observations: data.observations,
     conditions: data.conditions,
+    exclusions: data.exclusions,
+    footerNote: data.footerNote,
     paymentTerms: data.paymentTerms,
   };
 }

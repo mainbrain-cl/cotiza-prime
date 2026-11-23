@@ -49,6 +49,8 @@ const doc: ShareDocument = {
   },
   observations: null,
   conditions: null,
+  exclusions: null,
+  footerNote: null,
   paymentTerms: null,
 };
 
@@ -101,6 +103,54 @@ describe("QuoteView: accesibilidad (H-030, menor 6)", () => {
       "Esta cotización ya fue aceptada el 02-10-2026.",
     );
     expect(render().container.querySelector('[data-testid="share-response-notice"]')).toBeNull();
+  });
+});
+
+describe("QuoteView: exclusiones y notas (H-048b)", () => {
+  function renderDoc(over: Partial<ShareDocument>) {
+    const html = renderToStaticMarkup(
+      createElement(QuoteView, {
+        document: { ...doc, ...over },
+        customer: { name: "Cliente Ficticio", detailLines: [] },
+        logoDataUrl: null,
+        pdfHref: "/pdf",
+        responseNotice: null,
+      }),
+    );
+    return html;
+  }
+
+  it("muestran «Exclusiones» después de las condiciones y «Notas» al final, como texto simple", () => {
+    const html = renderDoc({
+      observations: "OBS-texto",
+      conditions: "CON-texto",
+      exclusions: "EXC-texto",
+      paymentTerms: "PAG-texto",
+      footerNote: "NOT-texto",
+    });
+    const order = ["OBS-texto", "CON-texto", "EXC-texto", "PAG-texto", "NOT-texto"].map((marker) =>
+      html.indexOf(marker),
+    );
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html).toContain("Exclusiones");
+    expect(html).toContain("Notas");
+  });
+
+  it("sin los textos no aparece ninguno de los dos títulos", () => {
+    const html = renderDoc({ observations: "OBS-texto" });
+    expect(html).not.toContain("Exclusiones");
+    expect(html).not.toContain(">Notas<");
+  });
+
+  it("el HTML de las exclusiones y las notas se escapa: no se interpreta", () => {
+    const html = renderDoc({
+      exclusions: '<script>alert("x")</script>',
+      footerNote: '<img src=x onerror="alert(1)">',
+    });
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;script&gt;");
   });
 });
 

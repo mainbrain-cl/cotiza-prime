@@ -1,7 +1,8 @@
 "use client";
 
 import { ChevronDown, ChevronUp, Loader2, Lock, Plus, Save, Search, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { InsertSnippetMenu } from "@/components/snippets/insert-snippet-menu";
 import { Button } from "@/components/ui/button";
 import { FormAlert, Input, Select, Textarea } from "@/components/ui/form-controls";
 import { OFFLINE_MESSAGE, OfflineNotice, blockIfOffline } from "@/components/ui/offline-notice";
@@ -34,6 +35,7 @@ import {
   type ValidityMode,
 } from "@/lib/quotes/editor-model";
 import type { SaveQuotePayload } from "@/lib/quotes/schemas";
+import type { QuoteFieldSnippetKind, QuoteFieldSnippets } from "@/lib/snippets/quote-fields";
 import {
   describeValidity,
   QUOTE_TEXT_MAX_LENGTH,
@@ -71,6 +73,7 @@ function TextField({
   error,
   disabled,
   onChange,
+  action,
 }: {
   id: string;
   label: string;
@@ -79,14 +82,19 @@ function TextField({
   error?: string;
   disabled: boolean;
   onChange: (value: string) => void;
+  /** Un botón junto a la etiqueta (por ejemplo «Insertar texto guardado»). */
+  action?: ReactNode;
 }) {
   const length = value.trim().length;
   const over = length > QUOTE_TEXT_MAX_LENGTH;
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-semibold text-fg">
-        {label} (opcional)
-      </label>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label htmlFor={id} className="text-sm font-semibold text-fg">
+          {label} (opcional)
+        </label>
+        {action}
+      </div>
       <Textarea
         id={id}
         value={value}
@@ -120,6 +128,8 @@ export function QuoteEditor({
   savedValidUntil,
   initialCatalog,
   requestSeedLines = [],
+  snippets,
+  manageSnippetsHref,
   rules,
 }: {
   tenantId: string;
@@ -132,6 +142,10 @@ export function QuoteEditor({
   initialCatalog: QuotableCatalogItem[];
   /** Líneas de los servicios de la solicitud de origen; solo se ofrecen si la cotización no tiene líneas. */
   requestSeedLines?: EditorLine[];
+  /** Los textos guardados que se ofrecen en cada campo (H-048b). */
+  snippets: QuoteFieldSnippets;
+  /** A dónde ir a crear textos guardados; `null` si esta persona no puede administrarlos. */
+  manageSnippetsHref: string | null;
   /** Las reglas de precio y descuento de la organización (H-041): el tope de descuento y si esta persona se salta el candado. */
   rules: EditorRules;
 }) {
@@ -181,6 +195,23 @@ export function QuoteEditor({
   const hasErrors = Object.keys(errors).length > 0;
   const capHint = maxDiscountHint(rules.canOverride ? null : rules.maxDiscountBp);
   const blocked = saver.state.status === "conflict" || saver.state.status === "not_editable";
+  // «Insertar texto guardado» de cada campo (H-048b): solo mientras se puede editar. Cada campo ofrece los textos de su tipo.
+  const snippetMenu = (
+    kind: QuoteFieldSnippetKind,
+    fieldLabel: string,
+    value: string,
+    onInsert: (text: string) => void,
+  ): ReactNode =>
+    blocked ? null : (
+      <InsertSnippetMenu
+        fieldLabel={fieldLabel}
+        snippets={snippets.byKind[kind]}
+        unavailable={!snippets.available}
+        value={value}
+        onInsert={onInsert}
+        manageHref={manageSnippetsHref}
+      />
+    );
 
   // Avisa antes de cerrar la pestaña con cambios sin guardar.
   useEffect(() => {
@@ -925,11 +956,41 @@ export function QuoteEditor({
           <TextField
             id="conditions"
             label="Condiciones comerciales"
-            hint="Plazos, forma de pago, exclusiones. Solo texto."
+            hint="Plazos y forma de pago. Solo texto."
             value={state.conditions}
             error={errors.conditions}
             disabled={blocked}
             onChange={(value) => setState((current) => ({ ...current, conditions: value }))}
+            action={snippetMenu(
+              "conditions",
+              "Condiciones comerciales",
+              state.conditions,
+              (value) => setState((current) => ({ ...current, conditions: value })),
+            )}
+          />
+          <TextField
+            id="exclusions"
+            label="Exclusiones"
+            hint="Lo que no incluye la cotización, por ejemplo «No incluye embalaje». Solo texto."
+            value={state.exclusions}
+            error={errors.exclusions}
+            disabled={blocked}
+            onChange={(value) => setState((current) => ({ ...current, exclusions: value }))}
+            action={snippetMenu("exclusions", "Exclusiones", state.exclusions, (value) =>
+              setState((current) => ({ ...current, exclusions: value })),
+            )}
+          />
+          <TextField
+            id="footer-note"
+            label="Notas al pie"
+            hint="Aparecen al final del documento. Solo texto."
+            value={state.footerNote}
+            error={errors.footerNote}
+            disabled={blocked}
+            onChange={(value) => setState((current) => ({ ...current, footerNote: value }))}
+            action={snippetMenu("footer_note", "Notas al pie", state.footerNote, (value) =>
+              setState((current) => ({ ...current, footerNote: value })),
+            )}
           />
         </section>
       </div>

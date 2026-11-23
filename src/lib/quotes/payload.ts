@@ -42,6 +42,8 @@ export function toSaveRpcArgs(quoteId: string, payload: SaveQuotePayload, totals
           : { mode: "date", date: payload.validity.date },
       observations: payload.observations === "" ? null : payload.observations,
       conditions: payload.conditions === "" ? null : payload.conditions,
+      exclusions: payload.exclusions === "" ? null : payload.exclusions,
+      footer_note: payload.footerNote === "" ? null : payload.footerNote,
     },
     p_items: payload.items.map((item) => {
       const discount = discountColumns(item.discount);

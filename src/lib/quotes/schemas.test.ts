@@ -25,6 +25,8 @@ const payload = (over: Record<string, unknown> = {}) => ({
   validity: { mode: "days", days: 15 },
   observations: null,
   conditions: null,
+  exclusions: null,
+  footerNote: null,
   items: [item()],
   ...over,
 });
@@ -66,6 +68,12 @@ describe("saveQuotePayloadSchema", () => {
     ["observaciones sobre 4.000", { observations: "x".repeat(4001) }],
     ["condiciones sobre 4.000", { conditions: "x".repeat(4001) }],
     ["observaciones que no son texto", { observations: 5 }],
+    ["exclusiones sobre 4.000", { exclusions: "x".repeat(4001) }],
+    ["notas sobre 4.000", { footerNote: "x".repeat(4001) }],
+    ["exclusiones que no son texto", { exclusions: 5 }],
+    ["notas con un carácter de control", { footerNote: "a\u0007b" }],
+    ["exclusiones sin decidir (falta la clave)", { exclusions: undefined }],
+    ["notas sin decidir (falta la clave)", { footerNote: undefined }],
     ["campo de más (organización)", { tenantId: randomUUID() }],
     ["campo de más en la línea", { items: [item({ unitCostClp: 5 })] }],
   ])("rechaza: %s", (_name, over) => {
@@ -119,6 +127,20 @@ describe("del guardado a la base", () => {
     expect(args.p_header.validity).toEqual({ mode: "days", days: 15 });
     expect(args.p_header.observations).toBeNull();
     expect(args.p_header.conditions).toBeNull();
+    expect(args.p_header.exclusions).toBeNull();
+    expect(args.p_header.footer_note).toBeNull();
+    // cada texto va a su clave (no se cruzan) y el vacío viaja como null
+    const sent = toSaveRpcArgs(
+      randomUUID(),
+      { ...parsed, exclusions: "SOLO-EXCLUSIONES", footerNote: "SOLO-NOTAS" },
+      calc.totals,
+    ).p_header;
+    expect(sent.exclusions).toBe("SOLO-EXCLUSIONES");
+    expect(sent.footer_note).toBe("SOLO-NOTAS");
+    expect(
+      toSaveRpcArgs(randomUUID(), { ...parsed, exclusions: "", footerNote: "Nota" }, calc.totals)
+        .p_header,
+    ).toMatchObject({ exclusions: null, footer_note: "Nota" });
     expect(args.p_items.map((i) => [i.discount_kind, i.discount_value])).toEqual([
       ["percent", 1000],
       ["amount", 500],

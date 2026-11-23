@@ -70,6 +70,8 @@ export function sampleQuoteRow(
     valid_until: "2026-10-20",
     observations: "Carga y descarga a pie de camión.\nNo incluye embalaje.",
     conditions: "Valores válidos para una visita en día hábil.",
+    exclusions: null,
+    footer_note: null,
     payment_terms: null,
     ...overrides,
   };

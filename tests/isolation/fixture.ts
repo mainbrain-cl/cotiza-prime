@@ -464,6 +464,10 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
           p_header: {
             customer_id: orgs[key].customerIds[0],
             global_discount: { kind: "none", value: 0 },
+            // H-048b: las exclusiones y las notas al pie también llevan el canario de la organización. Las pruebas que leen todas las
+            // columnas de `quotes` con el pase de otra persona ven así si alguna de las dos columnas se filtra.
+            exclusions: `${orgs[key].canary} Exclusión`,
+            footer_note: `${orgs[key].canary} Nota al pie`,
           },
           p_items: items,
           p_expected_totals: calc.totals,

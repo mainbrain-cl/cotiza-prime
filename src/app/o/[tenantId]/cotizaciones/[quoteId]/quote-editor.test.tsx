@@ -24,6 +24,7 @@ import {
   type EditorLine,
   type EditorState,
 } from "@/lib/quotes/editor-model";
+import { NO_SNIPPETS, type QuoteFieldSnippets } from "@/lib/snippets/quote-fields";
 import { QuoteEditor } from "./quote-editor";
 
 const TENANT_ID = "11111111-1111-4111-8111-111111111111";
@@ -58,11 +59,14 @@ const stateWith = (lines: EditorLine[]): EditorState => ({
   validityDate: "",
   observations: "",
   conditions: "",
+  exclusions: "",
+  footerNote: "",
 });
 
 async function mount(
   lines: EditorLine[],
   rules: { maxDiscountBp: number | null; canOverride: boolean; maxDiscountUnknown?: boolean },
+  extra: { snippets?: QuoteFieldSnippets; manageSnippetsHref?: string | null } = {},
 ) {
   await act(async () => {
     root.render(
@@ -74,6 +78,8 @@ async function mount(
         taxRateBp: 1900,
         savedValidUntil: null,
         initialCatalog: [],
+        snippets: extra.snippets ?? NO_SNIPPETS,
+        manageSnippetsHref: extra.manageSnippetsHref ?? null,
         rules,
       }),
     );
@@ -93,6 +99,14 @@ async function choose(el: HTMLSelectElement, value: string) {
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
     setter.call(el, value);
     el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+async function typeText(el: HTMLElement, value: string) {
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
@@ -403,5 +417,140 @@ describe("poner al día una línea cuando el catálogo cambió con la cotizació
     expect(host.querySelector<HTMLInputElement>('input[id$="-quantity"]')!.value).toBe("5");
     expect(host.querySelector<HTMLInputElement>('input[id$="-price"]')!.value).toBe("8000");
     expect((testId("save-quote") as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("los textos de la cotización: exclusiones, notas al pie y «Insertar texto guardado» (H-048b)", () => {
+  const RULES = { maxDiscountBp: null, canOverride: true };
+  const withSnippets = (over: Partial<QuoteFieldSnippets["byKind"]> = {}): QuoteFieldSnippets => ({
+    available: true,
+    byKind: {
+      conditions: [{ id: "c1", name: "Condiciones estándar", body: "Valores sin IVA." }],
+      exclusions: [
+        { id: "e1", name: "Sin embalaje", body: "No incluye embalaje." },
+        { id: "e2", name: "Sin peajes", body: "No incluye peajes." },
+      ],
+      footer_note: [{ id: "n1", name: "Pie estándar", body: "Valores en pesos chilenos." }],
+      ...over,
+    },
+  });
+  const trigger = (label: string) =>
+    host.querySelector<HTMLButtonElement>(
+      `button[aria-label="Insertar texto guardado en ${label}"]`,
+    );
+  const menuItems = () =>
+    Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+  async function openMenu(label: string) {
+    await act(async () => {
+      trigger(label)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  it("el editor muestra los cuatro textos en el orden del PDF, cada uno opcional y con su contador", async () => {
+    await mount([newFreeLine("a")], RULES);
+    const labels = Array.from(host.querySelectorAll("label"))
+      .map((label) => label.textContent ?? "")
+      .filter((text) =>
+        /^(Observaciones|Condiciones comerciales|Exclusiones|Notas al pie)/.test(text),
+      );
+    expect(labels).toEqual([
+      "Observaciones (opcional)",
+      "Condiciones comerciales (opcional)",
+      "Exclusiones (opcional)",
+      "Notas al pie (opcional)",
+    ]);
+    for (const id of ["observations", "conditions", "exclusions", "footer-note"]) {
+      expect(byId(id)).not.toBeNull();
+      expect(testId(`${id}-count`)!.textContent).toBe("0 / 4.000");
+    }
+    // la pista de las condiciones ya no manda las exclusiones aquí: tienen su campo
+    expect(host.textContent).toContain("Plazos y forma de pago. Solo texto.");
+    expect(host.textContent).not.toContain("Plazos, forma de pago, exclusiones");
+  });
+
+  it("cada campo tiene su botón «Insertar texto guardado», menos las observaciones", async () => {
+    await mount([newFreeLine("a")], RULES, { snippets: withSnippets() });
+    expect(trigger("Condiciones comerciales")).not.toBeNull();
+    expect(trigger("Exclusiones")).not.toBeNull();
+    expect(trigger("Notas al pie")).not.toBeNull();
+    expect(host.querySelectorAll('button[aria-label^="Insertar texto guardado"]')).toHaveLength(3);
+  });
+
+  it("elegir un texto lo agrega al final, separado por una línea en blanco, y cuenta los caracteres", async () => {
+    await mount([newFreeLine("a")], RULES, { snippets: withSnippets() });
+    await typeText(byId("exclusions"), "Lo que ya escribí.");
+    await openMenu("Exclusiones");
+    const items = menuItems();
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringContaining("Sin embalaje"),
+      expect.stringContaining("Sin peajes"),
+    ]);
+    await act(async () => {
+      items[0].click();
+    });
+    expect((byId("exclusions") as unknown as HTMLTextAreaElement).value).toBe(
+      "Lo que ya escribí.\n\nNo incluye embalaje.",
+    );
+    expect(testId("exclusions-count")!.textContent).toBe("40 / 4.000");
+    // solo cambió ese campo
+    expect((byId("conditions") as unknown as HTMLTextAreaElement).value).toBe("");
+    expect((byId("footer-note") as unknown as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("un texto que ya está agregado queda apagado con «Ya agregado»", async () => {
+    await mount([newFreeLine("a")], RULES, { snippets: withSnippets() });
+    await typeText(byId("exclusions"), "No incluye embalaje.");
+    await openMenu("Exclusiones");
+    const [embalaje, peajes] = menuItems();
+    expect(embalaje.getAttribute("data-disabled")).not.toBeNull();
+    expect(embalaje.textContent).toContain("Ya agregado");
+    expect(peajes.getAttribute("data-disabled")).toBeNull();
+  });
+
+  it("un texto que haría pasar del máximo queda apagado y dice cuánto quedaría", async () => {
+    await mount([newFreeLine("a")], RULES, { snippets: withSnippets() });
+    await typeText(byId("exclusions"), "x".repeat(3_990));
+    await openMenu("Exclusiones");
+    const [embalaje] = menuItems();
+    expect(embalaje.getAttribute("data-disabled")).not.toBeNull();
+    expect(embalaje.textContent).toContain("No cabe: quedaría con 4.012 caracteres (máximo 4.000)");
+  });
+
+  it("sin textos guardados lo dice, y solo ofrece Configuración a quien puede administrarlos", async () => {
+    await mount([newFreeLine("a")], RULES, { snippets: NO_SNIPPETS, manageSnippetsHref: null });
+    await openMenu("Notas al pie");
+    expect(document.body.textContent).toContain("Aún no hay textos guardados");
+    expect(document.body.textContent).toContain("El Dueño o un Administrador los crea");
+    expect(document.body.querySelector('a[href*="configuracion/textos"]')).toBeNull();
+  });
+
+  it("quien administra los textos ve el enlace a Configuración", async () => {
+    await mount([newFreeLine("a")], RULES, {
+      snippets: NO_SNIPPETS,
+      manageSnippetsHref: `/o/${TENANT_ID}/configuracion/textos`,
+    });
+    await openMenu("Notas al pie");
+    const link = document.body.querySelector<HTMLAnchorElement>('a[href*="configuracion/textos"]');
+    expect(link).not.toBeNull();
+    expect(link!.textContent).toContain("Crear textos en Configuración");
+  });
+
+  it("si no se pudieron leer los textos, lo dice en vez de mostrarse como si no hubiera", async () => {
+    await mount([newFreeLine("a")], RULES, {
+      snippets: { ...NO_SNIPPETS, available: false },
+    });
+    await openMenu("Exclusiones");
+    expect(document.body.textContent).toContain("No pudimos cargar los textos guardados");
+    expect(document.body.textContent).not.toContain("Aún no hay textos guardados");
+  });
+
+  it("un texto más largo que el máximo marca el campo con su mensaje y no deja guardar", async () => {
+    await mount([newFreeLine("a")], RULES);
+    await typeText(byId("exclusions"), "x".repeat(4_001));
+    await typeText(byId("footer-note"), "y".repeat(4_001));
+    expect(host.textContent).toContain("Las exclusiones son demasiado largas");
+    expect(host.textContent).toContain("Las notas son demasiado largas");
+    expect(byId("exclusions").getAttribute("aria-invalid")).toBe("true");
+    expect(byId("footer-note").getAttribute("aria-invalid")).toBe("true");
   });
 });

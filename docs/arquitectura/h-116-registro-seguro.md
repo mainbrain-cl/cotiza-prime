@@ -726,3 +726,31 @@ Todos estos puntos los cierra la prueba exploratoria de la etapa 0, con llamadas
 atacante, luego la de la víctima), ambas respuestas devuelven el mismo identificador de usuario; al verificar con el correo más
 reciente, la contraseña del atacante inicia sesión y la de la víctima da `invalid_credentials`. Con H-009, el atacante queda como
 Administrador activo de la organización invitada. Probado solo en local; no se verificó contra un Supabase de producción.
+
+---
+
+## Registro de construcción — Etapa 0: prueba exploratoria contra GoTrue local (2026-11-24)
+
+Hecha en PRUEBAS (Supabase local, GoTrue del CLI 2.119.0) con guiones desechables que llaman a la API real (no van al repositorio). Para las
+pruebas con el registro apagado se aplicó a `supabase/config.toml` la configuración objetivo: `[auth] enable_signup = false` y `[auth.email]
+otp_length = 10`. **Ningún resultado cambia el diseño;** los de abajo lo confirman y fijan detalles.
+
+| # | Resultado |
+|---|---|
+| 1 | **Confirmado.** Con `enable_signup = false`, `POST /auth/v1/signup` responde `422 signup_disabled`, pero `auth.admin.generateLink({ type: "invite", email })` **sí crea la cuenta** (sin contraseña, sin verificar). No hace falta el respaldo con `createUser` |
+| 2 | **`amr` de la sesión de `verifyOtp({ token_hash, type: "invite" })`: `[{ method: "otp" }]`**, `aal1`. Es el mismo método que se espera de un enlace del correo; el ingreso con contraseña trae `method: "password"`. `complete_account_setup` debe exigir `otp` en `amr` |
+| 3 | **Confirmado.** Con el registro público apagado el ingreso con contraseña funciona (cuenta con contraseña propia) |
+| 4 | **Confirmado.** Un segundo `generateLink` invalida el código anterior (`Email link is invalid or has expired`). Sobre una cuenta ya verificada responde `422 email_exists` («A user with this email address has already been registered») |
+| 5 | **No verificable en local sin esperar una hora:** el enlace vive `otp_expiry` (3600 s según la configuración). Se verifica en producción con el guion de configuración (`mailer_otp_exp`) |
+| 6 | **`admin.updateUserById(id, { password })` NO envía el aviso «Tu contraseña cambió».** `updateUser({ password })` desde la sesión de la persona **SÍ lo envía**, también al fijar la primera contraseña. Consecuencia: la plantilla `password_changed` (hoy «Tu contraseña de Cotiza Prime cambió») se ve en cada cuenta nueva al terminar de registrarse, así que su texto no puede dar a entender que «alguien cambió tu contraseña»; se ajusta en la etapa 2. La pasarela puede fijar siempre la contraseña aleatoria sin sumar un correo |
+| 7 | `GET /auth/v1/settings` entrega `disable_signup`, `mailer_autoconfirm`, `phone_autoconfirm`, `external.*` (incluido `email` y `anonymous_users`), `saml_enabled` y `passkeys_enabled`. **No** trae el cambio seguro de correo ni el largo del código (como se esperaba). Con la configuración nueva: `disable_signup: true` |
+| 10 | **Confirmado, y es la razón de la contraseña aleatoria.** Con el registro abierto, el atacante se registra con su contraseña; después `generateLink("invite")` + `verifyOtp` sobre esa cuenta **confirma el correo pero NO borra la contraseña del atacante: sigue sirviendo.** Lo mismo con una cuenta antigua sin verificar creada con contraseña (`createUser`). Solo cambiarla (`admin.updateUserById`) o fijar otra desde la sesión del enlace la anula |
+| 11 | **Confirmado.** Con `otp_length = 10` el `email_otp` del invite tiene 10 caracteres y el enlace funciona |
+| 12 | Tiempos medidos (una máquina cargada, local): cuenta nueva con las tres llamadas de la pasarela, **120–128 ms**; cuenta ya verificada (una llamada), **17 ms**. La diferencia es de 100 ms: la duración mínima fija de la respuesta (§3.6) tapa esto con holgura |
+| 13 | **Reproducido en `main` (sin el cierre).** Cuenta confirmada del atacante con su contraseña → `updateUser({ email: <víctima> })` envía un correo de confirmación a cada correo (el actual y el nuevo, `double_confirm_changes`); la víctima confirma el suyo (el estado queda «pendiente del otro»), el atacante hace el último clic y **la cuenta pasa a tener el correo de la víctima y sigue valiendo la contraseña del atacante** (`signInWithPassword` con el correo de la víctima entra). El pase viejo del atacante sigue valiendo con su correo antiguo en el claim. Esto es lo que cierra el disparador sobre `auth.users` y `profiles.signup_email` (§3.4). Pendiente de la etapa 1: comprobar con el disparador puesto qué responde `PUT /auth/v1/user` y si salen los correos |
+| 14 | **Confirmado.** `signOut({ scope: "others" })` borra de `auth.sessions` las demás sesiones: la API de Auth rechaza su pase (`403 session_not_found`) y su `refresh_token` (`Refresh Token Not Found`). **PostgREST SÍ acepta el pase de esa sesión cerrada (200) hasta que vence**: es la ventana de 15 minutos que cierra `app.session_alive()`. El `session_id` del pase se conserva al renovarlo |
+| 15 | **Confirmado el orden de §3.1.** (a) Fijar una contraseña con `admin.updateUserById` **invalida el código de un solo uso generado antes** (`invalid or has expired`); el enlace generado **después** de la contraseña funciona. (b) `updateUser({ password })` desde la sesión del invite **no cierra la propia sesión** (`getUser` sigue respondiendo), y anula la contraseña anterior |
+| 8, 9 | Solo en el Supabase alojado (plan de los ganchos; funciones que lean `auth.sessions` y `auth.mfa_factors`; disparador `before update` en `auth.users`): **no verificables en local, siguen en la lista «Antes del piloto» (§5).** En local, `postgres` (con el que conectan las pruebas) puede leer `auth.sessions` y `auth.mfa_factors`; `auth.users` hoy solo tiene el disparador `on_auth_user_created` (`after insert`) |
+
+**Cambios de esta etapa:** `supabase/config.toml` (`enable_signup = false`, `otp_length = 10`). Las pruebas e2e que hoy se registran con
+`signUpAndVerify` dejan de funcionar con esta configuración: se rehacen en la etapa 3 (por eso va todo en una rama, decisión J0).

@@ -174,8 +174,9 @@ enable_refresh_token_rotation = true
 # Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
-# Allow/disallow new user signups to your project.
-enable_signup = true
+# H-116: el registro público de Supabase está APAGADO. Las cuentas se crean solo desde nuestro servidor, sin contraseña
+# (docs/arquitectura/h-116-registro-seguro.md). NO se apaga `[auth.email] enable_signup`: ese es el proveedor Email completo.
+enable_signup = false
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
 # Allow/disallow testing manual linking of accounts
@@ -232,8 +233,8 @@ enable_confirmations = true
 secure_password_change = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "30s"
-# Number of characters used in the email OTP.
-otp_length = 6
+# Number of characters used in the email OTP. H-116: 10, porque el enlace del correo equivale a un código de 6 números adivinable.
+otp_length = 10
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 otp_expiry = 3600
 

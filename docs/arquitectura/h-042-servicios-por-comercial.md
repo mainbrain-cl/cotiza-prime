@@ -456,7 +456,7 @@ al mezclar.
 eso los dos PR.
 
 **Documentos a actualizar al construir:**
-- `docs/arquitectura/modelo-datos.md`: la fila `member_catalog_permissions` pasa a las dos tablas nuevas.
+- `docs/arquitectura/modelo-datos.md`: la fila `member_catalog_permissions` pasa a las dos tablas nuevas. **Hecho en el PR 1.**
 - `docs/HISTORIAS.md`: notas en H-069 y H-070 (el candado de H-042 y el tamaño ya quedaron en este PR).
 - El documento del sprint 5.
 
@@ -540,3 +540,36 @@ recomendaba. H-042 solo agrega su sección.
   y el de nombre parcial), pero hay que confirmarlo con el plan de la consulta (`explain`).
 - **El estado de la rama**: la «última fecha en `main`» se supuso `20261104110000`; hay una corrección de H-009 (I1) pendiente de
   mezclar con la fecha `20261105100000`.
+
+---
+
+## Registro de construcción — PR 1, la base (2026-11-24)
+
+> Construido por la sesión principal tras la aprobación de Aarón del orden H-048b → H-042 (2026-11-23). **Delicada (🔒): no se mezcla sin Aarón** (decisión 020 §5). Es el PR 1 de dos: no cambia ninguna pantalla ni ningún archivo de la aplicación, y con este PR solo, **nadie tiene regla y nada cambia de comportamiento**.
+
+**Qué quedó hecho** (migración `20261124110000_member_catalog_scope.sql` y su deshacer; **57 migraciones**, 58 con el #68). **Orden de mezcla: primero el #68** (su migración `20261124100000` es anterior a esta, `20261124110000`; la regla de fechas exige que cada migración sea posterior a la última integrada)
+
+- **Dos tablas** (`member_catalog_scopes` y `member_catalog_scope_items`, decisión D13) con `tenant_id`, RLS (solo `team.manage` las lee), relaciones compuestas con `members` y `catalog_items`, `forbid_tenant_change`, sin permisos de escritura directa y con el tope de 500 servicios (`app.member_catalog_scope_max_items()`).
+- **`public.set_member_catalog_scope(miembro, modo, servicios, versión esperada)`**, la única que escribe: sigue el orden del diseño (sesión → `team.manage` → argumentos → miembro de la organización activa → bloqueo de las filas de quien actúa y del miembro por orden de id → ¿se le puede limitar? → «lo pedido ya está guardado» → versión → servicios de esta organización → guardar → auditoría). Resultados `changed` y `unchanged`. **Decisiones al construir:** (1) un servicio desactivado puede estar en la lista (sigue ahí hasta que se quite, como dice el diseño); (2) «lo pedido ya está guardado» se evalúa **antes** de la versión, así un doble clic con una pantalla vieja recibe «listo» y no un `CP409`; (3) sin fila, pedir «todos» no crea nada; (4) se usa `for share` en las filas de `members` (el mismo orden de id de `change_member_role` y `remove_member`, que usan `for update`): un cambio de rol o una quitada concurrentes esperan o se ven.
+- **El predicado único**: `app.catalog_scope_limited()` y `app.can_quote_catalog_item(uuid)`, que **reemplaza el gancho de H-041** con `create or replace` (mismo nombre de parámetro y atributos `security definer set search_path = ''`, `stable`). `save_quote_draft` **no se tocó**. Ante la duda responde «no»: sin sesión, sin organización activa, miembro quitado, servicio inexistente o de otra organización; nunca recibe la organización por parámetro.
+- **`public.quotable_catalog_items(búsqueda, ids)`** (lo que ofrece el cotizador; `security invoker`, hasta 20 con búsqueda y 200 con ids; devuelve `price_locked`) y **`public.my_catalog_scope()`** (si hay límite y cuántos servicios activos puede cotizar).
+- **Permiso del gancho (riesgo 1 de la «Puesta al día»), opción (a):** `authenticated` ejecuta el gancho. Se actualizó `tests/db/price-locks.test.ts` (era la prueba que lo exigía cerrado) y queda documentado en `modelo-datos.md` §9.4.
+- **Auditoría:** `member.catalog_scope_changed` sobre el miembro, con modos, cantidades y ids (hasta 50 agregados y 50 quitados, con `truncated`); nunca nombres. Su etiqueta en pantalla es del PR 2.
+
+**Cambios a pruebas existentes (los esperaba el diseño):** `save-quote-draft-contract` (el primer caso ya no espera «sí» para un id al azar: ahora comprueba `prosecdef`, `proconfig`, volatilidad y permisos del gancho, que responde «no» sin sesión y que `save_quote_draft` lo sigue consultando); `price-locks` (el gancho lo ejecuta `authenticated`); `price-locks-rollback` (ahora corre antes el deshacer de H-042 y el de H-048b); `role-matrix-rollback` (las dos políticas nuevas usan `app.can('team.manage')`); y `second-step` (`quotable_catalog_items` responde una lista vacía, no datos, con la contraseña sola: revisada a mano).
+
+**Pruebas nuevas:** `tests/db/member-catalog-scope.test.ts` (33: quién puede fijar la regla, bordes, 500 servicios, doble clic, dos Administradores, historial con tope, escritura directa y lectura, lo que ofrece el cotizador, `my_catalog_scope`, el gancho, `save_quote_draft` con la regla y «no se tocó nada» por huella de `quotes`, `quote_items`, `quote_packages` y `quote_events`), `tests/db/member-catalog-scope-rollback.test.ts` (8), `tests/db/member-catalog-scope-concurrency.test.ts` (3) y `tests/isolation/catalog-scope.test.ts` (9, más las dos tablas y las tres funciones en el registro; la fixture monta una regla en A (Sofía) y en B).
+
+**Lo que sigue (PR 2, lo que se ve):** `catalog-source.ts` (los **tres** lectores del catálogo: `listQuotableCatalogItems`, `getQuotableCatalogItem` y `loadActiveCatalog` de `convert-lines.ts`), la sección «Servicios que puede cotizar» en la ficha del miembro, los avisos del editor, el texto de «no se cargaron» al convertir una solicitud, la etiqueta de auditoría, la semilla y la prueba e2e (`e2e/catalog-scope.spec.ts`).
+
+### Revisión Opus del PR 1 (2026-11-24): sin bloqueantes; un importante y los menores, corregidos
+
+- **I-1 (corregido): dos guardados a la vez sobre un miembro sin fila daban un error crudo** (`23505`, llave duplicada), porque `for update` no bloquea una fila que no existe. Ahora `set_member_catalog_scope` toma un candado por miembro (`pg_advisory_xact_lock`) después de las filas de `members` y antes de leer la regla: el segundo espera, ve lo que guardó el primero y responde `unchanged` (lo mismo) o `CP409` (otra lista). `tests/db/member-catalog-scope-concurrency.test.ts` abre dos conexiones que SE SOLAPAN; **contra la versión anterior reproduce el `23505`** (se comprobó antes de corregir).
+- **Rendimiento (M-3, corregido; medición propia):** con 2.000 servicios, un Comercial limitado sin búsqueda tardaba **~940 ms** por llamada porque el predicado se recalculaba por fila. Ahora `app.my_catalog_scope_item_ids()` entrega la lista permitida una sola vez y el gancho y `quotable_catalog_items` salen de ella: **~4 ms** (con búsqueda ~1 ms; sin límite y el Dueño, ~1 ms). Su deshacer la borra.
+- **M-1:** el tope de 500 se mira antes de recorrer la lista (el comentario ya decía eso). **M-2:** «nadie cambia su propia regla» ahora es explícito (`CP423 cannot_target_self`, como en H-010), no solo consecuencia de la matriz. **M-6:** los ataques de aislamiento contra la regla de Sofía en A ahora comprueban también su fila (modo, versión y servicios), no solo la huella de B. **M-7:** `modelo-datos.md` §9.4 dice que las relaciones nuevas toman un bloqueo breve sobre `tenants`, `members`, `catalog_items` y `auth.users`.
+
+**Dos preguntas para Aarón (el código aplica el supuesto de abajo):**
+1. **¿Se puede limpiar una lista «dormida»?** Hoy `member_not_limitable` y `member_removed` rechazan también «todos» sobre alguien que pasó a Administrador o fue quitado, así que su lista vieja no se puede borrar (D4: se conserva y vuelve a aplicar si vuelve a ser Comercial). Alternativa: permitir «todos» siempre (solo afloja). **Supuesto aplicado: queda como está (D4)**; la ficha del PR 2 lo explica.
+2. **¿Un tope de cambios por hora?** H-010 limita a 30 los cambios de rol y quitadas por persona y hora, para no llenar el registro. Aquí no hay tope: cada cambio deja un registro de a lo más ~4 KB. **Supuesto aplicado: sin tope** (el volumen esperado es mínimo; si Aarón quiere el mismo tope, es chico).
+
+**Para el PR 2 (anotado por la revisión):** la etiqueta de `member.catalog_scope_changed` y que `src/lib/audit/queries.ts` resuelva el nombre del miembro afectado; pruebas de paridad de los valores fijos 500, 20 y 100 contra los de la aplicación; y que la pantalla reconozca `cannot_target_self`.

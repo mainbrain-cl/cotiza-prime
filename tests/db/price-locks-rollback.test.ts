@@ -22,9 +22,14 @@ const NAME = "20261118100000_price_locks";
 const up = read("migrations", `${NAME}.sql`);
 const down = read("rollbacks", `${NAME}.down.sql`);
 const previous = read("migrations", "20261005130000_brand_server_only_logo.sql");
-// H-048b (20261123100000) redefinió `save_quote_draft` encima de la de esta migración: su deshacer va PRIMERO (orden inverso), y deja la
-// función exactamente como la dejó esta migración. Cada prueba de aquí lo corre al empezar, dentro de su transacción.
-const later = read("rollbacks", "20261123100000_quote_text_fields.down.sql");
+// H-048b (20261123100000) redefinió `save_quote_draft` encima de la de esta migración y H-042 (20261124110000) reemplazó el gancho: sus
+// deshacer van PRIMERO (orden inverso) y dejan la función y el gancho exactamente como los dejó esta migración. Cada prueba de aquí los
+// corre al empezar, dentro de su transacción.
+// Los deshacer posteriores, en orden inverso: primero H-042 (devuelve el gancho a `select true`) y después H-048b.
+const later =
+  read("rollbacks", "20261124110000_member_catalog_scope.down.sql") +
+  "\n" +
+  read("rollbacks", "20261123100000_quote_text_fields.down.sql");
 const md5 = (text: string) => createHash("md5").update(text).digest("hex");
 const code = (sql: string) =>
   sql

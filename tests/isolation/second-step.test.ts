@@ -161,7 +161,10 @@ describe("S2-2 · funciones: con la contraseña sola, rechazo en todo el registr
       if (nothing(res)) open.push(name);
     }
     // Las que responden «nada» son pocas y conocidas; una nueva se revisa a mano.
-    expect(open.sort()).toEqual(["my_last_tenant_id", "preview_next_quote_number"].sort());
+    // `quotable_catalog_items` (H-042, revisada a mano): sin organización activa responde una lista vacía, no datos.
+    expect(open.sort()).toEqual(
+      ["my_last_tenant_id", "preview_next_quote_number", "quotable_catalog_items"].sort(),
+    );
   });
 
   it("control: con aal2 las funciones de lectura de la organización responden", async () => {

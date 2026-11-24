@@ -3,7 +3,14 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { MEMBER_ROLES } from "../../src/lib/permissions/matrix";
 import { calculateQuote } from "../../src/lib/quotes/calc";
+import {
+  QUOTABLE_CATALOG_LIMIT,
+  QUOTABLE_IDS_LIMIT,
+  QUOTABLE_SEARCH_MAX_LENGTH,
+} from "../../src/lib/quotes/catalog-limits";
+import { CATALOG_SCOPE_MAX_ITEMS, roleCanBeLimited } from "../../src/lib/team/catalog-scope-model";
 import { actAsPostgres, connect, expectSqlError, withTx, type TestUser } from "./helpers";
 import { addCatalogItem } from "./approval-helpers";
 import { asUser, buildWorld, line, type World } from "./send-helpers";
@@ -814,5 +821,57 @@ describe("no se toca nada de lo ya hecho", () => {
       await setScope(w.owner, carla, "list", [a], 1);
       await setScope(w.owner, carla, "all", null, 2);
       expect(await fingerprint()).toEqual(before);
+    }));
+});
+
+describe("paridad con la aplicación (los valores fijos y quién se limita)", () => {
+  it("el tope de la lista y a quién se limita son los de la aplicación, para los cinco roles", async () => {
+    await actAsPostgres(db);
+    const { rows: max } = await db.query<{ n: number }>(
+      "select app.member_catalog_scope_max_items() as n",
+    );
+    expect(max[0].n).toBe(CATALOG_SCOPE_MAX_ITEMS);
+    const { rows } = await db.query<{ role: string; limitable: boolean }>(
+      `select r as role, (app.role_can(r, 'quote.create') and not app.role_can(r, 'catalog.manage')) as limitable
+         from unnest($1::text[]) r`,
+      [MEMBER_ROLES],
+    );
+    expect(rows).toHaveLength(MEMBER_ROLES.length);
+    for (const row of rows) expect(row.limitable, row.role).toBe(roleCanBeLimited(row.role));
+  });
+
+  it("una búsqueda devuelve a lo más QUOTABLE_CATALOG_LIMIT servicios y corta lo buscado en QUOTABLE_SEARCH_MAX_LENGTH caracteres", () =>
+    withTx(db, async () => {
+      await actAsPostgres(db);
+      await db.query(
+        `insert into public.catalog_items (tenant_id, name, unit, unit_price_clp)
+         select $1, 'Servicio paridad ' || lpad(g::text, 3, '0'), 'service', 100
+           from generate_series(1, $2::int) g`,
+        [w.tenantA, QUOTABLE_CATALOG_LIMIT + 10],
+      );
+      expect(await offered(w.owner, "Servicio paridad")).toHaveLength(QUOTABLE_CATALOG_LIMIT);
+      // el nombre más largo posible (150): lo buscado se corta en el máximo, así que 3 caracteres de más (que no están en el nombre) no impiden hallarlo
+      const longName = `${"x".repeat(QUOTABLE_SEARCH_MAX_LENGTH)}ZZZ`;
+      const long = await addCatalogItem(db, w.tenantA, PRICE, longName);
+      const found = await offered(w.owner, `${"x".repeat(QUOTABLE_SEARCH_MAX_LENGTH)}QQQ`);
+      expect(found.map((r) => r.id)).toEqual([long]);
+      // un carácter dentro del máximo que no coincide, sí lo descarta
+      expect(await offered(w.owner, `${"x".repeat(QUOTABLE_SEARCH_MAX_LENGTH - 1)}Q`)).toHaveLength(
+        0,
+      );
+    }));
+
+  it("por identificador se aceptan QUOTABLE_IDS_LIMIT y no uno más", () =>
+    withTx(db, async () => {
+      const ids = Array.from({ length: QUOTABLE_IDS_LIMIT }, () => randomUUID());
+      expect(await offered(w.owner, "", ids)).toEqual([]);
+      await asUser(db, w.owner, w.tenantA);
+      const error = await expectSqlError(
+        db,
+        "select * from public.quotable_catalog_items('', $1::uuid[])",
+        [[...ids, randomUUID()]],
+      );
+      await actAsPostgres(db);
+      expect(error.code).toBe("CP422");
     }));
 });

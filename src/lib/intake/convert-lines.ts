@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { saveQuoteDraftAction } from "@/lib/quotes/actions";
+import { QUOTABLE_IDS_LIMIT } from "@/lib/quotes/catalog-limits";
 import { serverLog } from "@/lib/log/server-log";
 import type { ActiveTenant } from "@/lib/tenant/active-tenant";
 import {
@@ -25,7 +26,11 @@ type CatalogRow = {
   price_locked: boolean;
 };
 
-/** Servicios del catálogo, de esta organización, que siguen activos, por id. `null` si no se pudo leer. */
+/**
+ * Servicios del catálogo, de esta organización, que siguen activos Y que esta persona puede cotizar (H-042), por id. Lee
+ * `public.quotable_catalog_items` con los ids pedidos (de a 200): un servicio que la regla no le permite NO aparece, y queda entre los
+ * «no cargados» en vez de hacer fallar el guardado entero y dejar la cotización vacía. `null` si no se pudo leer.
+ */
 export async function loadActiveCatalog(
   active: ActiveTenant,
   catalogItemIds: readonly string[],
@@ -33,26 +38,26 @@ export async function loadActiveCatalog(
   const ids = [...new Set(catalogItemIds)];
   const result = new Map<string, CatalogSnapshot>();
   if (ids.length === 0) return result;
-  const { data, error } = await active.supabase
-    .from("catalog_items")
-    .select("id, name, description, unit, unit_price_clp, tax_treatment, price_locked")
-    .eq("tenant_id", active.tenantId)
-    .eq("is_active", true)
-    .in("id", ids);
-  if (error || !data) {
-    await serverLog("error", "intake_convert_catalog_failed", { code: error?.code });
-    return null;
-  }
-  for (const row of data as CatalogRow[]) {
-    result.set(row.id, {
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      unit: row.unit,
-      unitPriceClp: row.unit_price_clp,
-      taxTreatment: row.tax_treatment,
-      priceLocked: row.price_locked,
+  for (let start = 0; start < ids.length; start += QUOTABLE_IDS_LIMIT) {
+    const { data, error } = await active.supabase.rpc("quotable_catalog_items", {
+      p_search: "",
+      p_ids: ids.slice(start, start + QUOTABLE_IDS_LIMIT),
     });
+    if (error || !data) {
+      await serverLog("error", "intake_convert_catalog_failed", { code: error?.code });
+      return null;
+    }
+    for (const row of data as CatalogRow[]) {
+      result.set(row.id, {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        unit: row.unit,
+        unitPriceClp: row.unit_price_clp,
+        taxTreatment: row.tax_treatment,
+        priceLocked: row.price_locked,
+      });
+    }
   }
   return result;
 }

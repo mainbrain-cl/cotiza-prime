@@ -807,7 +807,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-010, H-020, H-041
 **Datos personales:** no
-**Notas técnicas:** 🔒 delicada (permisos por persona y una función con permisos elevados); no se mezcla sin Aarón (decisión 020 §5). Unos 3,75 días en dos PR. D2: ordena (cada Comercial ve una lista más corta) y no controla (las líneas escritas a mano no se limitan). Diseño en `docs/arquitectura/h-042-servicios-por-comercial.md`. **Puesta al día del 2026-11-19 (con H-041 en `main`):** H-042 solo reemplaza el gancho `app.can_quote_catalog_item` y **no reescribe `save_quote_draft`**; se construye **después de H-048b** (que sí la reescribe); ≈3,5 días (la pregunta 18 se resolvió el 2026-11-19 con la opción A: H-042 solo ordena). Detalle y riesgos nuevos en la sección «Puesta al día» del diseño.
+**Notas técnicas:** 🔒 delicada (permisos por persona y una función con permisos elevados); no se mezcla sin Aarón (decisión 020 §5). Unos 3,75 días en dos PR. D2: ordena (cada Comercial ve una lista más corta) y no controla (las líneas escritas a mano no se limitan). Diseño en `docs/arquitectura/h-042-servicios-por-comercial.md`. **Puesta al día del 2026-11-19 (con H-041 en `main`):** H-042 solo reemplaza el gancho `app.can_quote_catalog_item` y **no reescribe `save_quote_draft`**; se construye **después de H-048b** (que sí la reescribe); ≈3,5 días (la pregunta 18 se resolvió el 2026-11-19 con la opción A: H-042 solo ordena). Detalle y riesgos nuevos en la sección «Puesta al día» del diseño. **Estado (2026-11-24): construida en dos PR, a la espera de la revisión de Aarón.** PR 1 (#69, la base de datos): dos tablas, `set_member_catalog_scope`, el gancho de H-041 reemplazado, `quotable_catalog_items` y `my_catalog_scope`. PR 2 (las pantallas, sobre la rama del #69): los tres lectores del catálogo pasan por `quotable_catalog_items`, la sección en la ficha del miembro, los avisos del editor, la etiqueta de auditoría y la prueba e2e. **Pendiente (no construido):** el aviso «esta persona estuvo antes en el equipo con una lista» en la pantalla de invitar (necesita una función de la base que busque por correo una membresía quitada con regla, con el riesgo de enumeración de cuentas): propuesta H-042b, a decidir con Aarón. Registro de construcción y revisiones en `docs/arquitectura/h-042-servicios-por-comercial.md`.
 
 ---
 
@@ -1299,7 +1299,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** mediano
 **Depende de:** H-044
 **Datos personales:** no
-**Notas técnicas:** la nueva versión copia los cuatro textos de la cotización: observaciones, condiciones, exclusiones y notas al pie (campos de H-048b).
+**Notas técnicas:** la nueva versión copia los cuatro textos de la cotización: observaciones, condiciones, exclusiones y notas al pie (campos de H-048b). **Servicios por comercial (H-042, decisión D10 de Aarón):** la versión nueva conserva las líneas del catálogo **solo si es la misma cotización y el mismo autor** (misma negociación). Si la crea otra persona, se trata como un duplicado: consulta `app.can_quote_catalog_item` y omite con aviso los servicios que esa persona no puede cotizar. Si inserta las líneas sin pasar por `save_quote_draft`, **se salta la regla**: tiene que consultar el gancho.
 
 ---
 
@@ -1318,7 +1318,7 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **Tamaño:** chico
 **Depende de:** H-025
 **Datos personales:** no
-**Notas técnicas:** el borrador nuevo copia los cuatro textos de la cotización: observaciones, condiciones, exclusiones y notas al pie (campos de H-048b).
+**Notas técnicas:** el borrador nuevo copia los cuatro textos de la cotización: observaciones, condiciones, exclusiones y notas al pie (campos de H-048b). **Servicios por comercial (H-042, decisión D10 de Aarón):** duplicar consulta `app.can_quote_catalog_item` y omite con aviso los servicios que quien duplica no puede cotizar; si no, duplicar la cotización de un colega saltaría el límite. Si inserta las líneas sin pasar por `save_quote_draft`, **se salta la regla**: tiene que consultar el gancho.
 
 ---
 

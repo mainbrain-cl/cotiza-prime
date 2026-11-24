@@ -293,6 +293,124 @@ describe("a quién afectó la acción (H-010: sin correos, el registro es lo que
     expect(text).not.toContain("@");
   });
 
+  it("servicios por comercial (H-042): dice a quién y qué cambió, con cantidades y sin nombres de servicio", () => {
+    const entry = (details: Record<string, unknown>, subjectName: string | null = "Carla Soto") =>
+      describeAuditEntry({ action: "member.catalog_scope_changed", details, subjectName });
+    const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    // de «todos» a una lista
+    expect(
+      entry({
+        old_mode: "all",
+        new_mode: "list",
+        old_count: 0,
+        new_count: 3,
+        added: [id(1), id(2), id(3)],
+        removed: [],
+        truncated: false,
+      }),
+    ).toBe("Limitó a Carla Soto a 3 servicios");
+    expect(
+      entry({
+        old_mode: "all",
+        new_mode: "list",
+        old_count: 0,
+        new_count: 1,
+        added: [id(1)],
+        removed: [],
+        truncated: false,
+      }),
+    ).toBe("Limitó a Carla Soto a 1 servicio");
+    // de una lista a «todos»
+    expect(
+      entry({
+        old_mode: "list",
+        new_mode: "all",
+        old_count: 3,
+        new_count: 0,
+        added: [],
+        removed: [id(1)],
+        truncated: false,
+      }),
+    ).toBe("Dejó a Carla Soto cotizar todos los servicios");
+    // de una lista a otra
+    expect(
+      entry({
+        old_mode: "list",
+        new_mode: "list",
+        old_count: 3,
+        new_count: 4,
+        added: [id(4), id(5)],
+        removed: [id(1)],
+        truncated: false,
+      }),
+    ).toBe("Cambió los servicios de Carla Soto: de 3 servicios a 4 servicios (agregó 2, quitó 1)");
+    expect(
+      entry({
+        old_mode: "list",
+        new_mode: "list",
+        old_count: 2,
+        new_count: 1,
+        added: [],
+        removed: [id(1)],
+        truncated: false,
+      }),
+    ).toBe("Cambió los servicios de Carla Soto: de 2 servicios a 1 servicio (quitó 1)");
+    // si el registro cortó la lista de ids, no dice un número que no es
+    expect(
+      entry({
+        old_mode: "list",
+        new_mode: "list",
+        old_count: 10,
+        new_count: 200,
+        added: Array.from({ length: 50 }, (_, i) => id(i)),
+        removed: [],
+        truncated: true,
+      }),
+    ).toBe("Cambió los servicios de Carla Soto: de 10 servicios a 200 servicios");
+    // sin nombre legible
+    expect(
+      entry(
+        {
+          old_mode: "all",
+          new_mode: "list",
+          old_count: 0,
+          new_count: 2,
+          added: [],
+          removed: [],
+          truncated: false,
+        },
+        null,
+      ),
+    ).toBe("Limitó a una persona del equipo a 2 servicios");
+    // de lista a lista sin nada que contar (un registro deformado): sin paréntesis vacío
+    expect(
+      entry({
+        old_mode: "list",
+        new_mode: "list",
+        old_count: 2,
+        new_count: 2,
+        added: [],
+        removed: [],
+        truncated: false,
+      }),
+    ).toBe("Cambió los servicios de Carla Soto: de 2 servicios a 2 servicios");
+    // un detalle que no trae lo esperado cae a la frase general, sin romper
+    expect(entry({})).toBeNull();
+    expect(
+      entry({ old_mode: "otro", new_mode: "list", old_count: 0, new_count: 1 }) ?? "",
+    ).not.toContain("Limitó");
+  });
+
+  it("la etiqueta y el recurso de los servicios por comercial", () => {
+    expect(actionLabel("member.catalog_scope_changed")).toBe(
+      "Se cambiaron los servicios que puede cotizar un miembro",
+    );
+    expect(isKnownAuditAction("member.catalog_scope_changed")).toBe(true);
+    expect(describeAuditSubject({ resourceType: "member", subjectName: "Carla Soto" })).toBe(
+      "Miembro: Carla Soto",
+    );
+  });
+
   it("las demás acciones siguen como antes", () => {
     expect(
       describeAuditEntry({

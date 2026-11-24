@@ -808,6 +808,18 @@ describe("variables", () => {
     "línea uno\n{{cliente}}\nlínea tres",
     "{{cliente\n}}",
     "{{cliente}}\n\n{{numero}}",
+    // una variable dentro de la dirección de un enlace (revisión de Aarón al PR #67)
+    "[Mira]({{cliente}})",
+    "[Mira](https://{{organizacion}}/x)",
+    "[Mira](https://ejemplo.cl/{{numero}}) y más",
+    "Hola\n\n[Mira]({{cliente}}) gracias",
+    "[{{cliente}}](https://ejemplo.cl/x)",
+    "[Mira](https://ejemplo.cl/x) {{cliente}}",
+    "Hola ({{cliente}}), gracias",
+    "[Mira](https://ejemplo.cl/x\n{{cliente}})",
+    "[Mira]({{otra}})",
+    "[Mira]({{cliente}}",
+    "[Mira]({{cliente}})".repeat(11),
   ];
 
   it("la base y el módulo puro dicen lo mismo en cada caso y cada tipo", async () => {
@@ -837,6 +849,8 @@ describe("variables", () => {
         ["email_body", "Hola {{nombre}}", "unknown_variable"],
         ["email_body", "Hola {{cliente}", "unknown_variable"],
         ["email_body", "{{cliente}}".repeat(11), "too_many_variables"],
+        ["email_body", "[Mira]({{cliente}})", "variable_in_link"],
+        ["email_body", "[Mira](https://{{organizacion}}/x)", "variable_in_link"],
         ["conditions", "Para {{cliente}}", "variables_not_allowed"],
         ["exclusions", "Para {{cliente}}", "variables_not_allowed"],
         ["footer_note", "}}", "variables_not_allowed"],

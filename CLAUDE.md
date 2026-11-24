@@ -34,7 +34,7 @@ de la base exige una decisión registrada en `docs/decisiones/`.
 **Fase 4 — Desarrollo.** Plan, historias y sprint 1 aprobados (Compuerta 3 cruzada el
 2026-10-01). Forma de trabajo: decisión 013. Las decisiones están en `docs/decisiones/`.
 
-## Para retomar (actualizado 2026-11-23)
+## Para retomar (actualizado 2026-11-24)
 
 Al abrir una sesión nueva, **parte por aquí**.
 
@@ -54,20 +54,20 @@ organizaciones), `test:db:rollbacks`, `test:e2e`; todo en verde local y en GitHu
 **En curso: sprint 2** → `docs/sprints/002-primera-cotizacion-pdf.md` (orden de construcción y decisiones:
 la plantilla 1 del PDF la propone la sesión principal con vista previa; PDF con `@react-pdf/renderer`).
 
-### Traspaso del 2026-11-23 — lo más reciente (léelo antes que el del 2026-11-19)
+### Traspaso del 2026-11-24 — lo más reciente (léelo antes que el del 2026-11-19)
 
-**`main` está en `ef772d0` (PR #65, la muestra del PDF), sobre `2f3cbdb` (#66, pulido del enlace del cliente). 56 migraciones con la de H-048b (rama abierta). PR abierto: el #67 (H-048b, `feat/h-048b-textos-en-la-cotizacion`), esperando a Aarón.**
+**`main` está en `f41e8d6` (PR #67, H-048b, mezclado por Aarón el 2026-11-23), sobre `ef772d0` (#65). 56 migraciones; la última es `20261123100000_quote_text_fields`. PR abierto: el #68, los menores de Aarón al #67 (rama `fix/menores-h048b-de-aaron`, abajo; agrega la migración `20261124100000_snippet_variable_in_link`, 57 con ella).**
 
 - **Aarón aprobó la muestra del PDF de H-048b «tal cual» (2026-11-23)** y autorizó el orden **H-048b → H-042 → H-116 → H-119 → H-120**. Desde el traspaso del 19-11 entraron #62 (el PDF sin total), #63 (decisiones de Aarón), #64 (menores del #60), #65 (muestra) y #66 (encabezado del enlace del cliente); los mezcló José bajo la decisión 020 §5.
-- **H-048b: construida, con revisión Opus (0 bloqueantes; sus 2 importantes y los menores, corregidos).** Exclusiones y notas al pie como campos propios de la cotización (migración `20261123100000_quote_text_fields`), «Insertar texto guardado» en el editor, el correo de `/enviar` con el texto inicial y las variables completas, y los dos textos en el PDF y en la página del cliente. **Delicada: no se mezcla sin Aarón.** Registro de construcción, desviaciones y verificación: `docs/arquitectura/sprint-5-h-048-textos.md` («Registro de construcción — H-048b»). Componentes nuevos: `docs/DISENO.md`.
+- **H-048b: ✅ mezclada por Aarón (#67, 2026-11-23, tras una revisión con dos Opus nuevos: sin bloqueantes ni importantes).** Construida con revisión Opus propia (0 bloqueantes; sus 2 importantes y los menores, corregidos). Exclusiones y notas al pie como campos propios de la cotización (migración `20261123100000_quote_text_fields`), «Insertar texto guardado» en el editor, el correo de `/enviar` con el texto inicial y las variables completas, y los dos textos en el PDF y en la página del cliente. Registro de construcción, desviaciones y verificación: `docs/arquitectura/sprint-5-h-048-textos.md` («Registro de construcción — H-048b»). Componentes nuevos: `docs/DISENO.md`.
   - `save_quote_draft` se generó con un script desde la de H-041 (huella `103579dac268fc9032bf33896d36b6a9`) cambiando solo tres cosas; la nueva tiene la huella `0cd4b44ff2c3c6128672b9469fc37c91`. **El deshacer de H-048b va ANTES que el de H-041** y se niega si otra función cambió `save_quote_draft` o nombra las columnas.
   - **Arreglo del título solo al pie del PDF** (anotado el 19-11): la causa real era el `marginBottom` del texto de cada bloque (el motor de cortes cuenta el margen como parte de lo que debe caber y movía el texto entero dejando su título solo). El espacio entre bloques va ahora en el `marginTop` del título.
   - **Verde local (2026-11-23, código final):** lint, tipos y formato limpios (el formato solo marca los dos archivos de traspaso sin versionar de la raíz); 3.093 unitarias (1 omitida); `test:db` 1.460; `test:isolation` 1.424 (3 pendientes); `test:db:rollbacks` OK; e2e `isolation` 48 de 48 y `chromium` 202 de 202. **No probado:** iPhone real, Firefox, Safari, lector de pantalla.
-  - **Anotado, sin construir:** `docs/seguridad-pendiente.md` H-048b-1 (los límites de caracteres entre la base y la página del cliente no calzan con emoji; ya existía con observaciones y condiciones y no cruza organizaciones). Las plantillas 2 y 3 (H-076) deben mostrar también «Exclusiones» y «Notas».
-- **Siguiente: H-042** (servicios por comercial), **después de que Aarón mezcle H-048b**: comparten `quote-editor.tsx`, `save-error.ts`, la prueba trampa y `convert-lines.ts`. No tiene decisiones abiertas para Aarón; el plan está en la «Puesta al día del 2026-11-19» de `docs/arquitectura/h-042-servicios-por-comercial.md` (solo reemplaza el gancho `app.can_quote_catalog_item`; ≈3,5 días en dos PR).
+  - **Cinco menores de Aarón al #67, en el PR de seguimiento** (detalle en `sprint-5-h-048-textos.md`, «Menores de la revisión de Aarón al PR #67»): (1) una variable dentro de la dirección de un enlace (`[texto]({{cliente}})`) ya no se acepta al guardar un texto (motivo `variable_in_link`, en el módulo puro y en la base; los textos viejos con esa forma no se ofrecen en `/enviar`); (2) `defaultEmailBody` sanea los nombres (un cliente con «{{cliente}}» ya no apaga «Enviar»); (3) «Ya agregado» compara por bloques completos; (4) corregida la entrada H-048b-1 de `seguridad-pendiente.md` (decía que la página del cliente falla con emoji: es falso); (5) informativo: Exclusiones y Notas aceptan marcas RTL e invisibles, igual que observaciones y condiciones. Las plantillas 2 y 3 (H-076) deben mostrar también «Exclusiones» y «Notas».
+- **Siguiente: H-042** (servicios por comercial), ya sin bloqueo (H-048b está en `main`). No tiene decisiones abiertas para Aarón; el plan está en la «Puesta al día del 2026-11-19» de `docs/arquitectura/h-042-servicios-por-comercial.md` (solo reemplaza el gancho `app.can_quote_catalog_item`; ≈3,5 días en dos PR).
 - **Trampas de hoy:** `FormAlert` no acepta `data-testid` (envolver en un `div`). Un spec de Playwright nuevo con «Insertar texto guardado» necesita contar los `menuitem` sin el enlace «Administrar textos» (la persona es Dueña). `git add -A` mete los dos archivos de traspaso sin versionar de la raíz: agregar archivo por archivo.
 
-### Traspaso del 2026-11-19 — histórico (el del 2026-11-23 lo actualiza; léelo antes que el del 2026-11-17)
+### Traspaso del 2026-11-19 — histórico (el del 2026-11-24 lo actualiza; léelo antes que el del 2026-11-17)
 
 **`main` está en `a93fd96` (PR #61, documentos), sobre `d1aab2d` (PR #58, H-041, mezclado el 2026-11-19 por José con la autorización de Aarón). 55 migraciones; la última es `20261118100000_price_locks`. PR abiertos: el #62 (el PDF podía salir sin total, abajo) y el de las decisiones de Aarón de este traspaso.** Desde el traspaso del 17-11 entraron: #57 (Next 16.4.6, por Aarón), #56 (H-004b), #59 (pulido de pantallas), #60 («Sin conexión») y #58 (H-041). Los #59, #60 y #58 los mezcló José bajo la decisión 020 §5; el #58 con la autorización expresa de Aarón (arriba).
 

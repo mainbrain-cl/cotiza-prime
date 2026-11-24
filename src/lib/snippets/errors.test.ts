@@ -51,6 +51,15 @@ const CASES: [string, string, ReturnType<typeof mapSnippetError>][] = [
       field: "body",
     },
   ],
+  [
+    "CP422",
+    "variable_in_link",
+    {
+      kind: "invalid",
+      message: SNIPPET_VARIABLE_PROBLEM_MESSAGES.variable_in_link,
+      field: "body",
+    },
+  ],
   ["CP422", "too_many_snippets", { kind: "limit", message: SNIPPET_TOO_MANY }],
   ["CP422", "invalid_kind", { kind: "other", message: SNIPPET_GENERIC_FAILURE }],
   ["CP422", "invalid_arguments", { kind: "other", message: SNIPPET_GENERIC_FAILURE }],

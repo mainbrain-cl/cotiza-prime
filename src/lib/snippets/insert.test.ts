@@ -26,11 +26,48 @@ describe("appendSnippet (insertar un texto guardado, H-048b)", () => {
     const once = appendSnippet("", "No incluye embalaje.");
     if (once.status !== "ok") throw new Error("debía agregarse");
     expect(appendSnippet(once.text, "No incluye embalaje.")).toEqual({ status: "already_added" });
+    // con espacios o saltos de línea de más alrededor del texto guardado, es el mismo texto
     expect(
-      appendSnippet("Antes. No incluye embalaje. Después.", " No incluye embalaje.\n"),
+      appendSnippet("Antes.\n\nNo incluye embalaje.\n\nDespués.", " No incluye embalaje.\n"),
     ).toEqual({ status: "already_added" });
     expect(isSnippetInField("abc", "")).toBe(false);
     expect(isSnippetInField("abc", "   ")).toBe(false);
+  });
+
+  it("«Ya agregado» compara por bloques completos, no por pedazos de texto (revisión de Aarón al PR #67)", () => {
+    // un texto corto que es PARTE de otro más largo no cuenta como ya agregado
+    expect(isSnippetInField("No incluye IVA ni transporte.", "No incluye IVA")).toBe(false);
+    expect(appendSnippet("No incluye IVA ni transporte.", "No incluye IVA")).toEqual({
+      status: "ok",
+      text: "No incluye IVA ni transporte.\n\nNo incluye IVA",
+    });
+    // pero sí cuenta si está como un bloque propio, solo o junto a otros, con cualquier cantidad de líneas en blanco
+    expect(isSnippetInField("No incluye IVA", "No incluye IVA")).toBe(true);
+    expect(isSnippetInField("Antes.\n\nNo incluye IVA\n\nDespués.", "No incluye IVA")).toBe(true);
+    expect(isSnippetInField("Antes.\n\n\n  No incluye IVA  \n\n\nDespués.", "No incluye IVA")).toBe(
+      true,
+    );
+    // un texto de varios párrafos se compara párrafo a párrafo, en orden y juntos
+    expect(isSnippetInField("A.\n\nB.\n\nC.", "B.\n\nC.")).toBe(true);
+    expect(isSnippetInField("A.\n\nX.\n\nC.", "A.\n\nC.")).toBe(false);
+    expect(isSnippetInField("B.\n\nA.", "A.\n\nB.")).toBe(false);
+    // el mismo texto en una sola línea con otro texto pegado, no
+    expect(isSnippetInField("Antes. No incluye IVA. Después.", "No incluye IVA.")).toBe(false);
+  });
+
+  it("«Ya agregado» detecta una exclusión escrita como una línea dentro de un párrafo, y con saltos de línea de Windows", () => {
+    // las exclusiones se escriben una debajo de otra, sin línea en blanco
+    const field = "No incluye embalaje.\nNo incluye seguro.\nNo incluye peajes.";
+    expect(isSnippetInField(field, "No incluye seguro.")).toBe(true);
+    expect(appendSnippet(field, "No incluye seguro.")).toEqual({ status: "already_added" });
+    expect(isSnippetInField(field, "No incluye seguro")).toBe(false);
+    expect(isSnippetInField(field, "No incluye")).toBe(false);
+    // un texto de dos líneas tiene que estar completo y seguido
+    expect(isSnippetInField(field, "No incluye seguro.\nNo incluye peajes.")).toBe(true);
+    expect(isSnippetInField(field, "No incluye embalaje.\nNo incluye peajes.")).toBe(false);
+    // los saltos de Windows cuentan como uno
+    expect(isSnippetInField("Uno.\r\nDos.\r\n\r\nTres.", "Dos.")).toBe(true);
+    expect(isSnippetInField("Uno.\nDos.", "Uno.\r\nDos.")).toBe(true);
   });
 
   it("si pasaría del máximo, no se agrega y dice cuánto quedaría", () => {

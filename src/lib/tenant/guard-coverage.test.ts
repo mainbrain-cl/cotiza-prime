@@ -13,7 +13,12 @@ const PERMISSION_GUARD = "requirePermission(";
 
 /** Acciones que NO operan dentro de una organización, con la razón. Cada excepción debe justificarse. */
 const ACTIONS_WITHOUT_ACTIVE_TENANT: Record<string, string> = {
-  "lib/auth/actions.ts#signUpAction": "todavía no hay sesión ni organización",
+  "lib/auth/signup-actions.ts#signUpAction":
+    "todavía no hay sesión ni organización: pide el enlace del registro con solo el correo",
+  "lib/auth/signup-actions.ts#confirmEmailLinkAction":
+    "todavía no hay organización: canjea el enlace del correo del registro por una sesión",
+  "lib/auth/signup-actions.ts#completeAccountSetupAction":
+    "es de la cuenta, no de una organización: la propia persona elige su nombre y su contraseña desde la sesión del enlace del correo; la base lo exige",
   "lib/auth/actions.ts#signInAction": "todavía no hay sesión ni organización",
   "lib/auth/actions.ts#requestPasswordResetAction":
     "todavía no hay sesión: la persona olvidó su clave",

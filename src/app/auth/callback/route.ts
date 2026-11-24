@@ -6,7 +6,10 @@ import { INVITATION_ACCEPT_PATH } from "@/lib/team/accept-model";
 import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
 
 /**
- * Llegada desde el enlace del correo de verificación (H-001).
+ * Llegada desde el enlace del correo de verificación (H-001). Desde H-116 el registro ya no envía este enlace (el correo del
+ * registro lleva a `/confirmar-correo`): queda solo para los enlaces enviados ANTES del cambio, que valen su hora de vida. Quien
+ * llega con uno cae en el inicio, y el control de entrada (`requireUser`) lo manda a terminar de crear su cuenta si todavía no
+ * lo hizo (`/crear-cuenta`).
  * Cambia el código del enlace por una sesión. Si el enlace caducó, ya se usó o se abrió en otro
  * navegador, lleva a ingresar con un aviso: el correo puede haber quedado verificado igual.
  */

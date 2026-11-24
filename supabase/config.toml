@@ -248,10 +248,23 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
-# Uncomment to customize email template
-# [auth.email.template.invite]
-# subject = "You have been invited"
-# content_path = "./supabase/templates/invite.html"
+# H-116: el correo del registro lo envía NUESTRO servidor (`src/lib/auth/signup-service.ts`), no Supabase. Estas dos plantillas son
+# las de Supabase que, aun así, pueden salir (por ejemplo si alguien llama a `/resend` con la llave pública sobre una cuenta sin
+# verificar): no traen ningún enlace de confirmación, solo mandan a pedir uno desde `/registro`. En producción se cargan en el
+# panel de Supabase (Authentication → Emails → Confirm sign up e Invite user).
+[auth.email.template.invite]
+subject = "Pide tu enlace para crear tu cuenta en Cotiza Prime"
+content_path = "./supabase/templates/signup_link_unavailable.html"
+
+[auth.email.template.confirmation]
+subject = "Pide tu enlace para crear tu cuenta en Cotiza Prime"
+content_path = "./supabase/templates/signup_link_unavailable.html"
+
+# H-116: el cambio de correo no está disponible hasta H-109 (la base lo rechaza con un disparador en `auth.users`; aun así GoTrue
+# alcanza a enviar este correo antes de fallar, medido en la etapa 1). La plantilla lo dice y NO trae el enlace de confirmación.
+[auth.email.template.email_change]
+subject = "El cambio de correo no está disponible en Cotiza Prime"
+content_path = "./supabase/templates/email_change_unavailable.html"
 
 # Correo de recuperar la contraseña, en español y con la marca (visto en la prueba de H-118, 2026-11-16: salía el de
 # Supabase, en inglés). El enlace vence con `otp_expiry` (3600 s): si cambia ese valor, cambia también «1 hora» del texto.
@@ -260,10 +273,11 @@ otp_expiry = 3600
 subject = "Elige una contraseña nueva en Cotiza Prime"
 content_path = "./supabase/templates/recovery.html"
 
-# H-003: aviso a la persona de que su contraseña cambió.
+# H-003: aviso a la persona de que su contraseña cambió. Desde H-116 también llega al fijar la PRIMERA contraseña al terminar de
+# crear la cuenta (medido en la etapa 0), así que el texto no da a entender que alguien «cambió» la contraseña.
 [auth.email.notification.password_changed]
 enabled = true
-subject = "Tu contraseña de Cotiza Prime cambió"
+subject = "Se guardó la contraseña de tu cuenta de Cotiza Prime"
 content_path = "./supabase/templates/password_changed_notification.html"
 
 # H-004a / H-118: el aviso de que se activó la verificación en dos pasos YA NO lo envía Supabase Auth

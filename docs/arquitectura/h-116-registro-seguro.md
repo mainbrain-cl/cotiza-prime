@@ -801,3 +801,60 @@ Con el disparador puesto, `PUT /auth/v1/user { email }` con una sesión de enlac
 - **Concurrencia real** de dos `complete_account_setup` a la vez (el candado por cuenta `pg_advisory_xact_lock` está, pero no hay prueba con dos conexiones).
 - **El Supabase alojado**: que `security definer` pueda leer `auth.sessions`/`auth.mfa_factors`, que se permita un disparador `before update` en `auth.users`, y el comportamiento de GoTrue de producción (puntos 8 y 9 de §8); siguen en la lista «Antes del piloto».
 - Rendimiento: `app.session_alive()` agrega una búsqueda por llave principal a cada llamada de `app.current_tenant_id()`/`app.my_tenant_ids()`; no se midió con carga.
+
+---
+
+## Registro de construcción — Etapa 2: la aplicación (2026-11-24)
+
+Hecha en PRUEBAS (Supabase local, `npm run dev`, Mailpit). **No se tocó ninguna migración ni `e2e/`** (la etapa 3 reescribe `signUpAndVerify` y los e2e; hoy están rotos a propósito). Un solo commit «H-116 etapa 2».
+
+**Archivos nuevos.** `src/lib/auth/signup-gateway.ts` (pasarela), `signup-service.ts` (enlace con `APP_ORIGIN` y envío), `signup-actions.ts` (las tres acciones), `account-setup.ts` (resultados de la base, mensajes y textos fijos), `src/lib/email/account-link.ts` (el correo), `src/components/auth/flow-steps.tsx`, las pantallas `src/app/(auth)/confirmar-correo/` (`page`, `confirm-email-form`, `expired-link`) y `src/app/(auth)/crear-cuenta/` (`page`, `create-account-form`, `password-fields`), las plantillas `supabase/templates/signup_link_unavailable.html` y `email_change_unavailable.html`, y sus pruebas (pasarela, servicio, acciones, correo, resultados, las tres pantallas y sus formularios, `/auth/recuperar`).
+**Modificados.** `session.ts` (`hasEmailLinkSession`, `isAccountReady`, `requireUser` con `skipSetupGate`), `paths.ts`, `schemas.ts` (`signUpSchema` = correo + anti-robot; `createAccountSchema`), `login-rate-limit.ts` (`consumeSignupLinkQuota`: 1 por minuto y 3 por hora por correo, alcance `signup_email` con huella por ventana), `actions.ts` (se quita `signUpAction` con contraseña), `audit/log.ts` (`session.signup_requested`, solo la huella del correo), `/registro`, `/ingresar`, `/invitacion`, `/auth/recuperar`, `/auth/callback` (comentario), `accept-model.ts`, `next.config.ts` (cabeceras de `/confirmar-correo`, `/crear-cuenta` y CSP de `/registro`), `supabase/config.toml` y `password_changed_notification.html`, y las guardias (`eslint.config.mjs`, `static-guards.test.ts` con la 17 y 17b, `registry.ts`, `guard-coverage.test.ts`, `security-headers.test.ts`).
+
+### Desviaciones del diseño (y por qué)
+
+1. **Las tres acciones viven en `src/lib/auth/signup-actions.ts`**, no en `actions.ts`: aísla el registro y sus pruebas. `signUpAction` se mudó (la lista de `guard-coverage.test.ts` cambió de llave y suma las otras dos, con su razón).
+2. **No se construyó `signup-open-guard.ts` (J5)** ni `scripts/check-auth-config.ts`: no estaban en el alcance pedido para esta etapa. La guardia 17e sí lee `config.toml` y exige la configuración que cierra el ataque. Quedan para la etapa 3 / aparte.
+3. **Plantillas.** El correo real del registro lo envía NUESTRO servidor (`account-link.ts`). Las plantillas de Supabase `invite` y `confirmation` (las que podrían salir por `/resend`) dicen «pide tu enlace en Crear cuenta» y **no traen ningún enlace de confirmación**; `email_change` dice que el cambio de correo no está disponible, también sin enlace; `password_changed` se reescribió («Se guardó la contraseña de tu cuenta…») porque llega también al fijar la PRIMERA contraseña. `magic_link` no se tocó (no es parte del registro; `/otp` sigue como puerta de correos no pedidos, §4). **`config.toml` solo vale tras reiniciar Supabase local** (se reinició y se vio el correo nuevo). En producción se cargan en el panel.
+4. **Textos añadidos que el diseño no traía** (ninguno cambia los de §3.3): «Paso 1/2 de 2» (`FlowSteps`), casilla «Mostrar las contraseñas», «¿No te llegó? Pedir otro enlace» en «Revisa tu correo», y la **ayuda de quien ya confirmó su correo** en `/ingresar` y en todas las pantallas de «enlace vencido» (ver hallazgo 1).
+5. `EMAIL_LINK_METHODS` de `session.ts` pasó de `{otp, recovery}` a los cuatro que acepta la base (`otp`, `recovery`, `magiclink`, `invite`); `hasRecoverySession` (con su cookie) usa la misma comprobación.
+6. `/crear-cuenta` conserva el nombre **y la casilla de términos** tras un error (React vacía el formulario al terminar una acción), salvo si el error es `legal_changed`. La casilla «Mostrar las contraseñas» se asocia a «ningún formulario» (`form="sin-formulario"`) porque, si no, React la desmarcaba y las contraseñas quedaban a la vista (visto en el recorrido).
+7. `/crear-cuenta` declara `maxDuration = 60` (varias llamadas a Supabase y hasta un reintento).
+8. La acción de «Continuar» no tiene tope propio por IP: los 10 caracteres del código y el límite de verificaciones de GoTrue (`token_verifications`) lo cubren.
+
+### Hallazgos para Aarón y para la etapa 3
+
+1. **Quien confirmó su correo y no terminó la cuenta no recibe otro enlace de registro** (decisión A2: con una cuenta verificada no se envía nada). Su camino es «¿Olvidaste tu contraseña?», que ya lleva a `/crear-cuenta` (probado a mano). El texto de `/ingresar` de §3.3 («pide otro enlace en Crear cuenta») no lo decía; se amplió. **Pregunta:** ¿se acepta, o se prefiere que `/registro` también reenvíe el enlace a una cuenta verificada sin terminar? (Eso revelaría que existe una cuenta sin terminar para ese correo; por eso no se hizo.)
+2. **La variante «la contraseña plantada sobrevivió» de §3.7 no se puede probar con la llave maestra tal como estaba escrita.** Fijar una contraseña con `auth.admin.updateUserById` **cierra todas las sesiones de la cuenta** (comprobado: la sesión de la víctima murió y quedó «Tu enlace venció»), y antes de verificar anula el enlace pendiente. Es el lado seguro (la víctima pide otro camino) pero la prueba e2e debe simular la contraseña sobreviviente con un `update` SQL a `auth.users.encrypted_password`, que no cierra sesiones.
+3. El tiempo de respuesta de `/registro` es ≥ 0,8 s en todos los casos (medido en desarrollo: 1,36 s con correo nuevo y 1,50 s con una cuenta existente; la diferencia es ruido del servidor de desarrollo). El trabajo caro corre después de responder (`after`).
+
+### Recorrido a mano (local, Playwright + Mailpit)
+
+Registro → correo → `GET` del enlace dos veces (no lo gasta) → «Continuar» → `/crear-cuenta` (con la cuenta sin terminar, `/` y `/organizaciones/nueva` mandan a `/crear-cuenta`) → error de contraseñas distintas (casilla y nombre se conservan) → terminar → `/organizaciones/nueva`. Base: perfil con `account_ready_at`, aceptaciones de términos en contexto `signup` con IP y navegador de quien terminó, auditoría `account.setup_completed`, una sola sesión. Ingreso con la contraseña elegida OK; enlace reutilizado dice «ya se usó o venció»; correo de una cuenta existente (`ana@ejemplo.test`): respuesta igual y **cero correos**.
+**Ataque** (`registro abierto por error`): `POST /auth/v1/signup` con la llave pública → `422 signup_disabled`; el atacante planta la cuenta de la víctima con su contraseña → tras el registro de la víctima su contraseña da `invalid_credentials`; replanta una contraseña con la llave maestra y entra: con ese pase `create_tenant` falla («Termina de crear tu cuenta…») y `complete_account_setup` responde `not_email_link`; la víctima (sesión cerrada por la replantada) ve «Tu enlace venció», usa «¿Olvidaste tu contraseña?», el enlace la lleva a `/crear-cuenta` y termina; después ni la contraseña original ni la replantada entran, el nombre del perfil es el de la víctima, y el pase viejo del atacante (sin vencer) recibe `session_closed` en `create_tenant`, `complete_account_setup`, reescribir el nombre y la API de cuentas.
+
+### Revisión visual
+
+Capturas a 1280 y 375 px, claro y oscuro, de `/registro` (normal, error de correo, sin anti-robot, cargando, enviado, sin conexión), `/confirmar-correo` (normal, vencido, cargando, usado, sin conexión) y `/crear-cuenta` (normal, contraseñas a la vista, error de términos, de campos y de largo, cargando, sin conexión, vencido). Arreglado tras verlas: el correo se cortaba en el «@» (ahora en su propia línea, 13 px en teléfono) y la casilla «Mostrar las contraseñas» se desmarcaba tras un error. Sin desbordes a 375 px; alturas táctiles de 44 px.
+
+### Verificación (2026-11-24, local)
+
+| Comando | Resultado |
+|---|---|
+| `npx tsc --noEmit` | limpio |
+| `npm run lint` | limpio |
+| `npx prettier --check` de lo tocado (51 archivos) | limpio |
+| `npm run build` | compila (confirma que el archivo de acciones solo exporta funciones) |
+| `npm test` | **3.212 pasan**, 1 omitida, 205 archivos (antes 3.092: +120 nuevas) |
+| `npm run test:db` | **1.498 de 1.498** (sin cambios: no hay migraciones nuevas). Una corrida previa falló 3: dos eran filas del alcance `signup_email` que dejó mi recorrido a mano en `auth_rate_limits` (las pruebas de deshacer de migraciones anteriores las rechazan; borradas, pasan) y una era el plazo de 30 s de `text-snippets` con la máquina cargada (pasa sola) |
+| `npm run test:isolation` | **1.435 pasan** + 3 pendientes (antes 1.433: +2 guardias nuevas, 17 y 17b) |
+
+Tras un recorrido a mano con el registro, correr `delete from auth_rate_limits where scope = 'signup_email'` (o `db reset`) antes de `test:db:rollbacks` y de `test:db`.
+
+### Lo que NO se pudo verificar
+
+- **Turnstile real** (solo el adaptador `memory`), **Resend / SMTP real**, el Supabase alojado y las plantillas cargadas en su panel.
+- **iPhone real, Firefox, Safari, lector de pantalla.** Solo Chromium.
+- **Los e2e** (etapa 3), el ataque «último clic» de punta a punta y la concurrencia real de dos «Crear mi cuenta».
+- El estado «error al canjear (servidor caído)» de `/confirmar-correo` solo está probado con pruebas de componente, no en pantalla.
+- `signup-open-guard` y `check:auth-config` (no construidos, ver desviación 2).

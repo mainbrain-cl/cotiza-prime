@@ -15,24 +15,56 @@ const emailField = z
   .max(EMAIL_MAX_LENGTH, "El correo es demasiado largo.")
   .pipe(z.email({ error: "Revisa el correo: no parece una dirección válida." }));
 
+/** H-116, paso 1 del registro: solo el correo (y la prueba anti-robot). Nada de contraseña, nombre ni términos todavía. */
+export const ANTIBOT_TOKEN_MAX_LENGTH = 2_048;
+export const ANTIBOT_MISSING_MESSAGE = "Confirma que no eres un robot.";
+
 export const signUpSchema = z.object({
-  fullName: z
-    .string({ error: "Ingresa tu nombre." })
-    .trim()
-    .min(1, "Ingresa tu nombre.")
-    .max(NAME_MAX_LENGTH, "El nombre es demasiado largo."),
   email: emailField,
-  password: z
-    .string({ error: "Ingresa una contraseña." })
-    .min(
-      PASSWORD_MIN_LENGTH,
-      `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres.`,
-    )
-    .max(PASSWORD_MAX_LENGTH, `La contraseña puede tener hasta ${PASSWORD_MAX_LENGTH} caracteres.`),
-  acceptLegal: z.literal("on", {
-    error: "Para crear tu cuenta debes aceptar los términos y la política de privacidad.",
-  }),
+  antibotToken: z
+    .string({ error: ANTIBOT_MISSING_MESSAGE })
+    .min(1, ANTIBOT_MISSING_MESSAGE)
+    .max(ANTIBOT_TOKEN_MAX_LENGTH, ANTIBOT_MISSING_MESSAGE),
 });
+
+/** Largo máximo de las versiones de los documentos legales que viajan en el formulario (son del estilo `2026-10-01-preliminar`). */
+const LEGAL_VERSION_MAX_LENGTH = 64;
+/** Caracteres de control: la base los rechaza en el nombre (`complete_account_setup`). */
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+const newPasswordField = z
+  .string({ error: "Ingresa una contraseña." })
+  .min(PASSWORD_MIN_LENGTH, `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres.`)
+  .max(PASSWORD_MAX_LENGTH, `La contraseña puede tener hasta ${PASSWORD_MAX_LENGTH} caracteres.`);
+
+/**
+ * H-116, paso 2: terminar de crear la cuenta (desde la sesión del enlace del correo). Las versiones de términos y privacidad
+ * son las que la pantalla mostró; la base las compara con las vigentes y, si cambiaron mientras tanto, responde
+ * `legal_changed`.
+ */
+export const createAccountSchema = z
+  .object({
+    fullName: z
+      .string({ error: "Ingresa tu nombre." })
+      .trim()
+      .min(1, "Ingresa tu nombre.")
+      .max(NAME_MAX_LENGTH, "El nombre es demasiado largo.")
+      .refine(
+        (value) => !CONTROL_CHARACTERS.test(value),
+        "Revisa tu nombre: tiene caracteres que no podemos guardar.",
+      ),
+    password: newPasswordField,
+    confirmPassword: z.string({ error: "Repite la contraseña." }),
+    acceptLegal: z.literal("on", {
+      error: "Para crear tu cuenta debes aceptar los términos y la política de privacidad.",
+    }),
+    termsVersion: z.string().min(1).max(LEGAL_VERSION_MAX_LENGTH),
+    privacyVersion: z.string().min(1).max(LEGAL_VERSION_MAX_LENGTH),
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    path: ["confirmPassword"],
+    error: "Las contraseñas no coinciden.",
+  });
 
 export const signInSchema = z.object({
   email: emailField,

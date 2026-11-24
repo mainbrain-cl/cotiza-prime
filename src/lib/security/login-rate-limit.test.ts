@@ -40,8 +40,13 @@ import {
   SHARE_MAX_READS_PER_IP_PER_WINDOW,
   SHARE_MAX_READS_PER_LINK_PER_WINDOW,
   TENANT_DENIED_MAX_LOGGED_PER_WINDOW,
+  SIGNUP_LINK_HOUR_WINDOW_SECONDS,
+  SIGNUP_LINK_MAX_PER_EMAIL_PER_HOUR,
+  SIGNUP_LINK_MAX_PER_EMAIL_PER_MINUTE,
+  SIGNUP_LINK_MINUTE_WINDOW_SECONDS,
   consumeSendQuota,
   consumeShareQuota,
+  consumeSignupLinkQuota,
   ipLimitKey,
   recordResetRequest,
   recordSignupAttempt,
@@ -156,6 +161,46 @@ describe("consumeSendQuota (H-029)", () => {
   it("si el contador falla, se deja pasar", async () => {
     rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
     expect(await consumeSendQuota("u1", "t1")).toBe(true);
+  });
+});
+
+describe("consumeSignupLinkQuota (H-116): 1 enlace por minuto y 3 por hora por correo", () => {
+  it("cuenta el pedido en las dos ventanas, con huellas distintas, bajo el mismo alcance de la base", async () => {
+    expect(await consumeSignupLinkQuota("Ana@Ejemplo.test")).toBe(true);
+    expect(rpc.mock.calls).toHaveLength(2);
+    expect(rpc.mock.calls[0][1]).toEqual({
+      p_scope: "signup_email",
+      p_key_hash: "signup_email_minute|ana@ejemplo.test",
+      p_max_failures: SIGNUP_LINK_MAX_PER_EMAIL_PER_MINUTE + 1,
+      p_window_seconds: SIGNUP_LINK_MINUTE_WINDOW_SECONDS,
+      p_lock_seconds: SIGNUP_LINK_MINUTE_WINDOW_SECONDS,
+    });
+    expect(rpc.mock.calls[1][1]).toEqual({
+      p_scope: "signup_email",
+      p_key_hash: "signup_email_hour|ana@ejemplo.test",
+      p_max_failures: SIGNUP_LINK_MAX_PER_EMAIL_PER_HOUR + 1,
+      p_window_seconds: SIGNUP_LINK_HOUR_WINDOW_SECONDS,
+      p_lock_seconds: SIGNUP_LINK_HOUR_WINDOW_SECONDS,
+    });
+  });
+
+  it("si choca con el tope del minuto, bloquea y NO gasta el de la hora", async () => {
+    rpc.mockResolvedValue({ data: "2026-10-01T00:00:00Z", error: null });
+    expect(await consumeSignupLinkQuota("ana@ejemplo.test")).toBe(false);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls[0][1].p_key_hash).toBe("signup_email_minute|ana@ejemplo.test");
+  });
+
+  it("si choca con el tope de la hora, bloquea", async () => {
+    rpc
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({ data: "2026-10-01T00:00:00Z", error: null });
+    expect(await consumeSignupLinkQuota("ana@ejemplo.test")).toBe(false);
+  });
+
+  it("si el contador falla, se deja pasar (siguen el tope por IP y los de Supabase)", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    expect(await consumeSignupLinkQuota("ana@ejemplo.test")).toBe(true);
   });
 });
 

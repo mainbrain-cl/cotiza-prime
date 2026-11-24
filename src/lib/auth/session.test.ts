@@ -5,6 +5,7 @@ const getUser = vi.fn();
 const getSession = vi.fn();
 const getClaims = vi.fn();
 const from = vi.fn();
+const rpc = vi.fn();
 
 vi.mock("next/navigation", () => ({
   redirect: (target: string) => {
@@ -15,11 +16,23 @@ vi.mock("next/navigation", () => ({
   },
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({ auth: { getUser, getSession, getClaims }, from }),
+  createClient: async () => ({ auth: { getUser, getSession, getClaims }, from, rpc }),
 }));
 
-import { ACCEPT_TERMS_PATH, HOME_PATH, LOGIN_PATH, SECOND_STEP_PATH } from "./paths";
-import { getOptionalUser, getSessionState, requirePendingSecondStep, requireUser } from "./session";
+import {
+  ACCEPT_TERMS_PATH,
+  CREATE_ACCOUNT_PATH,
+  HOME_PATH,
+  LOGIN_PATH,
+  SECOND_STEP_PATH,
+} from "./paths";
+import {
+  getOptionalUser,
+  getSessionState,
+  hasEmailLinkSession,
+  requirePendingSecondStep,
+  requireUser,
+} from "./session";
 
 const USER = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -40,6 +53,8 @@ beforeEach(() => {
   getSession.mockReset();
   getClaims.mockReset();
   from.mockReset();
+  // H-116: por defecto la cuenta está terminada (la mayoría de las pruebas no trata de eso).
+  rpc.mockReset().mockResolvedValue({ data: true, error: null });
 });
 
 describe("getOptionalUser", () => {
@@ -218,5 +233,77 @@ describe("requireUser con sesión completa y verificación activa", () => {
     await expect(requireUser()).rejects.toMatchObject({ target: ACCEPT_TERMS_PATH });
     legalRows(["t1"], ["t1"]);
     await expect(requireUser()).resolves.toMatchObject({ id: USER.id });
+  });
+});
+
+// H-116 · una cuenta sin terminar solo puede ir a /crear-cuenta.
+describe("requireUser y la cuenta sin terminar (H-116)", () => {
+  beforeEach(() => {
+    getUser.mockResolvedValue({ data: { user: USER }, error: null });
+    legalRows(["t1", "p1"], ["t1", "p1"]);
+  });
+
+  it("con la cuenta sin terminar manda a /crear-cuenta, ANTES de mirar los términos", async () => {
+    rpc.mockResolvedValue({ data: false, error: null });
+    await expect(requireUser()).rejects.toMatchObject({ target: CREATE_ACCOUNT_PATH });
+    expect(rpc).toHaveBeenCalledWith("my_account_ready");
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it("si no se puede leer si está terminada, asume que NO (lado seguro)", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+    await expect(requireUser()).rejects.toMatchObject({ target: CREATE_ACCOUNT_PATH });
+    rpc.mockResolvedValue({ data: "true", error: null });
+    await expect(requireUser()).rejects.toMatchObject({ target: CREATE_ACCOUNT_PATH });
+  });
+
+  it("con la cuenta terminada deja pasar", async () => {
+    await expect(requireUser()).resolves.toMatchObject({ id: USER.id });
+  });
+
+  it("solo /crear-cuenta puede saltarse la puerta (y no pregunta nada a la base)", async () => {
+    rpc.mockResolvedValue({ data: false, error: null });
+    await expect(requireUser({ skipSetupGate: true })).resolves.toMatchObject({ id: USER.id });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("la sesión parcial va primero al código del segundo paso", async () => {
+    getUser.mockResolvedValue({ data: { user: userWith([VERIFIED]) }, error: null });
+    getClaims.mockResolvedValue({ data: { claims: { aal: "aal1" } }, error: null });
+    rpc.mockResolvedValue({ data: false, error: null });
+    await expect(requireUser()).rejects.toMatchObject({ target: SECOND_STEP_PATH });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("hasEmailLinkSession (H-116)", () => {
+  const withAmr = (amr: unknown) =>
+    getClaims.mockResolvedValue({ data: { claims: { aal: "aal1", amr } }, error: null });
+
+  it("el enlace del correo trae `otp` y vale", async () => {
+    withAmr([{ method: "otp", timestamp: 1 }]);
+    expect(await hasEmailLinkSession()).toBe(true);
+    withAmr(["otp"]);
+    expect(await hasEmailLinkSession()).toBe(true);
+    withAmr([{ method: "recovery" }]);
+    expect(await hasEmailLinkSession()).toBe(true);
+  });
+
+  it("una sesión de contraseña no vale, ni con un método de enlace agregado", async () => {
+    withAmr([{ method: "password", timestamp: 1 }]);
+    expect(await hasEmailLinkSession()).toBe(false);
+    withAmr([{ method: "otp" }, { method: "password" }]);
+    expect(await hasEmailLinkSession()).toBe(false);
+  });
+
+  it("sin amr, con un método desconocido o con el pase ilegible no vale", async () => {
+    withAmr(undefined);
+    expect(await hasEmailLinkSession()).toBe(false);
+    withAmr([]);
+    expect(await hasEmailLinkSession()).toBe(false);
+    withAmr([{ method: "totp" }]);
+    expect(await hasEmailLinkSession()).toBe(false);
+    getClaims.mockResolvedValue({ data: null, error: { message: "mal" } });
+    expect(await hasEmailLinkSession()).toBe(false);
   });
 });

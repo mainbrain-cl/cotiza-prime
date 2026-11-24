@@ -50,7 +50,7 @@ const eslintConfig = defineConfig([
             {
               group: ["**/admin-client", "**/admin-client.ts"],
               message:
-                "El cliente con la llave maestra solo puede importarse desde src/lib/audit/, src/lib/security/, src/lib/brand/logo-storage.ts, src/lib/quotes/send/document-storage.ts, src/lib/share/gateway.ts, src/lib/intake/gateway.ts, src/lib/team/gateway.ts, src/lib/email/delivery-events-service.ts, src/server/jobs/, scripts/ y tests/.",
+                "El cliente con la llave maestra solo puede importarse desde src/lib/audit/, src/lib/security/, src/lib/brand/logo-storage.ts, src/lib/quotes/send/document-storage.ts, src/lib/share/gateway.ts, src/lib/intake/gateway.ts, src/lib/team/gateway.ts, src/lib/auth/signup-gateway.ts, src/lib/email/delivery-events-service.ts, src/server/jobs/, scripts/ y tests/.",
             },
           ],
         },
@@ -71,6 +71,8 @@ const eslintConfig = defineConfig([
       "src/lib/intake/gateway.ts",
       // El portero de las invitaciones (H-008): una sola función, para cerrar el envío del correo.
       "src/lib/team/gateway.ts",
+      // La pasarela del registro en dos pasos (H-116): crea la cuenta sin contraseña y entrega el código del enlace.
+      "src/lib/auth/signup-gateway.ts",
       // Avisos de entrega del correo (H-033): llama solo a `record_email_event`.
       "src/lib/email/delivery-events-service.ts",
       "src/server/jobs/**",

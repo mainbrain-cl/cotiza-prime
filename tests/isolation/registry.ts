@@ -931,6 +931,11 @@ export const APP_ROUTES: AppRoute[] = [
   // del enlace, de un solo uso) hace algo. La acción pasa por el servicio de anulación, nunca por una organización.
   { path: "/cuenta/anular-dos-pasos", kind: "page", scope: "none" },
   { path: "/registro", kind: "page", scope: "none" },
+  // H-116: el registro en dos pasos. `/confirmar-correo` es pública y sin sesión (abrirla no gasta el código del enlace; solo el
+  // clic lo canjea por una sesión); `/crear-cuenta` es la única pantalla que acepta una cuenta sin terminar y solo sirve con la
+  // sesión que abrió ese enlace (la base lo exige). Ninguna toca una organización.
+  { path: "/confirmar-correo", kind: "page", scope: "none" },
+  { path: "/crear-cuenta", kind: "page", scope: "none" },
   { path: "/aceptar-terminos", kind: "page", scope: "none" },
   { path: "/recuperar-contrasena", kind: "page", scope: "none" },
   { path: "/restablecer-contrasena", kind: "page", scope: "none" },

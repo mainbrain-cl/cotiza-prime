@@ -62,6 +62,19 @@ export default async function LoginPage({ searchParams }: PageProps<"/ingresar">
     >
       {notice ? <FormAlert tone={notice.tone}>{notice.text}</FormAlert> : null}
       <LoginForm />
+      <p
+        className="border-t border-border pt-4 text-sm text-fg-muted"
+        data-testid="login-unfinished-help"
+      >
+        ¿Empezaste a crear tu cuenta y no la terminaste? Pide otro enlace en{" "}
+        <Link
+          href={SIGNUP_PATH}
+          className="font-semibold text-accent underline-offset-4 hover:underline"
+        >
+          «Crear cuenta»
+        </Link>
+        . Si ya habías confirmado tu correo, usa «¿Olvidaste tu contraseña?».
+      </p>
     </AuthCard>
   );
 }

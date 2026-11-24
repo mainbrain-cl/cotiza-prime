@@ -9,7 +9,13 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { FormAlert } from "@/components/ui/form-controls";
 import { signOutKeepingInvitationAction } from "@/lib/auth/actions";
-import { HOME_PATH, LOGIN_PATH, SECOND_STEP_PATH, SIGNUP_PATH } from "@/lib/auth/paths";
+import {
+  CREATE_ACCOUNT_PATH,
+  HOME_PATH,
+  LOGIN_PATH,
+  SECOND_STEP_PATH,
+  SIGNUP_PATH,
+} from "@/lib/auth/paths";
 import { getSessionState, requireUser } from "@/lib/auth/session";
 import {
   FALLBACK_INVITER_NAME,
@@ -142,6 +148,12 @@ export default async function InvitationPage({ searchParams }: PageProps<"/invit
                 Cerrar sesión e ingresar con otro correo
               </Button>
             </form>
+          ) : null}
+          {result === "unverified" ? (
+            // Cuenta sin terminar (H-116): se arregla terminándola; la invitación se queda guardada para después.
+            <Link href={CREATE_ACCOUNT_PATH} className={buttonVariants({ size: "lg" })}>
+              Terminar mi cuenta
+            </Link>
           ) : null}
           {RETRY_RESULTS.has(result) ? (
             // Se arregla esperando o verificando el correo: el código se queda guardado para el reintento.

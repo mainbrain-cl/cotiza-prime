@@ -2,6 +2,10 @@
 export const HOME_PATH = "/";
 export const LOGIN_PATH = "/ingresar";
 export const SIGNUP_PATH = "/registro";
+/** H-116: a donde llega el enlace del correo de registro (no gasta el código al abrirse; el clic lo canjea). */
+export const CONFIRM_EMAIL_PATH = "/confirmar-correo";
+/** H-116: donde la persona elige su nombre y su contraseña después de confirmar el correo. Única pantalla que acepta una cuenta sin terminar. */
+export const CREATE_ACCOUNT_PATH = "/crear-cuenta";
 export const ACCEPT_TERMS_PATH = "/aceptar-terminos";
 export const FORGOT_PASSWORD_PATH = "/recuperar-contrasena";
 export const RESET_PASSWORD_PATH = "/restablecer-contrasena";
@@ -10,7 +14,7 @@ export const NEW_TENANT_PATH = "/organizaciones/nueva";
 export const SECOND_STEP_PATH = "/ingresar/codigo";
 /** Pantalla de la cuenta donde se activa la verificación en dos pasos (H-004a). */
 export const ACCOUNT_SECURITY_PATH = "/cuenta/seguridad";
-/** Dirección a la que llega el enlace del correo de verificación. */
+/** Dirección a la que llegaban los enlaces de verificación enviados antes de H-116 (siguen sirviendo su hora de vida). */
 export const AUTH_CALLBACK_PATH = "/auth/callback";
 /** Dirección a la que llega el enlace del correo de restablecer contraseña. */
 export const AUTH_RECOVERY_PATH = "/auth/recuperar";

@@ -1,19 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { MailCheck } from "lucide-react";
+import { AntibotWidget } from "@/components/intake/antibot-widget";
 import { Field, FormAlert, Input, SubmitButton } from "@/components/ui/form-controls";
 import { OfflineNotice } from "@/components/ui/offline-notice";
-import { signUpAction } from "@/lib/auth/actions";
-import { INITIAL_FORM_STATE } from "@/lib/auth/form-state";
-import { LOGIN_PATH, PRIVACY_PATH, TERMS_PATH } from "@/lib/auth/paths";
-import { PASSWORD_MIN_LENGTH } from "@/lib/auth/schemas";
+import { SIGNUP_ANTIBOT_ACTION, SIGNUP_SENT_SUFFIX } from "@/lib/auth/account-setup";
+import { INITIAL_FORM_STATE, type FormState } from "@/lib/auth/form-state";
+import { FORGOT_PASSWORD_PATH, LOGIN_PATH, PRIVACY_PATH } from "@/lib/auth/paths";
+import { signUpAction } from "@/lib/auth/signup-actions";
 
-export function SignUpForm() {
+const LINK_CLASS =
+  "inline-flex min-h-11 items-center font-semibold text-accent underline-offset-4 hover:underline";
+
+export type SignUpFormProps = {
+  antibot: { provider: "turnstile" | "memory"; siteKey: string | null };
+};
+
+/**
+ * Paso 1 del registro (H-116): solo el correo. La pantalla responde igual exista o no la cuenta. La prueba anti-robot se
+ * vuelve a montar tras cada envío (cada prueba sirve una sola vez).
+ */
+export function SignUpForm({ antibot }: SignUpFormProps) {
   const [state, formAction] = useActionState(signUpAction, INITIAL_FORM_STATE);
+  const [antibotToken, setAntibotToken] = useState<string | null>(null);
+  const [antibotEpoch, setAntibotEpoch] = useState(0);
+  // El resultado que la persona ya cerró para pedir otro enlace: un resultado nuevo es otro objeto y vuelve a mostrarse.
+  const [dismissed, setDismissed] = useState<FormState | null>(null);
 
-  if (state.status === "sent") {
+  function submit(formData: FormData) {
+    setAntibotToken(null);
+    setAntibotEpoch((epoch) => epoch + 1);
+    formAction(formData);
+  }
+
+  if (state.status === "sent" && state !== dismissed) {
     return (
       <div className="flex flex-col gap-4" data-testid="signup-sent">
         <div className="flex size-12 items-center justify-center rounded-md bg-success-soft text-success">
@@ -21,42 +43,37 @@ export function SignUpForm() {
         </div>
         <h2 className="text-lg">Revisa tu correo</h2>
         <p className="text-fg-muted">
-          Te enviamos un enlace a <strong className="text-fg">{state.values?.email}</strong> para
-          verificar tu dirección. El enlace caduca, así que ábrelo pronto. Hasta que verifiques tu
-          correo no podrás crear una organización.
+          Te enviamos un enlace a{" "}
+          <strong className="[overflow-wrap:anywhere] text-fg" data-testid="signup-sent-email">
+            {state.values?.email}
+          </strong>
+          . {SIGNUP_SENT_SUFFIX}
         </p>
-        <p className="text-sm text-fg-muted">
-          Si ya tenías una cuenta con este correo,{" "}
-          <Link
-            href={LOGIN_PATH}
-            className="font-semibold text-accent underline-offset-4 hover:underline"
-          >
-            ingresa con tu contraseña
+        <div className="flex flex-col gap-1 border-t border-border pt-4 text-sm text-fg-muted sm:flex-row sm:flex-wrap sm:gap-x-5">
+          <Link href={LOGIN_PATH} className={LINK_CLASS}>
+            Ingresar
           </Link>
-          .
-        </p>
+          <Link href={FORGOT_PASSWORD_PATH} className={LINK_CLASS}>
+            ¿Olvidaste tu contraseña?
+          </Link>
+          <button
+            type="button"
+            className={`${LINK_CLASS} text-left`}
+            data-testid="signup-resend"
+            onClick={() => setDismissed(state)}
+          >
+            ¿No te llegó? Pedir otro enlace
+          </button>
+        </div>
       </div>
     );
   }
 
   const errors = state.fieldErrors ?? {};
   return (
-    <form action={formAction} className="flex flex-col gap-4" noValidate>
+    <form action={submit} className="flex flex-col gap-4" noValidate>
       <OfflineNotice />
       {state.message ? <FormAlert>{state.message}</FormAlert> : null}
-
-      <Field label="Tu nombre" error={errors.fullName} required>
-        {(control) => (
-          <Input
-            {...control}
-            name="fullName"
-            autoComplete="name"
-            defaultValue={state.values?.fullName}
-            required
-            maxLength={120}
-          />
-        )}
-      </Field>
 
       <Field label="Correo" error={errors.email} required>
         {(control) => (
@@ -67,66 +84,39 @@ export function SignUpForm() {
             autoComplete="email"
             inputMode="email"
             defaultValue={state.values?.email}
+            autoFocus
             required
           />
         )}
       </Field>
 
-      <Field
-        label="Contraseña"
-        error={errors.password}
-        hint={`Mínimo ${PASSWORD_MIN_LENGTH} caracteres.`}
-        required
-      >
-        {(control) => (
-          <Input
-            {...control}
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            minLength={PASSWORD_MIN_LENGTH}
-            required
-          />
-        )}
-      </Field>
+      <input type="hidden" name="antibotToken" value={antibotToken ?? ""} />
+      <AntibotWidget
+        key={antibotEpoch}
+        provider={antibot.provider}
+        siteKey={antibot.siteKey}
+        action={SIGNUP_ANTIBOT_ACTION}
+        onToken={setAntibotToken}
+      />
+      {errors.antibotToken ? (
+        <p role="alert" className="text-sm text-danger">
+          {errors.antibotToken}
+        </p>
+      ) : null}
 
-      <div className="flex flex-col gap-1.5">
-        <label className="flex min-h-11 items-start gap-3 text-sm text-fg-muted">
-          <input
-            type="checkbox"
-            name="acceptLegal"
-            required
-            aria-invalid={Boolean(errors.acceptLegal)}
-            className="mt-0.5 size-5 shrink-0 accent-accent"
-          />
-          <span>
-            Acepto los{" "}
-            <Link
-              href={TERMS_PATH}
-              target="_blank"
-              className="font-semibold text-accent underline-offset-4 hover:underline"
-            >
-              términos y condiciones
-            </Link>{" "}
-            y la{" "}
-            <Link
-              href={PRIVACY_PATH}
-              target="_blank"
-              className="font-semibold text-accent underline-offset-4 hover:underline"
-            >
-              política de privacidad
-            </Link>
-            .
-          </span>
-        </label>
-        {errors.acceptLegal ? (
-          <p role="alert" className="text-sm text-danger">
-            {errors.acceptLegal}
-          </p>
-        ) : null}
-      </div>
+      <p className="text-sm text-fg-muted">
+        Usaremos tu correo solo para enviarte el enlace. Lee la{" "}
+        <Link
+          href={PRIVACY_PATH}
+          target="_blank"
+          className="font-semibold text-accent underline-offset-4 hover:underline"
+        >
+          política de privacidad
+        </Link>
+        .
+      </p>
 
-      <SubmitButton pendingLabel="Creando tu cuenta…">Crear mi cuenta</SubmitButton>
+      <SubmitButton pendingLabel="Enviando…">Enviarme el enlace</SubmitButton>
     </form>
   );
 }

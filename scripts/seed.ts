@@ -131,7 +131,6 @@ async function seedUsers(admin: SupabaseClient): Promise<Map<string, string>> {
     "legal_documents",
     await admin.from("legal_documents").select("id, kind, version").eq("is_current", true),
   ) as { id: string; kind: string; version: string }[];
-  const acceptedLegal = Object.fromEntries(docs.map((d) => [d.kind, d.version]));
 
   const ids = new Map<string, string>();
   for (const person of PEOPLE) {
@@ -141,15 +140,23 @@ async function seedUsers(admin: SupabaseClient): Promise<Map<string, string>> {
         email: person.email,
         password: TEST_PASSWORD,
         email_confirm: true,
-        user_metadata: {
-          full_name: person.fullName,
-          ...(docs.length > 0 ? { accepted_legal: acceptedLegal } : {}),
-        },
+        user_metadata: { full_name: person.fullName },
       });
       if (error || !data.user) throw new Error(`createUser: ${error?.message}`);
       id = data.user.id;
     }
     ids.set(person.email, id);
+
+    // H-116: las cuentas de la semilla son personas «terminadas» (nombre, contraseña y términos ya fijados): `account_ready_at`
+    // la escribe solo la llave maestra (las personas no tienen permiso sobre esa columna). Idempotente.
+    check(
+      "profiles account_ready_at",
+      await admin
+        .from("profiles")
+        .update({ account_ready_at: new Date().toISOString() })
+        .eq("user_id", id)
+        .is("account_ready_at", null),
+    );
 
     // Si había documentos vigentes y la cuenta ya existía sin aceptación, se registra ahora.
     for (const doc of docs) {

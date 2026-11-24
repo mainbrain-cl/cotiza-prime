@@ -29,6 +29,7 @@ import {
   createTenantAs,
   createUser,
   expectSqlError,
+  passClaims,
   withTx,
   type TestUser,
 } from "./helpers";
@@ -353,9 +354,8 @@ async function actAsLevel(
   tenantId: string | null,
   aal: "aal1" | "aal2" | null,
 ): Promise<void> {
-  await client.query("reset role");
   await client.query("select set_config('request.jwt.claims', $1, true)", [
-    JSON.stringify({ sub: user.id, role: "authenticated", ...(aal ? { aal } : {}) }),
+    JSON.stringify(await passClaims(client, user.id, { aal: aal ?? undefined })),
   ]);
   await client.query("select set_config('request.jwt.claim.sub', $1, true)", [user.id]);
   await client.query("select set_config('request.headers', $1, true)", [

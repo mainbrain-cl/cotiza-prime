@@ -19,8 +19,9 @@ import {
   createTenantAs,
   createUser,
   expectSqlError,
-  withTx,
+  passClaims,
 } from "./helpers";
+import { withTxBeforeAccountSetup as withTx } from "./before-account-setup";
 import { functionBodyIn } from "./migration-files";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "supabase");
@@ -331,9 +332,8 @@ describe("la migración mfa_session_gate y su deshacer", () => {
         key,
       ]);
       const visibleTenants = async () => {
-        await db.query("reset role");
         await db.query("select set_config('request.jwt.claims', $1, true)", [
-          JSON.stringify({ sub: owner.id, role: "authenticated", aal: "aal1" }),
+          JSON.stringify(await passClaims(db, owner.id, { aal: "aal1" })),
         ]);
         await db.query("select set_config('request.jwt.claim.sub', $1, true)", [owner.id]);
         await db.query("select set_config('request.headers', $1, true)", [
@@ -376,9 +376,8 @@ describe("la migración mfa_session_gate y su deshacer", () => {
       const owner = await createUser(db);
       const tenantId = await createTenantAs(db, owner);
       const resolve = async () => {
-        await db.query("reset role");
         await db.query("select set_config('request.jwt.claims', $1, true)", [
-          JSON.stringify({ sub: owner.id, role: "authenticated", aal: "aal1" }),
+          JSON.stringify(await passClaims(db, owner.id, { aal: "aal1" })),
         ]);
         await db.query("select set_config('request.jwt.claim.sub', $1, true)", [owner.id]);
         await db.query("select set_config('request.headers', $1, true)", [

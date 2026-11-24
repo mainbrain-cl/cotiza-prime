@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
+import { undoAccountSetup } from "./before-account-setup";
 import { actAsPostgres, withTx } from "./helpers";
 
 const MFA_GATE_DOWN = readFileSync(
@@ -23,9 +24,13 @@ const MFA_GATE_DOWN = readFileSync(
   "utf8",
 );
 
-/** Como `withTx`, pero con la migración 20261112100000 ya deshecha dentro de la transacción. */
+/**
+ * Como `withTx`, pero con la migración 20261112100000 ya deshecha dentro de la transacción. Antes se deshace la de H-116
+ * (20261125100000, que reemplazó después varias de las mismas funciones y políticas): es el orden inverso de siempre.
+ */
 export function withTxBeforeMfaGate<T>(client: Client, fn: () => Promise<T>): Promise<T> {
   return withTx(client, async () => {
+    await undoAccountSetup(client);
     await actAsPostgres(client);
     await client.query(MFA_GATE_DOWN);
     return fn();
@@ -34,6 +39,7 @@ export function withTxBeforeMfaGate<T>(client: Client, fn: () => Promise<T>): Pr
 
 /** Deshace 20261112100000 en la transacción abierta de `client` (para pruebas que manejan `begin`/`rollback` a mano). */
 export async function undoMfaGate(client: Client): Promise<void> {
+  await undoAccountSetup(client);
   await actAsPostgres(client);
   await client.query(MFA_GATE_DOWN);
 }

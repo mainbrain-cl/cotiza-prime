@@ -17,13 +17,24 @@ const REALTIME_ALLOWED_TABLES = new Set<string>(); // Realtime apagado para toda
 // que nombran `auth.uid()` SIN pasar por la organización activa (`app.current_tenant_id()` / `app.my_tenant_ids()`) también:
 // si no, una sesión parcial (contraseña sin el código del segundo paso) las atravesaría. Menor 2 de la revisión de Aarón al
 // PR #44: la regla mira también `auth.email()`, `auth.jwt()` (salvo `aal`) y `request.jwt.claim`, las ayudas de `app` (menos
-// las de trigger) y exige una LLAMADA de verdad, no la palabra. Excepciones, cada una justificada. Hoy no hay ninguna.
+// las de trigger) y exige una LLAMADA de verdad, no la palabra. Excepciones, cada una justificada (H-116 agrega dos, abajo).
 //
 // LÍMITE (revisión Opus del PR #49): la guardia comprueba que el texto LLAME a la puerta; NO prueba que el resultado se use, ni
 // entiende todo SQL escrito a mano en una función (comillas de dólar, comentarios anidados, identificadores entre comillas
 // dobles). Las políticas no tienen este problema: PostgreSQL las entrega ya normalizadas. La revisión humana de una función
 // nueva con `auth.uid()` sigue siendo necesaria.
-const UNGATED_AUTH_UID_ALLOWED: Record<string, string> = {};
+//
+// H-116 (2026-11-25): dos ayudas de `app` son ELLAS MISMAS puertas sobre el pase y por eso no llaman a la del segundo paso (si lo
+// hicieran, `app.session_alive()` valdría «falso» para una sesión parcial y se perdería el motivo de rechazo `factor_present` de
+// `complete_account_setup`). Las dos son internas (`app` no está expuesta por la API), no leen datos de nadie y solo contestan
+// preguntas sobre el pase de quien llama; todas las funciones públicas y políticas que las usan SÍ llaman al segundo paso o a la
+// organización activa (esta misma guardia lo exige de ellas).
+const UNGATED_AUTH_UID_ALLOWED: Record<string, string> = {
+  "function app.session_alive":
+    "H-116: ¿sigue abierta la sesión del pase? Solo mira `auth.sessions` y el pase; la usan `current_tenant_id`, `my_tenant_ids`, la política `profiles_update` y las funciones públicas de H-116 y de invitaciones, todas con la puerta del segundo paso.",
+  "function app.session_from_email_link":
+    "H-116: ¿el `amr` del pase trae un método de enlace del correo y ninguno `password`? Solo lee el pase; la usa `account_setup_verdict`, que llaman funciones públicas con la puerta del segundo paso.",
+};
 
 // Guardia 16 (menor 2 de la revisión de Aarón al PR #44): el texto de una política o de una función se analiza aquí, en
 // TypeScript, para que la regla se lea y se pruebe sola (16c) y no dependa de escapes dentro de SQL.
@@ -536,7 +547,7 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
    *   sin ella). Quedan fuera las funciones de trigger (no se llaman a mano ni desde una política: corren después de que la
    *   política o la función ya dejó pasar) y `app.second_step_pending`, que es la puerta misma.
    */
-  async function ungatedAuthUid(): Promise<string[]> {
+  async function rawUngatedAuthUid(): Promise<string[]> {
     const policies = await db.query<{ id: string; text: string }>(
       `select 'policy ' || schemaname || '.' || tablename || '.' || policyname as id,
               coalesce(qual, '') || ' ' || coalesce(with_check, '') as text
@@ -563,11 +574,16 @@ describe("controles de estructura de la base de datos (§8.2)", () => {
     return [...ungatedPolicies, ...ungatedFunctions].map((row) => row.id).sort();
   }
 
+  /** Lo que la guardia marca sin las excepciones justificadas (las pruebas «la guardia muerde» comparan contra lo que ELLAS crean). */
+  async function ungatedAuthUid(): Promise<string[]> {
+    return (await rawUngatedAuthUid()).filter((id) => !(id in UNGATED_AUTH_UID_ALLOWED));
+  }
+
   it("16. (H-004a) toda política, función expuesta o ayuda de app que identifica a la persona (auth.uid(), auth.email(), auth.jwt() fuera de `aal`, request.jwt.claim) sin pasar por la organización activa (en una política, siempre) llama también a app.second_step_pending(), o está en la lista justificada", async () => {
-    const found = (await ungatedAuthUid()).filter((id) => !(id in UNGATED_AUTH_UID_ALLOWED));
+    const found = (await rawUngatedAuthUid()).filter((id) => !(id in UNGATED_AUTH_UID_ALLOWED));
     expect(found).toEqual([]);
     // Y la lista de excepciones no guarda entradas que ya no existen.
-    const all = new Set(await ungatedAuthUid());
+    const all = new Set(await rawUngatedAuthUid());
     for (const id of Object.keys(UNGATED_AUTH_UID_ALLOWED)) {
       expect(all.has(id), `${id} ya no existe: quítala de la lista`).toBe(true);
     }

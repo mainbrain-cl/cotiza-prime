@@ -237,12 +237,6 @@ export async function createIsolationFixture(runId: string): Promise<IsolationFi
 }
 
 async function build(db: Client, runId: string): Promise<IsolationFixture> {
-  // Versiones vigentes de términos y privacidad: así las cuentas entran sin la pantalla de aceptar.
-  const { rows: docs } = await db.query<{ kind: string; version: string }>(
-    `select kind, version from public.legal_documents where is_current`,
-  );
-  const acceptedLegal = Object.fromEntries(docs.map((d) => [d.kind, d.version]));
-
   const canary = (key: OrgKey) => `CANARIO-${key}-${runId}`;
   const names: Record<PersonaKey, string> = {
     ana: `Ana ${canary("A")}`,
@@ -258,7 +252,8 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
   const personas = {} as Record<PersonaKey, Persona>;
   for (const key of PERSONA_KEYS) {
     const email = `${key}-${runId}@ejemplo.test`;
-    await adminCreateUser(email, { full_name: names[key], accepted_legal: acceptedLegal });
+    // Cuentas terminadas y con los términos vigentes aceptados (H-116: ya no se aceptan desde los metadatos de quien crea la cuenta).
+    await adminCreateUser(email, { full_name: names[key] }, { acceptLegal: true });
     const session = await signIn(email);
     personas[key] = { key, email, userId: session.userId, fullName: names[key], session };
   }

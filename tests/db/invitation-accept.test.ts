@@ -16,7 +16,9 @@ import {
   connect,
   createTenantAs,
   createUser,
+  ensureSession,
   expectSqlError,
+  setAccountEmail,
   withTx,
   type TestUser,
 } from "./helpers";
@@ -475,10 +477,7 @@ describe("aceptar: el camino feliz", () => {
     withTx(setup, async () => {
       const person = await newPerson();
       await actAsPostgres(setup);
-      await setup.query("update auth.users set email = $2 where id = $1", [
-        person.id,
-        "Persona.Mixta@Ejemplo.TEST",
-      ]);
+      await setAccountEmail(setup, person.id, "Persona.Mixta@Ejemplo.TEST");
       const p = await inviteAs(w.owner, "  persona.mixta@ejemplo.test ", "viewer");
       expect((await accept(person, p.tokenSha)).result).toBe("accepted");
     }));
@@ -514,7 +513,7 @@ describe("aceptar: lo que se rechaza", () => {
       ]) {
         const lookalike = await newPerson();
         await actAsPostgres(setup);
-        await setup.query("update auth.users set email = $2 where id = $1", [lookalike.id, email]);
+        await setAccountEmail(setup, lookalike.id, email);
         expect((await accept(lookalike, p.tokenSha)).result, email).toBe("wrong_email");
       }
     }));
@@ -742,10 +741,7 @@ describe("aceptar: quien ya estuvo o ya está", () => {
       const p = await inviteAs(w.owner, "dueno.invitado@ejemplo.test", "viewer");
       // La invitación es para el correo del Dueño (la cuenta cambia de correo después de que la crearon).
       await actAsPostgres(setup);
-      await setup.query(
-        "update auth.users set email = 'dueno.invitado@ejemplo.test' where id = $1",
-        [w.owner.id],
-      );
+      await setAccountEmail(setup, w.owner.id, "dueno.invitado@ejemplo.test");
       const result = await accept(w.owner, p.tokenSha);
       expect(result).toMatchObject({ result: "accepted", role: "owner", already_member: true });
       expect((await memberOf(w.tenantA, w.owner)).role).toBe("owner");
@@ -1575,6 +1571,8 @@ describe("solo lectura: un GET de PostgREST no puede probar códigos", () => {
       await asUser(setup, w.owner, w.tenantA);
       await setup.query(REVOKE, [p.id]);
       await actAsPostgres(setup);
+      // H-116: la sesión del pase se crea ANTES (una transacción de solo lectura no puede escribirla).
+      await ensureSession(setup, person.id);
       // Desde aquí la transacción es de solo lectura, como la de un GET de PostgREST. Con una invitación cancelada
       // las funciones NO escribirían nada: si igual contestan, es que se saltaron el límite de intentos.
       await setup.query("set transaction read only");

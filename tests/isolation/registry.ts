@@ -603,6 +603,16 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: false,
   },
   my_last_tenant_id: { args: {}, writesActiveTenant: false },
+  // H-116 · terminar la cuenta (solo desde una sesión de enlace del correo). No reciben organización: solo miran la cuenta de quien llama.
+  account_setup_preflight: {
+    args: { p_full_name: "Ataque", p_terms_version: "ataque", p_privacy_version: "ataque" },
+    writesActiveTenant: false,
+  },
+  my_account_ready: { args: {}, writesActiveTenant: false },
+  complete_account_setup: {
+    args: { p_full_name: "Ataque", p_terms_version: "ataque", p_privacy_version: "ataque" },
+    writesActiveTenant: false,
+  },
   // Ataque: apuntar el logo a un archivo que no existe en la carpeta de la organización activa.
   save_tenant_brand: {
     args: {

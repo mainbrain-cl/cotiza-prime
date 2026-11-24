@@ -1,6 +1,6 @@
 import { MAX_BODY_LENGTH, parseBasicFormat } from "@/lib/email/basic-format";
 import type { SnippetRow } from "./groups";
-import { renderVariables, type SnippetVariableValues } from "./model";
+import { hasVariableInLinkTarget, renderVariables, type SnippetVariableValues } from "./model";
 
 /**
  * El texto del correo al enviar una cotización (H-048b). Las variables (`{{cliente}}`, `{{numero}}`, `{{remitente}}`,
@@ -46,6 +46,9 @@ export function emailSnippetOptions(
 ): EmailSnippetOption[] {
   return rows.flatMap((row) => {
     if (row.kind !== "email_body") return [];
+    // Un texto guardado ANTES de que se prohibiera una variable dentro de la dirección de un enlace no se ofrece: el nombre del cliente
+    // decidiría adónde lleva el enlace (revisión de Aarón al PR #67). Hay que editarlo en Configuración.
+    if (hasVariableInLinkTarget(row.body)) return [];
     const text = renderVariables(row.body, values);
     if (text.length > MAX_BODY_LENGTH || !parseBasicFormat(text).ok) return [];
     return [{ id: row.id, name: row.name, text, isDefault: row.isDefault }];

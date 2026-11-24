@@ -74,6 +74,25 @@ describe("emailSnippetOptions (los textos de correo con los datos de esta cotiza
     expect(option.text).not.toContain("**");
   });
 
+  it("un texto viejo con una variable dentro de la dirección de un enlace no se ofrece (revisión de Aarón al PR #67)", () => {
+    const hostile = emailVariableValues({
+      customerName: "https://malo.ejemplo/pago",
+      quoteNumber: "COT-1",
+      senderName: "Ana",
+      organizationName: "Org",
+    });
+    const options = emailSnippetOptions(
+      [
+        row("Peligroso", "[Mira]({{cliente}})"),
+        row("Peligroso 2", "[Mira](https://{{organizacion}}/x)"),
+        row("Peligroso 3", "Pago: [aquí]({{cliente}})"),
+        row("Bien", "Hola {{cliente}}, cotización {{numero}}."),
+      ],
+      hostile,
+    );
+    expect(options.map((option) => option.name)).toEqual(["Bien"]);
+  });
+
   it("si completado ya no cabe en el correo, no se ofrece", () => {
     const big = "x".repeat(MAX_BODY_LENGTH - 5);
     expect(emailSnippetOptions([row("Largo", `${big} {{cliente}}`)], values)).toEqual([]);

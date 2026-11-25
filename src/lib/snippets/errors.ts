@@ -36,6 +36,7 @@ const VARIABLE_PROBLEMS: readonly string[] = [
   "variables_not_allowed",
   "unknown_variable",
   "too_many_variables",
+  "variable_in_link",
 ] satisfies SnippetVariableProblem[];
 
 export function mapSnippetError(error: {

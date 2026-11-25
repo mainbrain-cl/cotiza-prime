@@ -12,6 +12,7 @@ import {
   SNIPPET_VARIABLE_LABELS,
   SNIPPET_VARIABLE_VALUE_MAX_LENGTH,
   checkSnippetVariables,
+  hasVariableInLinkTarget,
   findVariableTokens,
   hasUnresolvedVariables,
   hasUnsafeSnippetCharacters,
@@ -226,6 +227,31 @@ describe("revisión de variables", () => {
       }
     });
   }
+
+  it("una variable dentro de la dirección de un enlace se rechaza (revisión de Aarón al PR #67); en el texto del enlace o fuera, no", () => {
+    for (const text of [
+      "[Mira]({{cliente}})",
+      "[Mira](https://{{organizacion}}/x)",
+      "[Mira](https://ejemplo.cl/{{numero}})",
+      "Hola\n\n[Mira]({{cliente}}) gracias",
+    ]) {
+      const result = checkSnippetVariables("email_body", text);
+      expect(result.ok, text).toBe(false);
+      if (!result.ok) expect(result.problem, text).toBe("variable_in_link");
+      expect(hasVariableInLinkTarget(text), text).toBe(true);
+    }
+    for (const text of [
+      "[{{cliente}}](https://ejemplo.cl/x)",
+      "[Mira](https://ejemplo.cl/x) {{cliente}}",
+      "{{cliente}} [Mira](https://ejemplo.cl/x)",
+      "Hola ({{cliente}}), gracias",
+      "[Mira](https://ejemplo.cl/x)\n{{cliente}}",
+      "[Mira](https://ejemplo.cl/x\n{{cliente}})",
+    ]) {
+      expect(checkSnippetVariables("email_body", text).ok, text).toBe(true);
+      expect(hasVariableInLinkTarget(text), text).toBe(false);
+    }
+  });
 
   it("findVariableTokens lista lo que hay entre llaves dobles, en orden", () => {
     expect(findVariableTokens("a {{x}} b {{cliente}} {{}}")).toEqual(["x", "cliente", ""]);

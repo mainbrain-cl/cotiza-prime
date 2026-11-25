@@ -146,7 +146,7 @@ export const normalizeSnippetBody = (raw: string): string =>
 // ---------------------------------------------------------------------------------------------------
 
 export type SnippetVariableProblem =
-  "variables_not_allowed" | "unknown_variable" | "too_many_variables";
+  "variables_not_allowed" | "unknown_variable" | "too_many_variables" | "variable_in_link";
 
 /** Mensajes para quien escribe el texto (la base responde con el mismo código en `message`). */
 export const SNIPPET_VARIABLE_PROBLEM_MESSAGES: Readonly<Record<SnippetVariableProblem, string>> = {
@@ -154,6 +154,8 @@ export const SNIPPET_VARIABLE_PROBLEM_MESSAGES: Readonly<Record<SnippetVariableP
     "Las variables entre llaves ({{ }}) solo se pueden usar en el texto del correo. Quita las llaves dobles de este texto.",
   unknown_variable: `Hay una variable que no existe o llaves sueltas. Las variables disponibles son ${SNIPPET_VARIABLES.map(variableToken).join(", ")}.`,
   too_many_variables: `El texto tiene demasiadas variables: el máximo es ${SNIPPET_MAX_VARIABLES}.`,
+  variable_in_link:
+    "No puedes poner una variable dentro de la dirección de un enlace: el nombre del cliente decidiría adónde lleva. Escribe la dirección completa, o deja la variable fuera del paréntesis del enlace.",
 };
 
 export type VariableCheck =
@@ -166,6 +168,14 @@ const fail = (problem: SnippetVariableProblem): VariableCheck => ({
   message: SNIPPET_VARIABLE_PROBLEM_MESSAGES[problem],
 });
 
+/**
+ * ¿Hay una variable dentro de la dirección de un enlace, como `[texto]({{cliente}})` o `[texto](https://{{cliente}}/x)`? El nombre del
+ * cliente puede venir del formulario público (lo escribe cualquiera) y el de la organización lo escribe quien la administra: ninguno
+ * debe decidir adónde lleva un enlace del correo (revisión de Aarón al PR #67). Gemela de la revisión de `app.snippet_variables_problem`: busca `](` y, antes de cerrar el paréntesis o
+ * cambiar de línea, unas llaves dobles.
+ */
+export const hasVariableInLinkTarget = (text: string): boolean => /\]\([^)\n]*\{\{/.test(text);
+
 /** Las variables que aparecen en el texto, en orden y con repetidas (sin revisar que existan). */
 export function findVariableTokens(text: string): string[] {
   return Array.from(text.matchAll(VARIABLE_PATTERN), (match) => match[1]);
@@ -177,6 +187,7 @@ export function findVariableTokens(text: string): string[] {
  *  - En el texto del correo solo valen las cuatro variables, escritas exactamente (`{{cliente}}`, sin espacios),
  *    hasta 10 en total. Cualquier llave que no forme parte de una variable es un error: así lo que se
  *    inserte después jamás puede formar una variable nueva.
+ *  - Una variable no puede ir dentro de la dirección de un enlace (`hasVariableInLinkTarget`).
  */
 export function checkSnippetVariables(kind: SnippetKind, text: string): VariableCheck {
   if (kind !== SNIPPET_KIND_WITH_VARIABLES) {
@@ -189,6 +200,7 @@ export function checkSnippetVariables(kind: SnippetKind, text: string): Variable
   const rest = text.replace(VARIABLE_PATTERN, "");
   if (rest.includes("{") || rest.includes("}")) return fail("unknown_variable");
   if (names.length > SNIPPET_MAX_VARIABLES) return fail("too_many_variables");
+  if (hasVariableInLinkTarget(text)) return fail("variable_in_link");
   return { ok: true, variables: names as SnippetVariable[] };
 }
 
@@ -208,10 +220,13 @@ const REPEATED_SPACES = / {2,}/g;
  *  - Los bordes también se protegen, porque dos valores pueden quedar pegados (`{{organizacion}}{{cliente}}`):
  *    si empieza con `(` o `*` se le antepone un espacio, y si termina en `]` o `*` se le agrega uno al final.
  *    Así `[Org]` junto a `(https://...)` no forma un enlace, ni `Ana*` junto a `*Juan` una negrita.
- *  - Se corta a `SNIPPET_VARIABLE_VALUE_MAX_LENGTH` caracteres, contando esos espacios.
+ *  - Se corta a `maxLength` caracteres (por defecto `SNIPPET_VARIABLE_VALUE_MAX_LENGTH`), contando esos espacios.
  * Si no queda nada, devuelve texto vacío (el que llama decide qué poner).
  */
-export function sanitizeVariableValue(value: string): string {
+export function sanitizeVariableValue(
+  value: string,
+  maxLength: number = SNIPPET_VARIABLE_VALUE_MAX_LENGTH,
+): string {
   const cleaned = trimSnippetEdges(
     value
       .replace(LINE_BREAKS_AND_TABS, " ")
@@ -225,7 +240,7 @@ export function sanitizeVariableValue(value: string): string {
     .replaceAll("{", "{ ")
     .replaceAll("}", " }");
   const characters = Array.from(cleaned);
-  let limit = SNIPPET_VARIABLE_VALUE_MAX_LENGTH;
+  let limit = maxLength;
   while (limit > 0) {
     // Si el corte dejó una `{` o un espacio al final, se quitan (junto a ellos iría el valor que sigue).
     const core = characters
@@ -234,8 +249,7 @@ export function sanitizeVariableValue(value: string): string {
       .replace(/[\s{]+$/u, "");
     const lead = /^[(*]/.test(core) ? " " : "";
     const trail = /[\]*]$/.test(core) ? " " : "";
-    const overflow =
-      snippetLength(core) + lead.length + trail.length - SNIPPET_VARIABLE_VALUE_MAX_LENGTH;
+    const overflow = snippetLength(core) + lead.length + trail.length - maxLength;
     if (overflow <= 0) return `${lead}${core}${trail}`;
     limit -= overflow;
   }

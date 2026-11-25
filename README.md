@@ -32,6 +32,33 @@ esta base no usa (analítica, vector, tiempo real, Studio), levantarla sin ellos
 `npx supabase start -x studio,vector,logflare,realtime,imgproxy,edge-runtime,postgres-meta,supavisor`. Reiniciar sin
 `--no-backup` conserva los datos. (Studio, cuando está levantado: http://127.0.0.1:56323.)
 
+### Probar el registro en dos pasos (H-116)
+
+Desde H-116 **nadie crea una cuenta con contraseña desde la aplicación**: el registro público de Supabase está apagado
+(`[auth] enable_signup = false` en `supabase/config.toml`; **hay que reiniciar Supabase local, `npx supabase stop` y
+`npx supabase start`, para que tome el cambio**) y la cuenta nace en nuestro servidor, sin contraseña. El código del
+correo es de 10 dígitos (`otp_length = 10`).
+
+1. Abre http://localhost:3000/registro, escribe un correo (por ejemplo `nueva@ejemplo.test`), pulsa «Confirmar que soy una
+   persona» (la verificación de prueba, solo local) y «Enviarme el enlace».
+2. El correo llega al buzón de pruebas: http://127.0.0.1:56324. Abre el botón «Confirmar mi correo» (la dirección es de
+   NUESTRA aplicación: `/confirmar-correo?token_hash=…`). Abrir la página no gasta el enlace; el botón «Continuar» sí.
+3. En «Termina de crear tu cuenta» (`/crear-cuenta`) eliges tu nombre y tu contraseña (10 o más caracteres) y aceptas los
+   términos. Recién entonces la cuenta queda terminada y puede crear una organización o aceptar una invitación.
+4. Mientras la cuenta no está terminada, cualquier otra pantalla te devuelve a «Termina de crear tu cuenta». Si cierras la
+   pestaña, usa «¿Olvidaste tu contraseña?» con ese correo: el enlace te lleva a terminar la cuenta.
+5. Si el correo ya tiene una cuenta, la pantalla responde lo mismo y **no se envía ningún correo**.
+
+Para probar el ataque que motivó la historia (alguien registra tu correo antes con su contraseña) hay una prueba
+automática: `E2E_PROD=1 npx playwright test --project=chromium e2e/account-prehijack.spec.ts`. La parte que quita
+el disparador del cambio de correo corre aparte, con `E2E_PROD=1 npx playwright test --project=trigger-off`: **nunca a la
+vez que otra suite** (mientras dura, la base local no tiene el disparador `forbid_email_change`; si una corrida muere a
+medias, la siguiente se detiene y dice cómo volver a ponerlo).
+
+Los e2e que NO prueban el registro usan `signUpAndVerify` (`e2e/helpers.ts`), que crea la cuenta ya terminada con la API de
+administración de la Supabase local e ingresa por la pantalla; los que sí lo prueban usan `registerThroughGateway` (el
+recorrido real, con el buzón de pruebas).
+
 ### Probar la verificación en dos pasos (H-004a)
 
 - Entra con una cuenta **nueva** (no actives la verificación en `ana`, `beto`, `carla`, `mixta` ni `ex`: activarla cierra
@@ -139,16 +166,32 @@ vive la ruta `GET /api/v1/jobs/invitation-notices` y su horario en `vercel.json`
   `curl -i -H "Authorization: Bearer <valor>" http://localhost:3000/api/v1/jobs/invitation-notices`.
   El script `npm run job:invitation-notices` sigue sirviendo para uso local o manual.
 
-## Despliegue: cuentas y correo verificado (aceptar invitaciones, H-009)
+## Despliegue: la configuración de Supabase Auth de producción (H-009 y H-116)
 
-Aceptar una invitación solo funciona con el mismo correo al que se envió, y eso descansa en que el correo verificado
-de una cuenta (`email_confirmed_at`) sea realmente de su dueño. Hoy esas opciones están solo en
-`supabase/config.toml` (la base local); **el proyecto de Supabase de producción hay que configurarlo a mano**:
+Aceptar una invitación solo funciona con el mismo correo al que se envió, y el registro solo es seguro si nadie puede crear
+una cuenta con contraseña antes de verificar el correo. Eso descansa en la configuración del proyecto de Supabase de
+producción, que **hay que dejar a mano** (`supabase/config.toml` solo vale para la base local) y que **bloquea el piloto**. La
+lista completa (17 puntos) está en `docs/arquitectura/h-116-registro-seguro.md`, §5. Lo esencial:
 
-- **H-009 exige en el proyecto de producción: Confirm email ON, Secure email change ON y sin proveedores externos
-  (OAuth) ni ingreso anónimo, salvo decisión registrada.**
-- Es requisito de **salida a producción y del piloto**: revisarlo en el panel de Supabase (Authentication) antes de
-  invitar a la primera persona real.
+- **«Allow new users to sign up»: APAGADO** (la defensa que de verdad cierra el ataque de registro previo). El proveedor
+  Email sigue ENCENDIDO (es el ingreso con contraseña y la recuperación); no se apaga `[auth.email] enable_signup`.
+- Confirm email ON, Secure email change ON, Secure password change ON, contraseña de 10 o más, código del correo de **10**
+  (`mailer_otp_length`), y sin ingreso anónimo, enlace manual de cuentas, proveedores externos, teléfono, SAML, Web3 ni ganchos.
+- SMTP propio para los correos de Supabase (con SPF, DKIM y DMARC) y las plantillas en español cargadas en el panel.
+- **`npm run check:auth-config` en verde, con la salida guardada.** Lo corre quien opera el proyecto de Supabase (Aarón o quien él
+  designe), en SU máquina, con un token personal de la API de gestión que **nunca** va en el repositorio ni en la aplicación:
+
+  ```
+  SUPABASE_ACCESS_TOKEN=… npm run check:auth-config -- --url https://<ref>.supabase.co --anon-key <llave pública> --ref <ref>
+  ```
+
+  Sin token se puede correr la parte pública (`--public-only`), que se declara PARCIAL y no sirve como salida del piloto. Lo que
+  no se pudo leer cuenta como fallo. Contra Supabase local: `npm run check:auth-config -- --public-only --url
+  http://127.0.0.1:56321 --anon-key <llave pública>`. Quedan «A MANO» (el guion los lista): SPF, DKIM y DMARC, las plantillas,
+  las redirecciones permitidas, y cero cuentas sin verificar (consulta de solo lectura en el editor SQL del panel).
+- Si el registro público de Supabase queda abierto en producción, la aplicación **bloquea su propio formulario** `/registro`
+  («El registro no está disponible por ahora») y deja una alerta en el registro del servidor (`signup_open_in_supabase`). Eso
+  **no frena el ataque** (va directo a la API de Supabase): solo lo hace visible. Lo que lo frena es tenerlo apagado.
 
 ## Estructura
 

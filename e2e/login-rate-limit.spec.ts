@@ -1,6 +1,6 @@
 import { connect } from "../tests/db/helpers";
 import { expect, test, type Page } from "./fixtures";
-import { TEST_PASSWORD, signUpAndVerify, uniqueEmail } from "./helpers";
+import { TEST_PASSWORD, signUpAndVerify, submitSignupEmail, uniqueEmail } from "./helpers";
 
 // H-002: límite de intentos de ingreso y de registro, de punta a punta.
 // Cada prueba navega desde una IP propia (ver fixtures.ts), así los contadores no se mezclan.
@@ -96,21 +96,13 @@ test("solo cuentan los fallos: ingresar bien limpia el contador de la cuenta", a
 
 test("el registro se limita por IP", async ({ page }) => {
   test.setTimeout(240_000);
+  // Desde H-116 el registro pide solo el correo: cada pedido de enlace cuenta, exista o no la cuenta.
+  const requestLink = () => submitSignupEmail(page, uniqueEmail("masivo"));
   for (let attempt = 1; attempt <= MAX_SIGNUPS_PER_IP; attempt++) {
-    await page.goto("/registro");
-    await page.getByLabel("Tu nombre").fill("Persona Ficticia");
-    await page.getByLabel("Correo").fill(uniqueEmail("masivo"));
-    await page.getByLabel("Contraseña").fill(TEST_PASSWORD);
-    await page.getByRole("checkbox", { name: /Acepto los/ }).check();
-    await page.getByRole("button", { name: "Crear mi cuenta" }).click();
+    await requestLink();
     await expect(page.getByTestId("signup-sent")).toBeVisible();
   }
-  await page.goto("/registro");
-  await page.getByLabel("Tu nombre").fill("Persona Ficticia");
-  await page.getByLabel("Correo").fill(uniqueEmail("masivo"));
-  await page.getByLabel("Contraseña").fill(TEST_PASSWORD);
-  await page.getByRole("checkbox", { name: /Acepto los/ }).check();
-  await page.getByRole("button", { name: "Crear mi cuenta" }).click();
+  await requestLink();
   await expect(page.getByText(LOCKED_MESSAGE)).toBeVisible();
   await expect(page.getByTestId("signup-sent")).toHaveCount(0);
 });

@@ -67,6 +67,14 @@ export const SIGNUP_SENT_SUFFIX =
 export const VERIFIED_NOT_FINISHED_HELP =
   "Si ya habías confirmado tu correo, usa «¿Olvidaste tu contraseña?»: te enviamos un enlace para terminar tu cuenta.";
 
+/**
+ * Lo que dice `/registro` cuando el registro público de Supabase está abierto en producción (`signup-open-guard`): nuestro
+ * formulario se bloquea. No explica el motivo: es un error de configuración que se arregla en el panel de Supabase.
+ */
+export const SIGNUP_UNAVAILABLE_TITLE = "El registro no está disponible por ahora";
+export const SIGNUP_UNAVAILABLE_TEXT =
+  "Estamos haciendo un ajuste y no podemos crear cuentas nuevas en este momento. Vuelve a intentarlo en un rato. Si ya tienes una cuenta, puedes ingresar con normalidad.";
+
 // --- /confirmar-correo -------------------------------------------------------------------------------------------------------
 
 export const CONFIRM_EXPIRED_TITLE = "Este enlace ya se usó o venció";

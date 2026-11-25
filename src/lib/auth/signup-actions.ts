@@ -10,6 +10,7 @@ import {
   SETUP_FAILED_MESSAGE,
   SIGNUP_ANTIBOT_ACTION,
   SIGNUP_MIN_RESPONSE_MS,
+  SIGNUP_UNAVAILABLE_TEXT,
   rejectionFor,
   rejectionState,
   setupResponseSchema,
@@ -17,6 +18,7 @@ import {
   type CreateAccountState,
 } from "@/lib/auth/account-setup";
 import { AUTH_MESSAGES, classifyAuthError } from "@/lib/auth/errors";
+import { isSignupBlockedByOpenSupabase } from "@/lib/auth/signup-open-guard";
 import type { FormState } from "@/lib/auth/form-state";
 import { CREATE_ACCOUNT_PATH, NEW_TENANT_PATH, SECOND_STEP_PATH } from "@/lib/auth/paths";
 import {
@@ -77,6 +79,11 @@ export async function signUpAction(_previous: FormState, formData: FormData): Pr
     antibotToken: readText(formData, "antibotToken"),
   };
   const values = { email: raw.email ?? "" };
+
+  // Si el registro público de Supabase está abierto en producción, este formulario se cierra (decisión J5).
+  if (await isSignupBlockedByOpenSupabase()) {
+    return { status: "error", message: SIGNUP_UNAVAILABLE_TEXT, values };
+  }
 
   const parsed = signUpSchema.safeParse(raw);
   if (!parsed.success) {

@@ -4,7 +4,9 @@ import { redirect } from "next/navigation";
 import { AuthCard } from "@/components/auth/auth-card";
 import { FlowSteps } from "@/components/auth/flow-steps";
 import { loadAntibotConfig } from "@/lib/antibot";
+import { SIGNUP_UNAVAILABLE_TEXT, SIGNUP_UNAVAILABLE_TITLE } from "@/lib/auth/account-setup";
 import { HOME_PATH, LOGIN_PATH } from "@/lib/auth/paths";
+import { isSignupBlockedByOpenSupabase } from "@/lib/auth/signup-open-guard";
 import { getOptionalUser } from "@/lib/auth/session";
 import { hasPendingInvitation } from "@/lib/team/invitation-cookie";
 import { SignUpForm } from "./signup-form";
@@ -13,6 +15,22 @@ export const metadata: Metadata = { title: "Crear cuenta · Cotiza Prime" };
 
 export default async function SignUpPage() {
   if (await getOptionalUser()) redirect(HOME_PATH);
+  // Registro público de Supabase abierto en producción: este formulario se cierra (decisión J5 de H-116).
+  if (await isSignupBlockedByOpenSupabase()) {
+    return (
+      <AuthCard title={SIGNUP_UNAVAILABLE_TITLE}>
+        <div className="flex flex-col gap-4" data-testid="signup-unavailable">
+          <p className="text-fg-muted">{SIGNUP_UNAVAILABLE_TEXT}</p>
+          <Link
+            href={LOGIN_PATH}
+            className="inline-flex min-h-11 items-center font-semibold text-accent underline-offset-4 hover:underline"
+          >
+            Ingresar
+          </Link>
+        </div>
+      </AuthCard>
+    );
+  }
   const invited = await hasPendingInvitation();
   const antibot = loadAntibotConfig();
 

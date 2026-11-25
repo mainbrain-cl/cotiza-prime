@@ -241,12 +241,13 @@ export async function markAccountSetUp(
 
 /**
  * Crea una cuenta confirmada con la llave maestra (solo para montar la fixture). Desde H-116 queda TERMINADA (puede crear
- * organizaciones y aceptar invitaciones) salvo con `ready: false`; `acceptLegal` registra la aceptación de los documentos vigentes.
+ * organizaciones y aceptar invitaciones) salvo con `ready: false`; `acceptLegal` registra la aceptación de los documentos vigentes;
+ * `password` cambia la contraseña de la cuenta (por defecto, `TEST_PASSWORD` de este archivo).
  */
 export async function adminCreateUser(
   email: string,
   userMetadata: Record<string, unknown> = {},
-  options: { ready?: boolean; acceptLegal?: boolean } = {},
+  options: { ready?: boolean; acceptLegal?: boolean; password?: string } = {},
 ): Promise<string> {
   const { apiUrl, secretKey } = localEnv();
   const res = await fetch(`${apiUrl}/auth/v1/admin/users`, {
@@ -258,7 +259,7 @@ export async function adminCreateUser(
     },
     body: JSON.stringify({
       email,
-      password: TEST_PASSWORD,
+      password: options.password ?? TEST_PASSWORD,
       email_confirm: true,
       user_metadata: userMetadata,
     }),

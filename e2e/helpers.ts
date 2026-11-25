@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { freshTotp } from "../src/test/totp";
+import { adminCreateUser } from "../tests/support/local-supabase";
 
 /** Buzón de prueba de Supabase local (Mailpit). Puerto de `[local_smtp]` en supabase/config.toml. */
-const MAILBOX_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:56324";
+export const MAILBOX_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:56324";
+
+/** Cuánto se espera que el ingreso termine (la primera vez que se abre una pantalla, el servidor de desarrollo la compila). */
+const SIGN_IN_TIMEOUT_MS = 20_000;
 
 export const TEST_PASSWORD = "clave-de-prueba-123";
 
@@ -64,18 +68,114 @@ export async function countMails(email: string, subject: string): Promise<number
   return messages?.length ?? 0;
 }
 
-/** Registra una cuenta nueva, verifica el correo y deja la sesión iniciada en la pantalla de crear organización. */
+/** Asunto del correo del registro en dos pasos (H-116). */
+export const SIGNUP_MAIL_SUBJECT = "Confirma tu correo para crear tu cuenta";
+
+/**
+ * Una cuenta lista para usar, SIN pasar por el registro: correo confirmado, contraseña `TEST_PASSWORD`, nombre y términos
+ * aceptados, y marcada como terminada (H-116). Se crea con la API de administración de la Supabase LOCAL (el mismo atajo de la
+ * semilla y de `tests/db/helpers.ts`); no hay nada de esto en la aplicación. Devuelve el id de la cuenta.
+ */
+export async function createReadyAccount(email: string, fullName: string): Promise<string> {
+  return adminCreateUser(
+    email,
+    { full_name: fullName },
+    { acceptLegal: true, password: TEST_PASSWORD },
+  );
+}
+
+/**
+ * ATAJO para las pruebas que NO prueban el registro: crea la cuenta lista (`createReadyAccount`) e ingresa por la pantalla de
+ * ingreso, de modo que la prueba parte con la sesión iniciada en «Crea tu primera organización», igual que tras el registro.
+ * Con el registro público de Supabase apagado (H-116) ya no se puede crear una cuenta con contraseña desde la aplicación.
+ * El registro de verdad, con su pasarela y su correo, lo recorre `registerThroughGateway`.
+ */
 export async function signUpAndVerify(page: Page, email: string, fullName: string): Promise<void> {
-  await page.goto("/registro");
-  await page.getByLabel("Tu nombre").fill(fullName);
+  await createReadyAccount(email, fullName);
+  await page.goto("/ingresar");
   await page.getByLabel("Correo").fill(email);
   await page.getByLabel("Contraseña").fill(TEST_PASSWORD);
+  await page.getByRole("button", { name: "Ingresar" }).click();
+  await expect(page).toHaveURL(/\/organizaciones\/nueva$/, { timeout: SIGN_IN_TIMEOUT_MS });
+}
+
+/**
+ * Espera el correo del registro en dos pasos y devuelve la dirección del botón («Confirmar mi correo»), tal como la recibe la
+ * persona: `/confirmar-correo?token_hash=…&type=invite`. `count` es cuántos correos del registro tiene que haber ya (para
+ * esperar uno NUEVO cuando se pidió otro enlace); se devuelve el más reciente.
+ */
+export async function waitForAccountLink(email: string, count = 1): Promise<string> {
+  let link: string | null = null;
+  await expect
+    .poll(
+      async () => {
+        const search = await fetch(
+          `${MAILBOX_URL}/api/v1/search?query=${encodeURIComponent(
+            `to:${email} subject:"${SIGNUP_MAIL_SUBJECT}"`,
+          )}`,
+        );
+        const { messages } = (await search.json()) as MailpitSearch;
+        if (!messages || messages.length < count) return null;
+        const detail = await fetch(`${MAILBOX_URL}/api/v1/message/${messages[0].ID}`);
+        const body = (await detail.json()) as MailpitMessage;
+        link = body.Text.match(/https?:\/\/\S+\/confirmar-correo\?\S+/)?.[0] ?? null;
+        return link;
+      },
+      { message: `No llegó el correo del registro a ${email}`, timeout: 30_000 },
+    )
+    .not.toBeNull();
+  return link!.replace(/[)>\]]+$/, "");
+}
+
+/** Paso 1 del registro por la pantalla, sin esperar el resultado: escribe el correo, pasa la verificación de prueba y envía. */
+export async function submitSignupEmail(page: Page, email: string): Promise<void> {
+  await page.goto("/registro");
+  await page.getByLabel("Correo").fill(email);
+  await page.getByTestId("antibot-memory-pass").click();
+  await page.getByRole("button", { name: "Enviarme el enlace" }).click();
+}
+
+/** Paso 1 del registro por la pantalla: pide el enlace y espera «Revisa tu correo». */
+export async function requestSignupLink(page: Page, email: string): Promise<void> {
+  await submitSignupEmail(page, email);
+  await expect(page.getByTestId("signup-sent")).toBeVisible();
+}
+
+/** Paso 2: abre el enlace del correo y aprieta «Continuar» (el clic es el que gasta el código). Termina en `/crear-cuenta`. */
+export async function confirmEmailFromLink(page: Page, link: string): Promise<void> {
+  await page.goto(link);
+  await page.getByRole("button", { name: "Continuar" }).click();
+  await expect(page).toHaveURL(/\/crear-cuenta$/);
+}
+
+/** Paso 3 en `/crear-cuenta`: nombre, contraseña dos veces y términos, y «Crear mi cuenta». No espera el resultado. */
+export async function submitAccountSetup(
+  page: Page,
+  fullName: string,
+  password: string = TEST_PASSWORD,
+): Promise<void> {
+  await page.getByLabel("Tu nombre").fill(fullName);
+  await page.locator("input[name=password]").fill(password);
+  await page.locator("input[name=confirmPassword]").fill(password);
   await page.getByRole("checkbox", { name: /Acepto los/ }).check();
   await page.getByRole("button", { name: "Crear mi cuenta" }).click();
-  await expect(page.getByTestId("signup-sent")).toBeVisible();
+}
 
-  await openVerificationLink(page, await waitForVerificationLink(email));
-  await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
+/**
+ * El registro REAL, de punta a punta, por la pantalla y el correo: `/registro` → Mailpit → «Continuar» → `/crear-cuenta`
+ * → «Crear mi cuenta». Lo usan las pruebas que prueban el registro (y las que necesitan una cuenta con contraseña elegida por
+ * la persona). Termina en `/organizaciones/nueva` (o en `/invitacion` si el navegador traía una invitación guardada).
+ */
+export async function registerThroughGateway(
+  page: Page,
+  email: string,
+  fullName: string,
+  password: string = TEST_PASSWORD,
+): Promise<void> {
+  await requestSignupLink(page, email);
+  await confirmEmailFromLink(page, await waitForAccountLink(email));
+  await submitAccountSetup(page, fullName, password);
+  await expect(page).toHaveURL(/\/(organizaciones\/nueva|invitacion)$/);
 }
 
 /** Completa el formulario de organización y espera llegar a su inicio. Devuelve el id de la organización. */

@@ -2051,6 +2051,17 @@ describe("guardias estáticas del aislamiento", () => {
         "false",
       );
     }
+    // 17f. El token de quien opera el proyecto de Supabase (API de gestión, `npm run check:auth-config`) vive solo en la máquina de
+    // quien corre el guion: la aplicación nunca lo nombra ni llama a esa API. El guion lo lee de la variable de entorno y nunca lo
+    // muestra.
+    const withManagementToken = sourceFiles
+      .filter((f) => /SUPABASE_ACCESS_TOKEN|api\.supabase\.com/.test(read(f)))
+      .map(rel);
+    expect(withManagementToken).toEqual([]);
+    const checkScript = stripComments(read(path.join(ROOT, "scripts", "check-auth-config.ts")));
+    expect(checkScript).toContain("process.env.SUPABASE_ACCESS_TOKEN");
+    expect(/console\.(log|error|info|warn)\([^)]*\btoken\b/.test(checkScript)).toBe(false);
+
     // Las plantillas de Supabase que pueden salir sin que las envíe nuestro servidor no traen ningún enlace de confirmación.
     for (const file of ["signup_link_unavailable.html", "email_change_unavailable.html"]) {
       const html = read(path.join(ROOT, "supabase", "templates", file));

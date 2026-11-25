@@ -65,13 +65,15 @@ Hay trabajo necesario que no se cuenta desde un usuario. Va aquí para que no se
 **quiero** crear una cuenta con mi correo y una contraseña
 **para** empezar a usar Cotiza Prime.
 
+> **Cambiado por H-116 (2026-11-25, construida en la rama `feat/h-116-registro-seguro`, sin mezclar):** el registro pasa a ser **en dos pasos**. Primero se pide solo el correo y llega un enlace; el nombre, la contraseña y la aceptación de los términos se piden **después** de abrir ese enlace (`/confirmar-correo` → `/crear-cuenta`). Ya no hay contraseña antes de verificar el correo: es lo que impide que alguien se registre antes con el correo de otra persona. Los criterios de abajo quedan con su redacción nueva; la evidencia está en `e2e/signup.spec.ts` y `e2e/account-prehijack.spec.ts`.
+
 **Criterios de aceptación**
-- [ ] Puedo registrarme con nombre, correo y contraseña
-- [ ] Antes de registrarme veo y acepto los términos y la política de privacidad
-- [ ] Me llega un correo para verificar mi dirección, y el enlace caduca
-- [ ] Mientras no verifique mi correo no puedo crear una organización
-- [ ] Si el correo ya existe, se me ofrece iniciar sesión o recuperar la contraseña, sin revelar si la cuenta existe
-- [ ] La contraseña exige un largo mínimo y se me dice cuál es
+- [x] Puedo registrarme con mi correo y, desde el enlace que me llega, elegir mi nombre y mi contraseña (`e2e/signup.spec.ts`, «el registro completo»)
+- [x] Antes de terminar mi cuenta veo y acepto los términos y la política de privacidad (`e2e/auth-tenants.spec.ts`: sin aceptarlos no se crea; la aceptación se guarda después de verificar, con fecha, IP y navegador)
+- [x] Me llega un correo para verificar mi dirección, y el enlace caduca en 1 hora (`e2e/signup.spec.ts`: enlace vencido, usado y reemplazado)
+- [x] Mientras no verifique mi correo ni termine mi cuenta no puedo crear una organización ni abrir otra pantalla (`e2e/signup.spec.ts`, «atrapada»; base: `tests/db/account-setup.test.ts`)
+- [x] Si el correo ya existe, la pantalla responde lo mismo y no se envía nada, sin revelar si la cuenta existe (`e2e/signup.spec.ts`; quien ya tiene cuenta usa «Ingresar» o «¿Olvidaste tu contraseña?»)
+- [x] La contraseña exige un largo mínimo y se me dice cuál es (`e2e/auth-tenants.spec.ts`)
 
 **Prioridad:** núcleo
 **Tamaño:** mediano
@@ -2040,21 +2042,21 @@ mostrar una página amable, con la marca de la aplicación y un botón para rein
 **para** que nadie pueda registrarse antes con mi correo y dejar una contraseña suya que siga sirviendo cuando yo verifique.
 
 **Criterios de aceptación**
-- [ ] Al registrarme pongo solo mi correo y recibo un enlace; la contraseña, el nombre y la aceptación de términos y privacidad se piden **después** de abrir el enlace
-- [ ] Si alguien registra mi correo con una contraseña suya antes que yo, esa contraseña no sirve cuando yo verifico mi cuenta
-- [ ] Una cuenta que aún no se terminó no puede crear organizaciones, aceptar invitaciones ni leer o cambiar datos de la organización
-- [ ] Una cuenta solo se termina desde la sesión que nació del enlace del correo, y con el mismo correo con que se creó
-- [ ] Un pase de una sesión ya cerrada deja de servir en la base de datos en el acto, sin esperar los 15 minutos de su vencimiento
-- [ ] Hasta que exista H-109, la base no deja cambiar el correo de una cuenta
-- [ ] Los textos del registro y de terminar la cuenta están en español de Chile, y Aarón los aprobó en pantalla
-- [ ] Una prueba reproduce el ataque completo (registro previo con correo ajeno) y el atacante queda fuera
-- [ ] Antes del piloto, una lista de ajustes del Supabase de producción (17) se comprueba con un guion y a mano
+- [x] Al registrarme pongo solo mi correo y recibo un enlace; la contraseña, el nombre y la aceptación de términos y privacidad se piden **después** de abrir el enlace (`e2e/signup.spec.ts`: el recorrido completo; funciona también en otro dispositivo y el enlace no se gasta al abrir la página, solo con «Continuar»)
+- [x] Si alguien registra mi correo con una contraseña suya antes que yo, esa contraseña no sirve cuando yo verifico mi cuenta (`e2e/account-prehijack.spec.ts`: el ataque completo, también con la contraseña «sobreviviente» simulada por SQL; `tests/isolation/account-setup.test.ts`)
+- [x] Una cuenta que aún no se terminó no puede crear organizaciones, aceptar invitaciones ni leer o cambiar datos de la organización (`tests/db/account-setup.test.ts`, `tests/isolation/account-setup.test.ts`)
+- [x] Una cuenta solo se termina desde la sesión que nació del enlace del correo, y con el mismo correo con que se creó (base: `complete_account_setup`; e2e: `e2e/email-change-trigger-off.spec.ts`, proyecto `trigger-off`, también con el «último clic» del cambio de correo)
+- [x] Un pase de una sesión ya cerrada deja de servir en la base de datos en el acto, sin esperar los 15 minutos de su vencimiento (`e2e/account-prehijack.spec.ts`, dos pruebas; salvedad en `docs/seguridad-pendiente.md` H-116-1)
+- [x] Hasta que exista H-109, la base no deja cambiar el correo de una cuenta (disparador `forbid_email_change`; `e2e/account-prehijack.spec.ts`: con el disparador puesto, `PUT /auth/v1/user` falla y el correo no cambia, aunque salen dos avisos «no disponible» sin enlace)
+- [ ] Los textos del registro y de terminar la cuenta están en español de Chile, y Aarón los aprobó en pantalla (**en español: sí; falta que Aarón los vea en pantalla**: capturas a 1280 y 375 px, claro y oscuro, en el registro de construcción de la etapa 2)
+- [x] Una prueba reproduce el ataque completo (registro previo con correo ajeno) y el atacante queda fuera (`e2e/account-prehijack.spec.ts`)
+- [ ] Antes del piloto, una lista de ajustes del Supabase de producción (17) se comprueba con un guion y a mano (**guion hecho:** `npm run check:auth-config`, con pruebas; **falta correrlo con un proyecto real** y revisar a mano lo que el guion no ve; lista en `docs/arquitectura/h-116-registro-seguro.md` §5)
 
 **Prioridad:** núcleo (bloquea el piloto)
 **Tamaño:** grande (entre 6,25 y 8 días, con la prueba exploratoria de medio día; se parte en etapas)
 **Depende de:** H-001, H-004a (mezclada), H-009 (mezclada), H-118 (mezclada); la entrada de H-001 cambia
 **Datos personales:** sí (correo, nombre y consentimiento de quien se registra)
-**Notas técnicas:** 🔒 delicada (es la puerta de entrada y toca `auth`); no se mezcla sin revisión adversarial (decisión 020 §5). Nace del hallazgo B1 de la revisión adversarial de H-009 (2026-11-03). Diseño del `planificador` con las decisiones de Aarón del 2026-11-05: `docs/arquitectura/h-116-registro-seguro.md` (opción (i): apagar el registro público de Supabase y crear la cuenta solo desde nuestro servidor, sin contraseña; segunda defensa en la base con `app.session_alive()`). **Decisión de Aarón (2026-11-19): cuenta como seguridad básica, así que sí se hace;** se toma **después de H-048b y H-042**, antes de H-119. Cierra la salvedad de H-118 (el pase de acceso del atacante vale hasta 15 minutos). Ficha agregada el 2026-11-19: hasta entonces estaba solo como historia propuesta en el diseño.
+**Notas técnicas:** 🔒 delicada (es la puerta de entrada y toca `auth`); no se mezcla sin revisión adversarial (decisión 020 §5). Nace del hallazgo B1 de la revisión adversarial de H-009 (2026-11-03). Diseño del `planificador` con las decisiones de Aarón del 2026-11-05: `docs/arquitectura/h-116-registro-seguro.md` (opción (i): apagar el registro público de Supabase y crear la cuenta solo desde nuestro servidor, sin contraseña; segunda defensa en la base con `app.session_alive()`). **Decisión de Aarón (2026-11-19): cuenta como seguridad básica, así que sí se hace;** se toma **después de H-048b y H-042**, antes de H-119. Cierra la salvedad de H-118 (el pase de acceso del atacante vale hasta 15 minutos). Ficha agregada el 2026-11-19: hasta entonces estaba solo como historia propuesta en el diseño. **Estado (2026-11-25): construida en tres etapas en la rama `feat/h-116-registro-seguro` (base de datos, pasarela y pantallas, e2e y guion de configuración); falta la revisión adversarial (etapa 4), que Aarón vea los textos en pantalla y correr el guion contra un Supabase real.** Registro de construcción en el diseño.
 
 ---
 

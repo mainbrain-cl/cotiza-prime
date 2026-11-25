@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   logAuditEvent: vi.fn(),
   serverLog: vi.fn(),
   sendSignupLink: vi.fn(),
+  isSignupBlocked: vi.fn(),
   isSignupLocked: vi.fn(),
   recordSignupAttempt: vi.fn(),
   consumeSignupLinkQuota: vi.fn(),
@@ -37,6 +38,9 @@ vi.mock("@/lib/antibot", () => ({ getAntibotVerifier: () => ({ verify: mocks.ver
 vi.mock("@/lib/audit/log", () => ({ logAuditEvent: mocks.logAuditEvent }));
 vi.mock("@/lib/log/server-log", () => ({ serverLog: mocks.serverLog }));
 vi.mock("@/lib/auth/signup-service", () => ({ sendSignupLink: mocks.sendSignupLink }));
+vi.mock("@/lib/auth/signup-open-guard", () => ({
+  isSignupBlockedByOpenSupabase: mocks.isSignupBlocked,
+}));
 vi.mock("@/lib/http/request-context", () => ({
   getAppOrigin: () => "https://app.cotizaprime.example",
   getRequestContext: async () => ({
@@ -64,6 +68,7 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: mocks.createClient }));
 
 import {
   SIGNUP_MIN_RESPONSE_MS,
+  SIGNUP_UNAVAILABLE_TEXT,
   SETUP_EXPIRED_MESSAGE,
   OTHER_SESSIONS_MESSAGE,
   SETUP_REJECTIONS,
@@ -94,6 +99,7 @@ beforeEach(() => {
   mocks.order.length = 0;
   mocks.after.mockImplementation(() => undefined);
   mocks.verify.mockResolvedValue({ ok: true });
+  mocks.isSignupBlocked.mockResolvedValue(false);
   mocks.isSignupLocked.mockResolvedValue(false);
   mocks.recordSignupAttempt.mockResolvedValue(false);
   mocks.consumeSignupLinkQuota.mockResolvedValue(true);
@@ -144,6 +150,20 @@ describe("signUpAction (paso 1: solo el correo)", () => {
     }
     expect(results[1]).toEqual(results[0]);
     expect(results[2]).toEqual(results[0]);
+  });
+
+  it("con el registro público de Supabase abierto en producción (signup-open-guard) este formulario se cierra y no hace nada", async () => {
+    mocks.isSignupBlocked.mockResolvedValue(true);
+    const state = await signUpAction(idle, valid());
+    expect(state).toEqual({
+      status: "error",
+      message: SIGNUP_UNAVAILABLE_TEXT,
+      values: { email: " Nueva@Ejemplo.test " },
+    });
+    expect(mocks.isSignupLocked).not.toHaveBeenCalled();
+    expect(mocks.verify).not.toHaveBeenCalled();
+    expect(mocks.consumeSignupLinkQuota).not.toHaveBeenCalled();
+    expect(mocks.after).not.toHaveBeenCalled();
   });
 
   it("un correo mal escrito o sin prueba anti-robot se rechaza sin tocar nada", async () => {

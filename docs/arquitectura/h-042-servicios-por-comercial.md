@@ -167,7 +167,7 @@ p_expected_revision)`. Es `SECURITY DEFINER` (corre con permisos elevados) con `
 | **Servicio que se desactiva** | Sigue en la lista, pero nadie lo cotiza (la regla de activo ya existe). Si se reactiva, vuelve a estar disponible para quien lo tenía. En la ficha aparece aparte, como «Desactivado en el catálogo», con opción de quitarlo |
 | **Servicio que se «borra»** | Hoy no existe borrar, solo desactivar. Si algún día se borra la organización completa, la lista se borra en cascada |
 | **Servicio nuevo** | Quien tiene «lista» **no lo ve** hasta que un Administrador lo agregue: la lista es cerrada y lo no elegido no se cotiza. La ficha lo dice: «Los servicios nuevos no se suman solos». Decisión D3, fijada por Aarón: los servicios nuevos **no** se agregan automáticamente a listas restringidas (lo más seguro) |
-| **Comercial quitado del equipo (H-010)** | Pierde el acceso, así que la regla deja de importar. La fila **se conserva**. Si vuelve como Comercial por invitación (H-009 reactiva la misma membresía, `invitation_accept.sql:314`), **la lista vieja vuelve a aplicar**. Es seguro, porque solo restringe, pero sorprende: al invitar de nuevo a alguien que tuvo una regla, la pantalla de invitación avisa (aviso incluido en el PR 2, ver §8) «Esta persona estuvo antes en el equipo con una lista de servicios; volverá a aplicarse. Revísala en su ficha». Decisión D4 |
+| **Comercial quitado del equipo (H-010)** | Pierde el acceso, así que la regla deja de importar. La fila **se conserva**. Si vuelve como Comercial por invitación (H-009 reactiva la misma membresía, `invitation_accept.sql:314`), **la lista vieja vuelve a aplicar**. Es seguro, porque solo restringe, pero sorprende: al invitar de nuevo a alguien que tuvo una regla, la pantalla de invitación debería avisar «Esta persona estuvo antes en el equipo con una lista de servicios; volverá a aplicarse. Revísala en su ficha». **Ese aviso NO se construyó en el PR 2: queda como propuesta H-042b** (ver el registro de construcción del PR 2). Decisión D4 |
 | **Cambio de rol** | Si pasa a Administrador, la fila se conserva pero no aplica (§4). Si vuelve a Comercial, aplica otra vez. La ficha lo muestra. Decisión D4 |
 
 ---
@@ -448,7 +448,7 @@ al mezclar.
    - nuevos: `src/lib/team/catalog-scope-model.ts` (puro), `catalog-scope-queries.ts` y `catalog-scope-actions.ts`;
    - la etiqueta de auditoría en `src/lib/audit/labels.ts` y la semilla (Carla con «todos»).
 5. **Pantallas** (1 día): `src/components/team/catalog-scope-form.tsx`, la sección en la ficha, el aviso y los vacíos en
-   `src/app/o/[tenantId]/cotizaciones/[quoteId]/page.tsx` y `quote-editor.tsx`, y el aviso «estuvo antes en el equipo» en la pantalla
+   `src/app/o/[tenantId]/cotizaciones/[quoteId]/page.tsx` y `quote-editor.tsx`, y (**no construido, propuesta H-042b**) el aviso «estuvo antes en el equipo» en la pantalla
    de invitación de H-009/H-010 (0,25 día; consulta si la membresía quitada tenía una regla, solo a quien tiene `team.manage`).
 6. **Punta a punta y revisión del `revisor`** (0,5 día).
 
@@ -456,7 +456,7 @@ al mezclar.
 eso los dos PR.
 
 **Documentos a actualizar al construir:**
-- `docs/arquitectura/modelo-datos.md`: la fila `member_catalog_permissions` pasa a las dos tablas nuevas.
+- `docs/arquitectura/modelo-datos.md`: la fila `member_catalog_permissions` pasa a las dos tablas nuevas. **Hecho en el PR 1.**
 - `docs/HISTORIAS.md`: notas en H-069 y H-070 (el candado de H-042 y el tamaño ya quedaron en este PR).
 - El documento del sprint 5.
 
@@ -540,3 +540,57 @@ recomendaba. H-042 solo agrega su sección.
   y el de nombre parcial), pero hay que confirmarlo con el plan de la consulta (`explain`).
 - **El estado de la rama**: la «última fecha en `main`» se supuso `20261104110000`; hay una corrección de H-009 (I1) pendiente de
   mezclar con la fecha `20261105100000`.
+
+---
+
+## Registro de construcción — PR 1, la base (2026-11-24)
+
+> Construido por la sesión principal tras la aprobación de Aarón del orden H-048b → H-042 (2026-11-23). **Delicada (🔒): no se mezcla sin Aarón** (decisión 020 §5). Es el PR 1 de dos: no cambia ninguna pantalla ni ningún archivo de la aplicación, y con este PR solo, **nadie tiene regla y nada cambia de comportamiento**.
+
+**Qué quedó hecho** (migración `20261124110000_member_catalog_scope.sql` y su deshacer; **57 migraciones**, 58 con el #68). **Orden de mezcla: primero el #68** (su migración `20261124100000` es anterior a esta, `20261124110000`; la regla de fechas exige que cada migración sea posterior a la última integrada)
+
+- **Dos tablas** (`member_catalog_scopes` y `member_catalog_scope_items`, decisión D13) con `tenant_id`, RLS (solo `team.manage` las lee), relaciones compuestas con `members` y `catalog_items`, `forbid_tenant_change`, sin permisos de escritura directa y con el tope de 500 servicios (`app.member_catalog_scope_max_items()`).
+- **`public.set_member_catalog_scope(miembro, modo, servicios, versión esperada)`**, la única que escribe: sigue el orden del diseño (sesión → `team.manage` → argumentos → miembro de la organización activa → bloqueo de las filas de quien actúa y del miembro por orden de id → ¿se le puede limitar? → «lo pedido ya está guardado» → versión → servicios de esta organización → guardar → auditoría). Resultados `changed` y `unchanged`. **Decisiones al construir:** (1) un servicio desactivado puede estar en la lista (sigue ahí hasta que se quite, como dice el diseño); (2) «lo pedido ya está guardado» se evalúa **antes** de la versión, así un doble clic con una pantalla vieja recibe «listo» y no un `CP409`; (3) sin fila, pedir «todos» no crea nada; (4) se usa `for share` en las filas de `members` (el mismo orden de id de `change_member_role` y `remove_member`, que usan `for update`): un cambio de rol o una quitada concurrentes esperan o se ven.
+- **El predicado único**: `app.catalog_scope_limited()` y `app.can_quote_catalog_item(uuid)`, que **reemplaza el gancho de H-041** con `create or replace` (mismo nombre de parámetro y atributos `security definer set search_path = ''`, `stable`). `save_quote_draft` **no se tocó**. Ante la duda responde «no»: sin sesión, sin organización activa, miembro quitado, servicio inexistente o de otra organización; nunca recibe la organización por parámetro.
+- **`public.quotable_catalog_items(búsqueda, ids)`** (lo que ofrece el cotizador; `security invoker`, hasta 20 con búsqueda y 200 con ids; devuelve `price_locked`) y **`public.my_catalog_scope()`** (si hay límite y cuántos servicios activos puede cotizar).
+- **Permiso del gancho (riesgo 1 de la «Puesta al día»), opción (a):** `authenticated` ejecuta el gancho. Se actualizó `tests/db/price-locks.test.ts` (era la prueba que lo exigía cerrado) y queda documentado en `modelo-datos.md` §9.4.
+- **Auditoría:** `member.catalog_scope_changed` sobre el miembro, con modos, cantidades y ids (hasta 50 agregados y 50 quitados, con `truncated`); nunca nombres. Su etiqueta en pantalla es del PR 2.
+
+**Cambios a pruebas existentes (los esperaba el diseño):** `save-quote-draft-contract` (el primer caso ya no espera «sí» para un id al azar: ahora comprueba `prosecdef`, `proconfig`, volatilidad y permisos del gancho, que responde «no» sin sesión y que `save_quote_draft` lo sigue consultando); `price-locks` (el gancho lo ejecuta `authenticated`); `price-locks-rollback` (ahora corre antes el deshacer de H-042 y el de H-048b); `role-matrix-rollback` (las dos políticas nuevas usan `app.can('team.manage')`); y `second-step` (`quotable_catalog_items` responde una lista vacía, no datos, con la contraseña sola: revisada a mano).
+
+**Pruebas nuevas:** `tests/db/member-catalog-scope.test.ts` (33: quién puede fijar la regla, bordes, 500 servicios, doble clic, dos Administradores, historial con tope, escritura directa y lectura, lo que ofrece el cotizador, `my_catalog_scope`, el gancho, `save_quote_draft` con la regla y «no se tocó nada» por huella de `quotes`, `quote_items`, `quote_packages` y `quote_events`), `tests/db/member-catalog-scope-rollback.test.ts` (8), `tests/db/member-catalog-scope-concurrency.test.ts` (3) y `tests/isolation/catalog-scope.test.ts` (9, más las dos tablas y las tres funciones en el registro; la fixture monta una regla en A (Sofía) y en B).
+
+**Lo que sigue (PR 2, lo que se ve):** `catalog-source.ts` (los **tres** lectores del catálogo: `listQuotableCatalogItems`, `getQuotableCatalogItem` y `loadActiveCatalog` de `convert-lines.ts`), la sección «Servicios que puede cotizar» en la ficha del miembro, los avisos del editor, el texto de «no se cargaron» al convertir una solicitud, la etiqueta de auditoría, la semilla y la prueba e2e (`e2e/catalog-scope.spec.ts`).
+
+### Revisión Opus del PR 1 (2026-11-24): sin bloqueantes; un importante y los menores, corregidos
+
+- **I-1 (corregido): dos guardados a la vez sobre un miembro sin fila daban un error crudo** (`23505`, llave duplicada), porque `for update` no bloquea una fila que no existe. Ahora `set_member_catalog_scope` toma un candado por miembro (`pg_advisory_xact_lock`) después de las filas de `members` y antes de leer la regla: el segundo espera, ve lo que guardó el primero y responde `unchanged` (lo mismo) o `CP409` (otra lista). `tests/db/member-catalog-scope-concurrency.test.ts` abre dos conexiones que SE SOLAPAN; **contra la versión anterior reproduce el `23505`** (se comprobó antes de corregir).
+- **Rendimiento (M-3, corregido; medición propia):** con 2.000 servicios, un Comercial limitado sin búsqueda tardaba **~940 ms** por llamada porque el predicado se recalculaba por fila. Ahora `app.my_catalog_scope_item_ids()` entrega la lista permitida una sola vez y el gancho y `quotable_catalog_items` salen de ella: **~4 ms** (con búsqueda ~1 ms; sin límite y el Dueño, ~1 ms). Su deshacer la borra.
+- **M-1:** el tope de 500 se mira antes de recorrer la lista (el comentario ya decía eso). **M-2:** «nadie cambia su propia regla» ahora es explícito (`CP423 cannot_target_self`, como en H-010), no solo consecuencia de la matriz. **M-6:** los ataques de aislamiento contra la regla de Sofía en A ahora comprueban también su fila (modo, versión y servicios), no solo la huella de B. **M-7:** `modelo-datos.md` §9.4 dice que las relaciones nuevas toman un bloqueo breve sobre `tenants`, `members`, `catalog_items` y `auth.users`.
+
+**Dos preguntas para Aarón (el código aplica el supuesto de abajo):**
+1. **¿Se puede limpiar una lista «dormida»?** Hoy `member_not_limitable` y `member_removed` rechazan también «todos» sobre alguien que pasó a Administrador o fue quitado, así que su lista vieja no se puede borrar (D4: se conserva y vuelve a aplicar si vuelve a ser Comercial). Alternativa: permitir «todos» siempre (solo afloja). **Supuesto aplicado: queda como está (D4)**; la ficha del PR 2 lo explica.
+2. **¿Un tope de cambios por hora?** H-010 limita a 30 los cambios de rol y quitadas por persona y hora, para no llenar el registro. Aquí no hay tope: cada cambio deja un registro de a lo más ~4 KB. **Supuesto aplicado: sin tope** (el volumen esperado es mínimo; si Aarón quiere el mismo tope, es chico).
+
+**Para el PR 2 (anotado por la revisión):** la etiqueta de `member.catalog_scope_changed` y que `src/lib/audit/queries.ts` resuelva el nombre del miembro afectado; pruebas de paridad de los valores fijos 500, 20 y 100 contra los de la aplicación; y que la pantalla reconozca `cannot_target_self`.
+
+---
+
+## Registro de construcción — PR 2, lo que se ve (2026-11-24)
+
+> Construido sobre la rama del PR 1 (#69), a la espera de que Aarón lo revise. **Delicada (🔒): no se mezcla sin Aarón** (decisión 020 §5). No agrega migraciones: toda la regla vive en la base desde el PR 1.
+
+**Qué quedó hecho**
+
+- **Los TRES lectores del catálogo** pasan por `public.quotable_catalog_items` (la base decide con la regla): `listQuotableCatalogItems` y `getQuotableCatalogItem` (`src/lib/quotes/catalog-source.ts`) y `loadActiveCatalog` (`src/lib/intake/convert-lines.ts`, de a 200 ids). Un servicio que la regla no permite no entra al mapa y queda entre los «no cargados» al convertir una solicitud, en vez de hacer fallar el guardado entero y dejar la cotización vacía (la carrera conocida de §3 **no se cierra**: solo deja de fallar siempre para una Comercial limitada cuando la solicitud trae un servicio que su regla no permite; si la regla cambia entre leer y guardar, sigue pudiendo fallar el guardado). Los topes 20, 100 y 200 salen de `catalog-limits.ts` (puro) y una prueba de la base los compara con los de la función.
+- **La ficha del miembro** (`equipo/[memberId]`): la sección «Servicios que puede cotizar» (`CatalogScopeForm`, módulo puro `catalog-scope-model.ts`, consultas, servicio y acción `saveCatalogScopeAction` con `requirePermission('team.manage')` antes de tocar la base). Para un rol que no se limita (Dueño, Administrador, Aprobador, Observador) solo dice por qué, y avisa si quedó una lista guardada de antes (D4). `roleCanBeLimited` usa la matriz sin nombrar roles y una prueba de la base lo compara con `app.role_can` para los cinco roles.
+- **El editor:** aviso «Ves solo los servicios que tu organización te permite cotizar», vacíos honestos («No tienes servicios del catálogo para cotizar…», «Ninguno de tus servicios coincide…»), las líneas que la cotización ya tenía de un servicio que salió de la lista **se conservan con un aviso junto a la línea**, y si el servidor rechaza una línea nueva porque le cambiaron la lista con el editor abierto, el error sale junto a la línea y **la lista se vuelve a pedir sola**, una vez por cada contenido fallido (la misma línea rechazada no repite la petición). «Actualizar al precio de hoy» (H-041) también respeta la regla (usa el mismo lector). El texto de «el servicio ya no está disponible» ahora dice «o no está entre los que puedes cotizar».
+- **Auditoría:** etiqueta y frase de `member.catalog_scope_changed` («Limitó a Carla a 3 servicios», «Dejó a Carla cotizar todos los servicios», «Cambió los servicios de Carla: de 3 a 4 (agregó 2, quitó 1)»); el nombre del miembro afectado ya lo resolvía `src/lib/audit/queries.ts` para cualquier recurso de tipo miembro.
+- **Semilla:** sin cambios. Sin fila, «todos» ya es el estado de Carla; no hace falta sembrar nada.
+- **Convertir una solicitud:** el aviso del panel «Solicitud original» dice «ya no están activos en tu catálogo o no están entre los servicios que puedes cotizar».
+
+**Pruebas nuevas:** unitarias del módulo de la ficha (22 + notas de roles), de la acción con un falso miembro de cada rol (18), del componente (15), de los lectores del catálogo y de la conversión (`catalog-source.test.ts`, `convert-lines.test.ts`), de la auditoría y del editor (6); de la base: paridad con la aplicación (3: tope de 500, a quién se limita y los topes 20, 100 y 200); e2e: `e2e/catalog-scope.spec.ts` (el Dueño limita a una Comercial, ella solo ve lo permitido, le cambian la lista con el editor abierto, lo que ya tenía se conserva, vuelve a «todos»; la ficha de un Administrador, Aprobador y Observador; teléfono a 375 px con áreas de 44 px y letra de 16 px). El proyecto e2e `isolation` (48) sigue verde con la regla que la fixture monta para Sofía.
+
+**Lo que NO se hizo, a propósito (propuesta H-042b, a decidir con Aarón):** el aviso «Esta persona estuvo antes en el equipo con una lista de servicios; volverá a aplicarse» en la pantalla de invitar. Exige una función nueva de la base que, dado un correo, diga si hay una membresía quitada con regla: sería una forma de **enumerar cuentas por correo** (aunque solo para quien maneja el equipo) y toca `auth.users`. Hoy la ficha del miembro (cuando vuelve) y el registro de actividad ya lo muestran. Alternativa más barata y sin esa función: decirlo al **quitar** a alguien que tiene una lista guardada («Su lista de servicios se conserva y volverá a aplicarse si vuelve a ser Comercial»).
+
+**Pruebas de §7 que NO se hicieron en este PR (pendientes, anotadas a propósito):** (1) e2e de convertir una solicitud con un servicio no permitido; (2) e2e de que una cotización ya enviada conserva su PDF con la misma huella tras cambiar la regla (la base sí lo prueba: «no se tocó nada»); (3) e2e del aviso «sin conexión» de la sección de la ficha (lo cubre una prueba unitaria del componente). La ruta nueva `equipo/[memberId]` ya estaba en `APP_ROUTES` por H-010.

@@ -9,12 +9,13 @@ import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { roleOptionsFor, toMemberItem } from "@/lib/team/members-model";
 import { loadMember } from "@/lib/team/members-queries";
+import { CatalogScopeSection } from "./catalog-scope-section";
 
 export const metadata: Metadata = { title: "Miembro del equipo · Cotiza Prime" };
 
 /**
- * La ficha de un miembro (H-010): nombre, rol, ingreso, correo y las mismas acciones que la lista. Es una ficha
- * mínima: H-042 le agrega después su sección (los servicios que puede cotizar) debajo de los datos.
+ * La ficha de un miembro (H-010): nombre, rol, ingreso, correo y las mismas acciones que la lista, y debajo (H-042) los
+ * servicios que puede cotizar.
  *
  * Primero la organización activa, luego el permiso de equipo, y recién entonces se lee a la persona: quien no maneja
  * el equipo ve «No tienes permiso» sin que se consulte nada. Un miembro de otra organización, ya quitado o que no
@@ -125,7 +126,12 @@ export default async function MemberPage({ params }: PageProps<"/o/[tenantId]/eq
         )}
       </section>
 
-      {/* Aquí irá, con H-042, la sección «Servicios que puede cotizar». */}
+      <CatalogScopeSection
+        active={active}
+        memberId={item.memberId}
+        memberName={item.displayName}
+        role={item.role}
+      />
     </div>
   );
 }

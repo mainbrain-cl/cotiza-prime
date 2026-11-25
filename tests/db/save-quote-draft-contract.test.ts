@@ -102,14 +102,34 @@ async function saveFails(user: TestUser, quoteId: string, lines: L[], discountBp
 }
 
 describe("el gancho de servicios por comercial (H-042)", () => {
-  it("hoy responde «sí» a todo y `save_quote_draft` lo consulta", async () => {
+  it("el gancho real (H-042) conserva sus atributos de seguridad y `save_quote_draft` lo consulta", async () => {
     await actAsPostgres(db);
-    const { rows } = await db.query<{ ok: boolean; src: string }>(
-      `select app.can_quote_catalog_item($1) as ok,
-              (select prosrc from pg_proc where oid = 'public.save_quote_draft(uuid, integer, uuid, jsonb, jsonb, jsonb)'::regprocedure) as src`,
-      [randomUUID()],
+    const { rows } = await db.query<{
+      src: string;
+      hook: string;
+      secdef: boolean;
+      cfg: string[] | null;
+      volatility: string;
+      anon: boolean;
+    }>(
+      `select (select prosrc from pg_proc where oid = 'public.save_quote_draft(uuid, integer, uuid, jsonb, jsonb, jsonb)'::regprocedure) as src,
+              h.prosrc as hook, h.prosecdef as secdef, h.proconfig as cfg, h.provolatile as volatility,
+              has_function_privilege('anon', h.oid, 'execute') as anon
+         from pg_proc h where h.oid = 'app.can_quote_catalog_item(uuid)'::regprocedure`,
     );
-    expect(rows[0].ok).toBe(true);
+    // reemplazar el gancho con `create or replace` sin repetir estos atributos le quitaría la protección (pedido de Aarón, 2026-11-18)
+    expect(rows[0]).toMatchObject({ secdef: true, volatility: "s", anon: false });
+    expect(rows[0].cfg).toContain('search_path=""');
+    // ya no es el gancho vacío de H-041: decide con la regla de H-042
+    expect(rows[0].hook).toContain("app.catalog_scope_limited()");
+    // sin sesión de una organización responde «no» (ante la duda, no)
+    expect(
+      (
+        await db.query<{ ok: boolean }>("select app.can_quote_catalog_item($1) as ok", [
+          randomUUID(),
+        ])
+      ).rows[0].ok,
+    ).toBe(false);
     // si alguien reescribe `save_quote_draft`, tiene que seguir consultando el gancho y la regla
     expect(rows[0].src).toContain("app.can_quote_catalog_item(");
     expect(rows[0].src).toContain("app.quote_line_rules_check(");

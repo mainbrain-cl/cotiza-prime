@@ -24,6 +24,7 @@ import {
   type EditorLine,
   type EditorState,
 } from "@/lib/quotes/editor-model";
+import { NOT_ALLOWED_LINE_MESSAGE, PRICE_LOCKED_STALE_LINE_MESSAGE } from "@/lib/quotes/line-rules";
 import { NO_SNIPPETS, type QuoteFieldSnippets } from "@/lib/snippets/quote-fields";
 import { QuoteEditor } from "./quote-editor";
 
@@ -66,7 +67,12 @@ const stateWith = (lines: EditorLine[]): EditorState => ({
 async function mount(
   lines: EditorLine[],
   rules: { maxDiscountBp: number | null; canOverride: boolean; maxDiscountUnknown?: boolean },
-  extra: { snippets?: QuoteFieldSnippets; manageSnippetsHref?: string | null } = {},
+  extra: {
+    snippets?: QuoteFieldSnippets;
+    manageSnippetsHref?: string | null;
+    catalogScope?: { limited: boolean; allowedCount: number | null } | null;
+    notAllowedCatalogIds?: string[];
+  } = {},
 ) {
   await act(async () => {
     root.render(
@@ -80,6 +86,8 @@ async function mount(
         initialCatalog: [],
         snippets: extra.snippets ?? NO_SNIPPETS,
         manageSnippetsHref: extra.manageSnippetsHref ?? null,
+        catalogScope: extra.catalogScope ?? null,
+        notAllowedCatalogIds: extra.notAllowedCatalogIds ?? [],
         rules,
       }),
     );
@@ -552,5 +560,194 @@ describe("los textos de la cotización: exclusiones, notas al pie y «Insertar t
     expect(host.textContent).toContain("Las notas son demasiado largas");
     expect(byId("exclusions").getAttribute("aria-invalid")).toBe("true");
     expect(byId("footer-note").getAttribute("aria-invalid")).toBe("true");
+  });
+});
+
+describe("servicios por comercial en el editor (H-042)", () => {
+  const RULES = { maxDiscountBp: null, canOverride: false };
+  const unlockedLine = (): EditorLine => ({ ...lockedLine(), priceLocked: false });
+
+  it("quien tiene lista ve el aviso de que solo ve los servicios que su organización le permite; quien no, nada", async () => {
+    await mount([newFreeLine("a")], RULES, { catalogScope: { limited: true, allowedCount: 3 } });
+    expect(testId("catalog-scope-notice")?.textContent).toContain(
+      "Ves solo los servicios que tu organización te permite cotizar.",
+    );
+    act(() => root.unmount());
+    root = createRoot(host);
+    await mount([newFreeLine("a")], RULES, {
+      catalogScope: { limited: false, allowedCount: null },
+    });
+    expect(testId("catalog-scope-notice")).toBeNull();
+    // si no se pudo leer, tampoco se afirma nada
+    act(() => root.unmount());
+    root = createRoot(host);
+    await mount([newFreeLine("a")], RULES, { catalogScope: null });
+    expect(testId("catalog-scope-notice")).toBeNull();
+  });
+
+  it("con lista y sin servicios permitidos, lo dice (y no que «tu catálogo no tiene servicios»)", async () => {
+    await mount([newFreeLine("a")], RULES, { catalogScope: { limited: true, allowedCount: 0 } });
+    const empty = testId("catalog-empty")!.textContent!;
+    expect(empty).toContain("No tienes servicios del catálogo para cotizar");
+    expect(empty).toContain("Pide a un Administrador que te asigne servicios");
+    expect(empty).toContain("Puedes agregar una línea libre");
+    expect(empty).not.toContain("Tu catálogo no tiene servicios activos");
+  });
+
+  it("sin lista, el vacío de siempre", async () => {
+    await mount([newFreeLine("a")], RULES, {
+      catalogScope: { limited: false, allowedCount: null },
+    });
+    expect(testId("catalog-empty")!.textContent).toContain(
+      "Tu catálogo no tiene servicios activos",
+    );
+  });
+
+  it("una búsqueda sin resultados dice «ninguno de tus servicios» solo a quien tiene lista", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.searchQuoteCatalogAction.mockResolvedValue([]);
+      await mount([newFreeLine("a")], RULES, { catalogScope: { limited: true, allowedCount: 2 } });
+      const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+      await type(search, "grúa");
+      await act(async () => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(testId("catalog-empty")!.textContent).toBe(
+        "Ninguno de tus servicios coincide con ese nombre.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("una línea cuyo servicio ya no está permitido se conserva y avisa junto a la línea; las demás no", async () => {
+    await mount([unlockedLine(), newFreeLine("line-2")], RULES, {
+      catalogScope: { limited: true, allowedCount: 1 },
+      notAllowedCatalogIds: [CATALOG_ID],
+    });
+    expect(testId("line-1-not-allowed")?.textContent).toBe(
+      "Este servicio ya no está entre los que puedes cotizar. La línea se conserva.",
+    );
+    expect(testId("line-2-not-allowed")).toBeNull();
+    // no la bloquea: la línea sigue editable
+    expect(byId("line-1-price").readOnly).toBe(false);
+  });
+
+  it("si el servidor dice que ya no puedes cotizar una línea nueva, el aviso va junto a la línea y la lista de servicios se vuelve a pedir", async () => {
+    mocks.searchQuoteCatalogAction.mockResolvedValue([]);
+    mocks.saveQuoteDraftAction.mockResolvedValue({
+      status: "invalid",
+      message: "Hay servicios que no puedes cotizar. Quítalos o cámbialos por otros.",
+      fieldErrors: { "items.0.name": NOT_ALLOWED_LINE_MESSAGE },
+    });
+    await mount([unlockedLine()], RULES, { catalogScope: { limited: true, allowedCount: 2 } });
+    await type(byId("line-1-price"), "9000");
+    await act(async () => (testId("save-quote") as HTMLButtonElement).click());
+    expect(host.textContent).toContain(NOT_ALLOWED_LINE_MESSAGE);
+    expect(NOT_ALLOWED_LINE_MESSAGE).toBe(
+      "Ya no puedes cotizar este servicio: un Administrador cambió tu lista. Quita la línea para guardar.",
+    );
+    expect(mocks.searchQuoteCatalogAction).toHaveBeenCalledTimes(1);
+    // un segundo intento fallido con el mismo contenido no vuelve a pedirla en bucle
+    await act(async () => (testId("save-quote") as HTMLButtonElement).click());
+    expect(mocks.searchQuoteCatalogAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("I-1: una línea de precio bloqueado cuyo servicio ya no está permitido NO ofrece «Actualizar al precio de hoy» aunque el catálogo tenga otro precio", async () => {
+    // el catálogo hoy dice $12.000 (la línea tiene $10.000): sin la regla se ofrecería actualizar
+    await mount([lockedLine("10000", 12_000)], RULES, {
+      catalogScope: { limited: true, allowedCount: 1 },
+      notAllowedCatalogIds: [CATALOG_ID],
+    });
+    expect(testId("refresh-catalog-price")).toBeNull();
+    // sí se dice qué pasa con la línea
+    expect(testId("line-1-not-allowed")?.textContent).toContain("La línea se conserva.");
+    // control: la misma línea, permitida, sí lo ofrece
+    act(() => root.unmount());
+    root = createRoot(host);
+    await mount([lockedLine("10000", 12_000)], RULES, {
+      catalogScope: { limited: true, allowedCount: 1 },
+      notAllowedCatalogIds: [],
+    });
+    expect(testId("refresh-catalog-price")).not.toBeNull();
+  });
+
+  it("I-1: con el servidor pidiendo el precio de hoy en una línea no permitida, el aviso manda a recargar (no a quitar la línea)", async () => {
+    mocks.saveQuoteDraftAction.mockResolvedValue({
+      status: "invalid",
+      message: "El precio de este servicio cambió o se bloqueó en el catálogo.",
+      fieldErrors: {
+        "items.0.price": PRICE_LOCKED_STALE_LINE_MESSAGE,
+      },
+    });
+    await mount([lockedLine("10000", 10_000)], RULES, {
+      catalogScope: { limited: true, allowedCount: 1 },
+      notAllowedCatalogIds: [CATALOG_ID],
+    });
+    // el precio de una línea bloqueada es de solo lectura: se cambia la cantidad para que haya algo que guardar
+    await type(byId("line-1-quantity"), "2");
+    await act(async () => (testId("save-quote") as HTMLButtonElement).click());
+    const note = testId("line-1-not-allowed")?.textContent ?? "";
+    expect(note).toContain("La línea se conserva.");
+    expect(note).toContain("Recarga la página para ver el precio con que se agregó.");
+    expect(testId("refresh-catalog-price")).toBeNull();
+  });
+
+  it("M-3: con servicios permitidos y la lista vacía, no afirma que no tenga (no se pudo cargar)", async () => {
+    await mount([newFreeLine("a")], RULES, { catalogScope: { limited: true, allowedCount: 4 } });
+    const empty = testId("catalog-empty")!.textContent!;
+    expect(empty).toContain("No pudimos cargar tus servicios");
+    expect(empty).not.toContain("No tienes servicios del catálogo");
+  });
+
+  it("M-3: si le pusieron la lista con el editor abierto, tras el rechazo la pantalla aprende que tiene límite y lo avisa", async () => {
+    mocks.searchQuoteCatalogAction.mockResolvedValue([]);
+    mocks.saveQuoteDraftAction.mockResolvedValue({
+      status: "invalid",
+      message: "Hay servicios que no puedes cotizar. Quítalos o cámbialos por otros.",
+      fieldErrors: { "items.0.name": NOT_ALLOWED_LINE_MESSAGE },
+    });
+    await mount([unlockedLine()], RULES, { catalogScope: { limited: false, allowedCount: null } });
+    expect(testId("catalog-scope-notice")).toBeNull();
+    await type(byId("line-1-price"), "9000");
+    await act(async () => (testId("save-quote") as HTMLButtonElement).click());
+    expect(testId("catalog-scope-notice")?.textContent).toContain(
+      "Ves solo los servicios que tu organización te permite cotizar.",
+    );
+  });
+
+  it("M-4: la repetición de la búsqueda no pisa lo que la persona buscó mientras tanto", async () => {
+    let resolveStale: (rows: unknown[]) => void = () => undefined;
+    mocks.searchQuoteCatalogAction.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveStale = resolve as typeof resolveStale)),
+    );
+    mocks.saveQuoteDraftAction.mockResolvedValue({
+      status: "invalid",
+      message: "Hay servicios que no puedes cotizar. Quítalos o cámbialos por otros.",
+      fieldErrors: { "items.0.name": NOT_ALLOWED_LINE_MESSAGE },
+    });
+    await mount([unlockedLine()], RULES, { catalogScope: { limited: true, allowedCount: 2 } });
+    await type(byId("line-1-price"), "9000");
+    await act(async () => (testId("save-quote") as HTMLButtonElement).click());
+    expect(mocks.searchQuoteCatalogAction).toHaveBeenCalledTimes(1);
+    // mientras la repetición está en vuelo, la persona escribe otra búsqueda
+    const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+    await type(search, "otra cosa");
+    // llega la respuesta vieja: no reemplaza los resultados de la búsqueda nueva
+    await act(async () =>
+      resolveStale([
+        {
+          id: "z",
+          name: "Resultado viejo",
+          description: null,
+          unit: "service",
+          unitPriceClp: 1,
+          taxTreatment: "taxable",
+          priceLocked: false,
+        },
+      ]),
+    );
+    expect(host.textContent).not.toContain("Resultado viejo");
   });
 });

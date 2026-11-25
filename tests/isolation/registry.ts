@@ -393,6 +393,35 @@ export const ISOLATION_TABLES: TableSpec[] = [
     ownWriteAccepted: false,
   },
   {
+    name: "member_catalog_scopes",
+    visibility: "business",
+    // Solo el Dueño y el Administrador leen la regla de servicios por comercial; nadie escribe directo (solo `set_member_catalog_scope`).
+    rolesThatRead: ["owner", "admin"],
+    idColumn: "member_id",
+    ownedByB: byTenantB,
+    readColumns: "tenant_id,member_id,mode,revision",
+    insertAttack: (_fx, tenant) => ({ tenant_id: tenant, member_id: randomUUID(), mode: "all" }),
+    updateAttack: () => ({ mode: "all" }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
+    name: "member_catalog_scope_items",
+    visibility: "business",
+    rolesThatRead: ["owner", "admin"],
+    idColumn: "catalog_item_id",
+    ownedByB: byTenantB,
+    readColumns: "tenant_id,member_id,catalog_item_id",
+    insertAttack: (_fx, tenant) => ({
+      tenant_id: tenant,
+      member_id: randomUUID(),
+      catalog_item_id: randomUUID(),
+    }),
+    updateAttack: () => ({ catalog_item_id: randomUUID() }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
     name: "approval_rules",
     visibility: "business",
     // Todo miembro de la organización activa la lee; nadie escribe directo (solo `set_approval_rule`) y el historial es de solo agregar.
@@ -805,6 +834,20 @@ export const RPC_CASES: Record<string, RpcCase> = {
   // Sprint 5 · el tope de descuento de quien vende (H-041). El valor del ataque (1) no es el que fija la fixture en B (4.321): si algún
   // día una llamada ajena lo cambia, se nota.
   set_quote_max_discount: { args: { p_max_bp: 1 }, writesActiveTenant: true },
+  // Sprint 5 · servicios por comercial (H-042). Los argumentos son válidos en forma y apuntan a nada propio.
+  set_member_catalog_scope: {
+    args: {
+      p_member_id: randomUUID(),
+      p_mode: "all",
+      p_catalog_item_ids: null,
+      p_expected_revision: 0,
+    },
+    writesActiveTenant: true,
+  },
+  // `my_catalog_scope` no recibe argumentos y sin organización propia activa responde «no encontrado».
+  my_catalog_scope: { args: {}, writesActiveTenant: true },
+  // `quotable_catalog_items` es de lectura y, sin organización propia activa, responde una lista vacía (no un error): no entrega nada de B.
+  quotable_catalog_items: { args: { p_search: "", p_ids: null }, writesActiveTenant: false },
   // Sprint 5 · aceptar una invitación (H-009). Corren con sesión y SIN organización activa (la persona todavía no es
   // miembro; la organización la define la invitación y la decide la base), por eso no exigen una propia.
   invitation_preview: { args: { p_token_sha256: "a".repeat(64) }, writesActiveTenant: false },

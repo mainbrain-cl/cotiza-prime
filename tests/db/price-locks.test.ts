@@ -1081,7 +1081,12 @@ describe("`set_quote_max_discount`", () => {
     expect(Object.keys(byName)).toHaveLength(8);
     for (const r of rows) expect(r.anon, r.name).toBe(false);
     expect(byName.set_quote_max_discount.auth).toBe(true);
-    for (const name of Object.keys(byName).filter((n) => n !== "set_quote_max_discount")) {
+    // El gancho de H-042 SÍ lo ejecuta `authenticated` desde la migración 20261124110000 (`quotable_catalog_items` corre con los permisos de
+    // quien llama y necesita el predicado; solo responde sobre quien pregunta). Es el único que cambió: los demás siguen siendo internos.
+    expect(byName.can_quote_catalog_item.auth).toBe(true);
+    for (const name of Object.keys(byName).filter(
+      (n) => n !== "set_quote_max_discount" && n !== "can_quote_catalog_item",
+    )) {
       expect(byName[name].auth, name).toBe(false);
     }
   });

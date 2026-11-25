@@ -10,23 +10,15 @@ const OTHER_TENANT_ID = "7f1d6b1c-9f6e-4c57-8c43-3b6a9b8f0099";
 const ITEM_ID = "7f1d6b1c-9f6e-4c57-8c43-3b6a9b8f0010";
 let role = "sales";
 
-const filters: Array<[string, unknown]> = [];
-let selected = "";
+const calls: Array<[string, unknown]> = [];
 let answer: { data: unknown; error: { code: string } | null } = { data: null, error: null };
-const from = vi.fn((table: string) => {
-  filters.push(["from", table]);
-  const builder = {
-    select: (columns: string) => {
-      selected = columns;
-      return builder;
-    },
-    eq: (column: string, value: unknown) => {
-      filters.push([column, value]);
-      return builder;
-    },
-    maybeSingle: async () => answer,
-  };
-  return builder;
+const rpc = vi.fn(async (name: string, args: unknown) => {
+  calls.push([name, args]);
+  return answer;
+});
+// La aplicación ya no lee `catalog_items` directo para ofrecer servicios (H-042): si lo hiciera, esta prueba cae.
+const from = vi.fn(() => {
+  throw new Error("el lector del catálogo no debe leer catalog_items directo");
 });
 
 vi.mock("@/lib/tenant/active-tenant", () => ({
@@ -34,7 +26,7 @@ vi.mock("@/lib/tenant/active-tenant", () => ({
     tenantId: TENANT_ID,
     role,
     userId: "7f1d6b1c-9f6e-4c57-8c43-3b6a9b8f0002",
-    supabase: { from },
+    supabase: { from, rpc },
   })),
 }));
 vi.mock("server-only", () => ({}));
@@ -54,10 +46,10 @@ const row = {
 
 beforeEach(() => {
   role = "sales";
-  filters.length = 0;
-  selected = "";
+  calls.length = 0;
   from.mockClear();
-  answer = { data: row, error: null };
+  rpc.mockClear();
+  answer = { data: [row], error: null };
 });
 
 describe("getQuoteCatalogItemAction", () => {
@@ -71,14 +63,14 @@ describe("getQuoteCatalogItemAction", () => {
   it.each(cannotEdit)("%s: «missing» y la base no se toca", async (r) => {
     role = r;
     expect(await getQuoteCatalogItemAction(TENANT_ID, ITEM_ID)).toEqual({ status: "missing" });
-    expect(from).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it.each(["", "no-es-uuid", "1; drop table catalog_items", ITEM_ID + "x"])(
     "un identificador que no es UUID («%s») no llega a la base",
     async (bad) => {
       expect(await getQuoteCatalogItemAction(TENANT_ID, bad)).toEqual({ status: "missing" });
-      expect(from).not.toHaveBeenCalled();
+      expect(rpc).not.toHaveBeenCalled();
     },
   );
 
@@ -86,11 +78,11 @@ describe("getQuoteCatalogItemAction", () => {
     expect(
       await getQuoteCatalogItemAction(TENANT_ID, { id: ITEM_ID } as unknown as string),
     ).toEqual({ status: "missing" });
-    expect(from).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("filtra por la organización ACTIVA, solo activos y trae las mismas columnas que el buscador (sin costos ni notas)", async () => {
-    // La pantalla manda OTRA organización: la activa la decide el servidor.
+  it("lee UN servicio por `quotable_catalog_items` (la regla de servicios por comercial la aplica la base) y no toca `catalog_items`", async () => {
+    // La pantalla manda OTRA organización: la activa la decide el servidor (la función de la base tampoco recibe ninguna).
     const result = await getQuoteCatalogItemAction(OTHER_TENANT_ID, ITEM_ID);
     expect(result).toEqual({
       status: "found",
@@ -104,19 +96,15 @@ describe("getQuoteCatalogItemAction", () => {
         priceLocked: true,
       },
     });
-    expect(filters).toEqual([
-      ["from", "catalog_items"],
-      ["tenant_id", TENANT_ID],
-      ["id", ITEM_ID],
-      ["is_active", true],
-    ]);
-    expect(selected).toBe(
-      "id, name, description, unit, unit_price_clp, tax_treatment, price_locked",
-    );
-    expect(filters.some(([, value]) => value === OTHER_TENANT_ID)).toBe(false);
+    expect(calls).toEqual([["quotable_catalog_items", { p_search: "", p_ids: [ITEM_ID] }]]);
+    expect(JSON.stringify(calls)).not.toContain(OTHER_TENANT_ID);
+    expect(JSON.stringify(calls)).not.toContain(TENANT_ID);
+    expect(from).not.toHaveBeenCalled();
   });
 
-  it("un servicio que no existe, está desactivado o es de otra organización da lo mismo: «missing»", async () => {
+  it("un servicio que no existe, está desactivado, es de otra organización o la regla no permite da lo mismo: «missing»", async () => {
+    answer = { data: [], error: null };
+    expect(await getQuoteCatalogItemAction(TENANT_ID, ITEM_ID)).toEqual({ status: "missing" });
     answer = { data: null, error: null };
     expect(await getQuoteCatalogItemAction(TENANT_ID, ITEM_ID)).toEqual({ status: "missing" });
   });

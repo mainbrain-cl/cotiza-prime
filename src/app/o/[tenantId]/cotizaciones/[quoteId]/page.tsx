@@ -11,7 +11,11 @@ import { getCustomer } from "@/lib/customers/queries";
 import { SourceRequestPanelView } from "@/components/intake/source-request-panel";
 import { formatDate } from "@/lib/format-date";
 import { loadQuoteSourceRequestId, loadSourceRequestPanel } from "@/lib/intake/convert-queries";
-import { listQuotableCatalogItems } from "@/lib/quotes/catalog-source";
+import {
+  listNotAllowedCatalogIds,
+  listQuotableCatalogItems,
+  loadMyCatalogScope,
+} from "@/lib/quotes/catalog-source";
 import { lineFromSaved, type EditorState } from "@/lib/quotes/editor-model";
 import {
   EDITABLE_STATUSES,
@@ -139,12 +143,28 @@ export default async function QuotePage({
     exclusions: quote.exclusions ?? "",
     footerNote: quote.footer_note ?? "",
   };
-  const initialCatalog = editable ? await listQuotableCatalogItems(active, "") : [];
   // Las reglas de precio y descuento (H-041): el descuento máximo de la organización y si esta persona se salta el candado. Quien
   // se las salta (Dueño, Administrador) no necesita el tope: no se lee. Si no se puede leer, la pantalla no marca ningún máximo y
   // lo dice (`maxDiscountUnknown`); el servidor y la base rechazan igual lo que no corresponda al guardar.
   const canOverride = can(active.role, "catalog.price_lock.override");
-  const maxDiscount = editable && !canOverride ? await loadMaxDiscountBp(active) : null;
+  // Las tres lecturas no dependen entre sí: van juntas. `catalogScope` (H-042): los servicios que esta persona puede cotizar; si tiene
+  // lista, el editor lo avisa.
+  const [initialCatalog, catalogScope, maxDiscount] = await Promise.all([
+    editable ? listQuotableCatalogItems(active, "") : Promise.resolve([]),
+    editable ? loadMyCatalogScope(active) : Promise.resolve(null),
+    editable && !canOverride ? loadMaxDiscountBp(active) : Promise.resolve(null),
+  ]);
+  // Las líneas que la cotización ya tenía de un servicio que salió de su lista se conservan, con un aviso junto a la línea (la base solo
+  // revisa las líneas NUEVAS).
+  const activeLineCatalogIds = items.flatMap((item) =>
+    item.catalog_item_id !== null && !inactive.has(item.catalog_item_id)
+      ? [item.catalog_item_id]
+      : [],
+  );
+  const notAllowedCatalogIds =
+    catalogScope?.limited && activeLineCatalogIds.length > 0
+      ? ((await listNotAllowedCatalogIds(active, activeLineCatalogIds)) ?? [])
+      : [];
   const rules = {
     maxDiscountBp: maxDiscount?.maxDiscountBp ?? null,
     canOverride,
@@ -250,7 +270,11 @@ export default async function QuotePage({
       {readOnlyText ? <FormAlert tone="warning">{readOnlyText}</FormAlert> : null}
 
       {sourcePanel ? (
-        <SourceRequestPanelView tenantId={active.tenantId} panel={sourcePanel} />
+        <SourceRequestPanelView
+          tenantId={active.tenantId}
+          panel={sourcePanel}
+          catalogLimited={catalogScope?.limited === true}
+        />
       ) : null}
 
       {editable ? (
@@ -266,6 +290,8 @@ export default async function QuotePage({
           rules={rules}
           snippets={snippets}
           manageSnippetsHref={manageSnippetsHref}
+          catalogScope={catalogScope}
+          notAllowedCatalogIds={notAllowedCatalogIds}
         />
       ) : (
         <QuoteReadOnly

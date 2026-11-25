@@ -32,6 +32,7 @@ export const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
   "member.updated": "Cambió un miembro",
   "member.role_changed": "Se cambió el rol de un miembro",
   "member.removed": "Se quitó a un miembro del equipo",
+  "member.catalog_scope_changed": "Se cambiaron los servicios que puede cotizar un miembro",
   "tenant.created": "Se creó la organización",
   "tenant.updated": "Cambió la configuración de la organización",
   "numbering.created": "Se configuró la numeración",
@@ -167,6 +168,42 @@ function describeMemberChange(details: Record<string, unknown>): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+/**
+ * Qué cambió en los servicios que puede cotizar un miembro (H-042), con las cantidades que guarda el registro (nunca nombres de servicio:
+ * solo ids). `null` si el detalle no trae lo esperado (se cae a la frase general).
+ */
+function describeCatalogScopeChange(who: string, details: Record<string, unknown>): string | null {
+  const {
+    old_mode: oldMode,
+    new_mode: newMode,
+    old_count: oldCount,
+    new_count: newCount,
+  } = details;
+  if (
+    (oldMode !== "all" && oldMode !== "list") ||
+    (newMode !== "all" && newMode !== "list") ||
+    typeof oldCount !== "number" ||
+    typeof newCount !== "number"
+  ) {
+    return null;
+  }
+  const services = (n: number) => (n === 1 ? "1 servicio" : `${n} servicios`);
+  if (newMode === "all") return `Dejó a ${who} cotizar todos los servicios`;
+  if (oldMode === "all") return `Limitó a ${who} a ${services(newCount)}`;
+  // De una lista a otra: cuántos se agregaron y cuántos se quitaron (si el registro los truncó, no se dice un número que no es).
+  const added = Array.isArray(details.added) ? details.added.length : null;
+  const removed = Array.isArray(details.removed) ? details.removed.length : null;
+  const changes =
+    details.truncated === true || added === null || removed === null
+      ? []
+      : [added > 0 ? `agregó ${added}` : null, removed > 0 ? `quitó ${removed}` : null].filter(
+          Boolean,
+        );
+  // Sin cambios que contar (un registro deformado), no se deja un paréntesis vacío.
+  const moved = changes.length > 0 ? ` (${changes.join(", ")})` : "";
+  return `Cambió los servicios de ${who}: de ${services(oldCount)} a ${services(newCount)}${moved}`;
+}
+
 /** Cómo se llama a la persona afectada cuando su nombre no se puede leer. */
 export const UNKNOWN_SUBJECT = "una persona del equipo";
 
@@ -272,6 +309,10 @@ export function describeAuditEntry(entry: {
     // Sin nombre: «Quitó a una persona del equipo» (sin repetir «del equipo»).
     const sentence = named ? `Quitó a ${named} del equipo` : `Quitó a ${UNKNOWN_SUBJECT}`;
     return [sentence, cancelledNote(details)].filter(Boolean).join(" · ");
+  }
+  if (entry.action === "member.catalog_scope_changed") {
+    const sentence = describeCatalogScopeChange(who, details);
+    if (sentence) return sentence;
   }
   if (entry.action === "approval_rule.updated") {
     // Montos y porcentajes, nunca datos personales: se cuenta la regla de antes y la de ahora con la misma frase de la pantalla.

@@ -19,9 +19,15 @@ function formatPlainDate(value: string): string {
 export function SourceRequestPanelView({
   tenantId,
   panel,
+  catalogLimited = false,
 }: {
   tenantId: string;
   panel: SourceRequestPanel;
+  /**
+   * Quien mira tiene una lista de servicios (H-042): no se le sugiere «agrégalo como línea libre» para los servicios que no se cargaron, porque
+   * sería enseñarle a saltarse lo que decidió quien administra su equipo (la regla lo permite, D2, pero la pantalla no lo recomienda).
+   */
+  catalogLimited?: boolean;
 }) {
   return (
     <section
@@ -64,9 +70,10 @@ export function SourceRequestPanelView({
           className="rounded-sm bg-warning-soft px-3 py-2.5 text-sm font-medium text-warning"
         >
           No cargamos {panel.notLoaded.length === 1 ? "este servicio" : "estos servicios"} porque ya
-          no {panel.notLoaded.length === 1 ? "está activo" : "están activos"} en tu catálogo:{" "}
-          {panel.notLoaded.map((service) => service.name).join(", ")}. Agrégalo como línea libre si
-          todavía lo vas a cotizar.
+          no {panel.notLoaded.length === 1 ? "está activo" : "están activos"} en tu catálogo o no{" "}
+          {panel.notLoaded.length === 1 ? "está" : "están"} entre los servicios que puedes cotizar:{" "}
+          {panel.notLoaded.map((service) => service.name).join(", ")}.
+          {catalogLimited ? "" : " Agrégalo como línea libre si todavía lo vas a cotizar."}
         </p>
       ) : null}
 

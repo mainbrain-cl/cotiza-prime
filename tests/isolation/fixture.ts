@@ -498,6 +498,31 @@ async function build(db: Client, runId: string): Promise<IsolationFixture> {
   // El tope de descuento de B y un servicio suyo con el precio bloqueado (H-041): de lo último, para no estorbar lo que la fixture
   // envía con `pg` antes (ya pasó por la regla con el tope vacío).
   await buildPriceLockData(orgs.B, personas.beto);
+  // La regla de servicios por comercial (H-042): una fila `list` con un servicio en A (Sofía, Comercial) y en B (la fila de la dueña: la
+  // base no deja limitar a un Dueño, pero una regla que quedó guardada de antes sí puede existir, D4; sirve para tener datos de B que proteger).
+  // Se montan con `pg`: nadie escribe directo por la API.
+  {
+    const sofiaMember = (
+      await db.query<{ id: string }>(
+        "select id from public.members where tenant_id = $1 and user_id = $2",
+        [orgs.A.tenantId, personas.sofia.userId],
+      )
+    ).rows[0].id;
+    for (const [data, memberId, catalogId] of [
+      [orgs.A, sofiaMember, orgs.A.catalogIds[0]],
+      [orgs.B, orgs.B.ownerMemberId, orgs.B.catalogIds[1]],
+    ] as const) {
+      await db.query(
+        "insert into public.member_catalog_scopes (tenant_id, member_id, mode) values ($1, $2, 'list')",
+        [data.tenantId, memberId],
+      );
+      await db.query(
+        `insert into public.member_catalog_scope_items (tenant_id, member_id, catalog_item_id)
+         values ($1, $2, $3)`,
+        [data.tenantId, memberId, catalogId],
+      );
+    }
+  }
   // C: un cliente, y luego se archiva
   {
     const id = randomUUID();

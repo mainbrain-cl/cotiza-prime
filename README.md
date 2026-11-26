@@ -135,6 +135,10 @@ Mailpit (http://127.0.0.1:56324).
 
 La primera vez, `npx playwright install chromium` descarga el navegador de las pruebas.
 
+## Salida a producción
+
+Pasos, ajustes de los paneles y variables de entorno para poner el MVP en línea: [`docs/PRODUCCION.md`](docs/PRODUCCION.md).
+
 ## Despliegue: anti-robot del formulario público
 
 - `ANTIBOT_PROVIDER` es **obligatorio y no tiene valor por defecto** (`turnstile` o, solo local, `memory`). Con

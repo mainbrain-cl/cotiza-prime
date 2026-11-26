@@ -1,6 +1,16 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Loader2, Lock, Plus, Save, Search, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Info,
+  Loader2,
+  Lock,
+  Plus,
+  Save,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { InsertSnippetMenu } from "@/components/snippets/insert-snippet-menu";
 import { Button } from "@/components/ui/button";
@@ -17,7 +27,7 @@ import {
 import type { QuotableCatalogItem } from "@/lib/quotes/catalog-source";
 import { QUOTE_MAX_LINES } from "@/lib/quotes/calc";
 import { maxDiscountHint } from "@/lib/quotes/discount-cap";
-import { PRICE_LOCKED_STALE_LINE_MESSAGE } from "@/lib/quotes/line-rules";
+import { NOT_ALLOWED_LINE_MESSAGE, PRICE_LOCKED_STALE_LINE_MESSAGE } from "@/lib/quotes/line-rules";
 import {
   catalogPriceToRestore,
   catalogPriceTodayIfDifferent,
@@ -63,6 +73,29 @@ function FieldError({ id, message }: { id: string; message?: string }) {
       {message}
     </p>
   );
+}
+
+/** Una línea que ya no se puede cotizar y a la que el servidor le exige un precio de hoy: la salida es recargar (vuelve el precio con que se agregó). */
+const NOT_ALLOWED_STALE_PRICE_NOTE = "Recarga la página para ver el precio con que se agregó.";
+const NOT_ALLOWED_EXISTING_LINE_NOTE =
+  "Este servicio ya no está entre los que puedes cotizar. La línea se conserva.";
+
+/** Lo que dice la lista de servicios cuando está vacía: según haya o no búsqueda y límite de servicios (H-042). */
+function catalogEmptyMessage(
+  term: string,
+  scope: { limited: boolean; allowedCount: number | null } | null,
+): string {
+  const searching = term.trim() !== "";
+  if (scope?.limited) {
+    if (searching) return "Ninguno de tus servicios coincide con ese nombre.";
+    // Con servicios permitidos y la lista vacía, la lista no se pudo leer: no se afirma que no tenga.
+    return scope.allowedCount !== null && scope.allowedCount > 0
+      ? "No pudimos cargar tus servicios. Recarga la página en unos minutos."
+      : "No tienes servicios del catálogo para cotizar. Pide a un Administrador que te asigne servicios. Puedes agregar una línea libre.";
+  }
+  return searching
+    ? "No encontramos servicios con ese nombre."
+    : "Tu catálogo no tiene servicios activos. Puedes agregar una línea libre.";
 }
 
 function TextField({
@@ -130,6 +163,8 @@ export function QuoteEditor({
   requestSeedLines = [],
   snippets,
   manageSnippetsHref,
+  catalogScope,
+  notAllowedCatalogIds,
   rules,
 }: {
   tenantId: string;
@@ -146,6 +181,13 @@ export function QuoteEditor({
   snippets: QuoteFieldSnippets;
   /** A dónde ir a crear textos guardados; `null` si esta persona no puede administrarlos. */
   manageSnippetsHref: string | null;
+  /**
+   * Los servicios que esta persona puede cotizar (H-042): `limited` si su organización le dejó una lista y cuántos servicios activos tiene.
+   * `null` si no se pudo leer (la base exige la regla igual al guardar).
+   */
+  catalogScope: { limited: boolean; allowedCount: number | null } | null;
+  /** Servicios de líneas que ya tenía la cotización y que hoy esta persona no puede cotizar: se conservan, pero se avisa en la línea. */
+  notAllowedCatalogIds: string[];
   /** Las reglas de precio y descuento de la organización (H-041): el tope de descuento y si esta persona se salta el candado. */
   rules: EditorRules;
 }) {
@@ -195,6 +237,40 @@ export function QuoteEditor({
   const hasErrors = Object.keys(errors).length > 0;
   const capHint = maxDiscountHint(rules.canOverride ? null : rules.maxDiscountBp);
   const blocked = saver.state.status === "conflict" || saver.state.status === "not_editable";
+  const notAllowed = useMemo(() => new Set(notAllowedCatalogIds), [notAllowedCatalogIds]);
+  // Si el servidor dice que ya no puedes cotizar una línea nueva (te cambiaron la lista con la cotización abierta), la lista de servicios
+  // de la pantalla estaba vieja: se vuelve a pedir, una sola vez por cada intento fallido.
+  const notAllowedFailure =
+    saver.failedKey !== null &&
+    Object.values(serverErrors).some((message) => message === NOT_ALLOWED_LINE_MESSAGE)
+      ? saver.failedKey
+      : null;
+  const refetchedFor = useRef<string | null>(null);
+  // Lo que hay hoy en el buscador: la respuesta de la repetición solo se aplica si la persona no escribió otra cosa mientras tanto.
+  const searchTermRef = useRef(catalogTerm);
+  useEffect(() => {
+    searchTermRef.current = catalogTerm;
+  }, [catalogTerm]);
+  // Si le pusieron la lista con el editor abierto, la pantalla lo aprende (y muestra el aviso de «ves solo los servicios…»).
+  const [learnedLimited, setLearnedLimited] = useState(false);
+  useEffect(() => {
+    if (notAllowedFailure === null || refetchedFor.current === notAllowedFailure) return;
+    refetchedFor.current = notAllowedFailure;
+    setLearnedLimited(true);
+    const asked = catalogTerm;
+    void searchQuoteCatalogAction(tenantId, asked)
+      .then((rows) => {
+        if (searchTermRef.current === asked) setCatalog(rows);
+      })
+      .catch(() => undefined);
+  }, [notAllowedFailure, tenantId, catalogTerm]);
+  const effectiveScope = useMemo(
+    () =>
+      learnedLimited
+        ? { limited: true, allowedCount: catalogScope?.allowedCount ?? null }
+        : catalogScope,
+    [learnedLimited, catalogScope],
+  );
   // «Insertar texto guardado» de cada campo (H-048b): solo mientras se puede editar. Cada campo ofrece los textos de su tipo.
   const snippetMenu = (
     kind: QuoteFieldSnippetKind,
@@ -282,7 +358,7 @@ export function QuoteEditor({
           ...current,
           [line.id]:
             result.status === "missing"
-              ? "Este servicio ya no está disponible en el catálogo. Quita la línea para seguir."
+              ? "Este servicio ya no está disponible para ti en el catálogo. Recarga la página para ver cómo queda la línea."
               : "No pudimos leer el catálogo. Intenta de nuevo en unos minutos.",
         }));
         return;
@@ -376,6 +452,15 @@ export function QuoteEditor({
           className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-1 md:p-5"
         >
           <h2 className="text-lg">Agregar servicios</h2>
+          {effectiveScope?.limited ? (
+            <p
+              data-testid="catalog-scope-notice"
+              className="flex items-start gap-2 text-sm text-fg-muted"
+            >
+              <Info aria-hidden strokeWidth={1.75} className="mt-0.5 size-[18px] shrink-0" />
+              Ves solo los servicios que tu organización te permite cotizar.
+            </p>
+          ) : null}
           <div className="relative">
             <Search
               aria-hidden
@@ -394,9 +479,7 @@ export function QuoteEditor({
           </div>
           {catalog.length === 0 ? (
             <p className="text-sm text-fg-muted" data-testid="catalog-empty">
-              {catalogTerm.trim() === ""
-                ? "Tu catálogo no tiene servicios activos. Puedes agregar una línea libre."
-                : "No encontramos servicios con ese nombre."}
+              {catalogEmptyMessage(catalogTerm, effectiveScope)}
             </p>
           ) : (
             <ul className="flex flex-col gap-2" data-testid="catalog-results">
@@ -491,10 +574,15 @@ export function QuoteEditor({
                 // El servidor dijo que el precio no cuadra con el catálogo de hoy (cambió o se bloqueó con la cotización abierta).
                 const staleCatalogPrice =
                   serverErrors[`items.${index}.price`] === PRICE_LOCKED_STALE_LINE_MESSAGE;
+                // Un servicio que ya no está entre los que la persona puede cotizar (H-042): la línea se conserva con el precio con que se
+                // agregó, pero «actualizar» arma una línea NUEVA y la base ya no se la dejaría agregar: no se ofrece.
+                const lineNotAllowed =
+                  line.catalogItemId !== null && notAllowed.has(line.catalogItemId);
                 // Un servicio desactivado no se puede leer de nuevo (la línea guardada sigue valiendo con el precio con que se agregó).
                 const canRefresh =
                   fromCatalog &&
                   !line.catalogInactive &&
+                  !lineNotAllowed &&
                   (catalogToday !== null || staleCatalogPrice);
                 const idFor = (field: string) => `${line.id}-${field}`;
                 return (
@@ -849,6 +937,14 @@ export function QuoteEditor({
                     </div>
                     {line.catalogInactive ? (
                       <p className="text-sm text-fg-muted">Ya no está en el catálogo.</p>
+                    ) : lineNotAllowed ? (
+                      <p
+                        data-testid={`line-${index + 1}-not-allowed`}
+                        className="text-sm text-fg-muted"
+                      >
+                        {NOT_ALLOWED_EXISTING_LINE_NOTE}
+                        {staleCatalogPrice ? ` ${NOT_ALLOWED_STALE_PRICE_NOTE}` : ""}
+                      </p>
                     ) : null}
                   </li>
                 );

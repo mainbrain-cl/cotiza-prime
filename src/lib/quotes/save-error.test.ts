@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { NOT_ALLOWED_LINE_MESSAGE } from "./line-rules";
 import {
   LINE_RULES_CHANGED_MESSAGE,
   LINE_RULES_DISCOUNT_MESSAGE,
@@ -99,7 +100,7 @@ describe("los errores del guardado", () => {
     expect(result).toMatchObject({
       status: "invalid",
       message: LINE_RULES_NOT_ALLOWED_MESSAGE,
-      fieldErrors: { "items.1.name": "No tienes permiso para cotizar este servicio." },
+      fieldErrors: { "items.1.name": NOT_ALLOWED_LINE_MESSAGE },
     });
   });
 

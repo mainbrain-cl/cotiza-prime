@@ -157,6 +157,12 @@ export function parseLineRulesError(message: string | null | undefined): LineRul
 export const PRICE_LOCKED_LINE_MESSAGE =
   "El precio de este servicio está bloqueado. Usa el precio con que se agregó a la cotización.";
 /**
+ * El servidor rechazó una línea NUEVA del catálogo porque la lista de servicios de esta persona cambió desde que se abrió la cotización
+ * (H-042): un Administrador la cambió con el editor abierto. El editor vuelve a pedir el catálogo al verlo.
+ */
+export const NOT_ALLOWED_LINE_MESSAGE =
+  "Ya no puedes cotizar este servicio: un Administrador cambió tu lista. Quita la línea para guardar.";
+/**
  * El error de la línea cuando lo manda el servidor: el catálogo cambió (el precio o el candado) con la cotización abierta, así que
  * «volver al precio con que se agregó» no lo arregla; se actualiza la línea con el catálogo de hoy.
  */
@@ -210,7 +216,7 @@ export function lineRuleFieldErrors(
         break;
       case "catalog_item_not_allowed":
         if (index !== null && index >= 0) {
-          errors[`items.${index}.name`] = "No tienes permiso para cotizar este servicio.";
+          errors[`items.${index}.name`] = NOT_ALLOWED_LINE_MESSAGE;
           continue;
         }
         break;

@@ -893,7 +893,9 @@ describe("guardias estáticas del aislamiento", () => {
     const others = sourceFiles
       .filter((f) => rel(f).startsWith("src/lib/intake/") || rel(f).startsWith("src/app/f/"))
       .filter((f) => rel(f) !== "src/lib/intake/gateway.ts")
-      .filter((f) => !/\/(builder|requests|convert)-(actions|queries)\.ts$/.test(rel(f)))
+      // `convert-lines.ts` (H-090/H-042) es de quien convierte una solicitud, con su propia sesión (no es público): lee el catálogo por la
+      // función `quotable_catalog_items`, que aplica la regla de servicios por comercial.
+      .filter((f) => !/\/(builder|requests|convert)-(actions|queries|lines)\.ts$/.test(rel(f)))
       .filter((f) => /\.rpc\(|createAdminClient|\.storage\b/.test(stripComments(read(f))))
       .map(rel);
     expect(others).toEqual([]);

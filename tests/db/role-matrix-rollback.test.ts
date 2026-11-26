@@ -39,7 +39,7 @@ async function functionExists(signature: string): Promise<boolean> {
 
 /**
  * Las migraciones POSTERIORES a role_matrix que ya decidieron con `app.can(...)` (las invitaciones del sprint 5,
- * H-008, la política `members_select` de H-010 y las dos de servicios por comercial de H-042) dependen de esa función: aquí, dentro de la transacción de la prueba, se les quita esa dependencia para
+ * H-008, la política `members_select` de H-010, las dos de servicios por comercial de H-042 y las tres del cobro) dependen de esa función: aquí, dentro de la transacción de la prueba, se les quita esa dependencia para
  * poder deshacer SOLO role_matrix. (El deshacer completo y en orden, que primero deshace las más nuevas, lo
  * prueba `npm run test:db:rollbacks`.)
  */
@@ -58,6 +58,10 @@ async function releaseLaterMigrations(): Promise<void> {
   await db.query(
     "drop policy member_catalog_scope_items_select on public.member_catalog_scope_items",
   );
+  // Cobro (20261126100000): la cuenta bancaria, su copia congelada y los hitos se leen con `app.can(...)`.
+  await db.query("drop policy bank_accounts_select on public.bank_accounts");
+  await db.query("drop policy payment_milestones_select on public.payment_milestones");
+  await db.query("drop policy quote_payment_accounts_select on public.quote_payment_accounts");
 }
 
 describe("el deshacer de role_matrix", () => {

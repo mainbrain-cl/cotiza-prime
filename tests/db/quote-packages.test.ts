@@ -552,6 +552,9 @@ describe("quotes · candado de envío y cambios de estado", () => {
       "viewed>accepted",
       "viewed>rejected_by_customer",
       "viewed>expired",
+      // Cobro (20261126100000): al aceptar con condición de pago, el disparador pasa a pendiente de pago o de anticipo.
+      "accepted>pending_payment",
+      "accepted>pending_deposit",
     ]);
     // Cada par se prueba en su propia transacción: la cotización parte del estado de origen.
     for (const from of ["draft", "sent", "viewed", "accepted", "expired"]) {

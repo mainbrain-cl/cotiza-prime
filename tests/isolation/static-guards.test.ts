@@ -692,7 +692,7 @@ describe("guardias estáticas del aislamiento", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("8. el portero del enlace del cliente solo llama a sus seis funciones y nunca lee una tabla", () => {
+  it("8. el portero del enlace del cliente solo llama a sus nueve funciones y nunca lee una tabla", () => {
     const allowedFunctions = new Set([
       "share_link_read",
       "share_link_record_view",
@@ -701,6 +701,10 @@ describe("guardias estáticas del aislamiento", () => {
       "share_notice_recipients",
       "internal_notice_register",
       "internal_notice_settle",
+      // el cobro (H-053): lo que el enlace muestra para pagar ya aceptado, y el correo con los datos para pagar
+      "share_link_payment",
+      "share_payment_notice",
+      "share_payment_notice_record",
     ]);
     const gateway = stripComments(read(path.join(SRC, "lib", "share", "gateway.ts"))).replace(
       /\s+/g,

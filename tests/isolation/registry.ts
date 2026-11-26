@@ -236,6 +236,61 @@ export const ISOLATION_TABLES: TableSpec[] = [
     hasFixtureRowsInB: true,
     ownWriteAccepted: false,
   },
+  // Cobro por transferencia: la cuenta bancaria y su copia congelada solo las leen el Dueño y el Administrador; los hitos, todo
+  // miembro. Nadie escribe directo (solo las funciones del cobro y el disparador de la aceptación).
+  {
+    name: "bank_accounts",
+    visibility: "business",
+    rolesThatRead: ["owner", "admin"],
+    idColumn: "id",
+    ownedByB: byTenantB,
+    readColumns: "id,tenant_id,details_enc,account_last4,revision",
+    insertAttack: (_fx, tenant, marker) => ({
+      id: randomUUID(),
+      tenant_id: tenant,
+      details_enc: marker,
+      account_last4: "0000",
+    }),
+    updateAttack: (marker) => ({ details_enc: marker, account_last4: "0000" }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
+    name: "payment_milestones",
+    visibility: "business",
+    idColumn: "id",
+    ownedByB: byTenantB,
+    readColumns: "id,tenant_id,quote_id,seq,kind,amount_clp,status",
+    insertAttack: (fx, tenant) => ({
+      tenant_id: tenant,
+      quote_id: fx.orgs.B.share!.quoteId,
+      seq: 2,
+      kind: "balance",
+      amount_clp: 1,
+    }),
+    updateAttack: () => ({ status: "paid" }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
+  {
+    name: "quote_payment_accounts",
+    visibility: "business",
+    rolesThatRead: ["owner", "admin"],
+    idColumn: "quote_id",
+    ownedByB: byTenantB,
+    readColumns: "tenant_id,quote_id,bank_account_id,details_enc,account_last4",
+    insertAttack: (fx, tenant, marker) => ({
+      tenant_id: tenant,
+      quote_id: fx.orgs.B.share!.quoteId,
+      bank_account_id: randomUUID(),
+      bank_revision: 1,
+      details_enc: marker,
+      account_last4: "0000",
+    }),
+    updateAttack: (marker) => ({ details_enc: marker }),
+    hasFixtureRowsInB: true,
+    ownWriteAccepted: false,
+  },
   {
     name: "quote_responses",
     visibility: "business",
@@ -850,6 +905,43 @@ export const RPC_CASES: Record<string, RpcCase> = {
   quotable_catalog_items: { args: { p_search: "", p_ids: null }, writesActiveTenant: false },
   // Sprint 5 · aceptar una invitación (H-009). Corren con sesión y SIN organización activa (la persona todavía no es
   // miembro; la organización la define la invitación y la decide la base), por eso no exigen una propia.
+  // Cobro por transferencia (H-050 a H-056). Argumentos válidos en forma que apuntan a nada propio: sin organización propia activa,
+  // todas responden «sin permiso».
+  set_bank_account: {
+    args: {
+      p_bank_account_id: randomUUID(),
+      p_details_enc: "v1.x.y",
+      p_account_last4: "0000",
+      p_expected_revision: 0,
+    },
+    writesActiveTenant: true,
+  },
+  tenant_has_bank_account: { args: {}, writesActiveTenant: true },
+  set_quote_payment_terms: {
+    args: { p_quote_id: randomUUID(), p_terms: "full" },
+    writesActiveTenant: true,
+  },
+  record_payment: {
+    args: { p_milestone_id: randomUUID(), p_paid_on: "2026-11-26", p_amount_clp: 1, p_note: null },
+    writesActiveTenant: true,
+  },
+  reverse_payment: {
+    args: { p_milestone_id: randomUUID(), p_reason: "prueba de aislamiento" },
+    writesActiveTenant: true,
+  },
+  request_second_payment: { args: { p_milestone_id: randomUUID() }, writesActiveTenant: true },
+  record_second_payment_email: {
+    args: {
+      p_milestone_id: randomUUID(),
+      p_email_id: randomUUID(),
+      p_to_email_enc: "v1.x.y",
+      p_to_email_hash: "0".repeat(64),
+      p_provider: "memory",
+      p_provider_message_id: "x",
+      p_error_code: null,
+    },
+    writesActiveTenant: true,
+  },
   invitation_preview: { args: { p_token_sha256: "a".repeat(64) }, writesActiveTenant: false },
   accept_invitation: { args: { p_token_sha256: "a".repeat(64) }, writesActiveTenant: false },
 };
@@ -900,6 +992,10 @@ export const SERVER_ONLY_FUNCTIONS = [
   "mfa_recovery_codes_acknowledge",
   "mfa_recovery_codes_status",
   "mfa_recovery_codes_revoke",
+  // Cobro (H-053): lo que el enlace muestra para pagar ya aceptado, y el correo con los datos para pagar (el portero del enlace)
+  "share_link_payment",
+  "share_payment_notice",
+  "share_payment_notice_record",
 ];
 
 /**
@@ -1016,6 +1112,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: "/o/[tenantId]/configuracion", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/actividad", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/aprobaciones", kind: "page", scope: "tenant" },
+  { path: "/o/[tenantId]/configuracion/pagos", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/empresa", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/marca", kind: "page", scope: "tenant" },
   { path: "/o/[tenantId]/configuracion/numeracion", kind: "page", scope: "tenant" },

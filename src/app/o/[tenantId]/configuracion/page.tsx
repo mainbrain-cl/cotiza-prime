@@ -9,7 +9,7 @@ import { visibleSettingsSections } from "./sections";
 
 export const metadata: Metadata = { title: "Configuración · Cotiza Prime" };
 
-const UPCOMING = ["Cómo te pagan"];
+const UPCOMING: string[] = [];
 
 export default async function SettingsPage({ params }: PageProps<"/o/[tenantId]/configuracion">) {
   const active = await requireActiveTenant((await params).tenantId);

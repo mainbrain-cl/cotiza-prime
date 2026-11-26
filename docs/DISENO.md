@@ -352,6 +352,25 @@ Tres pantallas de ingreso (`/registro`, `/confirmar-correo` y `/crear-cuenta`): 
 - **`/ingresar`** agrega, bajo el formulario y separado por una línea, la ayuda «¿Empezaste a crear tu cuenta y no la terminaste?…» con el enlace «Crear cuenta».
 - **Reglas**: ningún texto promete algo que no exista (no se dice «ya tienes cuenta» ni se nombra la contraseña elegida); el correo de la cuenta solo se muestra en `/crear-cuenta`, a su dueña; con «reducir movimiento» no cambia nada funcional.
 
+## Componente: el cobro por transferencia (H-050 a H-057)
+
+Pantallas de trabajo (superficie sólida, sin vidrio), con Lucide y sin colores fuera de los tokens. Lo que ve el cliente final lleva la
+marca de la organización.
+
+- **«Datos de transferencia»** (`/configuracion/pagos`): formulario de una columna con los campos estándar (16 px, 44 px de alto):
+  banco y tipo de cuenta (selectores nativos), número y RUT en Geist Mono, titular y correo; el RUT se valida al salir del campo y se
+  formatea. Debajo, «Último cambio: …» en `--fg-subtle`.
+- **«Condición de pago» en Enviar**: `fieldset` con dos opciones en tarjetas con borde (radio de 20 px, la elegida en
+  `--accent-soft`), cada una con el monto de cada pago en cifras de ancho fijo. Sin datos de transferencia, un aviso en
+  `--warning-soft` en su lugar.
+- **Panel «Pagos» en la cotización**: tarjeta sólida con cada hito (nombre, monto, insignia «Por pagar» / «Pedido al cliente» en
+  `--warning-soft` o «Recibido» en `--success-soft`) y «Falta por cobrar $X» arriba a la derecha. Las acciones abren un formulario en
+  línea sobre `--surface-2` (no un diálogo): fecha y monto en dos columnas desde tableta, nota opcional; un monto distinto del
+  esperado muestra un aviso en `--warning-soft` y el botón cambia a «Confirmar de todas formas». «Deshacer» es fantasma y su
+  confirmación, de peligro.
+- **«Datos para pagar» en el enlace del cliente**: bloque con borde bajo el aviso de respuesta, título en mayúscula con el color de
+  marca, el monto a pagar en `text-2xl` con cifras de ancho fijo y los datos en una lista de dos columnas desde 640 px.
+
 ## Por qué este documento existe
 
 `/auditar` revisa cada pantalla contra este archivo antes de darla por terminada. Si está vacío,

@@ -1,4 +1,5 @@
 import {
+  Banknote,
   Building2,
   FileText,
   Hash,
@@ -53,6 +54,14 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "Escribe una vez el correo base, las condiciones, las exclusiones y las notas al pie.",
     icon: FileText,
     permission: "settings.manage",
+  },
+  {
+    path: "configuracion/pagos",
+    title: "Datos de transferencia",
+    description:
+      "La cuenta donde tus clientes te pagan. Solo la ven el Dueño y los Administradores.",
+    icon: Banknote,
+    permission: "bank_account.manage",
   },
   {
     path: "configuracion/aprobaciones",

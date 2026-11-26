@@ -8,9 +8,12 @@ import { sendWithRetry } from "@/lib/quotes/send/dispatch";
 import { getAppOrigin } from "@/lib/http/request-context";
 import { serverLog } from "@/lib/log/server-log";
 import { tenantPath } from "@/lib/tenant/constants";
+import { paymentContextSchema, sendPaymentEmail } from "@/lib/payments/notice";
 import {
   ShareGatewayError,
   readNoticeRecipients,
+  readPaymentNotice,
+  recordPaymentNotice,
   registerInternalNotice,
   settleInternalNotice,
   type NoticeRecipient,
@@ -46,12 +49,39 @@ const NOTICE_DEADLINE_MS = 20_000;
 const MAX_NOTICE_RECIPIENTS = 10;
 
 /**
- * Gancho de la aceptación para el correo 2 (datos de transferencia). Se construye en otro sprint.
- * NO crea filas de cobro ni lee nada bancario: hoy no hace nada.
+ * Correo 2 (H-053): al aceptar, el cliente recibe el monto a pagar y los datos de transferencia CONGELADOS en la cotización. Los
+ * hitos y la copia de la cuenta ya los creó la base al registrar la aceptación; aquí solo se lee lo que entregó, se envía y se
+ * anota el resultado. Una cotización sin condición de pago (de antes del cobro) no recibe nada. Nunca lanza hacia el cliente.
  */
 export async function onQuoteAccepted(input: QuoteRespondedInput): Promise<void> {
-  // TODO(H-053): correo 2 con los datos de transferencia y el monto a pagar.
-  void input;
+  const parsed = paymentContextSchema.nullable().safeParse(await readPaymentNotice(input));
+  if (!parsed.success) {
+    await serverLog("error", "payment_notice_failed", { code: "shape" });
+    return;
+  }
+  const context = parsed.data;
+  const first = context?.milestones.find((m) => m.seq === 1);
+  if (!context || !first) return;
+  const outcome = await sendPaymentEmail(context, "payment_1", {
+    kind: first.kind,
+    amountClp: first.amount_clp,
+  });
+  if (outcome.status === "skipped") {
+    await serverLog("warn", "payment_notice_skipped", { code: outcome.code });
+    return;
+  }
+  if (outcome.errorCode) {
+    await serverLog("warn", "payment_notice_failed", { code: outcome.errorCode });
+  }
+  await recordPaymentNotice({
+    quoteId: input.quoteId,
+    responseId: input.responseId,
+    emailId: outcome.emailId,
+    toEmailEnc: outcome.toEmailEnc,
+    toEmailHash: outcome.toEmailHash,
+    sent: outcome.sent,
+    errorCode: outcome.errorCode,
+  });
 }
 
 const codeOf = (cause: unknown, fallback = "unexpected"): string =>

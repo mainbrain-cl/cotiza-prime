@@ -40,7 +40,9 @@ import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
 import { CustomerResponse } from "./customer-response";
+import { loadQuoteMilestones } from "@/lib/payments/queries";
 import { QuoteEditor } from "./quote-editor";
+import { QuotePayments } from "./quote-payments";
 import { QuoteReadOnly } from "./quote-read-only";
 import { QuoteTimeline } from "./quote-timeline";
 import { ResendButton } from "./resend-button";
@@ -50,6 +52,14 @@ export const metadata: Metadata = { title: "Cotización · Cotiza Prime" };
 
 const DEFAULT_VALIDITY_DAYS_FALLBACK = 15;
 const RESENDABLE_STATUSES = ["sent", "viewed"];
+const PAYMENT_STATUSES = [
+  "accepted",
+  "pending_payment",
+  "pending_deposit",
+  "deposit_paid",
+  "pending_balance",
+  "paid",
+];
 
 export default async function QuotePage({
   params,
@@ -79,6 +89,10 @@ export default async function QuotePage({
     RESENDABLE_STATUSES.includes(quote.status) &&
     can(active.role, "quote.resend", { isOwn: isAuthor });
   const timeline = await listQuoteTimeline(active, quote.id);
+  // El cobro (H-054 a H-057): los hitos existen desde que el cliente aceptó una cotización con condición de pago.
+  const milestones = PAYMENT_STATUSES.includes(quote.status)
+    ? await loadQuoteMilestones(active, quote.id)
+    : [];
   const customerResponse = await getQuoteResponse(active, quote.id);
   // Entrega del último correo (H-033) y enlace del cliente (H-035): solo si la cotización ya salió.
   const delivery = quote.status === "draft" ? null : await getQuoteDelivery(active, quote.id);
@@ -266,6 +280,16 @@ export default async function QuotePage({
       </header>
 
       <CustomerResponse response={customerResponse} />
+
+      {milestones.length > 0 ? (
+        <QuotePayments
+          tenantId={active.tenantId}
+          quoteId={quote.id}
+          rows={milestones}
+          canConfirm={can(active.role, "payment.confirm")}
+          canRequestSecond={can(active.role, "payment.second.request", { isOwn: isAuthor })}
+        />
+      ) : null}
 
       {readOnlyText ? <FormAlert tone="warning">{readOnlyText}</FormAlert> : null}
 

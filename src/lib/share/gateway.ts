@@ -17,9 +17,10 @@ import {
  * El PORTERO del enlace del cliente (decisión 017). Es el ÚNICO archivo que usa la llave maestra
  * para atender a alguien que no tiene sesión, y lo hace de dos maneras muy angostas:
  *
- *  1. Llama SOLO a seis funciones de la base, ejecutables únicamente por el servidor:
- *     `share_link_read`, `share_link_record_view` y `share_link_respond`, más las tres del aviso interno
- *     de H-031 (`share_notice_recipients`, `internal_notice_register`, `internal_notice_settle`).
+ *  1. Llama SOLO a nueve funciones de la base, ejecutables únicamente por el servidor:
+ *     `share_link_read`, `share_link_record_view` y `share_link_respond`, las tres del aviso interno
+ *     de H-031 (`share_notice_recipients`, `internal_notice_register`, `internal_notice_settle`) y las tres
+ *     del cobro (`share_link_payment`, `share_payment_notice`, `share_payment_notice_record`).
  *  2. Lee del bucket privado `quote-documents` SOLO el PDF y el logo congelados de ese enlace.
  *
  * No toca ninguna tabla (una prueba estática vigila que no aparezca `.from(` sobre tablas ni otra
@@ -238,6 +239,55 @@ export async function settleInternalNotice(input: {
     p_error_code: input.sent ? null : (input.errorCode ?? "unknown"),
   });
   if (error) throw new ShareGatewayError("notice_settle", error.code);
+}
+
+/**
+ * Cobro (H-053): lo que el enlace muestra para pagar, SOLO si el cliente ya aceptó (la base no devuelve nada antes). Lo bancario
+ * viene cifrado; lo abre quien llama, en el servidor. Token mal formado: `null` sin tocar la base.
+ */
+export async function readSharePayment(token: string): Promise<unknown> {
+  if (!isWellFormedShareToken(token)) return null;
+  const { data, error } = await createAdminClient().rpc("share_link_payment", {
+    p_token_sha256: hashShareToken(token),
+  });
+  if (error) throw new ShareGatewayError("payment_read", error.code);
+  return data ?? null;
+}
+
+/** Cobro (H-053): los datos del correo con los datos para pagar, de la respuesta que la base acaba de registrar. */
+export async function readPaymentNotice(ref: {
+  quoteId: string;
+  responseId: string;
+}): Promise<unknown> {
+  const { data, error } = await createAdminClient().rpc("share_payment_notice", {
+    p_quote_id: ref.quoteId,
+    p_response_id: ref.responseId,
+  });
+  if (error) throw new ShareGatewayError("payment_notice", error.code);
+  return data ?? null;
+}
+
+/** Cobro (H-053): anota el correo con los datos para pagar (salió o falló) y su evento en la línea de tiempo. */
+export async function recordPaymentNotice(input: {
+  quoteId: string;
+  responseId: string;
+  emailId: string;
+  toEmailEnc: string;
+  toEmailHash: string;
+  sent: { provider: string; providerMessageId: string } | null;
+  errorCode: string | null;
+}): Promise<void> {
+  const { error } = await createAdminClient().rpc("share_payment_notice_record", {
+    p_quote_id: input.quoteId,
+    p_response_id: input.responseId,
+    p_email_id: input.emailId,
+    p_to_email_enc: input.toEmailEnc,
+    p_to_email_hash: input.toEmailHash,
+    p_provider: input.sent?.provider ?? null,
+    p_provider_message_id: input.sent?.providerMessageId ?? null,
+    p_error_code: input.sent ? null : (input.errorCode ?? "unknown"),
+  });
+  if (error) throw new ShareGatewayError("payment_notice_record", error.code);
 }
 
 /** Ruta que le corresponde al PDF congelado de este enlace: `{tenant}/{quote}/{package}.pdf`. */

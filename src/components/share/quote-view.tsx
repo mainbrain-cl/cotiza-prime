@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils";
 /**
  * La cotización tal como la ve el cliente final (H-030). Dibuja la copia congelada del paquete, con
  * los mismos textos y cifras que el PDF (ya vienen formateados), y manda la marca de la organización:
- * su logo y sus colores. No lleva datos bancarios (llegan recién al aceptar) ni el diseño de
- * Cotiza Prime. Los botones de aceptar y rechazar (H-031) se ponen en el espacio `response-slot`.
+ * su logo y sus colores. Los datos bancarios llegan solo al aceptar, por `paymentSlot`; no lleva el
+ * diseño de Cotiza Prime. Los botones de aceptar y rechazar (H-031) se ponen en el espacio `response-slot`.
  */
 
 export type QuoteViewProps = {
@@ -20,6 +20,8 @@ export type QuoteViewProps = {
   responseNotice: string | null;
   /** Los botones de respuesta (H-031) o la confirmación, en el espacio previsto. */
   responseSlot?: ReactNode;
+  /** H-053: los datos para pagar, SOLO cuando el cliente ya aceptó (nunca antes). */
+  paymentSlot?: ReactNode;
 };
 
 const BRAND_BG = "bg-[var(--brand)] text-[var(--on-brand)]";
@@ -64,6 +66,7 @@ export function QuoteView({
   pdfHref,
   responseNotice,
   responseSlot,
+  paymentSlot,
 }: QuoteViewProps) {
   const { quote, organization, totals } = doc;
   const notes = [
@@ -116,6 +119,8 @@ export function QuoteView({
                 {responseNotice}
               </p>
             ) : null}
+
+            {paymentSlot}
 
             <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
               <div>

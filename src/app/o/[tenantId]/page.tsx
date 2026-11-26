@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { StatusSummary } from "@/components/app-shell/status-summary";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FormAlert } from "@/components/ui/form-controls";
+import { formatClp } from "@/lib/money/clp";
+import { loadOutstanding } from "@/lib/payments/queries";
 import { can } from "@/lib/permissions/matrix";
 import { getQuoteSummary } from "@/lib/quotes/summary-query";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
@@ -14,6 +16,8 @@ export default async function TenantHomePage({ params }: PageProps<"/o/[tenantId
   const { tenantId } = await params;
   const active = await requireActiveTenant(tenantId);
   const summary = await getQuoteSummary(active);
+  // H-057: lo que falta por cobrar (la suma de los pagos esperados que no se han recibido).
+  const outstanding = summary && summary.total > 0 ? await loadOutstanding(active) : null;
   // El texto nombra solo lo que esta persona ve en su menú y puede hacer.
   const emptyDescription = can(active.role, "settings.manage")
     ? "Aquí verás lo que requiere tu atención. Para empezar, configura tu marca en Configuración, agrega los servicios de tu empresa al catálogo y después crea tu primera cotización."
@@ -36,7 +40,22 @@ export default async function TenantHomePage({ params }: PageProps<"/o/[tenantId
           description={emptyDescription}
         />
       ) : (
-        <StatusSummary summary={summary} quotesPath={tenantPath(active.tenantId, "cotizaciones")} />
+        <>
+          {outstanding && outstanding.totalClp > 0 ? (
+            <p
+              className="rounded-lg border border-border bg-surface px-4 py-3 shadow-1"
+              data-testid="home-outstanding"
+            >
+              Falta por cobrar{" "}
+              <strong className="tabular-nums">{formatClp(outstanding.totalClp)}</strong> en{" "}
+              {outstanding.quotes === 1 ? "1 cotización" : `${outstanding.quotes} cotizaciones`}.
+            </p>
+          ) : null}
+          <StatusSummary
+            summary={summary}
+            quotesPath={tenantPath(active.tenantId, "cotizaciones")}
+          />
+        </>
       )}
     </div>
   );

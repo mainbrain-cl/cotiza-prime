@@ -38,6 +38,7 @@ import {
 } from "@/lib/quotes/send/prepare-error";
 import { loadMaxDiscountBp } from "@/lib/quotes/line-rules-queries";
 import { getQuote } from "@/lib/quotes/queries";
+import { tenantHasBankAccount } from "@/lib/payments/queries";
 import {
   consumePdfQuota,
   consumeSendQuota,
@@ -296,6 +297,19 @@ export async function sendQuoteAction(
   if (customer === "unreadable") return failure(MSG_UNREADABLE_CUSTOMER);
   if (!customer.email) return failure(MSG_NO_EMAIL);
   const toEmail = normalizeEmail(customer.email);
+
+  // 3b. Condición de pago (H-052): si la organización tiene datos de transferencia y el borrador no tiene condición, sale con la de
+  // siempre (100 % al aceptar). Sin datos de transferencia sale sin condición (sin cobro). Se fija antes de congelar el paquete.
+  if (detail.quote.payment_terms === null && (await tenantHasBankAccount(active)) === true) {
+    const { error: termsError } = await active.supabase.rpc("set_quote_payment_terms", {
+      p_quote_id: quoteId,
+      p_terms: "full",
+    });
+    if (termsError) {
+      await serverLog("warn", "quote_send_default_terms_failed", { code: termsError.code });
+      return failure(MSG_UNEXPECTED);
+    }
+  }
 
   // 4. Ids, token y datos personales cifrados: todo se genera aquí, en la aplicación.
   const packageId = randomUUID();

@@ -8,7 +8,6 @@ import { logTenantLogins } from "@/lib/auth/login-audit";
 import type { FormState } from "@/lib/auth/form-state";
 import {
   ACCEPT_TERMS_PATH,
-  AUTH_CALLBACK_PATH,
   AUTH_RECOVERY_PATH,
   HOME_PATH,
   LOGIN_NOTICES,
@@ -20,7 +19,6 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   signInSchema,
-  signUpSchema,
 } from "@/lib/auth/schemas";
 import {
   clearRecoverySession,
@@ -30,7 +28,6 @@ import {
   requireUser,
 } from "@/lib/auth/session";
 import { getAppOrigin, getRequestContext } from "@/lib/http/request-context";
-import { legalDocuments } from "@/lib/legal/documents";
 import { serverLog } from "@/lib/log/server-log";
 import {
   RATE_LIMITED_MESSAGE,
@@ -39,10 +36,8 @@ import {
   emailFingerprint,
   isLoginLocked,
   isResetLocked,
-  isSignupLocked,
   recordLoginFailure,
   recordResetRequest,
-  recordSignupAttempt,
 } from "@/lib/security/login-rate-limit";
 import { deliverPendingEnrollmentNotices } from "@/lib/security/mfa-enrollment-notice";
 import { createClient } from "@/lib/supabase/server";
@@ -56,60 +51,6 @@ const SUPABASE_COOKIE_PREFIX = "sb-";
 function readText(formData: FormData, name: string): string | undefined {
   const value = formData.get(name);
   return typeof value === "string" ? value : undefined;
-}
-
-/** H-001: crea la cuenta y manda el correo de verificación. Nunca revela si el correo ya existía. */
-export async function signUpAction(_previous: FormState, formData: FormData): Promise<FormState> {
-  const raw = {
-    fullName: readText(formData, "fullName"),
-    email: readText(formData, "email"),
-    password: readText(formData, "password"),
-    acceptLegal: readText(formData, "acceptLegal"),
-  };
-  const values = { fullName: raw.fullName ?? "", email: raw.email ?? "" };
-
-  const parsed = signUpSchema.safeParse(raw);
-  if (!parsed.success) {
-    return { status: "error", fieldErrors: fieldErrorsOf(parsed.error), values };
-  }
-
-  // Límite por IP contra el registro masivo de cuentas. Cada intento cuenta.
-  const { clientIp } = await getRequestContext();
-  if (await isSignupLocked(clientIp)) {
-    return { status: "error", message: RATE_LIMITED_MESSAGE, values };
-  }
-  await recordSignupAttempt(clientIp);
-
-  const supabase = await createClient();
-  const origin = getAppOrigin();
-  const { error } = await supabase.auth.signUp({
-    email: parsed.data.email,
-    password: parsed.data.password,
-    options: {
-      emailRedirectTo: `${origin}${AUTH_CALLBACK_PATH}`,
-      // Las versiones aceptadas viajan con la cuenta; la base las registra solo si son las vigentes.
-      data: {
-        full_name: parsed.data.fullName,
-        accepted_legal: {
-          terms: legalDocuments.terms.version,
-          privacy: legalDocuments.privacy.version,
-        },
-      },
-    },
-  });
-
-  if (error) {
-    const kind = classifyAuthError(error);
-    if (kind === "weak_password") {
-      return { status: "error", fieldErrors: { password: AUTH_MESSAGES.weak_password }, values };
-    }
-    // "Cuenta ya existe" no se distingue del éxito: no se revela quién tiene cuenta.
-    if (error.code !== "user_already_exists" && error.code !== "email_exists") {
-      return { status: "error", message: AUTH_MESSAGES[kind], values };
-    }
-  }
-
-  return { status: "sent", values: { email: parsed.data.email } };
 }
 
 /** H-002: ingresar con correo y contraseña. */

@@ -6,6 +6,7 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { Client } from "pg";
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const DEFAULT_DB_URL = "postgresql://postgres:postgres@127.0.0.1:56322/postgres";
@@ -208,10 +209,45 @@ export async function graphql(
   return toResult(res);
 }
 
-/** Crea una cuenta confirmada con la llave maestra (solo para montar la fixture). */
+/**
+ * Deja la cuenta TERMINADA (H-116: `account_ready_at` puesta) y, si se pide, con la aceptación de los términos y la privacidad vigentes
+ * (lo que escribe `complete_account_setup`). Se hace por una conexión SQL directa como postgres: las personas no tienen permiso sobre
+ * esas columnas. Solo pruebas, solo base local.
+ */
+export async function markAccountSetUp(
+  userId: string,
+  options: { acceptLegal?: boolean } = {},
+): Promise<void> {
+  const { dbUrl } = localEnv();
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  try {
+    await client.query(
+      "update public.profiles set account_ready_at = now() where user_id = $1 and account_ready_at is null",
+      [userId],
+    );
+    if (options.acceptLegal) {
+      await client.query(
+        `insert into public.legal_acceptances (user_id, document_id, context)
+         select $1, d.id, 'signup' from public.legal_documents d where d.is_current
+         on conflict (user_id, document_id) do nothing`,
+        [userId],
+      );
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Crea una cuenta confirmada con la llave maestra (solo para montar la fixture). Desde H-116 queda TERMINADA (puede crear
+ * organizaciones y aceptar invitaciones) salvo con `ready: false`; `acceptLegal` registra la aceptación de los documentos vigentes;
+ * `password` cambia la contraseña de la cuenta (por defecto, `TEST_PASSWORD` de este archivo).
+ */
 export async function adminCreateUser(
   email: string,
   userMetadata: Record<string, unknown> = {},
+  options: { ready?: boolean; acceptLegal?: boolean; password?: string } = {},
 ): Promise<string> {
   const { apiUrl, secretKey } = localEnv();
   const res = await fetch(`${apiUrl}/auth/v1/admin/users`, {
@@ -223,13 +259,15 @@ export async function adminCreateUser(
     },
     body: JSON.stringify({
       email,
-      password: TEST_PASSWORD,
+      password: options.password ?? TEST_PASSWORD,
       email_confirm: true,
       user_metadata: userMetadata,
     }),
   });
   if (res.status !== 200) throw new Error(`No se pudo crear la cuenta de prueba (${res.status})`);
-  return ((await res.json()) as { id: string }).id;
+  const id = ((await res.json()) as { id: string }).id;
+  if (options.ready ?? true) await markAccountSetUp(id, { acceptLegal: options.acceptLegal });
+  return id;
 }
 
 export interface Session {

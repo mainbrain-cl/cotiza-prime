@@ -726,3 +726,135 @@ Todos estos puntos los cierra la prueba exploratoria de la etapa 0, con llamadas
 atacante, luego la de la víctima), ambas respuestas devuelven el mismo identificador de usuario; al verificar con el correo más
 reciente, la contraseña del atacante inicia sesión y la de la víctima da `invalid_credentials`. Con H-009, el atacante queda como
 Administrador activo de la organización invitada. Probado solo en local; no se verificó contra un Supabase de producción.
+
+---
+
+## Registro de construcción — Etapa 0: prueba exploratoria contra GoTrue local (2026-11-24)
+
+Hecha en PRUEBAS (Supabase local, GoTrue del CLI 2.119.0) con guiones desechables que llaman a la API real (no van al repositorio). Para las
+pruebas con el registro apagado se aplicó a `supabase/config.toml` la configuración objetivo: `[auth] enable_signup = false` y `[auth.email]
+otp_length = 10`. **Ningún resultado cambia el diseño;** los de abajo lo confirman y fijan detalles.
+
+| # | Resultado |
+|---|---|
+| 1 | **Confirmado.** Con `enable_signup = false`, `POST /auth/v1/signup` responde `422 signup_disabled`, pero `auth.admin.generateLink({ type: "invite", email })` **sí crea la cuenta** (sin contraseña, sin verificar). No hace falta el respaldo con `createUser` |
+| 2 | **`amr` de la sesión de `verifyOtp({ token_hash, type: "invite" })`: `[{ method: "otp" }]`**, `aal1`. Es el mismo método que se espera de un enlace del correo; el ingreso con contraseña trae `method: "password"`. `complete_account_setup` debe exigir `otp` en `amr` |
+| 3 | **Confirmado.** Con el registro público apagado el ingreso con contraseña funciona (cuenta con contraseña propia) |
+| 4 | **Confirmado.** Un segundo `generateLink` invalida el código anterior (`Email link is invalid or has expired`). Sobre una cuenta ya verificada responde `422 email_exists` («A user with this email address has already been registered») |
+| 5 | **No verificable en local sin esperar una hora:** el enlace vive `otp_expiry` (3600 s según la configuración). Se verifica en producción con el guion de configuración (`mailer_otp_exp`) |
+| 6 | **`admin.updateUserById(id, { password })` NO envía el aviso «Tu contraseña cambió».** `updateUser({ password })` desde la sesión de la persona **SÍ lo envía**, también al fijar la primera contraseña. Consecuencia: la plantilla `password_changed` (hoy «Tu contraseña de Cotiza Prime cambió») se ve en cada cuenta nueva al terminar de registrarse, así que su texto no puede dar a entender que «alguien cambió tu contraseña»; se ajusta en la etapa 2. La pasarela puede fijar siempre la contraseña aleatoria sin sumar un correo |
+| 7 | `GET /auth/v1/settings` entrega `disable_signup`, `mailer_autoconfirm`, `phone_autoconfirm`, `external.*` (incluido `email` y `anonymous_users`), `saml_enabled` y `passkeys_enabled`. **No** trae el cambio seguro de correo ni el largo del código (como se esperaba). Con la configuración nueva: `disable_signup: true` |
+| 10 | **Confirmado, y es la razón de la contraseña aleatoria.** Con el registro abierto, el atacante se registra con su contraseña; después `generateLink("invite")` + `verifyOtp` sobre esa cuenta **confirma el correo pero NO borra la contraseña del atacante: sigue sirviendo.** Lo mismo con una cuenta antigua sin verificar creada con contraseña (`createUser`). Solo cambiarla (`admin.updateUserById`) o fijar otra desde la sesión del enlace la anula |
+| 11 | **Confirmado.** Con `otp_length = 10` el `email_otp` del invite tiene 10 caracteres y el enlace funciona |
+| 12 | Tiempos medidos (una máquina cargada, local): cuenta nueva con las tres llamadas de la pasarela, **120–128 ms**; cuenta ya verificada (una llamada), **17 ms**. La diferencia es de 100 ms: la duración mínima fija de la respuesta (§3.6) tapa esto con holgura |
+| 13 | **Reproducido en `main` (sin el cierre).** Cuenta confirmada del atacante con su contraseña → `updateUser({ email: <víctima> })` envía un correo de confirmación a cada correo (el actual y el nuevo, `double_confirm_changes`); la víctima confirma el suyo (el estado queda «pendiente del otro»), el atacante hace el último clic y **la cuenta pasa a tener el correo de la víctima y sigue valiendo la contraseña del atacante** (`signInWithPassword` con el correo de la víctima entra). El pase viejo del atacante sigue valiendo con su correo antiguo en el claim. Esto es lo que cierra el disparador sobre `auth.users` y `profiles.signup_email` (§3.4). Pendiente de la etapa 1: comprobar con el disparador puesto qué responde `PUT /auth/v1/user` y si salen los correos |
+| 14 | **Confirmado.** `signOut({ scope: "others" })` borra de `auth.sessions` las demás sesiones: la API de Auth rechaza su pase (`403 session_not_found`) y su `refresh_token` (`Refresh Token Not Found`). **PostgREST SÍ acepta el pase de esa sesión cerrada (200) hasta que vence**: es la ventana de 15 minutos que cierra `app.session_alive()`. El `session_id` del pase se conserva al renovarlo |
+| 15 | **Confirmado el orden de §3.1.** (a) Fijar una contraseña con `admin.updateUserById` **invalida el código de un solo uso generado antes** (`invalid or has expired`); el enlace generado **después** de la contraseña funciona. (b) `updateUser({ password })` desde la sesión del invite **no cierra la propia sesión** (`getUser` sigue respondiendo), y anula la contraseña anterior |
+| 8, 9 | Solo en el Supabase alojado (plan de los ganchos; funciones que lean `auth.sessions` y `auth.mfa_factors`; disparador `before update` en `auth.users`): **no verificables en local, siguen en la lista «Antes del piloto» (§5).** En local, `postgres` (con el que conectan las pruebas) puede leer `auth.sessions` y `auth.mfa_factors`; `auth.users` hoy solo tiene el disparador `on_auth_user_created` (`after insert`) |
+
+**Cambios de esta etapa:** `supabase/config.toml` (`enable_signup = false`, `otp_length = 10`). Las pruebas e2e que hoy se registran con
+`signUpAndVerify` dejan de funcionar con esta configuración: se rehacen en la etapa 3 (por eso va todo en una rama, decisión J0).
+
+---
+
+## Registro de construcción — Etapa 1: la base de datos y sus pruebas (2026-11-25)
+
+Hecha en PRUEBAS (Supabase local). **Solo base de datos, pruebas de base y de aislamiento, semilla y ayudas de prueba.** No se tocó `src/`, ni las pantallas, ni la pasarela, ni `e2e/` (etapas 2 y 3).
+
+**Archivos.** `supabase/migrations/20261125100000_account_setup.sql` y su deshacer `supabase/rollbacks/20261125100000_account_setup.down.sql`; `tests/db/account-setup.test.ts` (38 pruebas) y `tests/isolation/account-setup.test.ts` (9 pruebas); `tests/db/before-account-setup.ts` (para probar las migraciones anteriores tal como eran); `tests/db/helpers.ts` (`createUser` deja la cuenta terminada, `actAs` crea una sesión REAL en `auth.sessions` y pone su `session_id` en el pase, `passClaims`, `ensureSession`, `setAccountEmail`, `markAccountReady`); `tests/support/local-supabase.ts` (`adminCreateUser` deja la cuenta terminada; `markAccountSetUp`); `tests/isolation/fixture.ts`, `tests/isolation/registry.ts`, `scripts/seed.ts`; y ajustes a 9 pruebas existentes (abajo). Documentación: `docs/arquitectura/modelo-datos.md` (párrafo de H-116).
+
+**Qué hace la migración** (resumen; el detalle está en el encabezado del archivo): las dos columnas de `profiles`; `app.handle_new_user` (correo de alta, sin consentimiento desde metadatos); el disparador `forbid_email_change`; `app.account_ready`, `app.session_alive`, `app.session_from_email_link`, `app.account_setup_verdict`, `app.setup_denied`; `public.account_setup_preflight`, `public.my_account_ready`, `public.complete_account_setup`; `create_tenant`, `invitation_preview` y `accept_invitation` con sesión abierta y cuenta terminada; `app.current_tenant_id()` y `app.my_tenant_ids()` con sesión abierta; las políticas `profiles_update`, `profiles_select` y `members_select` con sesión abierta; alcance `signup_email`; relleno. Todas las funciones reemplazadas son copia literal de `20261112100000_mfa_session_gate` más las líneas nuevas (una prueba lo comprueba), y el deshacer las devuelve EXACTAMENTE a su texto anterior (md5).
+
+### Desviaciones del diseño (y por qué)
+
+1. **Los rechazos se RESPONDEN, no se lanzan.** `complete_account_setup` y `account_setup_preflight` devuelven `{result: …}` (`not_email_link`, `unverified`, `email_changed`, `factor_present`, `invalid_name`, `legal_changed`, `other_sessions`, y `completed` con `already_ready`). El diseño decía «error 42501 y auditoría `account.setup_denied`» para la sesión de contraseña: un error revierte la transacción y la fila de auditoría no queda. Se lanza error solo cuando no hay nada que auditar: sin sesión (`not_authenticated`), sesión cerrada (`session_closed`), solo lectura (`25006`) y segundo paso pendiente (`second_step_required`). **La aplicación (etapa 2) debe leer `result`.** `preflight` responde `{"result":"ok"}` también para una cuenta ya terminada.
+2. **`factor_present` y el segundo paso.** Las tres funciones públicas rechazan con `42501 second_step_required` si el pase es `aal1` y la cuenta tiene un factor VERIFICADO (la misma puerta de todo el resto de la base; la guardia 16 la exige, y `tests/isolation/second-step.test.ts` pide que toda función del registro la respete). `factor_present` (auditado) queda para: un factor SIN verificar (lo que de verdad puede dejar un atacante: verificarlo exige el «permiso» del servidor, H-118) o un factor verificado con un pase `aal2`. En la práctica son los mismos casos que el diseño quería rechazar y auditar.
+3. **Dos excepciones justificadas en la guardia 16** (`UNGATED_AUTH_UID_ALLOWED` de `tests/db/schema-guards.test.ts`): `app.session_alive` y `app.session_from_email_link`. Son ayudas internas que solo contestan preguntas sobre el pase; todas las funciones públicas y políticas que las usan sí llaman a la puerta del segundo paso. Las pruebas «la guardia muerde» (16b, 16c, 16d) ahora comparan contra la lista SIN esas dos excepciones; la prueba 16 principal sigue mirando la lista completa y falla si una excepción deja de existir. **No se relajó ninguna otra guardia.**
+4. **El disparador rechaza cualquier cambio de `email`, también solo de mayúsculas y minúsculas** (`old.email is distinct from new.email`). §3.4 decía «cambie `lower(email)`» y §3.7 «también solo en mayúsculas y minúsculas»; se eligió lo segundo, que es lo más estricto. GoTrue guarda el correo en minúsculas y no lo reescribe al ingresar, así que no rompe nada comprobado (ingreso, confirmar, contraseña, `last_sign_in_at`).
+5. **`app.session_alive()` también exige que la sesión no haya vencido** (`not_after`), además de existir y ser de `auth.uid()`. `complete_account_setup` cuenta como «otra sesión» cualquier otra fila de la cuenta en `auth.sessions` (es lo que borra `signOut({scope:"others"})`).
+6. **Hallazgo de seguridad cerrado de más: `tenants_select` y las ramas «filas propias».** `tenants_select` usa `app.my_tenant_ids()`, que solo miraba `auth.uid()`: con el diseño tal cual, el pase de una sesión CERRADA seguía leyendo el nombre y los datos de las organizaciones propias. Además, las ramas `user_id = auth.uid()` de `members_select` y `profiles_select` (que §4 dejaba legibles) mostraban la membresía y el rol de la persona. Se cerraron las tres cosas con `app.session_alive()` (en `my_tenant_ids()` y en las dos políticas), por ser el lado seguro; tienen su prueba (AS26 y la de aislamiento X11) y su deshacer. **Lo que un pase de sesión cerrada sí puede leer todavía:** `public.my_last_tenant_id()` (el id de la última organización usada), sus propias aceptaciones de términos (`legal_acceptances_select`) y llamar `accept_current_legal_documents()` sobre su propia cuenta; ninguna da datos de una organización. No se tocó (fuera de las seis funciones del diseño); se anota por si Aarón quiere cerrarlo en la revisión.
+7. **El rechazo auditado se registra una vez por hora, cuenta y motivo** (`app.setup_denied`): quien insiste con un pase robado, o llama en bucle, no llena `audit_log`. La fila va en la organización «plataforma», sin el correo.
+8. **Orden de las comprobaciones de `complete_account_setup`**: segundo paso, sesión abierta, solo lectura, candado por cuenta; luego, en `app.account_setup_verdict` (compartida con `preflight` para que no divergan): sesión de enlace del correo, correo verificado, correo de alta, cuenta ya terminada (→ `completed` sin cambiar nada; el chequeo de `amr` va antes, así que Ana con contraseña recibe `not_email_link` aunque su cuenta esté terminada), factor, nombre, versiones legales, otras sesiones. Si falta algún documento vigente de un tipo, no se exige ni se guarda ese tipo.
+9. **Pruebas de migraciones anteriores.** Los deshacer de H-004a, H-118a y los de invitaciones comparan funciones y políticas con el texto de SU migración; como la de H-116 las reemplazó, esas pruebas empiezan cada transacción deshaciendo primero la de H-116 (`tests/db/before-account-setup.ts`, encadenado con `before-mfa-gate.ts`). Pruebas editadas por esto: `mfa-session-gate-rollback`, `mfa-enrollment-alerts-rollback`, `member-invitation-creator-rollback` (la última comparación de `accept_invitation` quita también las líneas de H-116). Pruebas editadas porque ahora hay que pasar por el interruptor o por una cuenta con su correo de alta: `invitation-accept` (3 cambios de correo por `setAccountEmail`, y la sesión se crea antes de la transacción de solo lectura), `mfa-enrollment-alerts` (un `email = null`), y `behavior` (la prueba del registro que esperaba que los metadatos registraran la aceptación ahora comprueba que NO lo hacen).
+
+### Verificación (2026-11-25, local, tras `supabase db reset` + `npm run db:seed`)
+
+| Comando | Resultado |
+|---|---|
+| `npx tsc --noEmit` | limpio |
+| `npm run lint` | limpio (0 errores, 0 avisos) |
+| `npx prettier --check` de lo tocado | limpio |
+| `supabase db reset` | aplica las 57 migraciones sin error (guardia 15 incluida) |
+| `npm run test:db` | **1.498 de 1.498** en 67 archivos (baseline 1.460 + 38 nuevas) |
+| `npm run test:isolation` | **1.433 pasan** + 3 pendientes, 25 archivos (baseline 1.424 + 9 nuevas) |
+| `npm run test:db:rollbacks` | OK (deshace las 57 en orden inverso y las vuelve a aplicar) |
+| `npm test` | 3.092 pasan, 1 omitida; 1 falló por el plazo de 5 s (`pdf/render.test.tsx`, máquina cargada) y pasa sola 11 de 11. Ninguna depende del registro: no se tocó `src/` |
+
+### Medido de paso (pendiente de la etapa 0)
+
+Con el disparador puesto, `PUT /auth/v1/user { email }` con una sesión de enlace responde **500 `unexpected_failure` («Error sending email change email»), el correo de la cuenta no cambia, y GoTrue SÍ alcanza a enviar los dos correos de confirmación (al correo actual y al correo nuevo) antes de fallar.** Es la puerta de spam de §4: el texto de la plantilla de cambio de correo debe decir que el cambio no está disponible (etapa 2/H-116 A6) y queda en la lista de ajustes de producción.
+
+### Lo que NO se pudo verificar
+
+- **Nada de la aplicación** (etapas 2 y 3): la pasarela, `/crear-cuenta`, `/confirmar-correo`, `requireUser`, `signUpAction` ni los e2e. `src/lib/auth/actions.ts` sigue llamando `supabase.auth.signUp` (con el registro apagado falla) y `e2e/member-management.spec.ts` escribe `accepted_legal` en los metadatos (ya no registra aceptación: los usuarios que crea por esa vía quedan sin aceptar los términos hasta la etapa 3).
+- **El ataque «el atacante hace el último clic» de punta a punta** (cambio de correo confirmado por GoTrue con el disparador quitado, `trigger-off`): requiere deshabilitar el disparador con `supabase_admin` (el rol `postgres` no es dueño de `auth.users`; por TCP `supabase_admin:postgres` sí puede, comprobado) y leer los correos en Mailpit; queda para la etapa 3. La segunda barrera (correo de alta) sí se prueba aislada en la base: cambiar el correo con el interruptor hace que `account_ready` sea falso, `accept_invitation` y `create_tenant` fallen, y `complete_account_setup` responda `email_changed` (AS9, AS14 y la prueba de aislamiento del cambio por SQL).
+- **Concurrencia real** de dos `complete_account_setup` a la vez (el candado por cuenta `pg_advisory_xact_lock` está, pero no hay prueba con dos conexiones).
+- **El Supabase alojado**: que `security definer` pueda leer `auth.sessions`/`auth.mfa_factors`, que se permita un disparador `before update` en `auth.users`, y el comportamiento de GoTrue de producción (puntos 8 y 9 de §8); siguen en la lista «Antes del piloto».
+- Rendimiento: `app.session_alive()` agrega una búsqueda por llave principal a cada llamada de `app.current_tenant_id()`/`app.my_tenant_ids()`; no se midió con carga.
+
+---
+
+## Registro de construcción — Etapa 2: la aplicación (2026-11-24)
+
+Hecha en PRUEBAS (Supabase local, `npm run dev`, Mailpit). **No se tocó ninguna migración ni `e2e/`** (la etapa 3 reescribe `signUpAndVerify` y los e2e; hoy están rotos a propósito). Un solo commit «H-116 etapa 2».
+
+**Archivos nuevos.** `src/lib/auth/signup-gateway.ts` (pasarela), `signup-service.ts` (enlace con `APP_ORIGIN` y envío), `signup-actions.ts` (las tres acciones), `account-setup.ts` (resultados de la base, mensajes y textos fijos), `src/lib/email/account-link.ts` (el correo), `src/components/auth/flow-steps.tsx`, las pantallas `src/app/(auth)/confirmar-correo/` (`page`, `confirm-email-form`, `expired-link`) y `src/app/(auth)/crear-cuenta/` (`page`, `create-account-form`, `password-fields`), las plantillas `supabase/templates/signup_link_unavailable.html` y `email_change_unavailable.html`, y sus pruebas (pasarela, servicio, acciones, correo, resultados, las tres pantallas y sus formularios, `/auth/recuperar`).
+**Modificados.** `session.ts` (`hasEmailLinkSession`, `isAccountReady`, `requireUser` con `skipSetupGate`), `paths.ts`, `schemas.ts` (`signUpSchema` = correo + anti-robot; `createAccountSchema`), `login-rate-limit.ts` (`consumeSignupLinkQuota`: 1 por minuto y 3 por hora por correo, alcance `signup_email` con huella por ventana), `actions.ts` (se quita `signUpAction` con contraseña), `audit/log.ts` (`session.signup_requested`, solo la huella del correo), `/registro`, `/ingresar`, `/invitacion`, `/auth/recuperar`, `/auth/callback` (comentario), `accept-model.ts`, `next.config.ts` (cabeceras de `/confirmar-correo`, `/crear-cuenta` y CSP de `/registro`), `supabase/config.toml` y `password_changed_notification.html`, y las guardias (`eslint.config.mjs`, `static-guards.test.ts` con la 17 y 17b, `registry.ts`, `guard-coverage.test.ts`, `security-headers.test.ts`).
+
+### Desviaciones del diseño (y por qué)
+
+1. **Las tres acciones viven en `src/lib/auth/signup-actions.ts`**, no en `actions.ts`: aísla el registro y sus pruebas. `signUpAction` se mudó (la lista de `guard-coverage.test.ts` cambió de llave y suma las otras dos, con su razón).
+2. **No se construyó `signup-open-guard.ts` (J5)** ni `scripts/check-auth-config.ts`: no estaban en el alcance pedido para esta etapa. La guardia 17e sí lee `config.toml` y exige la configuración que cierra el ataque. Quedan para la etapa 3 / aparte.
+3. **Plantillas.** El correo real del registro lo envía NUESTRO servidor (`account-link.ts`). Las plantillas de Supabase `invite` y `confirmation` (las que podrían salir por `/resend`) dicen «pide tu enlace en Crear cuenta» y **no traen ningún enlace de confirmación**; `email_change` dice que el cambio de correo no está disponible, también sin enlace; `password_changed` se reescribió («Se guardó la contraseña de tu cuenta…») porque llega también al fijar la PRIMERA contraseña. `magic_link` no se tocó (no es parte del registro; `/otp` sigue como puerta de correos no pedidos, §4). **`config.toml` solo vale tras reiniciar Supabase local** (se reinició y se vio el correo nuevo). En producción se cargan en el panel.
+4. **Textos añadidos que el diseño no traía** (ninguno cambia los de §3.3): «Paso 1/2 de 2» (`FlowSteps`), casilla «Mostrar las contraseñas», «¿No te llegó? Pedir otro enlace» en «Revisa tu correo», y la **ayuda de quien ya confirmó su correo** en `/ingresar` y en todas las pantallas de «enlace vencido» (ver hallazgo 1).
+5. `EMAIL_LINK_METHODS` de `session.ts` pasó de `{otp, recovery}` a los cuatro que acepta la base (`otp`, `recovery`, `magiclink`, `invite`); `hasRecoverySession` (con su cookie) usa la misma comprobación.
+6. `/crear-cuenta` conserva el nombre **y la casilla de términos** tras un error (React vacía el formulario al terminar una acción), salvo si el error es `legal_changed`. La casilla «Mostrar las contraseñas» se asocia a «ningún formulario» (`form="sin-formulario"`) porque, si no, React la desmarcaba y las contraseñas quedaban a la vista (visto en el recorrido).
+7. `/crear-cuenta` declara `maxDuration = 60` (varias llamadas a Supabase y hasta un reintento).
+8. La acción de «Continuar» no tiene tope propio por IP: los 10 caracteres del código y el límite de verificaciones de GoTrue (`token_verifications`) lo cubren.
+
+### Hallazgos para Aarón y para la etapa 3
+
+1. **Quien confirmó su correo y no terminó la cuenta no recibe otro enlace de registro** (decisión A2: con una cuenta verificada no se envía nada). Su camino es «¿Olvidaste tu contraseña?», que ya lleva a `/crear-cuenta` (probado a mano). El texto de `/ingresar` de §3.3 («pide otro enlace en Crear cuenta») no lo decía; se amplió. **Pregunta:** ¿se acepta, o se prefiere que `/registro` también reenvíe el enlace a una cuenta verificada sin terminar? (Eso revelaría que existe una cuenta sin terminar para ese correo; por eso no se hizo.)
+2. **La variante «la contraseña plantada sobrevivió» de §3.7 no se puede probar con la llave maestra tal como estaba escrita.** Fijar una contraseña con `auth.admin.updateUserById` **cierra todas las sesiones de la cuenta** (comprobado: la sesión de la víctima murió y quedó «Tu enlace venció»), y antes de verificar anula el enlace pendiente. Es el lado seguro (la víctima pide otro camino) pero la prueba e2e debe simular la contraseña sobreviviente con un `update` SQL a `auth.users.encrypted_password`, que no cierra sesiones.
+3. El tiempo de respuesta de `/registro` es ≥ 0,8 s en todos los casos (medido en desarrollo: 1,36 s con correo nuevo y 1,50 s con una cuenta existente; la diferencia es ruido del servidor de desarrollo). El trabajo caro corre después de responder (`after`).
+
+### Recorrido a mano (local, Playwright + Mailpit)
+
+Registro → correo → `GET` del enlace dos veces (no lo gasta) → «Continuar» → `/crear-cuenta` (con la cuenta sin terminar, `/` y `/organizaciones/nueva` mandan a `/crear-cuenta`) → error de contraseñas distintas (casilla y nombre se conservan) → terminar → `/organizaciones/nueva`. Base: perfil con `account_ready_at`, aceptaciones de términos en contexto `signup` con IP y navegador de quien terminó, auditoría `account.setup_completed`, una sola sesión. Ingreso con la contraseña elegida OK; enlace reutilizado dice «ya se usó o venció»; correo de una cuenta existente (`ana@ejemplo.test`): respuesta igual y **cero correos**.
+**Ataque** (`registro abierto por error`): `POST /auth/v1/signup` con la llave pública → `422 signup_disabled`; el atacante planta la cuenta de la víctima con su contraseña → tras el registro de la víctima su contraseña da `invalid_credentials`; replanta una contraseña con la llave maestra y entra: con ese pase `create_tenant` falla («Termina de crear tu cuenta…») y `complete_account_setup` responde `not_email_link`; la víctima (sesión cerrada por la replantada) ve «Tu enlace venció», usa «¿Olvidaste tu contraseña?», el enlace la lleva a `/crear-cuenta` y termina; después ni la contraseña original ni la replantada entran, el nombre del perfil es el de la víctima, y el pase viejo del atacante (sin vencer) recibe `session_closed` en `create_tenant`, `complete_account_setup`, reescribir el nombre y la API de cuentas.
+
+### Revisión visual
+
+Capturas a 1280 y 375 px, claro y oscuro, de `/registro` (normal, error de correo, sin anti-robot, cargando, enviado, sin conexión), `/confirmar-correo` (normal, vencido, cargando, usado, sin conexión) y `/crear-cuenta` (normal, contraseñas a la vista, error de términos, de campos y de largo, cargando, sin conexión, vencido). Arreglado tras verlas: el correo se cortaba en el «@» (ahora en su propia línea, 13 px en teléfono) y la casilla «Mostrar las contraseñas» se desmarcaba tras un error. Sin desbordes a 375 px; alturas táctiles de 44 px.
+
+### Verificación (2026-11-24, local)
+
+| Comando | Resultado |
+|---|---|
+| `npx tsc --noEmit` | limpio |
+| `npm run lint` | limpio |
+| `npx prettier --check` de lo tocado (51 archivos) | limpio |
+| `npm run build` | compila (confirma que el archivo de acciones solo exporta funciones) |
+| `npm test` | **3.212 pasan**, 1 omitida, 205 archivos (antes 3.092: +120 nuevas) |
+| `npm run test:db` | **1.498 de 1.498** (sin cambios: no hay migraciones nuevas). Una corrida previa falló 3: dos eran filas del alcance `signup_email` que dejó mi recorrido a mano en `auth_rate_limits` (las pruebas de deshacer de migraciones anteriores las rechazan; borradas, pasan) y una era el plazo de 30 s de `text-snippets` con la máquina cargada (pasa sola) |
+| `npm run test:isolation` | **1.435 pasan** + 3 pendientes (antes 1.433: +2 guardias nuevas, 17 y 17b) |
+
+Tras un recorrido a mano con el registro, correr `delete from auth_rate_limits where scope = 'signup_email'` (o `db reset`) antes de `test:db:rollbacks` y de `test:db`.
+
+### Lo que NO se pudo verificar
+
+- **Turnstile real** (solo el adaptador `memory`), **Resend / SMTP real**, el Supabase alojado y las plantillas cargadas en su panel.
+- **iPhone real, Firefox, Safari, lector de pantalla.** Solo Chromium.
+- **Los e2e** (etapa 3), el ataque «último clic» de punta a punta y la concurrencia real de dos «Crear mi cuenta».
+- El estado «error al canjear (servidor caído)» de `/confirmar-correo` solo está probado con pruebas de componente, no en pantalla.
+- `signup-open-guard` y `check:auth-config` (no construidos, ver desviación 2).

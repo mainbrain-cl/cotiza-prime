@@ -428,12 +428,22 @@ describe("la migración member_invitation_creator y su deshacer", () => {
       await holder.query("rollback");
       await actAsPostgres(db);
       expect(await hasColumn()).toBe(true);
-      // (La vigente lleva además la línea del segundo paso de H-004a, que esta prueba no deshizo en la base real.)
+      // (La vigente lleva además la línea del segundo paso de H-004a y las de H-116 (sesión abierta y cuenta terminada), que esta
+      // prueba no deshizo en la base real.)
       expect(
-        (await definition(ACCEPT_SIG)).src.replace(
-          "  if app.second_step_pending() then\n    raise exception 'second_step_required' using errcode = '42501';\n  end if;\n",
-          "",
-        ),
+        (await definition(ACCEPT_SIG)).src
+          .replace(
+            "  if app.second_step_pending() then\n    raise exception 'second_step_required' using errcode = '42501';\n  end if;\n",
+            "",
+          )
+          .replace(
+            "  -- H-116: la sesión del pase sigue abierta.\n  if not app.session_alive() then\n    raise exception 'session_closed' using errcode = '42501';\n  end if;\n",
+            "",
+          )
+          .replace(
+            /  -- H-116: una cuenta sin terminar[^\n]*\n  if not app\.account_ready\(v_uid\) then\n    return jsonb_build_object\('result', 'unverified'\);\n  end if;\n/,
+            "",
+          ),
       ).toBe(functionBodyIn(up, "public.accept_invitation"));
     } finally {
       await holder.query("rollback").catch(() => undefined);

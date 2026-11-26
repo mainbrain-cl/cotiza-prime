@@ -1,5 +1,14 @@
 import { expect, randomTestIp, test, type Page } from "./fixtures";
-import { TEST_PASSWORD, createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
+import {
+  TEST_PASSWORD,
+  confirmEmailFromLink,
+  createTenant,
+  requestSignupLink,
+  signUpAndVerify,
+  submitAccountSetup,
+  uniqueEmail,
+  waitForAccountLink,
+} from "./helpers";
 
 // Cuentas, organizaciones y aislamiento de punta a punta (H-001, H-002, H-005, H-006).
 // Todo con correos únicos @ejemplo.test: no depende de datos previos ni los deja en conflicto.
@@ -29,13 +38,14 @@ test("registro, organizaciones, cambio, cierre de sesión y aislamiento", async 
     if (message.type() === "error") consoleErrors.push(message.text());
   });
 
-  // ── H-001: registro con verificación de correo ──────────────────────────────────────────────
-  await page.goto("/registro");
+  // ── H-001 / H-116: registro en dos pasos (correo → enlace → nombre y contraseña) ────────────
+  await requestSignupLink(page, emailA);
+  await confirmEmailFromLink(page, await waitForAccountLink(emailA));
+  // Con una contraseña corta y sin aceptar los términos: se dice cuál es el largo mínimo y se exige aceptar
   await page.getByLabel("Tu nombre").fill("Ana Ficticia");
-  await page.getByLabel("Correo").fill(emailA);
-  await page.getByLabel("Contraseña").fill("corta");
+  await page.locator("input[name=password]").fill("corta");
+  await page.locator("input[name=confirmPassword]").fill("corta");
   await page.getByRole("button", { name: "Crear mi cuenta" }).click();
-  // Sin aceptar términos y con contraseña corta: se dice cuál es el largo mínimo y se exige aceptar
   await expect(page.getByText("La contraseña debe tener al menos 10 caracteres.")).toBeVisible();
   await expect(page.getByText("Para crear tu cuenta debes aceptar los términos")).toBeVisible();
   await expect(
@@ -44,8 +54,8 @@ test("registro, organizaciones, cambio, cierre de sesión y aislamiento", async 
   await expect(
     page.getByRole("link", { name: "política de privacidad", exact: true }),
   ).toHaveAttribute("href", "/privacidad");
-
-  await signUpAndVerify(page, emailA, "Ana Ficticia");
+  await submitAccountSetup(page, "Ana Ficticia");
+  await expect(page).toHaveURL(/\/organizaciones\/nueva$/);
 
   // ── H-005: crear la primera organización (con aviso inmediato del RUT) ──────────────────────
   await expect(page.getByRole("heading", { name: "Crea tu primera organización" })).toBeVisible();

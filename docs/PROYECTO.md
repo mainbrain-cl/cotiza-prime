@@ -274,7 +274,9 @@ ni lo manda por fuera. Esa es la razón de ser del producto.
 
 ### 6.1 Registro y onboarding
 
-1. Alguien se registra con su correo y lo verifica. *(Sin verificación no se crea nada.)*
+1. Alguien se registra **en dos pasos** (H-116): primero escribe solo su correo y recibe un enlace; al abrirlo y confirmar,
+   elige su nombre y su contraseña y acepta los términos. *(Sin verificación no se crea nada, y ninguna contraseña existe
+   antes de verificar el correo: así nadie puede registrarse antes con el correo de otra persona.)*
 2. Crea su organización y queda como **Dueño**.
 3. Activa la **verificación en dos pasos**, obligatoria para el Dueño (§13.2).
 4. Entra al **onboarding**: un recorrido guiado que deja configurada casi toda la plataforma antes
@@ -796,6 +798,7 @@ emitir la cotización formal, no en el formulario.
 | Aperturas del enlace (IP, navegador) | 12 meses |
 | Cotizaciones, pagos y clientes de una organización activa | Mientras la organización esté activa |
 | Datos de una organización cancelada | 90 días archivados; después se borran o anonimizan |
+| Cuentas que no verificaron su correo o no terminaron de crearse (H-116: solo guardan el correo; el nombre y la aceptación de los términos se escriben recién al terminar la cuenta) | Propuesta: 7 días sin verificar y 30 días verificadas sin terminar. **La limpieza automática todavía no existe** (historia aparte, depende de la decisión nº 17); mientras tanto quedan hasta que se limpien a mano |
 | Invitaciones no aceptadas (correo del invitado) | 30 días después de vencer o cancelarse; el correo se vacía al aceptar *(supuesto 7 del sprint 5, por confirmar)* |
 | Avisos de activación del segundo paso y sus enlaces de anulación (`mfa_enrollment_alerts`, `mfa_annul_links`; H-118: no guardan el correo, solo códigos y la huella del enlace) | 30 días después de vencer el enlace de 72 horas (`expires_at` + 30 días; el aviso se borra cuando ya no le queda ningún enlace y tiene más de 30 días); el borrado va dentro de las funciones que los crean y los toman |
 | Códigos de respaldo del segundo paso (`mfa_recovery_codes`; H-004b: solo guardan la huella de cada código, nunca el código ni el correo) | Mientras la verificación en dos pasos esté activa. Se borran: al desactivarla desde la pantalla, al entrar con uno (se usa y se borra el resto del juego) y al activar de nuevo o generar otros (el juego nuevo reemplaza al anterior). Si el factor desaparece por otro camino (anular, revertir, soporte), los códigos dejan de servir al instante y se borran **a más tardar con la limpieza**: juegos cuyo factor ya no existe y tienen más de 1 día, hasta 100 filas por llamada, dentro de las funciones que los crean y los toman y solo cuando hay actividad de códigos. Un código usado se conserva 30 días como rastro; el rastro de quién usó o creó códigos es la auditoría (24 meses) |

@@ -35,18 +35,10 @@ async function newContext(browser: Browser, baseURL: string | undefined): Promis
   return browser.newContext({ baseURL, extraHTTPHeaders: { "x-forwarded-for": randomTestIp() } });
 }
 
-/** Una cuenta lista para ingresar (correo confirmado y términos aceptados), sin pasar por el registro. */
+/** Una cuenta lista para ingresar (correo confirmado, términos aceptados y cuenta terminada, H-116), sin pasar por el registro. */
 async function createAccount(label: string, fullName: string): Promise<string> {
   const email = uniqueEmail(label);
-  const legal = await withDb((db) =>
-    db.query<{ kind: string; version: string }>(
-      "select kind, version from public.legal_documents where is_current",
-    ),
-  );
-  await adminCreateUser(email, {
-    full_name: fullName,
-    accepted_legal: Object.fromEntries(legal.rows.map((row) => [row.kind, row.version])),
-  });
+  await adminCreateUser(email, { full_name: fullName }, { acceptLegal: true });
   return email;
 }
 

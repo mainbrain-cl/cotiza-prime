@@ -396,8 +396,10 @@ const SECOND_STEP_STRICT_LOG_FILES: readonly string[] = [
   "src/lib/auth/second-step-actions.ts",
   "src/lib/auth/second-step-checks.ts",
 ];
-/** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. La pasarela de H-116 se agrega aquí. */
-const AUTH_ADMIN_GATEWAYS: readonly string[] = [MFA_ADMIN_GATEWAY];
+/** La pasarela del registro en dos pasos (H-116): crea la cuenta sin contraseña y entrega el código del enlace. */
+const SIGNUP_GATEWAY = "src/lib/auth/signup-gateway.ts";
+/** Los únicos archivos de la aplicación que pueden nombrar `auth.admin`. */
+const AUTH_ADMIN_GATEWAYS: readonly string[] = [MFA_ADMIN_GATEWAY, SIGNUP_GATEWAY];
 
 /**
  * Lo que NUNCA puede llegar a `serverLog` ni a `logAuditEvent` en los avisos de activación y su enlace (H-118): el código
@@ -574,6 +576,22 @@ function intakeLogProblem(call: string): string | null {
   return null;
 }
 
+/** Lo que la pasarela del registro (H-116) NUNCA puede contener (guardia 17c). */
+const SIGNUP_GATEWAY_FORBIDDEN: readonly RegExp[] = [
+  /\bcreateUser\b/,
+  /\bemail_confirm\b/,
+  /\blistUsers\b/,
+  /\bdeleteUser\b/,
+  /\binviteUserByEmail\b/,
+  /\.from\(/,
+  /\.rpc\(/,
+  /\.storage\b/,
+  /\bconsole\./,
+  /\bserverLog\b|\blogAuditEvent\b/,
+  /type:\s*["'`](?!invite["'`])\w+["'`]/,
+  /\baction_link\b|\bemail_otp\b/,
+];
+
 describe("guardias estáticas del aislamiento", () => {
   it("1. el nombre de la cabecera de la organización solo está en constants.ts", () => {
     const offenders = sourceFiles
@@ -592,6 +610,7 @@ describe("guardias estáticas del aislamiento", () => {
       "src/lib/share/gateway.ts",
       "src/lib/intake/gateway.ts",
       "src/lib/team/gateway.ts",
+      "src/lib/auth/signup-gateway.ts",
       "src/lib/email/delivery-events-service.ts",
       "src/server/jobs/",
     ];
@@ -1324,8 +1343,8 @@ describe("guardias estáticas del aislamiento", () => {
     expect(only(MFA_RECOVERY_TABLE_PATTERN, [])).toEqual([]);
     // H-004b (C7): y el nombre de ninguna función se arma por partes en ningún archivo.
     expect(only(MFA_RECOVERY_SPLIT_NAME_PATTERN, [])).toEqual([]);
-    // La API de administración de cuentas (`auth.admin.*`, con la llave maestra): solo en las pasarelas. Hoy hay una (H-118);
-    // la de H-116 se suma a esta lista cuando exista. `auth.admin.mfa` solo vive en la de los factores.
+    // La API de administración de cuentas (`auth.admin.*`, con la llave maestra): solo en las pasarelas. Hoy hay dos: la de los
+    // factores (H-118) y la del registro (H-116). `auth.admin.mfa` solo vive en la de los factores.
     expect(only(AUTH_ADMIN_PATTERN, AUTH_ADMIN_GATEWAYS)).toEqual([]);
     expect(only(AUTH_ADMIN_MFA_PATTERN, MFA_ADMIN_GATEWAY)).toEqual([]);
     // H-004b: comprobar una contraseña (abrir una sesión con ella) solo se hace en el ingreso y en «pedir la contraseña de nuevo».
@@ -1939,6 +1958,152 @@ describe("guardias estáticas del aislamiento", () => {
       "logAuditEvent({ action: 'session.mfa_enroll_reverted', result: 'failure', actorUserId: user.id, details: { reason: 'provider_rejected', stage: 'enrollment' } })",
     ];
     for (const call of good) expect(annulLogViolation(call), call).toBeNull();
+  });
+
+  it("17. (H-116) el registro en dos pasos: nadie crea cuentas con contraseña desde la aplicación, la llave maestra de `src/lib/auth/` vive solo en la pasarela, y la pasarela solo hace lo que el diseño dice", () => {
+    // 17a. Ninguna parte de la aplicación registra con contraseña ni manda un enlace para entrar: el registro público de
+    // Supabase está apagado y las cuentas nacen solo en la pasarela (el correo lo envía nuestro servidor).
+    const signingUp = sourceFiles
+      .filter((f) => /\.signUp\s*\(|\bsignInWithOtp\s*\(/.test(stripComments(read(f))))
+      .map(rel);
+    expect(signingUp).toEqual([]);
+
+    // 17b. En `src/lib/auth/` solo la pasarela usa la llave maestra o la API de cuentas.
+    const inAuth = sourceFiles
+      .filter((f) => rel(f).startsWith("src/lib/auth/"))
+      .filter((f) =>
+        /admin-client|createAdminClient|SERVICE_ROLE|\bauth\s*\.\s*admin\b/.test(
+          stripComments(read(f)),
+        ),
+      )
+      .map(rel);
+    expect(inAuth).toEqual([SIGNUP_GATEWAY]);
+
+    // 17c. La pasarela solo llama a `generateLink({ type: "invite" })` y `updateUserById(id, { password })`, en este orden:
+    // enlace → contraseña al azar → enlace que se envía. Nunca crea con contraseña ni confirma el correo a mano, ni lista,
+    // borra o toca tablas.
+    const gateway = stripComments(read(path.join(ROOT, SIGNUP_GATEWAY)));
+    for (const forbidden of SIGNUP_GATEWAY_FORBIDDEN) {
+      expect(forbidden.test(gateway), String(forbidden)).toBe(false);
+    }
+    const links = [...gateway.matchAll(/generateLink\(\{\s*type:\s*"invite",\s*email\s*\}\)/g)];
+    expect(links).toHaveLength(2);
+    const password = gateway.indexOf("updateUserById(");
+    expect(password).toBeGreaterThan(links[0].index);
+    expect(password).toBeLessThan(links[1].index);
+    expect(gateway.match(/generateLink\(/g)).toHaveLength(2);
+    expect(gateway.match(/updateUserById\(/g)).toHaveLength(1);
+
+    // 17d. El enlace del correo se arma con `APP_ORIGIN` (nunca con la dirección de la petición) y ni el código ni el
+    // enlace llegan a un registro: el único dato del correo que puede llegar a la auditoría es su huella.
+    const service = stripComments(read(path.join(SRC, "lib/auth/signup-service.ts")));
+    expect(service).toMatch(/getAppOrigin\(\)/);
+    expect(/headers\(|request\.url|x-forwarded-host|\bhost\b/i.test(service)).toBe(false);
+    for (const file of [
+      "src/lib/auth/signup-actions.ts",
+      "src/lib/auth/signup-service.ts",
+      "src/lib/auth/signup-gateway.ts",
+      "src/lib/email/account-link.ts",
+    ]) {
+      const text = stripComments(read(path.join(ROOT, file)));
+      for (const name of ["serverLog", "logAuditEvent"]) {
+        for (const call of namedCalls(text, name)) {
+          const withoutAllowed = call.replace(/\bemailHash\b/g, "");
+          expect(
+            /\b(token\w*|hashed\w*|\w*sha256\w*|password\w*|email\w*|link\w*|url|address\w*|recipient\w*|secret\w*)\b/i.test(
+              withoutAllowed.replace(
+                /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
+                "''",
+              ),
+            ),
+            `${file}: ${call}`,
+          ).toBe(false);
+        }
+      }
+    }
+
+    // 17e. La configuración de Supabase que cierra el ataque (`config.toml`, valores de local): registro público apagado
+    // (y el proveedor Email encendido, para el ingreso con contraseña y la recuperación), correo confirmado, cambio de correo
+    // en dos clics, contraseña segura, código de 10 números y nada de ingreso anónimo, enlace manual ni proveedores externos.
+    const config = read(path.join(ROOT, "supabase", "config.toml"));
+    const section = (name: string) => {
+      // El encabezado va al inicio de una línea: un comentario puede nombrar `[auth.email]` sin ser el encabezado.
+      const heading = new RegExp(`^\\[${name.replaceAll(".", "\\.")}\\]\\s*$`, "m").exec(config);
+      expect(heading, `falta [${name}]`).not.toBeNull();
+      const start = heading!.index;
+      const next = config.indexOf("\n[", start + 1);
+      return config.slice(start, next === -1 ? undefined : next);
+    };
+    const setting = (name: string, key: string) =>
+      section(name).match(new RegExp(`^${key}\\s*=\\s*(.+?)\\s*$`, "m"))?.[1];
+    expect(setting("auth", "enable_signup")).toBe("false");
+    expect(setting("auth", "enable_anonymous_sign_ins")).toBe("false");
+    expect(setting("auth", "enable_manual_linking")).toBe("false");
+    expect(setting("auth.email", "enable_signup")).toBe("true");
+    expect(setting("auth.email", "enable_confirmations")).toBe("true");
+    expect(setting("auth.email", "double_confirm_changes")).toBe("true");
+    expect(setting("auth.email", "secure_password_change")).toBe("true");
+    expect(setting("auth.email", "otp_length")).toBe("10");
+    expect(Number(setting("auth", "minimum_password_length"))).toBeGreaterThanOrEqual(10);
+    const providers = [...config.matchAll(/^\[auth\.external\.([a-z_0-9]+)\]/gm)].map((m) => m[1]);
+    expect(providers).toContain("apple");
+    expect(setting("auth.web3.solana", "enabled")).toBe("false");
+    for (const provider of providers) {
+      expect(setting(`auth.external.${provider}`, "enabled"), `[auth.external.${provider}]`).toBe(
+        "false",
+      );
+    }
+    // 17f. El token de quien opera el proyecto de Supabase (API de gestión, `npm run check:auth-config`) vive solo en la máquina de
+    // quien corre el guion: la aplicación nunca lo nombra ni llama a esa API. El guion lo lee de la variable de entorno y nunca lo
+    // muestra.
+    const withManagementToken = sourceFiles
+      .filter((f) => /SUPABASE_ACCESS_TOKEN|api\.supabase\.com/.test(read(f)))
+      .map(rel);
+    expect(withManagementToken).toEqual([]);
+    const checkScript = stripComments(read(path.join(ROOT, "scripts", "check-auth-config.ts")));
+    expect(checkScript).toContain("process.env.SUPABASE_ACCESS_TOKEN");
+    expect(/console\.(log|error|info|warn)\([^)]*\btoken\b/.test(checkScript)).toBe(false);
+
+    // Las plantillas de Supabase que pueden salir sin que las envíe nuestro servidor no traen ningún enlace de confirmación.
+    for (const file of ["signup_link_unavailable.html", "email_change_unavailable.html"]) {
+      const html = read(path.join(ROOT, "supabase", "templates", file));
+      expect(/ConfirmationURL|TokenHash|\.Token\b|\.Data\b/.test(html), file).toBe(false);
+    }
+  });
+
+  it("17b. la guardia 17 detecta de verdad una pasarela que crea cuentas con contraseña, confirma el correo a mano, registra el enlace o toca tablas", () => {
+    const bad = [
+      "await admin.createUser({ email, password })",
+      "await admin.createUser({ email, email_confirm: true })",
+      "await admin.listUsers()",
+      "await admin.deleteUser(id)",
+      "await admin.inviteUserByEmail(email)",
+      'await admin.generateLink({ type: "signup", email, password })',
+      'await admin.generateLink({ type: "magiclink", email })',
+      'await createAdminClient().from("profiles").select()',
+      'await createAdminClient().rpc("my_account_ready")',
+      "const link = data.properties.action_link",
+      "const code = data.properties.email_otp",
+      "await serverLog('warn', 'x', {})",
+      "console.log(tokenHash)",
+    ];
+    for (const sample of bad) {
+      expect(
+        SIGNUP_GATEWAY_FORBIDDEN.some((pattern) => pattern.test(sample)),
+        sample,
+      ).toBe(true);
+    }
+    const good = [
+      'await admin.generateLink({ type: "invite", email })',
+      "await admin.updateUserById(account.id, { password: randomPassword() })",
+      "const tokenHash = second.data.properties?.hashed_token",
+    ];
+    for (const sample of good) {
+      expect(
+        SIGNUP_GATEWAY_FORBIDDEN.some((pattern) => pattern.test(sample)),
+        sample,
+      ).toBe(false);
+    }
   });
 
   it("7. la guardia detecta de verdad: el texto de una violación sí coincide con las reglas", () => {

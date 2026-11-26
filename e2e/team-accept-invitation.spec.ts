@@ -6,10 +6,13 @@ import { expect, randomTestIp, test } from "./fixtures";
 import {
   TEST_PASSWORD,
   createTenant,
-  openVerificationLink,
+  confirmEmailFromLink,
+  registerThroughGateway,
+  requestSignupLink,
   signUpAndVerify,
+  submitAccountSetup,
   uniqueEmail,
-  waitForVerificationLink,
+  waitForAccountLink,
 } from "./helpers";
 
 // H-009: aceptar una invitación. Invitar (como Dueño) → el correo llega a Mailpit → aceptar con una cuenta que ya
@@ -326,18 +329,15 @@ test("sin cuenta: se registra desde la invitación y queda unido al verificar su
     await expect(page).toHaveURL(`${baseURL}/invitacion`);
     await expect(page.getByTestId("invitation-signed-out")).toBeVisible();
 
-    // Crear la cuenta con el correo de la invitación.
+    // Crear la cuenta con el correo de la invitación (registro en dos pasos, H-116).
     await page.getByRole("link", { name: "Crear mi cuenta", exact: true }).click();
     await expect(page).toHaveURL(/\/registro$/);
-    await page.getByLabel("Tu nombre").fill("Nueva Invitada");
-    await page.getByLabel("Correo").fill(email);
-    await page.getByLabel("Contraseña").fill(TEST_PASSWORD);
-    await page.getByRole("checkbox", { name: /Acepto los/ }).check();
-    await page.getByRole("button", { name: "Crear mi cuenta" }).click();
-    await expect(page.getByTestId("signup-sent")).toBeVisible();
+    await requestSignupLink(page, email);
 
-    // Verifica el correo en el mismo navegador: vuelve a la invitación (no a «Crea tu primera organización»).
-    await openVerificationLink(page, await waitForVerificationLink(email, "Confirm"));
+    // Abre el enlace del correo en el mismo navegador, confirma y termina la cuenta: vuelve a la invitación (no a «Crea tu
+    // primera organización»).
+    await confirmEmailFromLink(page, await waitForAccountLink(email));
+    await submitAccountSetup(page, "Nueva Invitada");
     await expect(page).toHaveURL(`${baseURL}/invitacion`);
     await expect(page.getByTestId("invitation-sentence")).toHaveText(
       `${OWNER_NAME} te invitó a ${ORG_NAME} como Observador.`,
@@ -377,7 +377,7 @@ test("si verifica el correo en otro dispositivo, el inicio le recuerda abrir de 
   const phone = await newContext(browser, baseURL);
   try {
     const page = await phone.newPage();
-    await signUpAndVerify(page, email, "Otra Invitada");
+    await registerThroughGateway(page, email, "Otra Invitada");
     await expect(page.getByTestId("invited-hint")).toHaveText(
       "¿Te invitaron? Abre de nuevo el enlace del correo de la invitación.",
     );

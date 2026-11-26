@@ -25,6 +25,16 @@ export const SIGNUP_WINDOW_SECONDS = 15 * SECONDS_PER_MINUTE;
 export const SIGNUP_LOCK_SECONDS = 15 * SECONDS_PER_MINUTE;
 
 /**
+ * Enlaces del registro en dos pasos (H-116), por correo: 1 por minuto y 3 por hora. Cada pedido cuenta, exista o no la cuenta
+ * (así el tope tampoco revela nada). El pedido número N+1 es el que bloquea. Se guardan en el alcance `signup_email` con una
+ * huella distinta por ventana. Además rige el tope por IP de arriba (`signup_ip`).
+ */
+export const SIGNUP_LINK_MAX_PER_EMAIL_PER_MINUTE = 1;
+export const SIGNUP_LINK_MINUTE_WINDOW_SECONDS = SECONDS_PER_MINUTE;
+export const SIGNUP_LINK_MAX_PER_EMAIL_PER_HOUR = 3;
+export const SIGNUP_LINK_HOUR_WINDOW_SECONDS = 60 * SECONDS_PER_MINUTE;
+
+/**
  * Registros de "acceso denegado a una organización" que se escriben por persona y por ventana.
  * Pasado el tope se sigue respondiendo 404, pero ya no se escribe en la auditoría: quien prueba
  * direcciones ajenas no puede llenarla.
@@ -142,6 +152,8 @@ export type RateLimitScope =
   | "login_email"
   | "login_ip"
   | "signup_ip"
+  | "signup_email_minute"
+  | "signup_email_hour"
   | "tenant_denied_user"
   | "reset_email"
   | "reset_ip"
@@ -171,6 +183,9 @@ const STORAGE_SCOPE: Record<RateLimitScope, string> = {
   login_email: "login_email",
   login_ip: "login_ip",
   signup_ip: "signup_ip",
+  // H-116: dos ventanas del mismo alcance de la base; se distinguen por la huella (el nombre del campo).
+  signup_email_minute: "signup_email",
+  signup_email_hour: "signup_email",
   tenant_denied_user: "tenant_denied_user",
   reset_email: "login_email",
   reset_ip: "signup_ip",
@@ -208,6 +223,17 @@ const RULES: Record<RateLimitScope, Rule> = {
     maxFailures: SIGNUP_MAX_ATTEMPTS_PER_IP,
     windowSeconds: SIGNUP_WINDOW_SECONDS,
     lockSeconds: SIGNUP_LOCK_SECONDS,
+  },
+  // El pedido número N+1 es el que bloquea: los primeros N pasan.
+  signup_email_minute: {
+    maxFailures: SIGNUP_LINK_MAX_PER_EMAIL_PER_MINUTE + 1,
+    windowSeconds: SIGNUP_LINK_MINUTE_WINDOW_SECONDS,
+    lockSeconds: SIGNUP_LINK_MINUTE_WINDOW_SECONDS,
+  },
+  signup_email_hour: {
+    maxFailures: SIGNUP_LINK_MAX_PER_EMAIL_PER_HOUR + 1,
+    windowSeconds: SIGNUP_LINK_HOUR_WINDOW_SECONDS,
+    lockSeconds: SIGNUP_LINK_HOUR_WINDOW_SECONDS,
   },
   // El intento número N+1 es el que bloquea: los primeros N sí se registran.
   tenant_denied_user: {
@@ -450,6 +476,26 @@ export function isSignupLocked(ip: string | null): Promise<boolean> {
 /** Cada intento de registro cuenta (no hay "fallo" que distinguir sin revelar si el correo existía). */
 export function recordSignupAttempt(ip: string | null): Promise<boolean> {
   return failOpen("signup_attempt", false, () => recordAll(signupTargets(ip)));
+}
+
+/**
+ * ¿Se puede enviar otro enlace de registro a este correo ahora? Cuenta el pedido contra los dos topes (1 por minuto y 3 por
+ * hora) y responde `false` si alguno ya está bloqueado. Cuenta el pedido SIEMPRE, exista o no la cuenta: no revela nada. Si el
+ * pedido ya choca con el tope del minuto no gasta el de la hora. Si el contador falla, se deja pasar y se avisa en el log
+ * (siguen el tope por IP y los propios de Supabase).
+ */
+export async function consumeSignupLinkQuota(email: string): Promise<boolean> {
+  const address = normalizeEmail(email);
+  const minute: Target = {
+    scope: "signup_email_minute",
+    keyHash: searchHash("signup_email_minute", PLATFORM_TENANT_ID, address),
+  };
+  const hour: Target = {
+    scope: "signup_email_hour",
+    keyHash: searchHash("signup_email_hour", PLATFORM_TENANT_ID, address),
+  };
+  if (await failOpen("signup_email_minute", false, () => recordAll([minute]))) return false;
+  return !(await failOpen("signup_email_hour", false, () => recordAll([hour])));
 }
 
 /**

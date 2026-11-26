@@ -16,6 +16,9 @@ ensureTestCryptoEnv();
 // Los archivos que usan la fixture de aislamiento (personas con sesión ya iniciada) corren en el proyecto
 // `isolation`; `chromium` crea sus propias cuentas y organizaciones en cada prueba.
 const ISOLATION_FILES = /(isolation\.(setup|spec)|roles\.spec)\.ts$/;
+// H-116: las pruebas que quitan el disparador `forbid_email_change` de `auth.users` mientras corren (segunda barrera del cambio de
+// correo). Cambian la base entera: van en su propio proyecto, con UN trabajador, y nunca a la vez que otra suite.
+const TRIGGER_OFF_FILES = /email-change-trigger-off\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -27,7 +30,19 @@ export default defineConfig({
   reporter: "list",
   use: { baseURL: `http://localhost:${PORT}`, trace: "on-first-retry" },
   projects: [
-    { name: "chromium", testIgnore: ISOLATION_FILES, use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "chromium",
+      testIgnore: [ISOLATION_FILES, TRIGGER_OFF_FILES],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // H-116: corre solo, con `--project=trigger-off` y después de las demás suites (ver el archivo).
+    {
+      name: "trigger-off",
+      testMatch: TRIGGER_OFF_FILES,
+      fullyParallel: false,
+      retries: 0,
+      use: { ...devices["Desktop Chrome"] },
+    },
     // H-012: arma la fixture de aislamiento e inicia sesión como cada persona.
     {
       name: "isolation-setup",

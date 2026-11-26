@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
  * Cliente con la llave maestra (`service_role`): se salta TODA la seguridad por fila.
  *
  * Reglas (docs/arquitectura/modelo-datos.md §4.6):
- * - Solo se importa desde `src/lib/audit/`, `src/lib/security/`, `src/lib/brand/logo-storage.ts`, `src/lib/quotes/send/document-storage.ts`, `src/lib/share/gateway.ts`, `src/lib/intake/gateway.ts`, `src/lib/team/gateway.ts`, `src/lib/email/delivery-events-service.ts`, `src/server/jobs/`, `scripts/` y `tests/`; una regla
+ * - Solo se importa desde `src/lib/audit/`, `src/lib/security/`, `src/lib/brand/logo-storage.ts`, `src/lib/quotes/send/document-storage.ts`, `src/lib/share/gateway.ts`, `src/lib/intake/gateway.ts`, `src/lib/team/gateway.ts`, `src/lib/auth/signup-gateway.ts`, `src/lib/email/delivery-events-service.ts`, `src/server/jobs/`, `scripts/` y `tests/`; una regla
  *   del linter lo exige.
  * - Nunca se usa para leer ni escribir datos de negocio en respuesta a una petición de usuario.
  * - La llave nunca lleva el prefijo `NEXT_PUBLIC_`.

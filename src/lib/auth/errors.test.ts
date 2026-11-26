@@ -6,6 +6,7 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   signInSchema,
+  createAccountSchema,
   signUpSchema,
   totpCodeSchema,
 } from "./schemas";
@@ -70,33 +71,79 @@ describe("restablecer contraseña (H-003)", () => {
 });
 
 describe("schemas de cuenta", () => {
-  const valid = {
-    fullName: "  Ana Pérez ",
-    email: " ANA@Ejemplo.test ",
-    password: "una-clave-larga",
-    acceptLegal: "on",
-  };
+  const valid = { email: " ANA@Ejemplo.test ", antibotToken: "test-pass" };
 
-  it("normaliza nombre y correo", () => {
+  it("el paso 1 del registro pide solo el correo (y la prueba anti-robot) y lo normaliza", () => {
     const parsed = signUpSchema.parse(valid);
-    expect(parsed.fullName).toBe("Ana Pérez");
     expect(parsed.email).toBe("ana@ejemplo.test");
+    // Nada de nombre, contraseña ni términos: eso se pide después de confirmar el correo.
+    expect(Object.keys(parsed).sort()).toEqual(["antibotToken", "email"]);
   });
 
-  it("exige al menos 10 caracteres y lo dice", () => {
-    const result = signUpSchema.safeParse({ ...valid, password: "corta" });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(fieldErrorsOf(result.error).password).toContain("10 caracteres");
-    }
+  it("exige la prueba anti-robot y un correo con forma de correo", () => {
+    const missing = signUpSchema.safeParse({ email: "ana@ejemplo.test" });
+    expect(missing.success).toBe(false);
+    if (!missing.success) expect(fieldErrorsOf(missing.error).antibotToken).toContain("robot");
+    const empty = signUpSchema.safeParse({ ...valid, antibotToken: "" });
+    expect(empty.success).toBe(false);
+    expect(signUpSchema.safeParse({ ...valid, email: "no-es-correo" }).success).toBe(false);
   });
 
-  it("exige aceptar términos y privacidad", () => {
-    const result = signUpSchema.safeParse({ ...valid, acceptLegal: undefined });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(fieldErrorsOf(result.error).acceptLegal).toContain("términos");
-    }
+  describe("terminar la cuenta (H-116, paso 2)", () => {
+    const account = {
+      fullName: "  Ana Pérez ",
+      password: "una-clave-larga",
+      confirmPassword: "una-clave-larga",
+      acceptLegal: "on",
+      termsVersion: "2026-10-01-preliminar",
+      privacyVersion: "2026-10-01-preliminar",
+    };
+
+    it("normaliza el nombre", () => {
+      expect(createAccountSchema.parse(account).fullName).toBe("Ana Pérez");
+    });
+
+    it("exige al menos 10 caracteres y lo dice", () => {
+      const result = createAccountSchema.safeParse({
+        ...account,
+        password: "corta",
+        confirmPassword: "corta",
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(fieldErrorsOf(result.error).password).toContain("10 caracteres");
+      }
+    });
+
+    it("exige que las dos contraseñas sean iguales", () => {
+      const result = createAccountSchema.safeParse({
+        ...account,
+        confirmPassword: "otra-distinta",
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(fieldErrorsOf(result.error).confirmPassword).toBe("Las contraseñas no coinciden.");
+      }
+    });
+
+    it("exige aceptar términos y privacidad", () => {
+      const result = createAccountSchema.safeParse({ ...account, acceptLegal: undefined });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(fieldErrorsOf(result.error).acceptLegal).toContain("términos");
+      }
+    });
+
+    it("exige nombre, sin caracteres de control y de hasta 120", () => {
+      for (const fullName of ["   ", "", "Ana\u0000Pérez", "x".repeat(121)]) {
+        const result = createAccountSchema.safeParse({ ...account, fullName });
+        expect(result.success, JSON.stringify(fullName)).toBe(false);
+        if (!result.success) expect(fieldErrorsOf(result.error).fullName).toBeTruthy();
+      }
+      expect(createAccountSchema.safeParse({ ...account, fullName: "x".repeat(120) }).success).toBe(
+        true,
+      );
+    });
   });
 
   it("rechaza correos mal escritos al ingresar", () => {

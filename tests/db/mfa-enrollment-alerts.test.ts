@@ -430,6 +430,8 @@ describe("mfa_alerts_reserve, mfa_alert_settle y mfa_alert_revert", () => {
       });
 
       const mute = await pendingAlert(db);
+      // H-116: el disparador prohíbe cambiar el correo; soporte lo hace con el interruptor (solo en esta transacción).
+      await db.query("select set_config('app.allow_email_change', 'on', true)");
       await db.query("update auth.users set email = null where id = $1", [mute.user.id]);
       const got = await reserve(db, mute.user.id);
       expect(got).toMatchObject({ reserved: true, email: null, expires_at: null });

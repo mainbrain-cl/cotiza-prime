@@ -97,8 +97,10 @@ describe("cabeceras de la invitación (H-009, corrección I1)", () => {
     const withOpener = rules.filter((r) =>
       r.headers.some((h) => h.key === "Cross-Origin-Opener-Policy"),
     );
-    // Las dos pantallas que se abren con un código en la dirección: la invitación y anular la activación del segundo paso.
+    // Las pantallas que se abren con un código en la dirección: confirmar el correo del registro (H-116), anular la
+    // activación del segundo paso y la invitación.
     expect(withOpener.map((r) => r.source).sort()).toEqual([
+      "/confirmar-correo",
       "/cuenta/anular-dos-pasos",
       "/invitacion/:path*",
     ]);
@@ -115,5 +117,42 @@ describe("cabeceras de anular la activación del segundo paso (H-118b)", () => {
     expect(value("Referrer-Policy")).toBe("no-referrer");
     expect(value("X-Robots-Tag")).toBe("noindex, nofollow");
     expect(value("Cross-Origin-Opener-Policy")).toBe("same-origin");
+  });
+});
+
+describe("cabeceras del registro en dos pasos (H-116)", () => {
+  it("/confirmar-correo lleva el código del enlace en la dirección: no se guarda, no se indexa, no pasa la dirección y no deja que otro sitio controle la ventana", async () => {
+    const rules = await nextConfig.headers!();
+    const rule = rules.find((r) => r.source === "/confirmar-correo");
+    expect(rule, "falta la regla de /confirmar-correo").toBeDefined();
+    const value = (key: string) => rule!.headers.find((h) => h.key === key)?.value ?? "";
+    expect(value("Cache-Control")).toBe("private, no-store, max-age=0");
+    expect(value("Referrer-Policy")).toBe("no-referrer");
+    expect(value("X-Robots-Tag")).toBe("noindex, nofollow");
+    expect(value("Cross-Origin-Opener-Policy")).toBe("same-origin");
+  });
+
+  it("/crear-cuenta (muestra el correo de quien se registra) no se guarda, no se indexa y no pasa la dirección", async () => {
+    const rules = await nextConfig.headers!();
+    const cache = rules.find(
+      (r) => r.source === "/crear-cuenta" && r.headers.some((h) => h.key === "Cache-Control"),
+    );
+    const privacy = rules.find(
+      (r) => r.source === "/crear-cuenta" && r.headers.some((h) => h.key === "Referrer-Policy"),
+    );
+    expect(cache?.headers.find((h) => h.key === "Cache-Control")?.value).toBe(
+      "private, no-store, max-age=0",
+    );
+    expect(privacy?.headers.find((h) => h.key === "Referrer-Policy")?.value).toBe("no-referrer");
+    expect(privacy?.headers.find((h) => h.key === "X-Robots-Tag")?.value).toBe("noindex, nofollow");
+  });
+
+  it("/registro conserva toda la política base: solo la abre a la prueba anti-robot y sigue sin poder enmarcarse", async () => {
+    const rules = await nextConfig.headers!();
+    const rule = rules.find((r) => r.source === "/registro");
+    const csp = rule?.headers.find((h) => h.key === "Content-Security-Policy")?.value ?? "";
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("form-action 'self'");
   });
 });

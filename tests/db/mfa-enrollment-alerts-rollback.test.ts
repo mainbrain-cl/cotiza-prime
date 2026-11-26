@@ -9,7 +9,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { actAsPostgres, connect, createUser, expectSqlError, withTx } from "./helpers";
+import { withTxBeforeAccountSetup as withTx } from "./before-account-setup";
+import { actAsPostgres, connect, createUser, expectSqlError } from "./helpers";
 import { functionBodyIn } from "./migration-files";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "supabase");

@@ -417,35 +417,31 @@ describe("términos y consentimiento", () => {
     );
   }
 
-  it("el registro crea el perfil y registra la aceptación solo de las versiones vigentes", () =>
+  it("el registro crea el perfil sin terminar y anota el correo de alta; los metadatos de quien crea la cuenta ya NO registran la aceptación (H-116)", () =>
     withTx(db, async () => {
       await publishTestDocuments();
       const ok = await createUser(db, {
+        ready: false,
         meta: {
           full_name: "Ana Ficticia",
           accepted_legal: { terms: "v-test-1", privacy: "v-test-1" },
         },
       });
-      const partial = await createUser(db, {
-        meta: { accepted_legal: { terms: "v-test-1", privacy: "version-vieja" } },
-      });
-      const none = await createUser(db);
+      const none = await createUser(db, { ready: false });
 
       expect(
-        (
-          await one<{ full_name: string }>(
-            "select full_name from public.profiles where user_id = $1",
-            [ok.id],
-          )
-        ).full_name,
-      ).toBe("Ana Ficticia");
+        await one<{ full_name: string; signup_email: string; ready: boolean }>(
+          "select full_name, signup_email, account_ready_at is not null as ready from public.profiles where user_id = $1",
+          [ok.id],
+        ),
+      ).toEqual({ full_name: "Ana Ficticia", signup_email: ok.email, ready: false });
       const count = (id: string) =>
-        one<{ n: string; ctx: string | null }>(
-          "select count(*) as n, min(context) as ctx from public.legal_acceptances where user_id = $1",
+        one<{ n: string }>(
+          "select count(*) as n from public.legal_acceptances where user_id = $1",
           [id],
         );
-      expect(await count(ok.id)).toEqual({ n: "2", ctx: "signup" });
-      expect((await count(partial.id)).n).toBe("1");
+      // Quien crea la cuenta puede no ser la persona: ninguna aceptación sale de los metadatos
+      expect((await count(ok.id)).n).toBe("0");
       expect((await count(none.id)).n).toBe("0");
       // el perfil se creó igual, con el nombre sacado del correo
       expect(

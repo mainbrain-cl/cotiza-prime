@@ -11,6 +11,7 @@ export type AuditAction =
   | "session.login_failed"
   | "session.login_locked"
   | "session.password_reset_requested"
+  | "session.signup_requested"
   | "session.password_changed"
   | "session.mfa_enrolled"
   | "session.mfa_enroll_reverted"

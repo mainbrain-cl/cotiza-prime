@@ -127,7 +127,7 @@ export const RESULT_MESSAGES: Readonly<
   wrong_email:
     "Esta invitación es para otro correo. Ingresa con el correo al que llegó la invitación.",
   unverified:
-    "Primero verifica tu correo con el enlace que te enviamos y luego vuelve a abrir la invitación.",
+    "Antes de unirte, confirma tu correo y termina de crear tu cuenta. Luego vuelve a abrir la invitación.",
   rate_limited: "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
 };
 

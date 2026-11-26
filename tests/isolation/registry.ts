@@ -632,6 +632,16 @@ export const RPC_CASES: Record<string, RpcCase> = {
     writesActiveTenant: false,
   },
   my_last_tenant_id: { args: {}, writesActiveTenant: false },
+  // H-116 · terminar la cuenta (solo desde una sesión de enlace del correo). No reciben organización: solo miran la cuenta de quien llama.
+  account_setup_preflight: {
+    args: { p_full_name: "Ataque", p_terms_version: "ataque", p_privacy_version: "ataque" },
+    writesActiveTenant: false,
+  },
+  my_account_ready: { args: {}, writesActiveTenant: false },
+  complete_account_setup: {
+    args: { p_full_name: "Ataque", p_terms_version: "ataque", p_privacy_version: "ataque" },
+    writesActiveTenant: false,
+  },
   // Ataque: apuntar el logo a un archivo que no existe en la carpeta de la organización activa.
   save_tenant_brand: {
     args: {
@@ -964,6 +974,11 @@ export const APP_ROUTES: AppRoute[] = [
   // del enlace, de un solo uso) hace algo. La acción pasa por el servicio de anulación, nunca por una organización.
   { path: "/cuenta/anular-dos-pasos", kind: "page", scope: "none" },
   { path: "/registro", kind: "page", scope: "none" },
+  // H-116: el registro en dos pasos. `/confirmar-correo` es pública y sin sesión (abrirla no gasta el código del enlace; solo el
+  // clic lo canjea por una sesión); `/crear-cuenta` es la única pantalla que acepta una cuenta sin terminar y solo sirve con la
+  // sesión que abrió ese enlace (la base lo exige). Ninguna toca una organización.
+  { path: "/confirmar-correo", kind: "page", scope: "none" },
+  { path: "/crear-cuenta", kind: "page", scope: "none" },
   { path: "/aceptar-terminos", kind: "page", scope: "none" },
   { path: "/recuperar-contrasena", kind: "page", scope: "none" },
   { path: "/restablecer-contrasena", kind: "page", scope: "none" },

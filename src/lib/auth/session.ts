@@ -13,6 +13,8 @@
  * - `refreshSession`: lo usa el proxy (`src/proxy.ts`) en cada petición para renovar el pase antes
  *   de que venza, porque los componentes de servidor no pueden escribir cookies. El proxy solo
  *   renueva; nunca decide quién entra.
+ * - La puerta de la cuenta terminada (H-116): una cuenta creada por el registro en dos pasos que todavía no eligió su
+ *   nombre y su contraseña (`my_account_ready()` en la base) solo puede ir a `/crear-cuenta` y cerrar sesión.
  * - La puerta de términos: si falta aceptar alguna versión vigente, `requireUser` redirige a
  *   "Acepta la nueva versión".
  */
@@ -21,7 +23,13 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse, type NextRequest } from "next/server";
 import { cache } from "react";
-import { ACCEPT_TERMS_PATH, HOME_PATH, LOGIN_PATH, SECOND_STEP_PATH } from "@/lib/auth/paths";
+import {
+  ACCEPT_TERMS_PATH,
+  CREATE_ACCOUNT_PATH,
+  HOME_PATH,
+  LOGIN_PATH,
+  SECOND_STEP_PATH,
+} from "@/lib/auth/paths";
 import { hardenCookieOptions } from "@/lib/supabase/cookies";
 import { createClient } from "@/lib/supabase/server";
 
@@ -101,8 +109,8 @@ export const getOptionalUser = cache(async (): Promise<SessionUser | null> => {
 /** Cookie de corta vida que deja `/auth/recuperar` al canjear el enlace del correo (H-003). */
 const RECOVERY_COOKIE = "cp_recovery";
 const RECOVERY_COOKIE_MAX_AGE_SECONDS = 15 * 60;
-/** Métodos con que Supabase marca una sesión nacida de un enlace del correo. */
-const EMAIL_LINK_METHODS = new Set(["otp", "recovery"]);
+/** Métodos con que Supabase marca una sesión nacida de un enlace del correo (medido en H-116: el invite y la recuperación traen `otp`). */
+const EMAIL_LINK_METHODS = new Set(["otp", "recovery", "magiclink", "invite"]);
 
 /** Marca la sesión recién abierta con el enlace de recuperación. Solo `/auth/recuperar` la llama. */
 export async function markRecoverySession(): Promise<void> {
@@ -121,14 +129,12 @@ export async function clearRecoverySession(): Promise<void> {
 }
 
 /**
- * ¿La sesión actual nació del enlace de recuperación del correo? Exige dos señales a la vez:
- * la marca que dejó `/auth/recuperar` y que el pase verificado diga que la sesión se abrió con un
- * enlace del correo (`amr`: `otp`; Supabase no usa `recovery` aquí) y no con contraseña. Una
- * sesión normal, aunque alguien le agregue la cookie, no pasa.
+ * ¿La sesión actual nació de un enlace del correo y no de la contraseña? Lo dice el pase verificado (`amr`): algún método de
+ * enlace (`otp`, que es el que trae el enlace de registro y el de recuperación) y ninguno `password`. Es una comprobación de
+ * cortesía de la aplicación (para mostrar el mensaje correcto y no fijar una contraseña en vano): la que decide de verdad es la
+ * base (`complete_account_setup` mira lo mismo). Una sesión de contraseña no pasa, aunque alguien le agregue cookies.
  */
-export async function hasRecoverySession(): Promise<boolean> {
-  const store = await cookies();
-  if (store.get(RECOVERY_COOKIE)?.value !== "1") return false;
+export async function hasEmailLinkSession(): Promise<boolean> {
   const supabase = await createClient();
   const { data, error } = await supabase.auth.getClaims();
   if (error || !data) return false;
@@ -137,6 +143,27 @@ export async function hasRecoverySession(): Promise<boolean> {
   );
   return methods.some((m) => EMAIL_LINK_METHODS.has(m)) && !methods.includes("password");
 }
+
+/**
+ * ¿La sesión actual nació del enlace de recuperación del correo? Exige dos señales a la vez: la marca que dejó
+ * `/auth/recuperar` y que el pase diga que la sesión se abrió con un enlace del correo (`hasEmailLinkSession`).
+ */
+export async function hasRecoverySession(): Promise<boolean> {
+  const store = await cookies();
+  if (store.get(RECOVERY_COOKIE)?.value !== "1") return false;
+  return hasEmailLinkSession();
+}
+
+/**
+ * ¿La cuenta de esta persona está terminada (nombre y contraseña elegidos desde la sesión del enlace del correo, H-116)? Lo
+ * responde la base (`my_account_ready`); ante cualquier fallo de lectura se asume que NO (es el lado seguro: la pantalla de
+ * terminar la cuenta lo vuelve a comprobar y, si la base sigue sin responder, lo dice en vez de dejar pasar).
+ */
+export const isAccountReady = cache(async (): Promise<boolean> => {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("my_account_ready");
+  return !error && data === true;
+});
 
 /** ¿Aceptó esta persona todas las versiones vigentes de términos y privacidad? */
 const hasAcceptedCurrentLegal = cache(async (userId: string): Promise<boolean> => {
@@ -154,17 +181,21 @@ const hasAcceptedCurrentLegal = cache(async (userId: string): Promise<boolean> =
 type RequireUserOptions = {
   /** Solo la pantalla "Acepta la nueva versión" lo usa: no puede exigir lo que está resolviendo. */
   skipLegalGate?: boolean;
+  /** Solo `/crear-cuenta` y sus acciones lo usan: no pueden exigir una cuenta terminada. */
+  skipSetupGate?: boolean;
 };
 
 /**
  * Devuelve al usuario con sesión COMPLETA, o redirige: sin sesión a ingresar; con sesión parcial (falta el código de
- * la verificación en dos pasos) a la pantalla del código, ANTES de mirar los términos; y, si faltan términos
+ * la verificación en dos pasos) a la pantalla del código, ANTES de mirar lo demás; con la cuenta sin terminar (H-116) a
+ * `/crear-cuenta`, ANTES de los términos (quien no terminó la cuenta todavía no los aceptó); y, si faltan términos
  * vigentes por aceptar, a «Acepta la nueva versión».
  */
 export async function requireUser(options: RequireUserOptions = {}): Promise<SessionUser> {
   const state = await getSessionState();
   if (state.status === "signed_out") redirect(LOGIN_PATH);
   if (state.status === "second_step_pending") redirect(SECOND_STEP_PATH);
+  if (!options.skipSetupGate && !(await isAccountReady())) redirect(CREATE_ACCOUNT_PATH);
   if (!options.skipLegalGate && !(await hasAcceptedCurrentLegal(state.user.id))) {
     redirect(ACCEPT_TERMS_PATH);
   }

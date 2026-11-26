@@ -823,4 +823,63 @@ test.describe("Sin sesión", () => {
     await expect(page).toHaveURL(/\/ingresar/);
     expect(await page.content()).not.toContain(fx.orgs.A.canary);
   });
+
+  test("P31 · (H-116) sin sesión, «Termina de crear tu cuenta» y «Confirma tu correo» no muestran ni crean nada: piden un enlace nuevo", async ({
+    page,
+  }) => {
+    const fx = loadFixture();
+    // Sin la sesión que abrió el enlace del correo no hay nada que terminar.
+    await page.goto("/crear-cuenta");
+    await expect(page.getByTestId("create-account-expired")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Pedir un enlace nuevo" })).toBeVisible();
+    // Un enlace inventado dice lo mismo que uno vencido y no revela nada de nadie.
+    await page.goto(`/confirmar-correo?token_hash=${"a".repeat(56)}&type=invite`);
+    await page.getByRole("button", { name: "Continuar" }).click();
+    await expect(page.getByTestId("confirm-email-expired")).toBeVisible();
+    const text = await page.locator("body").innerText();
+    expect(text).not.toContain(fx.orgs.A.canary);
+    expect(text).not.toContain("ejemplo.test");
+    // Nada de esto abrió una sesión.
+    await page.goto(`/o/${fx.orgs.A.tenantId}`);
+    await expect(page).toHaveURL(/\/ingresar/);
+  });
+});
+
+test.describe("Ana (cuenta terminada) frente al registro en dos pasos (H-116)", () => {
+  test.use({ storageState: stateFile("ana") });
+
+  test("P32 · una cuenta terminada, con su sesión de contraseña, no puede usar «Termina de crear tu cuenta» ni volver a «terminarla»: sigue de largo y su perfil no cambia", async ({
+    page,
+  }) => {
+    const fx = loadFixture();
+    const before = await withDb(async (db) => {
+      const { rows } = await db.query<{ full_name: string; ready: string; signup_email: string }>(
+        `select p.full_name, p.account_ready_at::text as ready, p.signup_email
+           from public.profiles p where p.user_id = $1`,
+        [fx.personas.ana.userId],
+      );
+      return rows[0];
+    });
+    await page.goto("/crear-cuenta");
+    await expect(page).not.toHaveURL(/\/crear-cuenta$/);
+    // «Crea tu cuenta» tampoco se ofrece a quien ya tiene sesión.
+    await page.goto("/registro");
+    await expect(page).not.toHaveURL(/\/registro$/);
+    // Un enlace del registro abierto con una sesión ajena no la cambia ni muestra datos.
+    await page.goto(`/confirmar-correo?token_hash=${"b".repeat(56)}&type=invite`);
+    await page.getByRole("button", { name: "Continuar" }).click();
+    await expect(page.getByTestId("confirm-email-expired")).toBeVisible();
+    await page.goto(`/o/${fx.orgs.A.tenantId}`);
+    await expect(page).toHaveURL(new RegExp(`/o/${fx.orgs.A.tenantId}$`));
+    const after = await withDb(async (db) => {
+      const { rows } = await db.query<{ full_name: string; ready: string; signup_email: string }>(
+        `select p.full_name, p.account_ready_at::text as ready, p.signup_email
+           from public.profiles p where p.user_id = $1`,
+        [fx.personas.ana.userId],
+      );
+      return rows[0];
+    });
+    expect(after).toEqual(before);
+    expect(after.ready).not.toBeNull();
+  });
 });

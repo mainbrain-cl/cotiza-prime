@@ -62,6 +62,8 @@ const nextConfig: NextConfig = {
         "/organizaciones/:path*",
         "/aceptar-terminos",
         "/ingresar/codigo",
+        // H-116: terminar la cuenta muestra el correo de quien se registra.
+        "/crear-cuenta",
         "/cuenta/:path*",
       ].map((source) => ({
         source,
@@ -85,6 +87,33 @@ const nextConfig: NextConfig = {
           { key: "X-Robots-Tag", value: "noindex, nofollow" },
           { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
         ],
+      },
+      // Confirmar el correo del registro (H-116): `/confirmar-correo?token_hash=…` lleva el código del enlace en la dirección. Nada
+      // se guarda en cachés ni en buscadores, al salir no se manda la dirección a ningún sitio y, con
+      // `Cross-Origin-Opener-Policy: same-origin`, si otro sitio la abre en una ventana nueva, ese sitio no puede controlarla ni
+      // verla. Abrir la página no gasta el código (solo el clic en «Continuar»).
+      {
+        source: "/confirmar-correo",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store, max-age=0" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+        ],
+      },
+      // Terminar de crear la cuenta (H-116): muestra el correo de la cuenta y viene de un enlace del correo.
+      {
+        source: "/crear-cuenta",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+      // El registro (H-116) lleva la prueba anti-robot: con Turnstile, su política se abre SOLO a Cloudflare (la misma del
+      // formulario público).
+      {
+        source: "/registro",
+        headers: [{ key: "Content-Security-Policy", value: publicFormContentSecurityPolicy }],
       },
       // La invitación (H-009): `/invitacion/:código` lleva el código secreto de la invitación. Nada se guarda en
       // cachés ni en buscadores, y al salir no se manda la dirección a ningún sitio.

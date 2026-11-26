@@ -32,11 +32,26 @@ de la base exige una decisión registrada en `docs/decisiones/`.
 ## Estado
 
 **Fase 4 — Desarrollo.** Plan, historias y sprint 1 aprobados (Compuerta 3 cruzada el
-2026-10-01). Forma de trabajo: decisión 013. Las decisiones están en `docs/decisiones/`.
+2026-10-01). Las decisiones están en `docs/decisiones/`.
+
+## Regla vigente: avance rápido y producto funcional (decisiones 022 y 023)
+
+**Lee primero `docs/decisiones/023-mvp-infraestructura-y-forma-de-trabajo.md` (Aarón, 2026-11-26).** Manda sobre lo que la
+contradiga en este archivo, en los sprints y en los traspasos. En corto:
+
+- **Objetivo: terminar el MVP y presentárselo a JC y a Aarón** para recoger sus comentarios. MVP = armar, enviar y dejar
+  registro de cada cotización. Aprobaciones, cobro y lo demás va después de la presentación. No entran historias nuevas antes.
+- **GitHub y Vercel, siempre en la agencia** (`mainbrain-cl` y equipo `mb`). **Supabase: plan gratis, un proyecto de pruebas y
+  uno de producción**, con un correo propio del proyecto que guarda el responsable; Pro solo al final, cuando sea público.
+- **Dominio:** se le pregunta a JC; si no pide uno, subdominio de mainbrain.cl. **El abogado no detiene el avance.**
+- **CI sin minutos:** se espera el reinicio del cupo; antes de subir se corre en local lo afectado (022).
+- **La base se aplica con criterio:** seguridad base siempre (base de datos, ingreso, autenticación); lo demás según el riesgo.
+  **Subagentes en paralelo según la capacidad del PC**, modelo según la dificultad, **una revisión con límite** y una sola vuelta
+  de correcciones (solo crítico o alto).
 
 ## Para retomar (actualizado 2026-11-24)
 
-Al abrir una sesión nueva, **parte por aquí**.
+Al abrir una sesión nueva, **parte por aquí** (después de la regla vigente de arriba).
 
 **Sprint 1 — ✅ cerrado el 2026-10-01** (Aarón lo probó en pantalla; cierre en `docs/sprints/001-base-segura.md`).
 Las 10 historias están integradas en `main`, revisadas por Opus (H-012 por separado) y con los
@@ -368,6 +383,9 @@ como administrador, y de nuevo `npx supabase start` (pasó el 2026-10-30; no bor
 **Repositorio:** `github.com/mainbrain-cl/cotiza-prime` (antes `avronygg/cotiza-prime`, que redirige), privado, rama `main`.
 
 ## Cómo se trabaja cada historia
+
+> **Ajustado por las decisiones 022 y 023:** sin diseño previo obligatorio del `planificador`, revisiones con límite y
+> subagentes según la capacidad del PC. Donde este apartado diga otra cosa, mandan ellas.
 
 Según la decisión 013: la sesión principal coordina y no programa directo. Subagentes con
 **Sonnet** construyen, 2 o 3 en paralelo en copias aisladas cuando las historias no se tocan entre

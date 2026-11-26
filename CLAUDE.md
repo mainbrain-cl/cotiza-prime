@@ -45,6 +45,9 @@ contradiga en este archivo, en los sprints y en los traspasos. En corto:
   uno de producción**, con un correo propio del proyecto que guarda el responsable; Pro solo al final, cuando sea público.
 - **Dominio:** se le pregunta a JC; si no pide uno, subdominio de mainbrain.cl. **El abogado no detiene el avance.**
 - **CI sin minutos:** se espera el reinicio del cupo; antes de subir se corre en local lo afectado (022).
+- **Criterio de MVP (023 §2b):** ante cada tarea, *«¿sin esto se puede cotizar, enviar y hacer seguimiento?»*. Si sí, no se
+  hace ahora: se anota. Nada de anti-robot nuevo, Sentry, blindajes de cuenta ni pruebas exhaustivas. Lo ya construido no se
+  desarma: se configura lo mínimo (Turnstile: claves gratis y listo). No proponer controles nuevos ni preguntas técnicas en lote.
 - **La base se aplica con criterio:** seguridad base siempre (base de datos, ingreso, autenticación); lo demás según el riesgo.
   **Subagentes en paralelo según la capacidad del PC**, modelo según la dificultad, **una revisión con límite** y una sola vuelta
   de correcciones (solo crítico o alto).

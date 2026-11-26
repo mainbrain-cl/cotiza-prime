@@ -38,6 +38,30 @@ El MVP es **lo más básico que necesita una aplicación de cotizaciones**: arma
   presentación.
 - **No entran historias nuevas antes de la presentación**, salvo arreglos que impidan usar el recorrido básico.
 
+## 2b. Criterio de MVP: qué entra y qué no
+
+Cotiza Prime es una herramienta para **armar, enviar y guardar cotizaciones, con seguimiento de cada una y algo de
+automatización**. No es un banco ni maneja datos delicados. En esta etapa **se hace lo necesario para que funcione y nada
+más**.
+
+**Entra:** lo que hace falta para cotizar, enviar y ver en qué quedó cada cotización, y la seguridad base (cada empresa
+ve solo lo suyo, ingreso y contraseñas, permisos en el servidor).
+
+**No entra ahora** (se ve después de la presentación, si hace falta):
+- anti-robot, monitoreo de errores (Sentry), alertas y paneles de protección;
+- verificación en dos pasos obligatoria, controles de intentos propios y otros blindajes de cuenta;
+- pruebas exhaustivas, revisiones repetidas y documentos largos de diseño;
+- todo lo que sirva «por si acaso» o «para el lanzamiento público».
+
+**Lo que ya está construido no se desarma.** Si necesita una configuración mínima para funcionar, se configura y listo,
+sin invertirle más tiempo.
+
+**Cómo se decide:** ante cada tarea, la pregunta es *«¿sin esto se puede cotizar, enviar y hacer seguimiento?»*. Si la
+respuesta es sí, no se hace ahora: se anota como pendiente.
+
+**Los agentes no proponen controles nuevos ni preguntas técnicas en lote.** Si algo de seguridad les parece necesario y
+no es seguridad base, lo anotan como pendiente y siguen. Solo preguntan lo que de verdad bloquea el MVP.
+
 ## 3. Infraestructura
 
 | Qué | Regla |
@@ -49,8 +73,8 @@ El MVP es **lo más básico que necesita una aplicación de cotizaciones**: arma
 | **Correo** | Resend, plan gratis. El dominio de envío se verifica con SPF, DKIM y DMARC, y el seguimiento de aperturas y clics queda apagado. |
 | **Dominio** | **Se le pregunta a JC** si quiere un dominio propio para la aplicación. Si no, se usa un **subdominio de mainbrain.cl** (por ejemplo `cotizaprime.mainbrain.cl` para producción y `pruebas.cotizaprime.mainbrain.cl` para pruebas). |
 | **Claves** | Nunca en el repositorio ni en el historial de la terminal. Se cargan en Vercel, en el entorno que corresponde y marcadas *Sensitive*. Cada entorno tiene sus propias claves. |
-| **Anti-robot del formulario público** | Cloudflare Turnstile, gratis (cierra la decisión 019). |
-| **Sentry** | No es requisito para el MVP. Se agrega cuando haya uso real. |
+| **Anti-robot (Turnstile)** | **No se le dedica tiempo en el MVP.** Ya está construido y la aplicación no arranca en producción sin un proveedor configurado, así que lo más rápido es **crear las claves gratis de Cloudflare y cargarlas** (minutos de configuración, cero desarrollo). No se mejora ni se amplía. |
+| **Sentry** | **No va en el MVP.** No se instala. Si la política de privacidad lo menciona, se quita la mención. |
 
 **Lo que implica el plan gratis, y cómo se cubre:**
 - **Un proyecto se pausa tras 7 días sin uso.** Antes de una demo o de un periodo de uso, conviene revisar que esté

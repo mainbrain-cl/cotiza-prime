@@ -16,8 +16,18 @@ export type LegalDocument = {
   contentSha256: string;
 };
 
-export const CURRENT_LEGAL_VERSION = "2026-10-01-preliminar";
-const CURRENT_LEGAL_PUBLISHED_ON = "2026-10-01";
+/**
+ * Versión vigente de cada documento. Cada uno cambia por separado: al cambiar un texto se sube SU versión y se publica con
+ * una migración nueva (la prueba `tests/db/legal-seed.test.ts` compara la huella del código con la de la base).
+ * Privacidad 2026-11-27: sin Sentry en la lista de proveedores (decisión 023).
+ */
+export const CURRENT_LEGAL_VERSIONS: Record<
+  LegalDocumentKind,
+  { version: string; publishedOn: string }
+> = {
+  terms: { version: "2026-10-01-preliminar", publishedOn: "2026-10-01" },
+  privacy: { version: "2026-11-27-preliminar", publishedOn: "2026-11-27" },
+};
 
 const LEGAL_CONTENT_DIR = path.join(process.cwd(), "src", "content", "legal");
 
@@ -47,7 +57,8 @@ export function buildLegalDocument(
 
 function loadDocument(kind: LegalDocumentKind): LegalDocument {
   const raw = readFileSync(path.join(LEGAL_CONTENT_DIR, LEGAL_FILES[kind]), "utf8");
-  return buildLegalDocument(kind, CURRENT_LEGAL_VERSION, CURRENT_LEGAL_PUBLISHED_ON, raw);
+  const { version, publishedOn } = CURRENT_LEGAL_VERSIONS[kind];
+  return buildLegalDocument(kind, version, publishedOn, raw);
 }
 
 /** Los documentos vigentes. Fuente única de versión y huella para registro y reaceptación. */

@@ -1035,6 +1035,35 @@ async function buildShareData(
       }),
     ],
   );
+  // Cobro (H-050 a H-053): la cuenta bancaria de la organización, su copia congelada en esta cotización aceptada y sus dos hitos
+  // (50/50). Se montan con `pg`: nadie escribe directo por la API. El titular lleva el canario (cifrado, como en la aplicación).
+  const bankAccountId = randomUUID();
+  const bankEnc = encryptPii(
+    JSON.stringify({
+      bank: "BancoEstado",
+      accountType: "checking",
+      accountNumber: "000123456789",
+      holderName: `Titular ${data.canary}`,
+      holderRut: "76086428-5",
+      email: "pagos@ejemplo.test",
+    }),
+    { table: "bank_accounts", field: "details", tenantId: data.tenantId, rowId: bankAccountId },
+  );
+  await db.query(
+    `insert into public.bank_accounts (id, tenant_id, details_enc, account_last4) values ($1, $2, $3, '6789')`,
+    [bankAccountId, data.tenantId, bankEnc],
+  );
+  await db.query(
+    `insert into public.quote_payment_accounts
+       (tenant_id, quote_id, bank_account_id, bank_revision, details_enc, account_last4)
+     values ($1, $2, $3, 1, $4, '6789')`,
+    [data.tenantId, quoteId, bankAccountId, bankEnc],
+  );
+  await db.query(
+    `insert into public.payment_milestones (tenant_id, quote_id, seq, kind, amount_clp)
+     values ($1, $2, 1, 'deposit', 5950), ($1, $2, 2, 'balance', 5950)`,
+    [data.tenantId, quoteId],
+  );
   return {
     quoteId,
     packageId,

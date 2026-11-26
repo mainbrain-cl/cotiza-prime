@@ -270,6 +270,19 @@ describe("A13 · ninguna función permite actuar sobre otra organización", () =
       mfa_recovery_codes_acknowledge: { p_user_id: randomUUID(), p_set_id: randomUUID() },
       mfa_recovery_codes_status: { p_user_id: randomUUID() },
       mfa_recovery_codes_revoke: { p_user_id: randomUUID() },
+      // Cobro (H-053)
+      share_link_payment: { p_token_sha256: "0".repeat(64) },
+      share_payment_notice: { p_quote_id: randomUUID(), p_response_id: randomUUID() },
+      share_payment_notice_record: {
+        p_quote_id: randomUUID(),
+        p_response_id: randomUUID(),
+        p_email_id: randomUUID(),
+        p_to_email_enc: "x",
+        p_to_email_hash: "0".repeat(64),
+        p_provider: "memory",
+        p_provider_message_id: "x",
+        p_error_code: null,
+      },
     };
     for (const name of SERVER_ONLY_FUNCTIONS) {
       for (const token of [null, await tokenOf("ana")]) {

@@ -399,6 +399,41 @@ async function seedSnippets(
   await owner.auth.signOut({ scope: "local" });
 }
 
+/**
+ * Datos de transferencia ficticios (H-050) para Negocio Demo 1: así el cobro se puede probar de punta a punta. Negocio Demo 2 queda
+ * sin cuenta, para ver el envío sin condición de pago. Cifrados igual que en la aplicación (sello `bank_accounts.details|org|id`).
+ */
+async function seedBankAccount(admin: SupabaseClient, tenantId: string): Promise<void> {
+  const existing = check(
+    "bank_accounts select",
+    await admin.from("bank_accounts").select("id").eq("tenant_id", tenantId),
+  ) as { id: string }[];
+  if (existing.length > 0) return;
+  const id = stableUuid(`seed-bank-account|${tenantId}`);
+  const details = {
+    bank: "BancoEstado",
+    accountType: "checking",
+    accountNumber: "000123456789",
+    holderName: "Negocio Demo 1 SpA",
+    holderRut: "76000001-" + computeCheckDigit("76000001"),
+    email: "pagos@ejemplo.test",
+  };
+  check(
+    "bank_accounts insert",
+    await admin.from("bank_accounts").insert({
+      id,
+      tenant_id: tenantId,
+      details_enc: encryptPii(JSON.stringify(details), {
+        table: "bank_accounts",
+        field: "details",
+        tenantId,
+        rowId: id,
+      }),
+      account_last4: "6789",
+    }),
+  );
+}
+
 async function main(): Promise<void> {
   const url = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
   assertLocal(url);
@@ -428,6 +463,7 @@ async function main(): Promise<void> {
     await seedCatalog(admin, tenantId);
     await seedCustomers(admin, key, tenantId);
     await seedSnippets(admin, url, anonKey, tenantId, ownerEmailOf(key));
+    if (key === "A") await seedBankAccount(admin, tenantId);
   }
   console.log(
     `Listo: ${userIds.size} personas, ${tenantIds.size} organizaciones. Contraseña de prueba: ${TEST_PASSWORD}`,

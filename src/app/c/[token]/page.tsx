@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PaymentInstructions } from "@/components/share/payment-instructions";
 import { ResponsePanel } from "@/components/share/response-panel";
 import { QuoteView } from "@/components/share/quote-view";
 import { ShareBusy, ShareNotFound, ShareUnavailable } from "@/components/share/unavailable";
@@ -6,6 +7,7 @@ import { ViewBeacon } from "@/components/share/view-beacon";
 import { readShareCustomer } from "@/lib/share/customer";
 import { readFrozenLogoDataUrl, readShareLink } from "@/lib/share/gateway";
 import { passTokenGate } from "@/lib/share/public-request";
+import { readSharePaymentView } from "@/lib/share/payment";
 import { isAvailable } from "@/lib/share/read-model";
 
 /**
@@ -69,9 +71,12 @@ export default async function SharedQuotePage({ params }: PageProps<"/c/[token]"
     return <ShareUnavailable state={link.state} contact={link.contact} />;
   }
 
-  const [customer, logoDataUrl] = await Promise.all([
+  // Los datos para pagar (H-053) se piden SOLO si el cliente ya aceptó; la base tampoco los entrega antes.
+  const accepted = link.response?.decision === "accepted";
+  const [customer, logoDataUrl, payment] = await Promise.all([
     readShareCustomer(link),
     readFrozenLogoDataUrl(link),
+    accepted ? readSharePaymentView(token) : Promise.resolve(null),
   ]);
 
   return (
@@ -82,6 +87,15 @@ export default async function SharedQuotePage({ params }: PageProps<"/c/[token]"
         logoDataUrl={logoDataUrl}
         pdfHref={`${API_PREFIX}/${token}/pdf`}
         responseNotice={responseNotice(link.response)}
+        paymentSlot={
+          payment ? (
+            <PaymentInstructions
+              payment={payment}
+              organizationName={link.document.organization.name}
+              quoteNumber={link.document.quote.number}
+            />
+          ) : null
+        }
         responseSlot={
           <ResponsePanel
             apiBase={`${API_PREFIX}/${token}`}

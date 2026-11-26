@@ -33,6 +33,9 @@ import { pagePermission } from "@/lib/permissions/require";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { tenantPath } from "@/lib/tenant/constants";
 import { cn } from "@/lib/utils";
+import { isPaymentTerms } from "@/lib/payments/model";
+import { tenantHasBankAccount } from "@/lib/payments/queries";
+import { PaymentTermsField } from "./payment-terms-field";
 import { SendQuoteForm } from "./send-quote-form";
 
 export const metadata: Metadata = { title: "Enviar cotización · Cotiza Prime" };
@@ -166,6 +169,9 @@ export default async function SendQuotePage({
           }),
         )
       : [];
+  // La condición de pago (H-052): solo se ofrece si la organización tiene datos de transferencia. Si no se pudo saber, no se ofrece.
+  const hasBankAccount = !blocker ? (await tenantHasBankAccount(active)) === true : false;
+  const savedTerms = isPaymentTerms(quote.payment_terms) ? quote.payment_terms : null;
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-3">
@@ -203,25 +209,36 @@ export default async function SendQuotePage({
           </div>
         </div>
       ) : context && brand && customerEmail ? (
-        <SendQuoteForm
-          tenantId={active.tenantId}
-          quoteId={quote.id}
-          expectedRevision={quote.revision}
-          quotePath={quotePath}
-          initialSubject={defaultEmailSubject(quote.number_display, context.organizationName)}
-          initialBody={initialEmailBody(snippetOptions, defaultBody)}
-          defaultText={defaultBody}
-          snippetOptions={snippetOptions}
-          snippetsUnavailable={snippetList !== null && !snippetList.ok}
-          organizationName={context.organizationName}
-          brandPrimary={brand.primary}
-          brandOnPrimary={brand.onPrimary}
-          brandText={brand.primaryText}
-          customerName={customerName}
-          maskedRecipient={maskEmail(customerEmail)}
-          replyTo={context.contactEmail ?? (active.user.email || null)}
-          pdfSrc={`/api/v1/tenants/${active.tenantId}/quotes/${quote.id}/pdf?size=letter`}
-        />
+        <>
+          <PaymentTermsField
+            tenantId={active.tenantId}
+            quoteId={quote.id}
+            totalClp={Number(quote.total_clp)}
+            hasBankAccount={hasBankAccount}
+            initialTerms={savedTerms}
+            canManageBank={can(active.role, "bank_account.manage")}
+            bankSettingsHref={tenantPath(active.tenantId, "configuracion/pagos")}
+          />
+          <SendQuoteForm
+            tenantId={active.tenantId}
+            quoteId={quote.id}
+            expectedRevision={quote.revision}
+            quotePath={quotePath}
+            initialSubject={defaultEmailSubject(quote.number_display, context.organizationName)}
+            initialBody={initialEmailBody(snippetOptions, defaultBody)}
+            defaultText={defaultBody}
+            snippetOptions={snippetOptions}
+            snippetsUnavailable={snippetList !== null && !snippetList.ok}
+            organizationName={context.organizationName}
+            brandPrimary={brand.primary}
+            brandOnPrimary={brand.onPrimary}
+            brandText={brand.primaryText}
+            customerName={customerName}
+            maskedRecipient={maskEmail(customerEmail)}
+            replyTo={context.contactEmail ?? (active.user.email || null)}
+            pdfSrc={`/api/v1/tenants/${active.tenantId}/quotes/${quote.id}/pdf?size=letter&pago=${savedTerms ?? "ninguno"}`}
+          />
+        </>
       ) : null}
     </div>
   );

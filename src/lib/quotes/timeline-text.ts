@@ -1,5 +1,6 @@
 import { reasonTeamText } from "@/lib/share/respond";
 import { describeLockedPriceOverride } from "./locked-price-text";
+import { describePaymentEvent, PAYMENT_EVENT_TYPES } from "./payment-event-text";
 
 /** Texto, en español de Chile, de cada tipo de evento de la línea de tiempo de una cotización. */
 const EVENT_TEXTS: Record<string, string> = {
@@ -15,6 +16,12 @@ const EVENT_TEXTS: Record<string, string> = {
   link_revoked: "Se revocó el enlace del cliente",
   email_bounced: "El correo rebotó: no llegó al cliente",
   locked_price_overridden: "Se cambió un precio bloqueado",
+  payment_pending: "Quedó pendiente el pago del cliente",
+  payment_email_sent: "Se envió al cliente el correo con los datos para pagar",
+  payment_email_failed: "No se pudo enviar al cliente el correo con los datos para pagar",
+  payment_recorded: "Pago recibido",
+  payment_reversed: "Se deshizo un pago",
+  second_payment_requested: "Se pidió el segundo pago al cliente",
 };
 
 export const UNKNOWN_EVENT_TEXT = "Cambio registrado";
@@ -26,6 +33,7 @@ export const UNKNOWN_EVENT_TEXT = "Cambio registrado";
 export function describeQuoteEvent(type: string, data?: unknown): string {
   // Un precio bloqueado que alguien con permiso cambió (H-041): dice qué líneas y de cuánto a cuánto, sin nombres de línea.
   if (type === "locked_price_overridden") return describeLockedPriceOverride(data);
+  if (PAYMENT_EVENT_TYPES.has(type)) return describePaymentEvent(type, data);
   const base = EVENT_TEXTS[type] ?? UNKNOWN_EVENT_TEXT;
   if (type !== "rejected_by_customer" || !data || typeof data !== "object") return base;
   const code = (data as { reason_code?: unknown }).reason_code;

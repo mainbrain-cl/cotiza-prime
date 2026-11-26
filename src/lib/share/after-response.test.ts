@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   sendWithRetry: vi.fn(),
   serverLog: vi.fn(),
   send: vi.fn(),
+  readPaymentNotice: vi.fn(),
+  recordPaymentNotice: vi.fn(),
+  sendPaymentEmail: vi.fn(),
 }));
 
 vi.mock("./gateway", () => ({
@@ -14,6 +17,12 @@ vi.mock("./gateway", () => ({
   readNoticeRecipients: mocks.readNoticeRecipients,
   registerInternalNotice: mocks.registerInternalNotice,
   settleInternalNotice: mocks.settleInternalNotice,
+  readPaymentNotice: mocks.readPaymentNotice,
+  recordPaymentNotice: mocks.recordPaymentNotice,
+}));
+vi.mock("@/lib/payments/notice", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payments/notice")>()),
+  sendPaymentEmail: mocks.sendPaymentEmail,
 }));
 vi.mock("@/lib/email/config", () => ({
   loadEmailConfig: () => ({ fromAddress: "no-responder@ejemplo.test" }),
@@ -51,6 +60,9 @@ beforeEach(() => {
   mocks.registerInternalNotice.mockResolvedValue(undefined);
   mocks.settleInternalNotice.mockResolvedValue(undefined);
   mocks.sendWithRetry.mockResolvedValue({ ok: true, providerMessageId: "prov-1" });
+  // Por defecto, una cotización sin condición de pago: al aceptar no hay correo de cobro.
+  mocks.readPaymentNotice.mockResolvedValue(null);
+  mocks.recordPaymentNotice.mockResolvedValue(undefined);
 });
 
 describe("avisar al equipo de la respuesta del cliente (H-031)", () => {
@@ -145,5 +157,77 @@ describe("avisar al equipo de la respuesta del cliente (H-031)", () => {
     expect(message.text).toContain("El cliente dejó un comentario; míralo en la cotización");
     expect(message.subject).toBe("El cliente rechazó la cotización COT-2026-0043");
     expect(message.html).toContain(`/cotizaciones/${QUOTE}`);
+  });
+});
+
+describe("correo con los datos para pagar al aceptar (H-053)", () => {
+  const context = {
+    tenant_id: TENANT,
+    quote_id: QUOTE,
+    number_display: "COT-2026-0043",
+    version: 1,
+    payment_terms: "split_50_50",
+    total_clp: 11_901,
+    milestones: [
+      {
+        id: "77777777-7777-4777-8777-777777777777",
+        seq: 1,
+        kind: "deposit",
+        amount_clp: 5_950,
+        status: "pending",
+      },
+    ],
+    bank: null,
+    to_email_enc: null,
+    email_message_id: null,
+    package_id: PACKAGE,
+    customer_snapshot_enc: null,
+    organization_name: "Negocio Ficticio",
+    brand: null,
+  };
+
+  it("sale ANTES que los avisos al equipo", async () => {
+    recipientsOf([ANA]);
+    mocks.readPaymentNotice.mockResolvedValue(context);
+    mocks.sendPaymentEmail.mockResolvedValue({
+      status: "attempted",
+      emailId: "88888888-8888-4888-8888-888888888888",
+      toEmailEnc: "v1.enc",
+      toEmailHash: "a".repeat(64),
+      sent: { provider: "mailpit", providerMessageId: "prov-2" },
+      errorCode: null,
+    });
+    await onQuoteResponded(base);
+    expect(mocks.sendPaymentEmail.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.readNoticeRecipients.mock.invocationCallOrder[0],
+    );
+    expect(mocks.recordPaymentNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ emailId: "88888888-8888-4888-8888-888888888888", errorCode: null }),
+    );
+  });
+
+  it("si ni se intenta (sin destinatario), igual queda el fallo en la línea de tiempo, sin fila de correo", async () => {
+    recipientsOf([]);
+    mocks.readPaymentNotice.mockResolvedValue(context);
+    mocks.sendPaymentEmail.mockResolvedValue({ status: "skipped", code: "no_recipient" });
+    await onQuoteResponded(base);
+    expect(mocks.recordPaymentNotice).toHaveBeenCalledWith({
+      quoteId: QUOTE,
+      responseId: RESPONSE,
+      emailId: null,
+      toEmailEnc: null,
+      toEmailHash: null,
+      sent: null,
+      errorCode: "no_recipient",
+    });
+  });
+
+  it("si leer el cobro falla, también queda el fallo (y no lanza)", async () => {
+    recipientsOf([]);
+    mocks.readPaymentNotice.mockRejectedValue(new Error("db"));
+    await expect(onQuoteResponded(base)).resolves.toBeUndefined();
+    expect(mocks.recordPaymentNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ emailId: null, errorCode: "unexpected" }),
+    );
   });
 });

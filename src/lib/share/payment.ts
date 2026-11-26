@@ -2,7 +2,11 @@ import "server-only";
 import { z } from "zod";
 import { serverLog } from "@/lib/log/server-log";
 import { bankDetailLines } from "@/lib/payments/bank";
-import { MILESTONE_LABELS, MILESTONE_STATUS_LABELS, nextDueMilestone } from "@/lib/payments/model";
+import {
+  MILESTONE_LABELS,
+  MILESTONE_STATUS_LABELS,
+  customerPaymentDue,
+} from "@/lib/payments/model";
 import { decryptBankDetails } from "@/lib/payments/notice";
 import { readSharePayment } from "./gateway";
 
@@ -29,8 +33,11 @@ const sharePaymentSchema = z.object({
 
 export type SharePaymentView = {
   rows: { label: string; amountClp: number; statusLabel: string; paid: boolean }[];
-  /** Lo que corresponde pagar ahora; `null` si ya está todo pagado. */
+  /** Lo que corresponde pagar ahora; `null` si ya está todo pagado o si el saldo todavía no se pide. */
   due: { label: string; amountClp: number } | null;
+  /** 50/50 con el anticipo recibido y el saldo sin pedir: no hay nada que pagar todavía (ni se muestran los datos bancarios). */
+  awaitingBalance: boolean;
+  /** Los datos bancarios, solo si hay algo que pagar ahora. */
   bankLines: { label: string; value: string }[] | null;
 };
 
@@ -42,17 +49,19 @@ export async function readSharePaymentView(token: string): Promise<SharePaymentV
   }
   const data = parsed.data;
   if (!data || data.milestones.length === 0) return null;
-  const bank = data.bank
-    ? decryptBankDetails(data.bank.details_enc, data.tenant_id, data.bank.bank_account_id)
-    : null;
-  if (data.bank && !bank) await serverLog("error", "share_payment_bank_unreadable");
   const milestones = data.milestones.map((m) => ({
     seq: m.seq,
     kind: m.kind,
     amountClp: m.amount_clp,
     status: m.status,
   }));
-  const due = nextDueMilestone(milestones);
+  const { due, awaitingBalance } = customerPaymentDue(milestones);
+  // Los datos bancarios solo se abren si hay algo que pagar ahora.
+  const bank =
+    due && data.bank
+      ? decryptBankDetails(data.bank.details_enc, data.tenant_id, data.bank.bank_account_id)
+      : null;
+  if (due && data.bank && !bank) await serverLog("error", "share_payment_bank_unreadable");
   return {
     rows: milestones.map((m) => ({
       label: MILESTONE_LABELS[m.kind],
@@ -61,6 +70,7 @@ export async function readSharePaymentView(token: string): Promise<SharePaymentV
       paid: m.status === "paid",
     })),
     due: due ? { label: MILESTONE_LABELS[due.kind], amountClp: due.amountClp } : null,
+    awaitingBalance,
     bankLines: bank ? bankDetailLines(bank) : null,
   };
 }

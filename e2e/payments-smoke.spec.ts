@@ -2,7 +2,7 @@ import "../tests/support/stub-server-only"; // debe ir primero
 import { generateRut } from "../src/lib/chile/rut";
 import { connect } from "../tests/db/helpers";
 import { expect, randomTestIp, test, type Page } from "./fixtures";
-import { createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
+import { activateTwoStep, createTenant, signUpAndVerify, uniqueEmail } from "./helpers";
 
 // Humo del cobro por transferencia (H-050 a H-057), de punta a punta: la Dueña registra los datos de transferencia, envía una
 // cotización 50/50, el cliente la acepta y recibe los datos para pagar, la Dueña marca el anticipo, pide el saldo (correo 3) y marca
@@ -63,7 +63,10 @@ test("cobro 50/50 de punta a punta: datos de transferencia, aceptar, anticipo, s
     await db.end();
   }
 
-  // H-050: los datos de transferencia, en Configuración.
+  // H-050: sin el segundo paso no se pueden registrar los datos de transferencia; se activa y se registran en Configuración.
+  await page.goto(`/o/${tenantId}/configuracion/pagos`);
+  await expect(page.getByTestId("bank-second-step-required")).toBeVisible();
+  await activateTwoStep(page);
   await page.goto(`/o/${tenantId}/configuracion`);
   await page.getByRole("link", { name: /Datos de transferencia/ }).click();
   await page.getByLabel("Banco").selectOption("BancoEstado");

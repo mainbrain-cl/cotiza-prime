@@ -4,7 +4,15 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { actAsPostgres, connect, expectSqlError, withTx, type TestUser } from "./helpers";
+import {
+  actAs,
+  actAsPostgres,
+  connect,
+  expectSqlError,
+  TENANT_HEADER,
+  withTx,
+  type TestUser,
+} from "./helpers";
 import {
   actAsService,
   asUser,
@@ -39,6 +47,19 @@ async function asError(user: TestUser, sql: string, params: unknown[] = [], tena
   await actAsPostgres(db);
   return err;
 }
+/** Con el segundo paso hecho (pase aal2): lo que exige cambiar la cuenta bancaria. */
+async function as2<T = Json>(user: TestUser, sql: string, params: unknown[] = [], tenant?: string) {
+  await actAs(db, user, { [TENANT_HEADER]: tenant ?? w.tenantA }, "authenticated", { aal: "aal2" });
+  const { rows } = await db.query<{ r: T }>(sql, params);
+  await actAsPostgres(db);
+  return rows[0]?.r;
+}
+async function asError2(user: TestUser, sql: string, params: unknown[] = [], tenant?: string) {
+  await actAs(db, user, { [TENANT_HEADER]: tenant ?? w.tenantA }, "authenticated", { aal: "aal2" });
+  const err = await expectSqlError(db, sql, params);
+  await actAsPostgres(db);
+  return err;
+}
 async function rows<T = Json>(
   user: TestUser,
   sql: string,
@@ -62,7 +83,7 @@ const BANK_ENC = `v1.${"b".repeat(16)}.${"c".repeat(80)}`;
 
 async function addBank(user: TestUser = w.owner): Promise<string> {
   const id = randomUUID();
-  await as(user, SET_BANK, [id, BANK_ENC, "6789", 0]);
+  await as2(user, SET_BANK, [id, BANK_ENC, "6789", 0]);
   return id;
 }
 
@@ -130,7 +151,14 @@ describe("H-050 · datos de transferencia", () => {
       expect((await asError(w.viewer, SET_BANK, [randomUUID(), BANK_ENC, "1234", 0])).code).toBe(
         "42501",
       );
+      // Sin el segundo paso (pase aal1), ni el Dueño puede crearla o cambiarla
+      const noSecondStep = await asError(w.owner, SET_BANK, [randomUUID(), BANK_ENC, "1234", 0]);
+      expect(noSecondStep.code).toBe("42501");
+      expect(noSecondStep.message).toMatch(/second_step_required/);
       const id = await addBank(w.owner);
+      expect((await asError(w.admin, SET_BANK, [id, BANK_ENC, "4321", 1])).message).toMatch(
+        /second_step_required/,
+      );
 
       const select = "select id, details_enc from public.bank_accounts";
       expect(await rows(w.owner, select)).toHaveLength(1);
@@ -142,13 +170,13 @@ describe("H-050 · datos de transferencia", () => {
       expect(await rows(w.ownerB, select, [], w.tenantA)).toHaveLength(0);
 
       // Cambiar: con la revisión que se vio; una vieja choca
-      const changed = await as<Json>(w.admin, SET_BANK, [id, BANK_ENC, "4321", 1]);
+      const changed = await as2<Json>(w.admin, SET_BANK, [id, BANK_ENC, "4321", 1]);
       expect(changed).toMatchObject({ id, revision: 2 });
-      expect((await asError(w.owner, SET_BANK, [id, BANK_ENC, "0000", 1])).code).toBe("CP409");
+      expect((await asError2(w.owner, SET_BANK, [id, BANK_ENC, "0000", 1])).code).toBe("CP409");
       // Otra organización no puede escribir sobre la de A con la cabecera de A
-      expect((await asError(w.ownerB, SET_BANK, [id, BANK_ENC, "0000", 2], w.tenantA)).code).toBe(
-        "42501",
-      );
+      expect(
+        (await asError2(w.ownerB, SET_BANK, [id, BANK_ENC, "0000", 2], w.tenantA)).message,
+      ).toMatch(/forbidden/);
 
       // Cada cambio queda en la auditoría, con los últimos 4 y sin lo cifrado
       const { rows: audit } = await db.query<{
@@ -319,6 +347,65 @@ describe("H-054, H-055 y H-056 · marcar, deshacer y pedir el saldo", () => {
         seq: 2,
         reason: "era de otro cliente",
       });
+    });
+  });
+
+  it("deshacer el anticipo con el saldo PEDIDO (no pagado): el pedido se anula y vuelve a «Pendiente de anticipo»", async () => {
+    await withTx(db, async () => {
+      await addBank();
+      const q = await acceptWith("split_50_50");
+      const [deposit, balance] = [await milestoneId(q.quoteId, 1), await milestoneId(q.quoteId, 2)];
+      await as(w.admin, RECORD, [deposit, 5950]);
+      await as(w.sales, "select public.request_second_payment($1) as r", [balance]);
+      expect(await quoteStatus(q.quoteId)).toBe("pending_balance");
+
+      await as(w.admin, "select public.reverse_payment($1, $2) as r", [
+        deposit,
+        "no había llegado",
+      ]);
+      expect(await quoteStatus(q.quoteId)).toBe("pending_deposit");
+      const { rows: ms } = await db.query<{
+        status: string;
+        requested_at: string | null;
+        requested_by: string | null;
+      }>(
+        "select status, requested_at, requested_by from public.payment_milestones where quote_id = $1 order by seq",
+        [q.quoteId],
+      );
+      expect(ms).toEqual([
+        { status: "pending", requested_at: null, requested_by: null },
+        { status: "pending", requested_at: null, requested_by: null },
+      ]);
+      const { rows: events } = await db.query<{ data: Json }>(
+        "select data from public.quote_events where quote_id = $1 and type = 'payment_reversed'",
+        [q.quoteId],
+      );
+      expect(events[0].data).toMatchObject({ seq: 1, balance_request_cleared: true });
+    });
+  });
+
+  it("si el correo con los datos para pagar ni se intentó, igual queda el fallo en la línea de tiempo", async () => {
+    await withTx(db, async () => {
+      await addBank();
+      const q = await acceptWith("full");
+      const { rows: resp } = await db.query<{ id: string }>(
+        "select id from public.quote_responses where quote_id = $1",
+        [q.quoteId],
+      );
+      await service(
+        "select public.share_payment_notice_record($1, $2, null, null, null, null, null, 'no_recipient') as r",
+        [q.quoteId, resp[0].id],
+      );
+      const { rows: events } = await db.query<{ data: Json }>(
+        "select data from public.quote_events where quote_id = $1 and type = 'payment_email_failed'",
+        [q.quoteId],
+      );
+      expect(events.map((e) => e.data)).toEqual([{ kind: "payment_1", code: "no_recipient" }]);
+      const { rows: mails } = await db.query(
+        "select id from public.email_messages where quote_id = $1 and kind = 'payment_1'",
+        [q.quoteId],
+      );
+      expect(mails).toHaveLength(0);
     });
   });
 

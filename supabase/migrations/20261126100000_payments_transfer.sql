@@ -143,7 +143,9 @@ begin
     or (old.status = 'pending_balance' and new.status = 'paid')
     -- Deshacer un pago marcado por error: vuelve al estado anterior.
     or (old.status = 'paid'            and new.status in ('pending_payment', 'deposit_paid', 'pending_balance'))
-    or (old.status = 'deposit_paid'    and new.status = 'pending_deposit')) then
+    or (old.status = 'deposit_paid'    and new.status = 'pending_deposit')
+    -- Deshacer el anticipo con el saldo ya pedido (no pagado): el pedido del saldo se anula y vuelve a «Pendiente de anticipo».
+    or (old.status = 'pending_balance' and new.status = 'pending_deposit')) then
     raise exception 'invalid quote status change % -> %', old.status, new.status using errcode = '42501';
   end if;
   return new;
@@ -314,6 +316,7 @@ create constraint trigger quote_responses_start_payments after insert on public.
 -- 8. Funciones con sesión -----------------------------------------------------------------------------
 
 -- Crear o cambiar la cuenta bancaria (H-050). `p_expected_revision` = 0 para crearla; si otra persona la cambió entremedio, CP409.
+-- Exige el segundo paso (pase aal2); sin él responde `second_step_required` (42501), como el resto de la base desde H-004a.
 create function public.set_bank_account(
   p_bank_account_id uuid, p_details_enc text, p_account_last4 text, p_expected_revision integer
 ) returns jsonb
@@ -326,6 +329,10 @@ declare
 begin
   if v_tenant is null or v_uid is null or not app.can('bank_account.manage') then
     raise exception 'forbidden' using errcode = '42501';
+  end if;
+  -- Hacia dónde va el dinero (§13.2): solo con una sesión que pasó el segundo paso (pase aal2). Sin él, ni con la contraseña.
+  if coalesce(auth.jwt() ->> 'aal', 'aal1') <> 'aal2' then
+    raise exception 'second_step_required' using errcode = '42501';
   end if;
   if p_bank_account_id is null or p_details_enc is null or char_length(p_details_enc) not between 1 and 4000
      or p_account_last4 is null or p_account_last4 !~ '^[0-9A-Za-z]{1,4}$'
@@ -468,7 +475,8 @@ revoke all on function public.record_payment(uuid, date, bigint, text) from publ
 grant execute on function public.record_payment(uuid, date, bigint, text) to authenticated;
 
 -- Deshacer un pago marcado por error (H-055): con motivo; el registro original queda en la línea de tiempo y en la auditoría.
--- Se deshace en orden: el anticipo solo si el saldo no se pidió ni se pagó.
+-- Se deshace en orden: el anticipo solo si el saldo no está pagado. Si el saldo ya se había pedido, el pedido se anula en la misma
+-- transacción (vuelve a «por pagar»): se pidió dando por recibido un anticipo que no llegó.
 create function public.reverse_payment(p_milestone_id uuid, p_reason text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -477,6 +485,7 @@ declare
   m        public.payment_milestones;
   v_quote  uuid;
   v_status text;
+  v_cleared boolean := false;
 begin
   if v_tenant is null or v_uid is null or not app.can('payment.confirm') then
     raise exception 'forbidden' using errcode = '42501';
@@ -494,8 +503,14 @@ begin
     raise exception 'not_paid' using errcode = 'CP423';
   end if;
   if m.seq = 1 and exists (select 1 from public.payment_milestones x
-                            where x.tenant_id = v_tenant and x.quote_id = v_quote and x.seq = 2 and x.status <> 'pending') then
+                            where x.tenant_id = v_tenant and x.quote_id = v_quote and x.seq = 2 and x.status = 'paid') then
     raise exception 'reverse_balance_first' using errcode = 'CP423';
+  end if;
+  if m.seq = 1 then
+    update public.payment_milestones
+       set status = 'pending', requested_at = null, requested_by = null, updated_at = now()
+     where tenant_id = v_tenant and quote_id = v_quote and seq = 2 and status = 'requested';
+    v_cleared := found;
   end if;
   update public.payment_milestones
      set status = case when requested_at is not null then 'requested' else 'pending' end,
@@ -503,10 +518,11 @@ begin
    where tenant_id = v_tenant and id = m.id;
   v_status := app.sync_quote_payment_status(v_tenant, v_quote);
   perform app.write_quote_event(v_tenant, v_quote, 'payment_reversed', 'user', v_uid,
-    jsonb_build_object('seq', m.seq, 'kind', m.kind, 'amount_clp', m.paid_amount_clp, 'reason', btrim(p_reason)));
+    jsonb_build_object('seq', m.seq, 'kind', m.kind, 'amount_clp', m.paid_amount_clp, 'reason', btrim(p_reason),
+                       'balance_request_cleared', v_cleared));
   perform app.write_audit(v_tenant, 'user', v_uid, 'payment.reversed', 'quote', v_quote, 'success',
     jsonb_build_object('milestone_id', m.id, 'seq', m.seq, 'kind', m.kind, 'amount_clp', m.paid_amount_clp,
-                       'paid_on', m.paid_on, 'reason', btrim(p_reason)));
+                       'paid_on', m.paid_on, 'reason', btrim(p_reason), 'balance_request_cleared', v_cleared));
   return jsonb_build_object('quote_status', v_status);
 end $$;
 revoke all on function public.reverse_payment(uuid, text) from public, anon, authenticated;
@@ -670,6 +686,16 @@ begin
   select * into r from public.quote_responses where id = p_response_id and quote_id = p_quote_id;
   if not found or r.decision <> 'accepted' then
     raise exception 'response_not_found' using errcode = 'CP404';
+  end if;
+  -- El correo ni se intentó (sin destinatario, datos ilegibles, configuración…): sin fila de correo, pero queda el rastro en la
+  -- línea de tiempo para que el equipo sepa que el cliente no recibió los datos para pagar.
+  if p_email_id is null then
+    if p_error_code is null or p_error_code !~ '^[A-Za-z0-9_.:-]{1,60}$' then
+      raise exception 'invalid_error_code' using errcode = 'CP422';
+    end if;
+    perform app.write_quote_event(r.tenant_id, r.quote_id, 'payment_email_failed', 'system', null,
+      jsonb_build_object('kind', 'payment_1', 'code', p_error_code));
+    return jsonb_build_object('recorded', true);
   end if;
   perform app.record_payment_email(r.tenant_id, r.quote_id, 'payment_1', p_email_id, p_to_email_enc, p_to_email_hash,
     p_provider, p_provider_message_id, p_error_code, 'system', null);

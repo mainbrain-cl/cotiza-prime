@@ -33,7 +33,7 @@
 5. **Qué falta por cobrar (H-057).** En la cotización («Falta por cobrar $X» / «Todo pagado») y en el Inicio («Falta por cobrar $X en
    N cotizaciones», suma de los hitos sin recibir).
 6. **Deshacer un pago (H-055).** «Deshacer» con motivo obligatorio (3 a 200 caracteres), en orden (el anticipo solo si el saldo no
-   se pidió ni se pagó). El hito vuelve a «por pagar» (o «pedido»), la cotización al estado anterior, y el pago original y la
+   está pagado; si estaba pedido, el pedido se anula). El hito vuelve a «por pagar» (o «pedido»), la cotización al estado anterior, y el pago original y la
    reversión con su motivo quedan en la línea de tiempo y en la auditoría.
 7. **Aviso de cambio de cuenta (H-051, parcial).** Al guardar la cuenta, correo al Dueño y a los Administradores con quién, cuándo y
    los últimos 4 antes y después (de mejor esfuerzo, después de responder).
@@ -49,14 +49,23 @@
   y las cotizaciones de antes del cobro siguen funcionando igual.
 - **Valor por defecto: 100 %.** No existe todavía una condición por defecto de la organización (onboarding, paso 7): se agrega
   cuando llegue esa pantalla.
-- **La verificación en dos pasos NO se exige aún para guardar la cuenta** (criterio de H-050): depende de H-004c (dos pasos
-  obligatorio para Dueño y Administrador), que no está construida. **Antes del piloto** conviene exigirla.
+- **Cambiar la cuenta bancaria exige el segundo paso** (revisión Opus): `set_bank_account` pide un pase `aal2` y si no responde
+  `second_step_required` (42501, como el resto de la base desde H-004a); Configuración → Datos de transferencia, sin la verificación
+  activa, muestra un aviso con enlace a `/cuenta/seguridad` en vez del formulario.
 - **El correo 3 lo pide el servidor con el pase de quien lo solicita**: `request_second_payment` devuelve los datos bancarios
   CIFRADOS (solo el servidor los abre). Un Comercial que llamara la función directo recibiría solo texto cifrado. No hay vista previa
   del correo con los datos bancarios: el Comercial no puede ver la cuenta (§5.2); ve el monto y un texto de qué se enviará.
 - **El motivo de deshacer va en la línea de tiempo** (`quote_events.data.reason`, hasta 200 caracteres), para que «se vean el pago,
   la reversión y el motivo». Es texto del equipo; no se debe escribir ahí datos del cliente.
 - **La nota del pago va en claro** (`payment_milestones.paid_note`, hasta 500), visible para todo miembro, como las observaciones.
+- **Deshacer el anticipo con el saldo ya pedido** (revisión Opus): se puede mientras el saldo no esté pagado; el pedido del saldo se
+  anula en la misma transacción (vuelve a «por pagar») y la cotización pasa de «Pendiente de saldo» a «Pendiente de anticipo».
+- **El enlace no pide el saldo antes de tiempo** (revisión Opus): con el anticipo pagado y el saldo sin pedir, el cliente ve «El saldo
+  se te pedirá cuando el trabajo esté listo», sin monto a pagar ni datos bancarios (`customerPaymentDue`).
+- **Pedir o reenviar el saldo cuenta en el tope de envíos** (revisión Opus): `consumeSendQuota`, el mismo de enviar y reenviar.
+- **Al aceptar, primero el correo con los datos para pagar y después los avisos internos** (revisión Opus); la ruta de aceptar
+  declara `maxDuration = 60`, y si el correo no sale o ni se intenta queda `payment_email_failed` en la línea de tiempo, aunque no
+  haya fila de correo.
 - **El portero del enlace del cliente pasa de seis a nueve funciones** (`share_link_payment`, `share_payment_notice`,
   `share_payment_notice_record`): la guardia 8 se actualizó con las tres nuevas (sigue exigiendo la lista exacta).
 - **La fecha del pago** acepta hasta el día hábil siguiente (zona horaria) y no antes del 2000; el monto, de 0 a un billón.
@@ -69,6 +78,6 @@
 - H-056: avisar al Administrador cuando los datos bancarios cambiaron desde que se aceptó (hoy solo lo dice el aviso de éxito a quien
   pide el saldo).
 - H-057: una lista propia de cotizaciones por cobrar con días de espera y filtro «Con pago pendiente» en el listado.
-- Exigir dos pasos para guardar la cuenta (H-004c) y la condición de pago por defecto de la organización (onboarding).
+- La condición de pago por defecto de la organización (onboarding).
 - El reenvío del correo 2 desde la pantalla (si falló al aceptar, hoy solo queda «No se pudo enviar…» en la línea de tiempo).
 - `share_link_record_view` no registra aperturas de una cotización ya en cobro (solo hasta «Aceptada»).

@@ -51,37 +51,62 @@ const MAX_NOTICE_RECIPIENTS = 10;
 /**
  * Correo 2 (H-053): al aceptar, el cliente recibe el monto a pagar y los datos de transferencia CONGELADOS en la cotización. Los
  * hitos y la copia de la cuenta ya los creó la base al registrar la aceptación; aquí solo se lee lo que entregó, se envía y se
- * anota el resultado. Una cotización sin condición de pago (de antes del cobro) no recibe nada. Nunca lanza hacia el cliente.
+ * anota el resultado. Una cotización sin condición de pago (de antes del cobro) no recibe nada. Si el correo no sale (o ni se
+ * intenta), queda «No se pudo enviar…» en la línea de tiempo, aunque no haya fila de correo. Nunca lanza.
  */
 export async function onQuoteAccepted(input: QuoteRespondedInput): Promise<void> {
-  const parsed = paymentContextSchema.nullable().safeParse(await readPaymentNotice(input));
-  if (!parsed.success) {
-    await serverLog("error", "payment_notice_failed", { code: "shape" });
-    return;
+  const recordSkipped = async (code: string) => {
+    await serverLog("warn", "payment_notice_skipped", { code });
+    try {
+      await recordPaymentNotice({
+        quoteId: input.quoteId,
+        responseId: input.responseId,
+        emailId: null,
+        toEmailEnc: null,
+        toEmailHash: null,
+        sent: null,
+        errorCode: code,
+      });
+    } catch (cause) {
+      await serverLog("error", "payment_notice_record_failed", { code: codeOf(cause) });
+    }
+  };
+  try {
+    const parsed = paymentContextSchema.nullable().safeParse(await readPaymentNotice(input));
+    if (!parsed.success) {
+      await recordSkipped("shape");
+      return;
+    }
+    const context = parsed.data;
+    const first = context?.milestones.find((m) => m.seq === 1);
+    if (!context || !first) return;
+    const outcome = await sendPaymentEmail(context, "payment_1", {
+      kind: first.kind,
+      amountClp: first.amount_clp,
+    });
+    if (outcome.status === "skipped") {
+      await recordSkipped(outcome.code);
+      return;
+    }
+    if (outcome.errorCode) {
+      await serverLog("warn", "payment_notice_failed", { code: outcome.errorCode });
+    }
+    try {
+      await recordPaymentNotice({
+        quoteId: input.quoteId,
+        responseId: input.responseId,
+        emailId: outcome.emailId,
+        toEmailEnc: outcome.toEmailEnc,
+        toEmailHash: outcome.toEmailHash,
+        sent: outcome.sent,
+        errorCode: outcome.errorCode,
+      });
+    } catch (cause) {
+      await serverLog("error", "payment_notice_record_failed", { code: codeOf(cause) });
+    }
+  } catch (cause) {
+    await recordSkipped(codeOf(cause));
   }
-  const context = parsed.data;
-  const first = context?.milestones.find((m) => m.seq === 1);
-  if (!context || !first) return;
-  const outcome = await sendPaymentEmail(context, "payment_1", {
-    kind: first.kind,
-    amountClp: first.amount_clp,
-  });
-  if (outcome.status === "skipped") {
-    await serverLog("warn", "payment_notice_skipped", { code: outcome.code });
-    return;
-  }
-  if (outcome.errorCode) {
-    await serverLog("warn", "payment_notice_failed", { code: outcome.errorCode });
-  }
-  await recordPaymentNotice({
-    quoteId: input.quoteId,
-    responseId: input.responseId,
-    emailId: outcome.emailId,
-    toEmailEnc: outcome.toEmailEnc,
-    toEmailHash: outcome.toEmailHash,
-    sent: outcome.sent,
-    errorCode: outcome.errorCode,
-  });
 }
 
 const codeOf = (cause: unknown, fallback = "unexpected"): string =>
@@ -153,8 +178,13 @@ async function noticeOne(
   }
 }
 
-/** Avisa por correo al equipo que corresponda. Nunca lanza: un fallo se anota solo como código. */
+/**
+ * Lo que sigue a la respuesta. Primero el correo con los datos para pagar (al aceptar: es lo que espera el cliente y no debe quedar
+ * detrás de los avisos internos si se acaba el tiempo) y después el aviso por correo al equipo. Nunca lanza: un fallo se anota
+ * solo como código.
+ */
 export async function onQuoteResponded(input: QuoteRespondedInput): Promise<void> {
+  if (input.decision === "accepted") await onQuoteAccepted(input);
   try {
     const { recipients } = await readNoticeRecipients(input);
     if (recipients.length === 0) {
@@ -168,12 +198,5 @@ export async function onQuoteResponded(input: QuoteRespondedInput): Promise<void
     }
   } catch (cause) {
     await serverLog("error", "quote_response_notice_failed", { code: codeOf(cause) });
-  }
-  if (input.decision === "accepted") {
-    try {
-      await onQuoteAccepted(input);
-    } catch {
-      await serverLog("error", "quote_accepted_hook_failed");
-    }
   }
 }

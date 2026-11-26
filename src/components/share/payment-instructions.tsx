@@ -34,6 +34,10 @@ export function PaymentInstructions({
             {formatClp(payment.due.amountClp)}
           </p>
         </div>
+      ) : payment.awaitingBalance ? (
+        <p className="font-medium" data-testid="share-payment-awaiting-balance">
+          Recibimos tu anticipo. El saldo se te pedirá cuando el trabajo esté listo.
+        </p>
       ) : (
         <p className="font-medium">Esta cotización ya está pagada. ¡Gracias!</p>
       )}

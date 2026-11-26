@@ -2,6 +2,8 @@ import { ChevronLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { FormAlert } from "@/components/ui/form-controls";
+import { ACCOUNT_SECURITY_PATH } from "@/lib/auth/paths";
+import { getSessionState } from "@/lib/auth/session";
 import { formatDateTime } from "@/lib/format-date";
 import { pagePermission } from "@/lib/permissions/require";
 import { loadBankAccount } from "@/lib/payments/queries";
@@ -21,6 +23,9 @@ export default async function BankAccountPage({
   const active = await requireActiveTenant((await params).tenantId);
   const denied = pagePermission(active, "bank_account.manage");
   if (denied) return denied;
+  // La base solo deja cambiar la cuenta con el segundo paso hecho (pase aal2). Una sesión completa con la verificación activa lo es.
+  const session = await getSessionState();
+  const secondStepDone = session.status === "complete" && session.secondStep.active;
   const lookup = await loadBankAccount(active);
 
   return (
@@ -40,7 +45,20 @@ export default async function BankAccountPage({
         </p>
       </div>
 
-      {lookup.status === "error" ? (
+      {!secondStepDone ? (
+        <div data-testid="bank-second-step-required">
+          <FormAlert tone="warning">
+            Para ver y cambiar los datos de transferencia necesitas la verificación en dos pasos
+            activa: así nadie con solo tu contraseña puede desviar los pagos de tus clientes.{" "}
+            <Link
+              href={ACCOUNT_SECURITY_PATH}
+              className="inline-flex min-h-11 items-center underline underline-offset-2"
+            >
+              Activar la verificación en dos pasos
+            </Link>
+          </FormAlert>
+        </div>
+      ) : lookup.status === "error" ? (
         <FormAlert>
           No pudimos cargar los datos de transferencia. Recarga la página en unos minutos.
         </FormAlert>

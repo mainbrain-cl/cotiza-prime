@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextDueMilestone, outstandingClp, splitPayment } from "./model";
+import { customerPaymentDue, nextDueMilestone, outstandingClp, splitPayment } from "./model";
 
 describe("splitPayment: los hitos de pago (PROYECTO.md §13.7)", () => {
   it("100 %: un solo pago por el total", () => {
@@ -53,5 +53,45 @@ describe("lo que falta por cobrar (H-057)", () => {
       nextDueMilestone([...rows].reverse().map((r) => ({ ...r, status: "pending" as const })))?.seq,
     ).toBe(1);
     expect(nextDueMilestone(rows.map((r) => ({ ...r, status: "paid" as const })))).toBeNull();
+  });
+});
+
+describe("lo que el cliente debe pagar ahora (enlace del cliente)", () => {
+  const split = (deposit: "pending" | "paid", balance: "pending" | "requested" | "paid") => [
+    { seq: 1, kind: "deposit" as const, amountClp: 5_950, status: deposit },
+    { seq: 2, kind: "balance" as const, amountClp: 5_951, status: balance },
+  ];
+
+  it("antes del anticipo: el anticipo", () => {
+    expect(customerPaymentDue(split("pending", "pending"))).toMatchObject({
+      due: { seq: 1 },
+      awaitingBalance: false,
+    });
+  });
+
+  it("anticipo pagado y saldo SIN pedir: nada que pagar todavía (no es «ya está pagada»)", () => {
+    expect(customerPaymentDue(split("paid", "pending"))).toEqual({
+      due: null,
+      awaitingBalance: true,
+    });
+  });
+
+  it("saldo pedido: el saldo", () => {
+    expect(customerPaymentDue(split("paid", "requested"))).toMatchObject({
+      due: { seq: 2, amountClp: 5_951 },
+      awaitingBalance: false,
+    });
+  });
+
+  it("todo pagado: nada y no espera saldo", () => {
+    expect(customerPaymentDue(split("paid", "paid"))).toEqual({
+      due: null,
+      awaitingBalance: false,
+    });
+    expect(
+      customerPaymentDue([
+        { seq: 1, kind: "full" as const, amountClp: 100, status: "pending" as const },
+      ]),
+    ).toMatchObject({ due: { seq: 1 }, awaitingBalance: false });
   });
 });

@@ -61,3 +61,18 @@ export function nextDueMilestone<T extends MilestoneLike & { seq: number }>(
 ): T | null {
   return [...milestones].sort((a, b) => a.seq - b.seq).find((m) => m.status !== "paid") ?? null;
 }
+
+/**
+ * Lo que el CLIENTE debe pagar ahora (enlace y correo): el anticipo o el pago total mientras no estén recibidos; el saldo, solo
+ * cuando la organización ya lo PIDIÓ («Solicitar segundo pago»). Con el anticipo pagado y el saldo sin pedir, no hay nada que
+ * pagar todavía (`awaitingBalance`): el saldo se pide cuando el trabajo esté listo (§6.6).
+ */
+export function customerPaymentDue<T extends MilestoneLike & { seq: number; kind: MilestoneKind }>(
+  milestones: readonly T[],
+): { due: T | null; awaitingBalance: boolean } {
+  const next = nextDueMilestone(milestones);
+  if (next && next.kind === "balance" && next.status !== "requested") {
+    return { due: null, awaitingBalance: true };
+  }
+  return { due: next, awaitingBalance: false };
+}

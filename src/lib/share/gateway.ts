@@ -267,13 +267,16 @@ export async function readPaymentNotice(ref: {
   return data ?? null;
 }
 
-/** Cobro (H-053): anota el correo con los datos para pagar (salió o falló) y su evento en la línea de tiempo. */
+/**
+ * Cobro (H-053): anota el correo con los datos para pagar (salió o falló) y su evento en la línea de tiempo. Sin `emailId` (el correo
+ * ni se intentó: sin destinatario, datos ilegibles…) solo queda el evento «No se pudo enviar…» con el código, sin fila de correo.
+ */
 export async function recordPaymentNotice(input: {
   quoteId: string;
   responseId: string;
-  emailId: string;
-  toEmailEnc: string;
-  toEmailHash: string;
+  emailId: string | null;
+  toEmailEnc: string | null;
+  toEmailHash: string | null;
   sent: { provider: string; providerMessageId: string } | null;
   errorCode: string | null;
 }): Promise<void> {

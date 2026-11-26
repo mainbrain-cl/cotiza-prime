@@ -156,7 +156,7 @@ export function QuotePayments({
           const canReverse =
             canConfirm &&
             row.status === "paid" &&
-            (row.seq === 2 || !rows.some((other) => other.seq === 2 && other.status !== "pending"));
+            (row.seq === 2 || !rows.some((other) => other.seq === 2 && other.status === "paid"));
           const canRequest =
             canRequestSecond &&
             row.kind === "balance" &&
@@ -309,7 +309,12 @@ export function QuotePayments({
                 >
                   <Field
                     label="¿Por qué lo deshaces?"
-                    hint="Queda en el historial junto al pago original."
+                    hint={
+                      row.seq === 1 &&
+                      rows.some((other) => other.seq === 2 && other.status === "requested")
+                        ? "Queda en el historial junto al pago original. El pedido del saldo se anula: vuelve a «Por pagar»."
+                        : "Queda en el historial junto al pago original."
+                    }
                     required
                   >
                     {(control) => (

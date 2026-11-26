@@ -9,6 +9,7 @@ import { serverLog } from "@/lib/log/server-log";
 import { parseClp } from "@/lib/money/clp";
 import { NO_PERMISSION_MESSAGE } from "@/lib/permissions/matrix";
 import { requirePermission } from "@/lib/permissions/require";
+import { consumeSendQuota, SEND_LOCK_SECONDS } from "@/lib/security/login-rate-limit";
 import { requireActiveTenant } from "@/lib/tenant/active-tenant";
 import { isUuid, tenantPath } from "@/lib/tenant/constants";
 import { accountLast4, bankDetailsSchema } from "./bank";
@@ -28,6 +29,11 @@ const SQLSTATE_NOT_ALLOWED = "CP423";
 const SQLSTATE_INVALID = "CP422";
 
 const MSG_UNEXPECTED = "No pudimos guardar el cambio. Inténtalo de nuevo en unos minutos.";
+/** Sin el segundo paso (sesión aal2), la base no deja cambiar la cuenta: hacia dónde va el dinero (§13.2). */
+const MSG_SECOND_STEP_REQUIRED =
+  "Para cambiar los datos de transferencia necesitas la verificación en dos pasos activa. Actívala en «Seguridad de tu cuenta» y vuelve a intentarlo.";
+const SECONDS_PER_MINUTE = 60;
+const MSG_SEND_QUOTA = `Hiciste muchos envíos en poco tiempo. No se envió nada: espera ${SEND_LOCK_SECONDS / SECONDS_PER_MINUTE} minutos e inténtalo de nuevo.`;
 
 export type PaymentActionResult =
   { status: "ok"; message?: string } | { status: "error"; message: string };
@@ -105,6 +111,12 @@ export async function saveBankAccountAction(
     p_expected_revision: expectedRevision,
   });
   if (error) {
+    if (
+      error.code === SQLSTATE_FORBIDDEN &&
+      (error.message ?? "").startsWith("second_step_required")
+    ) {
+      return failure(MSG_SECOND_STEP_REQUIRED);
+    }
     if (error.code === SQLSTATE_FORBIDDEN) return failure(NO_PERMISSION_MESSAGE);
     if (error.code === SQLSTATE_CONFLICT) {
       return failure(
@@ -245,14 +257,18 @@ export async function reversePaymentAction(
     if (error.code === SQLSTATE_FORBIDDEN) return failure(NO_PERMISSION_MESSAGE);
     const code = error.message ?? "";
     if (code.startsWith("reverse_balance_first")) {
-      return failure("Primero deshaz el saldo: ya se pidió o se registró.");
+      return failure("Primero deshaz el saldo: ya está registrado como recibido.");
     }
     if (code.startsWith("not_paid")) return failure("Este pago no estaba marcado como recibido.");
     await serverLog("error", "reverse_payment_failed", { code: error.code });
     return failure(MSG_UNEXPECTED);
   }
   revalidateQuote(active.tenantId, quoteId);
-  return { status: "ok", message: "Pago deshecho. Quedó registrado con su motivo." };
+  return {
+    status: "ok",
+    message:
+      "Pago deshecho. Quedó registrado con su motivo. Si el saldo ya se había pedido, el pedido quedó anulado.",
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -275,6 +291,8 @@ export async function requestSecondPaymentAction(
   if (!isUuid(quoteId) || !isUuid(milestoneId)) return failure("No encontramos el pago.");
   const denied = requirePermission(active, "payment.second.request");
   if (denied) return failure(denied);
+  // El mismo tope que enviar o reenviar una cotización (H-029): cada pedido (o reenvío) del saldo manda un correo al cliente.
+  if (!(await consumeSendQuota(active.userId, active.tenantId))) return failure(MSG_SEND_QUOTA);
   const { data, error } = await active.supabase.rpc("request_second_payment", {
     p_milestone_id: milestoneId,
   });

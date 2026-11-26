@@ -1,18 +1,26 @@
 import { expect, test } from "@playwright/test";
 
-const PRELIMINARY_VERSION = "2026-10-01-preliminar";
-
 const pages = [
-  { path: "/terminos", heading: "Términos y condiciones de uso", other: "Política de privacidad" },
-  { path: "/privacidad", heading: "Política de privacidad", other: "Términos y condiciones" },
+  {
+    path: "/terminos",
+    heading: "Términos y condiciones de uso",
+    other: "Política de privacidad",
+    version: "2026-10-01-preliminar",
+  },
+  {
+    path: "/privacidad",
+    heading: "Política de privacidad",
+    other: "Términos y condiciones",
+    version: "2026-11-27-preliminar",
+  },
 ];
 
-for (const { path, heading, other } of pages) {
+for (const { path, heading, other, version } of pages) {
   test(`${path} carga sin sesión y muestra aviso y versión`, async ({ page }) => {
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible();
     await expect(page.getByText("Versión preliminar, pendiente de revisión legal.")).toBeVisible();
-    await expect(page.getByTestId("legal-version")).toContainText(PRELIMINARY_VERSION);
+    await expect(page.getByTestId("legal-version")).toContainText(version);
     await expect(
       page
         .getByRole("navigation", { name: "Información legal" })

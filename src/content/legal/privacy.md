@@ -75,13 +75,12 @@ Como titular de datos personales puedes pedirnos, en cualquier momento:
 
 Para prestar el servicio usamos proveedores que tratan datos por nuestra cuenta. Cada uno debe quedar cubierto por un acuerdo de tratamiento.
 
-| Proveedor                                 | Para qué                                                                       | Dónde se alojan los datos                  |
-| ----------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------ |
-| **Supabase**                              | Base de datos, identidad de las cuentas y archivos (logos, PDF)                | **[POR COMPLETAR: región de alojamiento]** |
-| **Correo transaccional**                  | Invitaciones, avisos y los correos que se envían a los clientes                | **[POR COMPLETAR: proveedor y región]**    |
-| **Sentry**                                | Detectar y corregir errores en producción, sin datos personales sin enmascarar | **[POR COMPLETAR: región]**                |
-| Alojamiento de la aplicación              | Servir la plataforma                                                           | **[POR COMPLETAR: proveedor y región]**    |
-| Protección anti-robot y servicio de mapas | Formulario público y distancias                                                | Por definir                                |
+| Proveedor                                 | Para qué                                                        | Dónde se alojan los datos                  |
+| ----------------------------------------- | --------------------------------------------------------------- | ------------------------------------------ |
+| **Supabase**                              | Base de datos, identidad de las cuentas y archivos (logos, PDF) | **[POR COMPLETAR: región de alojamiento]** |
+| **Correo transaccional**                  | Invitaciones, avisos y los correos que se envían a los clientes | **[POR COMPLETAR: proveedor y región]**    |
+| Alojamiento de la aplicación              | Servir la plataforma                                            | **[POR COMPLETAR: proveedor y región]**    |
+| Protección anti-robot y servicio de mapas | Formulario público y distancias                                 | Por definir                                |
 
 Si algún proveedor aloja datos fuera de Chile, verificamos que ofrezca un nivel de protección adecuado. No compartimos datos personales con otros terceros salvo obligación legal o requerimiento de una autoridad.
 

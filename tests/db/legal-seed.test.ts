@@ -25,4 +25,16 @@ describe("documentos legales vigentes: código y base coinciden", () => {
       expect(rows[0].content_sha256).toBe(legalDocuments[kind].contentSha256);
     });
   }
+
+  // Decisión 023: la privacidad 2026-11-27 (sin Sentry) reemplaza a la 2026-10-01, que se conserva (hay aceptaciones que la
+  // nombran) pero ya no está vigente.
+  it("privacy: la versión anterior se conserva sin estar vigente", async () => {
+    const { rows } = await client.query<{ version: string; is_current: boolean }>(
+      "select version, is_current from public.legal_documents where kind = 'privacy' order by version",
+    );
+    expect(rows).toEqual([
+      { version: "2026-10-01-preliminar", is_current: false },
+      { version: "2026-11-27-preliminar", is_current: true },
+    ]);
+  });
 });
